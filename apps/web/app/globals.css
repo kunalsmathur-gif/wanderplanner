@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+/* ── WanderPlan design tokens (PRD Section 5.1) ─────────────────────── */
+@theme inline {
+  /* Brand colours */
+  --color-brand:      #1E40AF; /* Horizon Blue  */
+  --color-accent:     #047857; /* Emerald Green */
+  --color-warning:    #D97706; /* Amber Gold    */
+
+  /* Neutrals */
+  --color-surface:    #F1F5F9; /* container bg  */
+  --color-ink:        #0F172A; /* body text     */
+
+  /* Typography — PRD specifies Inter/system sans */
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+
+  /* Elevation */
+  --shadow-card: 0 4px 6px -1px rgb(0 0 0 / 0.05);
+
+  /* Border radius — PRD: 8px global */
+  --radius-card: 8px;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  background: #ffffff;
+}

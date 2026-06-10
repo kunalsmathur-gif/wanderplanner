@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+*.egg-info/
+dist/
+build/
+
+# Next.js
+apps/web/.next/
+apps/web/out/
+
+# Python
+apps/api/.env
+apps/api/__pycache__/
+
+# Qdrant data (local dev)
+qdrant_storage/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+.coverage
+htmlcov/
+coverage/
+.pytest_cache/
+
+# Logs
+*.log
+npm-debug.log*

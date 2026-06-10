@@ -1,0 +1,16 @@
+{
+  "name": "wanderplan",
+  "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:web": "cd apps/web && npm run dev",
+    "build:web": "cd apps/web && npm run build",
+    "test:web": "cd apps/web && npm run test",
+    "test:api": "cd apps/api && python -m pytest",
+    "ci": "npm run build:web && npm run test:web && npm run test:api",
+    "lint:web": "cd apps/web && npm run lint",
+    "type-check:web": "cd apps/web && npx tsc --noEmit"
+  }
+}
