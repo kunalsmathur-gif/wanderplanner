@@ -27,6 +27,10 @@ class BestTimeResponse(BaseModel):
     monthly_weather: list[MonthlyWeather] = Field(default_factory=list)
     busy_periods: list[BusyPeriod] = Field(default_factory=list)
     best_months: list[str] = Field(default_factory=list)
+    avoid_months: list[str] = Field(default_factory=list)
+    peak_season: str = ""
+    off_season: str = ""
+    weather_summary: str = ""
     events: list[LocalEvent] = Field(default_factory=list)
 
 

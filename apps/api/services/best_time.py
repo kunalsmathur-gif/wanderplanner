@@ -14,12 +14,19 @@ async def get_best_time(destination: str) -> BestTimeResponse:
     weather = await _fetch_weather(destination)
     busy, events = await _fetch_seasonal_info(destination)
     best_months = _compute_best_months(weather, busy)
+    avoid_months = _compute_avoid_months(weather)
+    peak_season, off_season = _compute_seasons(best_months, avoid_months)
+    weather_summary = _build_weather_summary(destination, weather, best_months)
 
     return BestTimeResponse(
         destination=destination,
         monthly_weather=weather,
         busy_periods=busy,
         best_months=best_months,
+        avoid_months=avoid_months,
+        peak_season=peak_season,
+        off_season=off_season,
+        weather_summary=weather_summary,
         events=events,
     )
 
@@ -112,3 +119,30 @@ def _compute_best_months(
         scored.append((w.month, score))
     scored.sort(key=lambda x: x[1], reverse=True)
     return [m for m, _ in scored[:4]]
+
+
+def _compute_avoid_months(weather: list[MonthlyWeather]) -> list[str]:
+    """Months with highest rainfall — bottom 3."""
+    if not weather:
+        return []
+    sorted_by_rain = sorted(weather, key=lambda w: w.avg_rain_mm, reverse=True)
+    return [w.month for w in sorted_by_rain[:3]]
+
+
+def _compute_seasons(best: list[str], avoid: list[str]) -> tuple[str, str]:
+    peak = ", ".join(best[:2]) if best else ""
+    off = ", ".join(avoid[:2]) if avoid else ""
+    return peak, off
+
+
+def _build_weather_summary(
+    destination: str, weather: list[MonthlyWeather], best: list[str]
+) -> str:
+    if not weather:
+        return f"Weather data for {destination} is currently unavailable."
+    avg_temp = sum(w.avg_temp_c for w in weather) / len(weather)
+    best_str = ", ".join(best[:3]) if best else "spring/autumn"
+    return (
+        f"{destination} has an average year-round temperature of {avg_temp:.1f}°C. "
+        f"Best months to visit: {best_str}."
+    )

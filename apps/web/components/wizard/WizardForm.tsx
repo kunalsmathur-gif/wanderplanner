@@ -43,7 +43,7 @@ export function WizardForm() {
       (result) => {
         setDays(result.days, result.alignment_score)
         setSubmitting(false)
-        goToStep(3)
+        // Stay at step 2 — ItineraryOverview shows day summary; user clicks Finalize → step 3
       },
       (code, message, retryable) => {
         setError({ code, message, retryable })

@@ -1,6 +1,9 @@
 'use client'
 
+import { useEffect, useRef, useState } from 'react'
 import { useTripConfigStore } from '@/store/tripConfigStore'
+import { geocode } from '@/lib/api'
+import type { DestinationInput } from '@/types'
 
 const THEMES = ['🏖️ Beaches', '🏛️ Sights', '⛰️ Mountains', '🎶 Nightlife', '🦁 Wildlife', '💼 Work-Friendly']
 
@@ -32,17 +35,14 @@ export function DestinationSection() {
         ))}
       </div>
 
-      {/* Origin */}
-      <div>
-        <label className="block text-xs text-slate-500 mb-1">Origin city / airport *</label>
-        <input
-          type="text"
-          placeholder="e.g. Bangalore, BLR"
-          value={config.origin.city}
-          onChange={(e) => setOrigin({ ...config.origin, city: e.target.value })}
-          className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1E40AF]"
-        />
-      </div>
+      {/* Origin — geocoded */}
+      <GeoInput
+        label="Origin city / airport *"
+        placeholder="e.g. Bangalore, BLR"
+        value={config.origin.city}
+        onSelect={(city, lat, lon) => setOrigin({ ...config.origin, city, lat, lon })}
+        onTextChange={(city) => setOrigin({ ...config.origin, city })}
+      />
 
       {/* Destination mode */}
       <div className="flex gap-3">
@@ -63,18 +63,16 @@ export function DestinationSection() {
       </div>
 
       {config.destination_mode === 'fixed' ? (
-        <input
-          type="text"
+        <GeoInput
+          label="Destination city"
           placeholder="e.g. Kuala Lumpur, Malaysia"
           value={config.destination?.city ?? ''}
-          onChange={(e) =>
-            setDestination(
-              e.target.value
-                ? { city: e.target.value, country: '', lat: 0, lon: 0 }
-                : null,
-            )
+          onSelect={(city, lat, lon) =>
+            setDestination({ city, country: '', lat, lon } satisfies DestinationInput)
           }
-          className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1E40AF]"
+          onTextChange={(city) =>
+            setDestination(city ? { city, country: '', lat: 0, lon: 0 } : null)
+          }
         />
       ) : (
         <div className="flex flex-wrap gap-2">
@@ -105,5 +103,78 @@ export function DestinationSection() {
         </div>
       )}
     </section>
+  )
+}
+
+// Reusable geocoded text input
+interface GeoInputProps {
+  label: string
+  placeholder: string
+  value: string
+  onSelect: (city: string, lat: number, lon: number) => void
+  onTextChange: (city: string) => void
+}
+
+function GeoInput({ label, placeholder, value, onSelect, onTextChange }: GeoInputProps) {
+  const [text, setText] = useState(value)
+  const [suggestion, setSuggestion] = useState<{ city: string; lat: number; lon: number } | null>(null)
+  const [loading, setLoading] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Sync external value resets (e.g. form reset)
+  useEffect(() => { setText(value) }, [value])
+
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const v = e.target.value
+    setText(v)
+    onTextChange(v)
+    setSuggestion(null)
+
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    if (v.length < 3) return
+    debounceRef.current = setTimeout(async () => {
+      setLoading(true)
+      try {
+        const result = await geocode(v)
+        const city = result.display_name.split(',')[0].trim()
+        setSuggestion({ city, lat: result.lat, lon: result.lon })
+      } catch { /* silent */ } finally {
+        setLoading(false)
+      }
+    }, 500)
+  }
+
+  function handleAccept() {
+    if (!suggestion) return
+    setText(suggestion.city)
+    onSelect(suggestion.city, suggestion.lat, suggestion.lon)
+    setSuggestion(null)
+  }
+
+  return (
+    <div>
+      <label className="block text-xs text-slate-500 mb-1">{label}</label>
+      <div className="relative">
+        <input
+          type="text"
+          value={text}
+          onChange={handleChange}
+          placeholder={placeholder}
+          className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1E40AF]"
+        />
+        {loading && (
+          <span className="absolute right-3 top-2.5 w-3 h-3 border-2 border-[#1E40AF] border-t-transparent rounded-full animate-spin" />
+        )}
+      </div>
+      {suggestion && (
+        <button
+          type="button"
+          onClick={handleAccept}
+          className="mt-1 w-full text-left px-3 py-2 text-xs bg-blue-50 border border-blue-200 rounded-lg text-blue-700 hover:bg-blue-100 transition-colors"
+        >
+          📍 {suggestion.city} — click to confirm location
+        </button>
+      )}
+    </div>
   )
 }
