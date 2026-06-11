@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from chains.itinerary_chain import generate_itinerary
+from core.config import settings
 from models.itinerary import GenerateItineraryRequest
 from models.trip import TripConfig
 
@@ -27,7 +28,7 @@ async def _stream_generation(trip_config: TripConfig) -> AsyncGenerator[str, Non
     try:
         result = await asyncio.wait_for(
             generate_itinerary(trip_config),
-            timeout=trip_config.__class__.__fields_set__ and 20 or 20,
+            timeout=settings.llm_timeout_seconds,
         )
         yield await send("status", {"message": "Finalising your schedule...", "step": 4, "total_steps": 4})
         yield await send("data", result.model_dump())
