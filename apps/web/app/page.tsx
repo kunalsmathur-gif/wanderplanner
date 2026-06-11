@@ -14,7 +14,7 @@ export default function Home() {
     <div className="flex flex-col h-screen overflow-hidden">
       <TopNav />
       <StepProgress currentStep={step} />
-      <main className="flex-1 overflow-hidden">
+      <main id="main-content" role="main" className="flex-1 overflow-hidden">
         {step === 1 && <WizardForm />}
         {step === 2 && <ItineraryOverview />}
         {step === 3 && <ThreeColumnLayout />}

@@ -1,11 +1,12 @@
 import type { NextConfig } from "next";
+import { resolve } from "path";
 
 const nextConfig: NextConfig = {
   // @react-pdf/renderer is ESM-only — keep it out of the SSR bundle
   serverExternalPackages: ['@react-pdf/renderer'],
-  // Silence monorepo root detection warning
+  // Point Turbopack at the monorepo root so it resolves workspace-hoisted deps
   turbopack: {
-    root: __dirname,
+    root: resolve(__dirname, '../..'),
   },
 };
 

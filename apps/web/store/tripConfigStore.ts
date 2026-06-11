@@ -68,8 +68,9 @@ export const useTripConfigStore = create<TripConfigStore>((set, get) => ({
 
   effectivePace: () => {
     const { config } = get()
+    // PRD: auto-Relaxed whenever any kid is under 5, regardless of user-selected pace
     const hasYoungKid = config.group.kids.some((k) => k.age < 5)
-    if (hasYoungKid && config.pace !== 'packed') return 'relaxed'
+    if (hasYoungKid) return 'relaxed'
     return config.pace
   },
 }))

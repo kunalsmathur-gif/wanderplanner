@@ -47,6 +47,7 @@ export function ComparisonPanel({ onClose }: Props) {
           onClick={onClose}
           className="text-slate-400 hover:text-slate-700 text-lg leading-none"
           aria-label="Close comparison"
+          type="button"
         >
           ✕
         </button>
