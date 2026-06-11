@@ -10,3 +10,5 @@ geopy==2.4.1
 better-profanity==0.7.0
 apscheduler==3.10.4
 qdrant-client==1.9.1
+google-genai>=1.0.0
+eval_type_backport

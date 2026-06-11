@@ -6,10 +6,12 @@ class Settings(BaseSettings):
 
     # LLM
     groq_api_key: str = ""
-    llm_provider: str = "groq"  # "groq" | "ollama" | "mock"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.0-flash"
+    llm_provider: str = "groq"  # "groq" | "gemini" | "ollama" | "mock"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
-    llm_timeout_seconds: int = 20
+    llm_timeout_seconds: int = 30
 
     # Qdrant
     qdrant_url: str = "http://localhost:6333"

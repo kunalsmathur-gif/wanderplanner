@@ -148,9 +148,58 @@ def _mock_itinerary(trip_config: TripConfig) -> dict:
     return {"days": days}
 
 
+async def _gemini_itinerary(trip_config: TripConfig) -> dict:
+    """Call Google Gemini directly — no langchain, no sentence-transformers needed."""
+    import asyncio
+    try:
+        from google import genai as google_genai
+        from google.genai import types as genai_types
+    except ImportError:
+        raise RuntimeError("google-genai not installed. Run: pip install google-genai")
+
+    if not settings.gemini_api_key:
+        raise RuntimeError("GEMINI_API_KEY is not set in .env")
+
+    client = google_genai.Client(api_key=settings.gemini_api_key)
+    trip_json = trip_config.model_dump_json(indent=2)
+
+    prompt = SYSTEM_PROMPT.format(
+        context="No pre-fetched research available — use your own knowledge of the destination.",
+        trip_config=trip_json,
+    )
+
+    def _call_sync() -> str:
+        response = client.models.generate_content(
+            model=settings.gemini_model,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                temperature=0.4,
+                response_mime_type="application/json",
+            ),
+        )
+        return response.text
+
+    # Run blocking SDK call in thread pool so the event loop stays free
+    loop = asyncio.get_event_loop()
+    text = await loop.run_in_executor(None, _call_sync)
+
+    try:
+        # Strip markdown fences if Gemini adds them despite response_mime_type
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = "\n".join(cleaned.split("\n")[1:])
+        if cleaned.endswith("```"):
+            cleaned = "\n".join(cleaned.split("\n")[:-1])
+        return json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Gemini returned invalid JSON: {e}") from e
+
+
 async def generate_itinerary(trip_config: TripConfig) -> ItineraryResponse:
     if settings.llm_provider == "mock":
         raw = _mock_itinerary(trip_config)
+    elif settings.llm_provider == "gemini":
+        raw = await _gemini_itinerary(trip_config)
     else:
         context_docs = await retrieve_context(trip_config)
         context_text = "\n\n".join(doc["text"] for doc in context_docs[:20])
