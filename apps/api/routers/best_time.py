@@ -1,3 +1,4 @@
+from __future__ import annotations
 from fastapi import APIRouter
 from models.common import BestTimeResponse
 from services.best_time import get_best_time

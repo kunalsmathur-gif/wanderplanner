@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Comparison engine — assembles side-by-side destination data."""
 from models.itinerary import ComparisonResponse, ComparisonParameter
 from models.trip import TripConfig, DestinationInput

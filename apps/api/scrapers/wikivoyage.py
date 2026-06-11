@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Wikivoyage scraper — extracts destination guide sections."""
 import hashlib
 import re

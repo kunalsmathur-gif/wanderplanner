@@ -1,4 +1,6 @@
 """Reddit public JSON feed ingester — no API key required."""
+from __future__ import annotations
+
 import hashlib
 import httpx
 from better_profanity import profanity

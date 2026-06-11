@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pydantic import BaseModel, Field
+from models.trip import TripConfig, DestinationInput
 
 
 class ItineraryItemLocation(BaseModel):
@@ -42,12 +43,10 @@ class ItineraryResponse(BaseModel):
 
 
 class GenerateItineraryRequest(BaseModel):
-    from models.trip import TripConfig
     trip_config: TripConfig
 
 
 class CompareDestinationsRequest(BaseModel):
-    from models.trip import TripConfig, DestinationInput
     destinations: list[DestinationInput]
     trip_config: TripConfig
 

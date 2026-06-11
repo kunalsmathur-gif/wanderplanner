@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
 
@@ -9,10 +11,14 @@ _client: QdrantClient | None = None
 def get_qdrant() -> QdrantClient:
     global _client
     if _client is None:
-        _client = QdrantClient(
-            url=settings.qdrant_url,
-            api_key=settings.qdrant_api_key or None,
-        )
+        if settings.qdrant_url == ":memory:":
+            # In-memory mode for local dev — no Docker needed
+            _client = QdrantClient(":memory:")
+        else:
+            _client = QdrantClient(
+                url=settings.qdrant_url,
+                api_key=settings.qdrant_api_key or None,
+            )
         _ensure_collections(_client)
     return _client
 

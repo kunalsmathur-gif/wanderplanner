@@ -2,6 +2,7 @@
 Alignment score: fixed weights in Phase 1 per PRD Section 6.2.
 Score is internal only — never displayed to users.
 """
+from __future__ import annotations
 from models.itinerary import ItineraryItem
 from models.trip import TripConfig
 

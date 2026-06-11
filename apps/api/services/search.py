@@ -1,4 +1,6 @@
 """Semantic search service — queries Qdrant collections."""
+from __future__ import annotations
+
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
 from core.config import settings

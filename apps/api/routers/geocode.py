@@ -1,3 +1,4 @@
+from __future__ import annotations
 from fastapi import APIRouter, Query
 from models.common import GeocodeResponse
 from services.geocode import geocode_city

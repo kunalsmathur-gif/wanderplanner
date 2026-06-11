@@ -1,4 +1,6 @@
 """Nominatim geocoding proxy with 1 req/s rate limiting and LRU cache."""
+from __future__ import annotations
+
 import asyncio
 import httpx
 from functools import lru_cache

@@ -1,4 +1,6 @@
 """Best time to travel — Wikivoyage seasonal data + Open-Meteo weather."""
+from __future__ import annotations
+
 import httpx
 
 from models.common import BestTimeResponse, MonthlyWeather, BusyPeriod, LocalEvent

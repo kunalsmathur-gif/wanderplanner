@@ -1,3 +1,4 @@
+from __future__ import annotations
 from fastapi import APIRouter, Query
 from models.itinerary import CompareDestinationsRequest, ComparisonResponse
 from services.comparison import build_comparison

@@ -2,6 +2,7 @@
 Kid safety filtering and persona module injection for generated itinerary days.
 PRD Section 6.2 / Clarification #3.
 """
+from __future__ import annotations
 from models.itinerary import ItineraryDay, ItineraryItem, ItineraryItemLocation
 from models.trip import TripConfig
 

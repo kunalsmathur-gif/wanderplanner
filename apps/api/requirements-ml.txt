@@ -1,0 +1,6 @@
+# Heavy ML dependencies — install after core requirements
+# Requires ~3GB disk space (PyTorch included)
+langchain==0.2.5
+langchain-groq==0.1.6
+langchain-community==0.2.5
+sentence-transformers==3.0.0
