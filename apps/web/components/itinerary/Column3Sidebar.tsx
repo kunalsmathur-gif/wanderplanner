@@ -2,6 +2,7 @@
 
 import { useItineraryStore } from '@/store/itineraryStore'
 import { MapWrapper } from '@/components/map/MapWrapper'
+import { BookingLinksSection } from './BookingLinksSection'
 
 export function Column3Sidebar() {
   const days = useItineraryStore((s) => s.days)
@@ -49,6 +50,9 @@ export function Column3Sidebar() {
           <p className="text-xs text-slate-400">No destination selected.</p>
         )}
       </div>
+
+      {/* Pre-filled booking deep-links */}
+      <BookingLinksSection />
     </div>
   )
 }
