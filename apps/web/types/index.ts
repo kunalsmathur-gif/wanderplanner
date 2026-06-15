@@ -105,6 +105,23 @@ export interface ItineraryResponse {
   days: ItineraryDay[]
   alignment_score: number
   warnings: string[]
+  expense_breakdown: ExpenseBreakdown
+}
+
+// Expense breakdown types
+export interface ExpenseBreakdown {
+  flights_inr: number
+  visa_inr: number
+  accommodation_inr: number
+  activities_inr: number
+  food_inr: number
+  local_transport_inr: number
+  shopping_inr: number
+  emergency_buffer_inr: number
+  total_inr: number
+  destination_currency_code: string
+  total_destination_currency: number
+  num_people: number
 }
 
 // Feasibility types

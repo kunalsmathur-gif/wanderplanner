@@ -27,6 +27,7 @@ RULES:
 - Flag schedule conflicts (< 30 min transit gap) in transit_warnings.
 - For local_name: provide the place name in local script only when it differs from English (e.g. 浅草寺 for Senso-ji, 에펠탑 for Eiffel Tower). Leave empty for English-named places.
 - For youtube_search_query: generate a short, specific search phrase travelers would use (e.g. "Senso-ji Temple Tokyo travel guide").
+- For expense_breakdown: provide realistic INR estimates for all 8 cost categories. Base on actual market rates for the destination year and accommodation style specified.
 
 OUTPUT SCHEMA:
 {{
@@ -52,7 +53,21 @@ OUTPUT SCHEMA:
       ],
       "transit_warnings": []
     }}
-  ]
+  ],
+  "expense_breakdown": {{
+    "flights_inr": <round-trip economy flights, all passengers>,
+    "visa_inr": <total visa fees all passengers, 0 if visa-free for Indians>,
+    "accommodation_inr": <nightly rate INR × nights × rooms>,
+    "activities_inr": <estimated total entry fees across all days>,
+    "food_inr": <food cost per person per day × days × people>,
+    "local_transport_inr": <metro/taxi/bus for all days × people>,
+    "shopping_inr": <reasonable souvenir budget for destination>,
+    "emergency_buffer_inr": <10% of sum of all above>,
+    "total_inr": <sum of all above including buffer>,
+    "destination_currency_code": "<3-letter ISO currency code e.g. JPY>",
+    "total_destination_currency": <total_inr converted to destination currency approximately>,
+    "num_people": <total group size>
+  }}
 }}
 
 DESTINATION RESEARCH:
@@ -155,7 +170,60 @@ def _mock_itinerary(trip_config: TripConfig) -> dict:
             ],
             "transit_warnings": [],
         })
-    return {"days": days}
+    return {
+        "days": days,
+        "expense_breakdown": {
+            "flights_inr": 35000 * max(1, num_days // 3),
+            "visa_inr": 6500,
+            "accommodation_inr": 4500 * num_days,
+            "activities_inr": 2000 * num_days,
+            "food_inr": 1800 * num_days,
+            "local_transport_inr": 800 * num_days,
+            "shopping_inr": 3000,
+            "emergency_buffer_inr": 0,
+            "total_inr": 0,
+            "destination_currency_code": "",
+            "total_destination_currency": 0,
+            "num_people": 2,
+        },
+    }
+
+
+def _parse_expense_breakdown(raw: dict, trip_config: TripConfig) -> "ExpenseBreakdown":
+    from models.itinerary import ExpenseBreakdown
+    group = trip_config.group
+    if hasattr(group, 'adults'):
+        people = group.adults + group.seniors + len(group.kids if group.kids else [])
+    else:
+        g = group if isinstance(group, dict) else vars(group)
+        people = g.get('adults', 1) + g.get('seniors', 0) + len(g.get('kids', []))
+    people = max(people, 1)
+
+    flights = int(raw.get("flights_inr", 0))
+    visa = int(raw.get("visa_inr", 0))
+    accommodation = int(raw.get("accommodation_inr", 0))
+    activities = int(raw.get("activities_inr", 0))
+    food = int(raw.get("food_inr", 0))
+    local_transport = int(raw.get("local_transport_inr", 0))
+    shopping = int(raw.get("shopping_inr", 0))
+    subtotal = flights + visa + accommodation + activities + food + local_transport + shopping
+    buffer = int(raw.get("emergency_buffer_inr", round(subtotal * 0.10)))
+    total = int(raw.get("total_inr", subtotal + buffer)) or (subtotal + buffer)
+
+    return ExpenseBreakdown(
+        flights_inr=flights,
+        visa_inr=visa,
+        accommodation_inr=accommodation,
+        activities_inr=activities,
+        food_inr=food,
+        local_transport_inr=local_transport,
+        shopping_inr=shopping,
+        emergency_buffer_inr=buffer,
+        total_inr=total,
+        destination_currency_code=raw.get("destination_currency_code", ""),
+        total_destination_currency=int(raw.get("total_destination_currency", 0)),
+        num_people=people,
+    )
 
 
 async def _gemini_itinerary(trip_config: TripConfig) -> dict:
@@ -244,7 +312,11 @@ async def generate_itinerary(trip_config: TripConfig) -> ItineraryResponse:
         / max(sum(len(d.items) for d in scored_days), 1)
     )
 
-    return ItineraryResponse(days=scored_days, alignment_score=round(overall_score, 2))
+    return ItineraryResponse(
+        days=scored_days,
+        alignment_score=round(overall_score, 2),
+        expense_breakdown=_parse_expense_breakdown(raw.get("expense_breakdown", {}), trip_config),
+    )
 
 
 def _parse_days(raw_days: list[dict]) -> list[ItineraryDay]:
@@ -297,6 +369,7 @@ RULES:
 - Flag schedule conflicts (< 30 min transit gap) in transit_warnings.
 - For local_name: provide the place name in local script only when it differs from English (e.g. 浅草寺 for Senso-ji, 에펠탑 for Eiffel Tower). Leave empty for English-named places.
 - For youtube_search_query: generate a short, specific search phrase travelers would use (e.g. "Senso-ji Temple Tokyo travel guide").
+- For expense_breakdown: provide realistic INR estimates for all 8 cost categories. Base on actual market rates for the destination year and accommodation style specified.
 
 OUTPUT SCHEMA:
 {{
@@ -322,7 +395,21 @@ OUTPUT SCHEMA:
       ],
       "transit_warnings": []
     }}
-  ]
+  ],
+  "expense_breakdown": {{
+    "flights_inr": <round-trip economy flights, all passengers>,
+    "visa_inr": <total visa fees all passengers, 0 if visa-free for Indians>,
+    "accommodation_inr": <nightly rate INR × nights × rooms>,
+    "activities_inr": <estimated total entry fees across all days>,
+    "food_inr": <food cost per person per day × days × people>,
+    "local_transport_inr": <metro/taxi/bus for all days × people>,
+    "shopping_inr": <reasonable souvenir budget for destination>,
+    "emergency_buffer_inr": <10% of sum of all above>,
+    "total_inr": <sum of all above including buffer>,
+    "destination_currency_code": "<3-letter ISO currency code e.g. JPY>",
+    "total_destination_currency": <total_inr converted to destination currency approximately>,
+    "num_people": <total group size>
+  }}
 }}
 
 DESTINATION RESEARCH:

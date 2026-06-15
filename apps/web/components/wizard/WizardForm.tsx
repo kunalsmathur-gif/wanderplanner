@@ -42,7 +42,7 @@ export function WizardForm() {
       { ...config, pace: effectivePace() },
       (msg, step, total) => setProgress({ message: msg, step, total }),
       (result) => {
-        setDays(result.days, result.alignment_score)
+        setDays(result.days, result.alignment_score, result.expense_breakdown)
         setSubmitting(false)
         // Stay at step 2 — ItineraryOverview shows day summary; user clicks Finalize → step 3
       },

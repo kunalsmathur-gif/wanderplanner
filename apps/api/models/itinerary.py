@@ -38,10 +38,28 @@ class ItineraryDay(BaseModel):
     transit_warnings: list[TransitWarning] = Field(default_factory=list)
 
 
+class ExpenseBreakdown(BaseModel):
+    """Estimated cost breakdown for the full trip, in INR."""
+    flights_inr: int = 0           # Round-trip flights for all passengers
+    visa_inr: int = 0              # Total visa/entry fees
+    accommodation_inr: int = 0     # Accommodation for all nights
+    activities_inr: int = 0        # Entry passes & tickets for itinerary activities
+    food_inr: int = 0              # Food & dining for full trip
+    local_transport_inr: int = 0   # In-destination transport
+    shopping_inr: int = 0          # Souvenirs & shopping estimate
+    emergency_buffer_inr: int = 0  # Recommended 10% emergency buffer
+    total_inr: int = 0
+    destination_currency_code: str = ""   # e.g. "JPY"
+    total_destination_currency: int = 0   # approximate total in destination currency
+    num_people: int = 1
+
+
 class ItineraryResponse(BaseModel):
     days: list[ItineraryDay]
     alignment_score: float
     warnings: list[str] = Field(default_factory=list)
+    expense_breakdown: ExpenseBreakdown = Field(default_factory=ExpenseBreakdown)
+
 
 
 class GenerateItineraryRequest(BaseModel):

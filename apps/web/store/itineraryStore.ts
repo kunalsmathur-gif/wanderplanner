@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ItineraryDay, ItineraryResponse } from '@/types'
+import type { ItineraryDay, ExpenseBreakdown } from '@/types'
 
 type GenerationStatus = 'idle' | 'loading' | 'success' | 'error'
 
@@ -23,8 +23,9 @@ interface ItineraryStore {
   progress: GenerationProgress
   error: GenerationError | null
   alignmentScore: number
+  expenseBreakdown: ExpenseBreakdown | null
 
-  setDays: (days: ItineraryDay[], score: number) => void
+  setDays: (days: ItineraryDay[], score: number, breakdown?: ExpenseBreakdown) => void
   setActiveDay: (day: number) => void
   setHoveredItem: (id: string | null) => void
   setStatus: (status: GenerationStatus) => void
@@ -41,8 +42,10 @@ export const useItineraryStore = create<ItineraryStore>((set) => ({
   progress: { message: '', step: 0, total: 4 },
   error: null,
   alignmentScore: 0,
+  expenseBreakdown: null,
 
-  setDays: (days, score) => set({ days, alignmentScore: score, status: 'success' }),
+  setDays: (days, score, breakdown) =>
+    set({ days, alignmentScore: score, status: 'success', expenseBreakdown: breakdown ?? null }),
   setActiveDay: (activeDay) => set({ activeDay }),
   setHoveredItem: (hoveredItemId) => set({ hoveredItemId }),
   setStatus: (status) => set({ status }),
@@ -51,6 +54,6 @@ export const useItineraryStore = create<ItineraryStore>((set) => ({
   reset: () => set({
     days: [], activeDay: 0, hoveredItemId: null,
     status: 'idle', progress: { message: '', step: 0, total: 4 },
-    error: null, alignmentScore: 0,
+    error: null, alignmentScore: 0, expenseBreakdown: null,
   }),
 }))

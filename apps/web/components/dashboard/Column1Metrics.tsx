@@ -6,6 +6,7 @@ import { useItineraryStore } from '@/store/itineraryStore'
 import { useAppStore } from '@/store/appStore'
 import { BestTimeWidget } from '@/components/dashboard/BestTimeWidget'
 import { CurrencyWidget } from '@/components/dashboard/CurrencyWidget'
+import { ExpenseBreakupCard } from '@/components/dashboard/ExpenseBreakupCard'
 
 const PdfDownloadButton = dynamic(
   () => import('@/components/pdf/PdfDownloadButton').then((m) => ({ default: m.PdfDownloadButton })),
@@ -52,6 +53,9 @@ export function Column1Metrics() {
 
       {destination?.city && (
         <>
+          <div className="border-t border-slate-100 pt-2">
+            <ExpenseBreakupCard />
+          </div>
           <div className="border-t border-slate-100 pt-2">
             <BestTimeWidget destination={destination.city} />
           </div>
