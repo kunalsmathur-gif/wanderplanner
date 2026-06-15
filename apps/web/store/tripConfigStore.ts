@@ -23,7 +23,7 @@ const DEFAULT_CONFIG: TripConfig = {
   group: DEFAULT_GROUP,
   accommodation: DEFAULT_ACCOMMODATION,
   pace: 'moderate',
-  budget: { amount: 0, currency: 'USD' },
+  budget: { amount: 0, currency: 'INR' },
 }
 
 interface TripConfigStore {

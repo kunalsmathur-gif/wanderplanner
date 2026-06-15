@@ -19,7 +19,7 @@ def _cached_geocode(city: str) -> dict | None:
     return None
 
 
-async def geocode_city(city: str) -> GeocodeResponse:
+async def geocode_city(city: str, countrycodes: str = "") -> GeocodeResponse:
     global _last_call
 
     async with _lock:
@@ -33,7 +33,10 @@ async def geocode_city(city: str) -> GeocodeResponse:
         "q": city,
         "format": "json",
         "limit": 1,
+        "addressdetails": 1,
     }
+    if countrycodes:
+        params["countrycodes"] = countrycodes
     headers = {"User-Agent": settings.nominatim_user_agent}
 
     async with httpx.AsyncClient(timeout=10, headers=headers) as client:

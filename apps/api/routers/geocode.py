@@ -7,5 +7,8 @@ router = APIRouter()
 
 
 @router.get("/geocode", response_model=GeocodeResponse)
-async def geocode(q: str = Query(..., min_length=2)):
-    return await geocode_city(q)
+async def geocode(
+    q: str = Query(..., min_length=2),
+    countrycodes: str = Query(default=""),
+):
+    return await geocode_city(q, countrycodes=countrycodes)

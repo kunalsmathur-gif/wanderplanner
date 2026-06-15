@@ -7,8 +7,10 @@ const api = axios.create({
 })
 
 // ── Geocode ───────────────────────────────────────────────────────────────
-export async function geocode(query: string) {
-  const { data } = await api.get('/api/geocode', { params: { q: query } })
+export async function geocode(query: string, countrycodes?: string) {
+  const { data } = await api.get('/api/geocode', {
+    params: { q: query, ...(countrycodes ? { countrycodes } : {}) },
+  })
   return data as { display_name: string; lat: number; lon: number; country_code: string }
 }
 

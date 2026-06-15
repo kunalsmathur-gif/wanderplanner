@@ -17,29 +17,18 @@ export function DestinationSection() {
     <section className="space-y-4">
       <h2 className="text-base font-semibold text-[#0F172A]">Origin & Destination *</h2>
 
-      {/* Scope */}
-      <div className="flex gap-2">
-        {(['local', 'domestic', 'international'] as const).map((scope) => (
-          <button
-            key={scope}
-            onClick={() => updateConfig({ scope })}
-            className={[
-              'px-3 py-1.5 rounded-lg border text-sm capitalize transition-all',
-              config.scope === scope
-                ? 'bg-[#1E40AF] border-[#1E40AF] text-white'
-                : 'bg-white border-slate-300 text-slate-700 hover:border-[#1E40AF]',
-            ].join(' ')}
-          >
-            {scope}
-          </button>
-        ))}
+      {/* Scope — always international */}
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200 w-fit">
+        <span className="text-sm text-blue-700 font-medium">🌍 International Trip</span>
       </div>
 
-      {/* Origin — geocoded */}
+      {/* Origin — India only */}
       <GeoInput
-        label="Origin city / airport *"
-        placeholder="e.g. Bangalore, BLR"
+        label="🇮🇳 Departure City (India only) *"
+        placeholder="e.g. Bengaluru, Mumbai, Delhi"
         value={config.origin.city}
+        countrycodes="in"
+        countryName="India"
         onSelect={(city, lat, lon) => setOrigin({ ...config.origin, city, lat, lon })}
         onTextChange={(city) => setOrigin({ ...config.origin, city })}
       />
@@ -111,14 +100,17 @@ interface GeoInputProps {
   label: string
   placeholder: string
   value: string
+  countrycodes?: string   // e.g. "in" restricts Nominatim results to India
+  countryName?: string    // shown in validation error, e.g. "India"
   onSelect: (city: string, lat: number, lon: number) => void
   onTextChange: (city: string) => void
 }
 
-function GeoInput({ label, placeholder, value, onSelect, onTextChange }: GeoInputProps) {
+function GeoInput({ label, placeholder, value, countrycodes, countryName, onSelect, onTextChange }: GeoInputProps) {
   const [text, setText] = useState(value)
   const [suggestion, setSuggestion] = useState<{ city: string; lat: number; lon: number } | null>(null)
   const [loading, setLoading] = useState(false)
+  const [countryError, setCountryError] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Sync external value resets (e.g. form reset)
@@ -129,13 +121,18 @@ function GeoInput({ label, placeholder, value, onSelect, onTextChange }: GeoInpu
     setText(v)
     onTextChange(v)
     setSuggestion(null)
+    setCountryError(false)
 
     if (debounceRef.current) clearTimeout(debounceRef.current)
     if (v.length < 3) return
     debounceRef.current = setTimeout(async () => {
       setLoading(true)
       try {
-        const result = await geocode(v)
+        const result = await geocode(v, countrycodes)
+        if (countrycodes && result.country_code !== countrycodes) {
+          setCountryError(true)
+          return
+        }
         const city = result.display_name.split(',')[0].trim()
         setSuggestion({ city, lat: result.lat, lon: result.lon })
       } catch { /* silent */ } finally {
@@ -160,12 +157,22 @@ function GeoInput({ label, placeholder, value, onSelect, onTextChange }: GeoInpu
           value={text}
           onChange={handleChange}
           placeholder={placeholder}
-          className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1E40AF]"
+          className={[
+            'w-full border rounded-lg px-3 py-2 text-sm focus:outline-none',
+            countryError
+              ? 'border-red-400 focus:border-red-500'
+              : 'border-slate-300 focus:border-[#1E40AF]',
+          ].join(' ')}
         />
         {loading && (
           <span className="absolute right-3 top-2.5 w-3 h-3 border-2 border-[#1E40AF] border-t-transparent rounded-full animate-spin" />
         )}
       </div>
+      {countryError && (
+        <p className="mt-1 text-xs text-red-500">
+          ⚠️ Please enter a city in {countryName ?? 'the required country'}.
+        </p>
+      )}
       {suggestion && (
         <button
           type="button"
