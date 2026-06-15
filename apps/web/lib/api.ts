@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { TripConfig, ItineraryResponse, ComparisonResponse, DestinationInput } from '@/types'
+import type { TripConfig, ItineraryResponse, ComparisonResponse, DestinationInput, FeasibilityResponse } from '@/types'
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000',
@@ -38,6 +38,12 @@ export async function compareDestinations(
     trip_config: tripConfig,
   })
   return data
+}
+
+// ── Feasibility check ────────────────────────────────────────────────────
+export async function checkFeasibility(tripConfig: TripConfig) {
+  const { data } = await api.post('/api/feasibility-check', { trip_config: tripConfig })
+  return data as FeasibilityResponse
 }
 
 // ── Itinerary (streaming SSE) ─────────────────────────────────────────────

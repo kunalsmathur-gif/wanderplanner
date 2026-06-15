@@ -12,6 +12,7 @@ import { PersonaSection } from './sections/PersonaSection'
 import { GroupSection } from './sections/GroupSection'
 import { AccommodationSection } from './sections/AccommodationSection'
 import { PaceBudgetSection } from './sections/PaceBudgetSection'
+import { FeasibilityCard } from './FeasibilityCard'
 
 function isConfigValid(config: ReturnType<typeof useTripConfigStore.getState>['config']) {
   return (
@@ -70,6 +71,9 @@ export function WizardForm() {
         <GroupSection />
         <AccommodationSection />
         <PaceBudgetSection />
+
+        {/* Budget feasibility check — auto-triggered when dest + dates + budget are filled */}
+        <FeasibilityCard />
 
         <div className="pb-10">
           <button

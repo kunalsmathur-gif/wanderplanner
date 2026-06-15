@@ -107,7 +107,34 @@ export interface ItineraryResponse {
   warnings: string[]
 }
 
-// Comparison types
+// Feasibility types
+export interface CostBreakdown {
+  flights_inr: number
+  visa_inr: number
+  accommodation_inr: number
+  daily_expenses_inr: number
+  total_estimated_inr: number
+}
+
+export interface AlternativeDestination {
+  city: string
+  country: string
+  estimated_total_inr: number
+  why_cheaper: string
+  similar_experiences: string[]
+}
+
+export interface FeasibilityResponse {
+  feasible: boolean
+  verdict: string
+  budget_inr: number
+  breakdown: CostBreakdown
+  shortfall_inr: number
+  buffer_inr: number
+  alternatives: AlternativeDestination[]
+  disclaimer: string
+}
+
 export interface ComparisonParameter {
   parameter: string
   unit: string
