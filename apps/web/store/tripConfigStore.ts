@@ -18,6 +18,8 @@ const DEFAULT_CONFIG: TripConfig = {
   origin: { city: '', iata: '', lat: 0, lon: 0 },
   destination: null,
   destination_mode: 'fixed',
+  destination_country: null,
+  hops: [],
   themes: [],
   personas: [],
   group: DEFAULT_GROUP,
@@ -35,6 +37,8 @@ interface TripConfigStore {
   updateDates: (partial: Partial<TripDates>) => void
   setOrigin: (origin: OriginInput) => void
   setDestination: (dest: DestinationInput | null) => void
+  addHop: (hop: DestinationInput) => void
+  removeHop: (index: number) => void
   resetConfig: () => void
   /** Auto-applies Relaxed pace if any kid is under 5. Returns effective pace. */
   effectivePace: () => TripConfig['pace']
@@ -63,6 +67,19 @@ export const useTripConfigStore = create<TripConfigStore>((set, get) => ({
 
   setDestination: (destination) =>
     set((s) => ({ config: { ...s.config, destination } })),
+
+  addHop: (hop) =>
+    set((s) => ({
+      config: {
+        ...s.config,
+        hops: s.config.hops.length < 5 ? [...s.config.hops, hop] : s.config.hops,
+      },
+    })),
+
+  removeHop: (index) =>
+    set((s) => ({
+      config: { ...s.config, hops: s.config.hops.filter((_, i) => i !== index) },
+    })),
 
   resetConfig: () => set({ config: DEFAULT_CONFIG }),
 

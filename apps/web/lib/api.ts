@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { TripConfig, ItineraryResponse, ComparisonResponse, DestinationInput, FeasibilityResponse } from '@/types'
+import type { TripConfig, ItineraryResponse, ComparisonResponse, DestinationInput, FeasibilityResponse, RecommendCitiesResponse, ChatRefineResponse } from '@/types'
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000',
@@ -50,6 +50,30 @@ export async function sendChatMessage(
     trip_context: tripContext ?? null,
   })
   return (data as { reply: string }).reply
+}
+
+// ── Chat refine (R13) ────────────────────────────────────────────────────
+export async function chatRefine(
+  messages: Array<{ role: string; content: string }>,
+  tripConfig: TripConfig,
+): Promise<ChatRefineResponse> {
+  const { data } = await api.post('/api/chat-refine', {
+    messages,
+    trip_config: tripConfig,
+  })
+  return data as ChatRefineResponse
+}
+
+// ── Recommend cities (R15) ───────────────────────────────────────────────
+export async function recommendCities(
+  country: string,
+  tripConfig: TripConfig,
+): Promise<RecommendCitiesResponse> {
+  const { data } = await api.post('/api/recommend-cities', {
+    country,
+    trip_config: tripConfig,
+  })
+  return data as RecommendCitiesResponse
 }
 
 // ── Feasibility check ────────────────────────────────────────────────────

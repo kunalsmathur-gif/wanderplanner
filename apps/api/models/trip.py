@@ -62,7 +62,9 @@ class TripConfig(BaseModel):
     scope: str   # "local" | "domestic" | "international"
     origin: OriginInput
     destination: DestinationInput | None = None
-    destination_mode: str = "fixed"  # "fixed" | "exploring"
+    destination_mode: str = "fixed"  # "fixed" | "exploring" | "country"
+    destination_country: str | None = None  # used when mode = "country"
+    hops: list[DestinationInput] = Field(default_factory=list)  # multi-stop, max 5
     themes: list[str] = Field(default_factory=list)
     personas: list[str] = Field(default_factory=list)
     group: GroupComposition = Field(default_factory=GroupComposition)

@@ -3,25 +3,29 @@
 import { useEffect, useRef, useState } from 'react'
 import { useChatStore } from '@/store/chatStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
-import { sendChatMessage } from '@/lib/api'
+import { useItineraryStore } from '@/store/itineraryStore'
+import { chatRefine } from '@/lib/api'
 import { ChatMessage } from './ChatMessage'
+import type { ChatRefineResponse } from '@/types'
 
 const WELCOME: string =
-  "Hi! I'm WanderPlan Assistant ✈️\n\nAsk me anything about your trip — destinations, visas, budgets, packing, or itinerary tips. I'm here to help!"
+  "Hi! I'm WanderPlan Assistant ✈️\n\nAsk me anything about your trip — or ask me to change your destination, dates, budget, or preferences and I'll update your plan!"
 
 export function ChatPanel() {
   const { isOpen, close, messages, status, errorMsg, addMessage, setStatus } = useChatStore()
   const tripConfig = useTripConfigStore((s) => s.config)
+  const updateConfig = useTripConfigStore((s) => s.updateConfig)
+  const resetItinerary = useItineraryStore((s) => s.reset)
+
   const [input, setInput] = useState('')
+  const [pendingAction, setPendingAction] = useState<ChatRefineResponse | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
-  // Scroll to bottom on new message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Focus input when panel opens
   useEffect(() => {
     if (isOpen) setTimeout(() => inputRef.current?.focus(), 150)
   }, [isOpen])
@@ -32,39 +36,43 @@ export function ChatPanel() {
 
     setInput('')
     addMessage({ role: 'user', content: text })
-
-    // Optimistic assistant placeholder
     addMessage({ role: 'assistant', content: '…' })
     setStatus('sending')
 
     try {
-      // Build history from store messages (exclude optimistic placeholder)
       const history = useChatStore.getState().messages.slice(0, -1).map((m) => ({
         role: m.role,
         content: m.content,
       }))
 
-      // Pass minimal trip context (destination + budget) for personalization
-      const ctx = tripConfig.destination
-        ? {
-            destination: tripConfig.destination.city,
-            origin: tripConfig.origin.city,
-            budget_inr: tripConfig.budget.amount,
-            dates: tripConfig.dates,
-          }
-        : undefined
-
-      const reply = await sendChatMessage(history, ctx)
-
-      // Replace placeholder with real reply
-      useChatStore.getState().updateLastAssistant(reply)
+      const result = await chatRefine(history, tripConfig)
+      useChatStore.getState().updateLastAssistant(result.reply)
       setStatus('idle')
+
+      if (result.action_type === 'patch_config' && result.config_patch) {
+        updateConfig(result.config_patch as Parameters<typeof updateConfig>[0])
+        // No confirmation needed — minor change already done
+      } else if (result.action_type === 'regenerate' && result.major_change) {
+        // Surface confirmation dialog
+        setPendingAction(result)
+      }
     } catch {
       useChatStore.getState().updateLastAssistant(
         "Sorry, I couldn't connect right now. Please try again."
       )
       setStatus('error', 'Connection failed')
     }
+  }
+
+  function handleConfirmRegenerate() {
+    if (!pendingAction?.config_patch) { setPendingAction(null); return }
+    updateConfig(pendingAction.config_patch as Parameters<typeof updateConfig>[0])
+    resetItinerary()
+    addMessage({
+      role: 'assistant',
+      content: '✅ Got it! I\'ve updated your trip settings. Head back to the wizard to regenerate your itinerary.',
+    })
+    setPendingAction(null)
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -81,7 +89,7 @@ export function ChatPanel() {
   return (
     <div
       className="fixed bottom-24 right-6 z-[9998] w-[360px] flex flex-col rounded-2xl shadow-2xl border border-slate-200 bg-white overflow-hidden"
-      style={{ maxHeight: '520px' }}
+      style={{ maxHeight: '540px' }}
     >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-[#1E40AF] shrink-0">
@@ -91,16 +99,14 @@ export function ChatPanel() {
           </div>
           <div>
             <p className="text-white text-sm font-semibold">WanderPlan Assistant</p>
-            <p className="text-blue-200 text-xs">Travel questions only</p>
+            <p className="text-blue-200 text-xs">Travel questions · Itinerary refinement</p>
           </div>
         </div>
         <button
           onClick={close}
           className="text-white/70 hover:text-white transition-colors text-lg leading-none"
           aria-label="Close chat"
-        >
-          ✕
-        </button>
+        >✕</button>
       </div>
 
       {/* Messages */}
@@ -127,10 +133,31 @@ export function ChatPanel() {
             <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" />
           </div>
         )}
+
+        {/* Regeneration confirmation card */}
+        {pendingAction && (
+          <div className="mx-1 p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2">
+            <p className="text-xs font-semibold text-amber-800">⚠️ This change will regenerate your itinerary</p>
+            <div className="flex gap-2">
+              <button
+                onClick={handleConfirmRegenerate}
+                className="flex-1 py-1.5 rounded-lg bg-[#1E40AF] text-white text-xs font-semibold hover:bg-blue-800"
+              >
+                Yes, apply & reset
+              </button>
+              <button
+                onClick={() => setPendingAction(null)}
+                className="flex-1 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-50"
+              >
+                No, just noting it
+              </button>
+            </div>
+          </div>
+        )}
+
         <div ref={bottomRef} />
       </div>
 
-      {/* Error banner */}
       {errorMsg && (
         <div className="px-3 py-1.5 bg-red-50 border-t border-red-100 text-xs text-red-600 shrink-0">
           ⚠️ {errorMsg}
@@ -145,7 +172,7 @@ export function ChatPanel() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about destinations, visas, budget…"
+            placeholder="Ask about your trip or request changes…"
             rows={1}
             disabled={status === 'sending'}
             className="flex-1 resize-none border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-[#1E40AF] disabled:bg-slate-50 leading-snug max-h-24 overflow-y-auto"
@@ -169,7 +196,7 @@ export function ChatPanel() {
           </button>
         </div>
         <p className="text-xs text-slate-400 mt-1.5 text-center">
-          Press Enter to send · Shift+Enter for new line
+          Enter to send · Shift+Enter for new line
         </p>
       </div>
     </div>

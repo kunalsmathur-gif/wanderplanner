@@ -2,7 +2,7 @@
 
 export type Pace = 'relaxed' | 'moderate' | 'packed'
 export type TripScope = 'local' | 'domestic' | 'international'
-export type DestinationMode = 'fixed' | 'exploring'
+export type DestinationMode = 'fixed' | 'exploring' | 'country'
 
 export interface KidAge { age: number }
 
@@ -57,6 +57,8 @@ export interface TripConfig {
   origin: OriginInput
   destination: DestinationInput | null
   destination_mode: DestinationMode
+  destination_country: string | null   // used when mode = 'country'
+  hops: DestinationInput[]             // multi-stop (max 5), used alongside destination
   themes: string[]
   personas: string[]
   group: GroupComposition
@@ -150,6 +152,29 @@ export interface FeasibilityResponse {
   buffer_inr: number
   alternatives: AlternativeDestination[]
   disclaimer: string
+}
+
+// City recommendations (R15)
+export interface RecommendedCity {
+  name: string
+  country: string
+  reason: string
+  lat: number
+  lon: number
+}
+
+export interface RecommendCitiesResponse {
+  cities: RecommendedCity[]
+}
+
+// Chat refinement action (R13)
+export type ChatActionType = 'none' | 'patch_config' | 'regenerate'
+
+export interface ChatRefineResponse {
+  reply: string
+  action_type: ChatActionType
+  config_patch: Partial<TripConfig> | null
+  major_change: boolean
 }
 
 export interface ComparisonParameter {
