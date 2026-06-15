@@ -7,6 +7,7 @@ import { useTripConfigStore } from '@/store/tripConfigStore'
 
 export function PdfDownloadButton() {
   const days = useItineraryStore((s) => s.days)
+  const expenseBreakdown = useItineraryStore((s) => s.expenseBreakdown)
   const config = useTripConfigStore((s) => s.config)
 
   const fileName = config.destination?.city
@@ -24,7 +25,13 @@ export function PdfDownloadButton() {
 
   return (
     <PDFDownloadLink
-      document={<ItineraryDocument days={days} config={config} />}
+      document={
+        <ItineraryDocument
+          days={days}
+          config={config}
+          expenseBreakdown={expenseBreakdown}
+        />
+      }
       fileName={fileName}
       className="block"
     >

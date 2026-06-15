@@ -7,7 +7,7 @@ import {
   StyleSheet,
   Font,
 } from '@react-pdf/renderer'
-import type { ItineraryDay, TripConfig } from '@/types'
+import type { ItineraryDay, TripConfig, ExpenseBreakdown } from '@/types'
 
 Font.register({
   family: 'Helvetica',
@@ -46,7 +46,16 @@ const styles = StyleSheet.create({
   activityLink: { fontSize: 8, color: colors.brand, marginTop: 2 },
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 2, gap: 3 },
   tag: { fontSize: 7, color: colors.mid, backgroundColor: colors.bg, paddingHorizontal: 4, paddingVertical: 1, borderRadius: 3 },
-  // Checklist
+  // Expense table
+  expRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: colors.border },
+  expRowAlt: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.bg },
+  expLabel: { fontSize: 9, color: colors.mid },
+  expValue: { fontSize: 9, fontFamily: 'Helvetica-Bold', color: colors.dark },
+  expTotal: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, marginTop: 2, borderTopWidth: 2, borderTopColor: colors.brand },
+  expTotalLabel: { fontSize: 10, fontFamily: 'Helvetica-Bold', color: colors.brand },
+  expTotalValue: { fontSize: 10, fontFamily: 'Helvetica-Bold', color: colors.brand },
+  expToggleRow: { flexDirection: 'row', gap: 12, marginBottom: 6 },
+  expBadge: { fontSize: 8, color: colors.mid, backgroundColor: colors.bg, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 3, borderWidth: 1, borderColor: colors.border },
   checkItem: { flexDirection: 'row', marginBottom: 4, fontSize: 9 },
   checkBox: { width: 12, height: 12, borderWidth: 1, borderColor: colors.border, borderRadius: 2, marginRight: 6, marginTop: 1 },
   // Notes
@@ -65,9 +74,10 @@ const PACKING_LIST = [
 interface Props {
   days: ItineraryDay[]
   config: TripConfig
+  expenseBreakdown?: ExpenseBreakdown | null
 }
 
-export function ItineraryDocument({ days, config }: Props) {
+export function ItineraryDocument({ days, config, expenseBreakdown }: Props) {
   const title = config.destination?.city
     ? `${config.destination.city} Itinerary`
     : 'Your WanderPlan Itinerary'
@@ -138,6 +148,77 @@ export function ItineraryDocument({ days, config }: Props) {
             Keep emergency contacts (local police, embassy, travel insurance hotline) saved offline.
           </Text>
         </View>
+
+        {/* Expense Breakup */}
+        {expenseBreakdown && expenseBreakdown.total_inr > 0 && (
+          <>
+            <Text style={styles.sectionTitle}>💰 Estimated Expense Breakup</Text>
+            <View style={styles.expToggleRow}>
+              <Text style={styles.expBadge}>Group of {expenseBreakdown.num_people}</Text>
+              <Text style={styles.expBadge}>Per person ÷ {expenseBreakdown.num_people}</Text>
+              {expenseBreakdown.destination_currency_code && (
+                <Text style={styles.expBadge}>
+                  Total ≈ {expenseBreakdown.destination_currency_code}{' '}
+                  {expenseBreakdown.total_destination_currency.toLocaleString()}
+                </Text>
+              )}
+            </View>
+
+            {[
+              { label: '✈  Flights (round-trip)',         val: expenseBreakdown.flights_inr },
+              { label: '   Visa & Entry fees',             val: expenseBreakdown.visa_inr },
+              { label: '   Accommodation',                 val: expenseBreakdown.accommodation_inr },
+              { label: '   Activities & Passes',           val: expenseBreakdown.activities_inr },
+              { label: '   Food & Dining',                 val: expenseBreakdown.food_inr },
+              { label: '   Local Transport',               val: expenseBreakdown.local_transport_inr },
+              { label: '   Shopping & Souvenirs',          val: expenseBreakdown.shopping_inr },
+              { label: '   Emergency Buffer (10%)',        val: expenseBreakdown.emergency_buffer_inr },
+            ].filter(r => r.val > 0).map((row, i) => (
+              <View key={row.label} style={i % 2 === 0 ? styles.expRow : styles.expRowAlt}>
+                <Text style={styles.expLabel}>{row.label}</Text>
+                <View style={{ flexDirection: 'row', gap: 16 }}>
+                  <Text style={{ ...styles.expValue, color: colors.mid, minWidth: 70, textAlign: 'right' }}>
+                    {`/person  Rs.${Math.round(row.val / expenseBreakdown.num_people).toLocaleString()}`}
+                  </Text>
+                  <Text style={{ ...styles.expValue, minWidth: 70, textAlign: 'right' }}>
+                    {`Rs.${row.val.toLocaleString()}`}
+                  </Text>
+                </View>
+              </View>
+            ))}
+
+            <View style={styles.expTotal}>
+              <Text style={styles.expTotalLabel}>TOTAL ESTIMATE</Text>
+              <View style={{ flexDirection: 'row', gap: 16 }}>
+                <Text style={{ ...styles.expTotalValue, color: colors.mid, minWidth: 70, textAlign: 'right' }}>
+                  {`/person  Rs.${Math.round(expenseBreakdown.total_inr / expenseBreakdown.num_people).toLocaleString()}`}
+                </Text>
+                <Text style={{ ...styles.expTotalValue, minWidth: 70, textAlign: 'right' }}>
+                  {`Rs.${expenseBreakdown.total_inr.toLocaleString()}`}
+                </Text>
+              </View>
+            </View>
+
+            {config.budget.amount > 0 && (
+              <View style={{
+                ...styles.noteBox,
+                borderColor: expenseBreakdown.total_inr > config.budget.amount ? colors.amber : colors.green,
+                marginTop: 4,
+              }}>
+                <Text style={{
+                  ...styles.noteText,
+                  color: expenseBreakdown.total_inr > config.budget.amount ? colors.amber : colors.green,
+                }}>
+                  {expenseBreakdown.total_inr > config.budget.amount
+                    ? `Budget may be tight — estimate exceeds your Rs.${config.budget.amount.toLocaleString()} budget by Rs.${(expenseBreakdown.total_inr - config.budget.amount).toLocaleString()}.`
+                    : `Within budget — Rs.${(config.budget.amount - expenseBreakdown.total_inr).toLocaleString()} remaining after estimated expenses.`
+                  }
+                  {'\n'}All figures are approximate and based on average market rates.
+                </Text>
+              </View>
+            )}
+          </>
+        )}
 
         {/* Packing checklist */}
         <Text style={styles.sectionTitle}>🧳 Packing Checklist</Text>
