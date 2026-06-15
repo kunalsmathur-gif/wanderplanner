@@ -65,6 +65,9 @@ export function ItineraryTimeline() {
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="font-semibold text-[#0F172A] text-sm">{item.title}</h3>
+                {item.local_name && (
+                  <p className="text-xs text-slate-400 mt-0.5">{item.local_name}</p>
+                )}
                 <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{item.description}</p>
                 <div className="flex flex-wrap gap-1 mt-2">
                   {item.tags.map((tag) => (
@@ -87,6 +90,16 @@ export function ItineraryTimeline() {
                     className="text-xs text-[#1E40AF] hover:underline mt-1 inline-block"
                   >
                     Book →
+                  </a>
+                )}
+                {item.youtube_search_query && (
+                  <a
+                    href={`https://www.youtube.com/results?search_query=${encodeURIComponent(item.youtube_search_query)}&sp=CAMSAhAB`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-red-500 hover:underline mt-1 inline-block ml-3"
+                  >
+                    ▶ Watch on YouTube
                   </a>
                 )}
               </div>

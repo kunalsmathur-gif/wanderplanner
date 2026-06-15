@@ -19,11 +19,13 @@ class ItineraryItem(BaseModel):
     time_start: str
     time_end: str
     title: str
+    local_name: str = ""   # Place name in local script/language (e.g. 浅草寺 for Senso-ji)
     description: str
     location: ItineraryItemLocation
     tags: list[str] = Field(default_factory=list)
     booking_url: str = ""
     youtube_video_id: str = ""
+    youtube_search_query: str = ""
     alignment_score: float = 0.0
     warnings: list[str] = Field(default_factory=list)
 

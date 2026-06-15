@@ -82,11 +82,13 @@ export interface ItineraryItem {
   time_start: string
   time_end: string
   title: string
+  local_name?: string          // Place name in local script (e.g. 浅草寺)
   description: string
   location: ItineraryItemLocation
   tags: string[]
   booking_url: string
   youtube_video_id: string
+  youtube_search_query?: string // Pre-built YouTube search phrase
   alignment_score: number
   warnings: string[]
 }

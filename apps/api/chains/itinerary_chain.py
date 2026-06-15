@@ -25,6 +25,8 @@ RULES:
 - If persona includes pet_parent: only include dog_friendly venues.
 - Tag photogenic/scenic spots with "instaworthy" in the tags array.
 - Flag schedule conflicts (< 30 min transit gap) in transit_warnings.
+- For local_name: provide the place name in local script only when it differs from English (e.g. 浅草寺 for Senso-ji, 에펠탑 for Eiffel Tower). Leave empty for English-named places.
+- For youtube_search_query: generate a short, specific search phrase travelers would use (e.g. "Senso-ji Temple Tokyo travel guide").
 
 OUTPUT SCHEMA:
 {{
@@ -39,11 +41,13 @@ OUTPUT SCHEMA:
           "time_start": "HH:MM",
           "time_end": "HH:MM",
           "title": "string",
+          "local_name": "place name in local script e.g. 浅草寺 (leave empty if same script as English)",
           "description": "string",
           "location": {{"lat": 0.0, "lon": 0.0, "address": "string"}},
           "tags": ["string"],
           "booking_url": "string",
-          "youtube_video_id": ""
+          "youtube_video_id": "",
+          "youtube_search_query": "short search phrase for YouTube e.g. Senso-ji Temple Tokyo travel guide"
         }}
       ],
       "transit_warnings": []
@@ -117,8 +121,10 @@ def _mock_itinerary(trip_config: TripConfig) -> dict:
                     "description": f"Explore the historic centre of {dest} on foot. Great for orientation and photos.",
                     "location": {"lat": 0.0, "lon": 0.0, "address": f"Old Town, {dest}"},
                     "tags": ["instaworthy"],
+                    "local_name": "",
                     "booking_url": "",
                     "youtube_video_id": "",
+                    "youtube_search_query": "",
                 },
                 {
                     "id": str(uuid.uuid4()),
@@ -128,8 +134,10 @@ def _mock_itinerary(trip_config: TripConfig) -> dict:
                     "description": f"Try the local cuisine at a well-rated restaurant near {dest} centre.",
                     "location": {"lat": 0.0, "lon": 0.0, "address": f"City Centre, {dest}"},
                     "tags": ["kid_friendly"],
+                    "local_name": "",
                     "booking_url": "",
                     "youtube_video_id": "",
+                    "youtube_search_query": "",
                 },
                 {
                     "id": str(uuid.uuid4()),
@@ -139,8 +147,10 @@ def _mock_itinerary(trip_config: TripConfig) -> dict:
                     "description": f"The top cultural attraction in {dest}. Book tickets online to skip queues.",
                     "location": {"lat": 0.0, "lon": 0.0, "address": f"Museum District, {dest}"},
                     "tags": ["kid_friendly", "instaworthy"],
+                    "local_name": "",
                     "booking_url": "",
                     "youtube_video_id": "",
+                    "youtube_search_query": "",
                 },
             ],
             "transit_warnings": [],
@@ -254,9 +264,11 @@ def _parse_days(raw_days: list[dict]) -> list[ItineraryDay]:
                     lon=loc.get("lon", 0.0),
                     address=loc.get("address", ""),
                 ),
+                local_name=ri.get("local_name", ""),
                 tags=ri.get("tags", []),
                 booking_url=ri.get("booking_url", ""),
                 youtube_video_id=ri.get("youtube_video_id", ""),
+                youtube_search_query=ri.get("youtube_search_query", ""),
             ))
         days.append(ItineraryDay(
             day_number=rd.get("day_number", 1),
@@ -283,6 +295,8 @@ RULES:
 - If persona includes pet_parent: only include dog_friendly venues.
 - Tag photogenic/scenic spots with "instaworthy" in the tags array.
 - Flag schedule conflicts (< 30 min transit gap) in transit_warnings.
+- For local_name: provide the place name in local script only when it differs from English (e.g. 浅草寺 for Senso-ji, 에펠탑 for Eiffel Tower). Leave empty for English-named places.
+- For youtube_search_query: generate a short, specific search phrase travelers would use (e.g. "Senso-ji Temple Tokyo travel guide").
 
 OUTPUT SCHEMA:
 {{
@@ -297,11 +311,13 @@ OUTPUT SCHEMA:
           "time_start": "HH:MM",
           "time_end": "HH:MM",
           "title": "string",
+          "local_name": "place name in local script e.g. 浅草寺 (leave empty if same script as English)",
           "description": "string",
           "location": {{"lat": 0.0, "lon": 0.0, "address": "string"}},
           "tags": ["string"],
           "booking_url": "string",
-          "youtube_video_id": ""
+          "youtube_video_id": "",
+          "youtube_search_query": "short search phrase for YouTube e.g. Senso-ji Temple Tokyo travel guide"
         }}
       ],
       "transit_warnings": []
@@ -348,9 +364,11 @@ def _parse_days(raw_days: list[dict]) -> list[ItineraryDay]:
                     lon=loc.get("lon", 0.0),
                     address=loc.get("address", ""),
                 ),
+                local_name=ri.get("local_name", ""),
                 tags=ri.get("tags", []),
                 booking_url=ri.get("booking_url", ""),
                 youtube_video_id=ri.get("youtube_video_id", ""),
+                youtube_search_query=ri.get("youtube_search_query", ""),
             ))
         days.append(ItineraryDay(
             day_number=rd.get("day_number", 1),
