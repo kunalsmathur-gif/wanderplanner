@@ -40,6 +40,18 @@ export async function compareDestinations(
   return data
 }
 
+// ── Chat ──────────────────────────────────────────────────────────────────
+export async function sendChatMessage(
+  messages: Array<{ role: string; content: string }>,
+  tripContext?: Record<string, unknown>,
+): Promise<string> {
+  const { data } = await api.post('/api/chat', {
+    messages,
+    trip_context: tripContext ?? null,
+  })
+  return (data as { reply: string }).reply
+}
+
 // ── Feasibility check ────────────────────────────────────────────────────
 export async function checkFeasibility(tripConfig: TripConfig) {
   const { data } = await api.post('/api/feasibility-check', { trip_config: tripConfig })

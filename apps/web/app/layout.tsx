@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
 import { MobileWarningBanner } from "@/components/common/MobileWarningBanner";
+import { ChatBubble } from "@/components/chat/ChatBubble";
 import "./globals.css";
 
 const geist = Geist({ subsets: ["latin"], variable: "--font-geist" });
@@ -25,6 +26,8 @@ export default function RootLayout({
       <body className="h-full bg-white text-slate-900 antialiased min-w-[320px]">
         <MobileWarningBanner />
         {children}
+        {/* Travel assistant chatbot — visible on all pages */}
+        <ChatBubble />
       </body>
     </html>
   );
