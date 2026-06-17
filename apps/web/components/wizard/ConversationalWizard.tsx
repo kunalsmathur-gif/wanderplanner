@@ -513,6 +513,15 @@ export function ConversationalWizard() {
       }
 
       if (currentField === 'origin') {
+        // Validate minimum length (reject very short inputs like "Ad")
+        if (value.trim().length < 3) {
+          addMessage(botMessage(
+            `Please enter at least 3 characters. Try your city name (e.g., "Mumbai", "Delhi", "Bangalore")`,
+            { inputType: 'text' }
+          ))
+          return
+        }
+        
         const place = await resolvePlace(value)
         
         if (!place) {
@@ -542,10 +551,10 @@ export function ConversationalWizard() {
           setDestination(null)
           pushNextField('destination')
         } else if (value.startsWith('Suggest') || lowerValue.includes('suggest') || lowerValue.includes('recommend') || lowerValue.includes('help') || lowerValue.includes('idea')) {
-          // AI suggests destinations based on user preferences - ask duration first
+          // AI suggests destinations based on user preferences - ask for preferences FIRST, then duration
           updateConfig({ destination_mode: 'exploring', destination_country: null })
           setDestination(null)
-          pushNextField('duration')
+          pushNextField('destination')  // Go to destination (which asks for preferences in exploring mode)
         } else if (value.startsWith('Exploring') || lowerValue.includes('exploring') || lowerValue.includes('country') || lowerValue.includes('nation') || lowerValue.includes('within')) {
           // User picks country, then selects cities (can be multiple)
           updateConfig({ destination_mode: 'country', destination_country: null })
