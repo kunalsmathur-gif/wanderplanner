@@ -212,15 +212,20 @@ function promptForField(field: WizardField, config: TripConfig): Omit<WizardMess
   }
 }
 
-async function resolvePlace(query: string) {
-  const result = await geocode(query)
-  const parts = result.display_name.split(',').map((part) => part.trim()).filter(Boolean)
+async function resolvePlace(query: string): Promise<{ city: string; country: string; lat: number; lon: number } | null> {
+  try {
+    const result = await geocode(query)
+    const parts = result.display_name.split(',').map((part) => part.trim()).filter(Boolean)
 
-  return {
-    city: parts[0] ?? query.trim(),
-    country: parts[parts.length - 1] ?? result.country_code.toUpperCase(),
-    lat: result.lat,
-    lon: result.lon,
+    return {
+      city: parts[0] ?? query.trim(),
+      country: parts[parts.length - 1] ?? result.country_code.toUpperCase(),
+      lat: result.lat,
+      lon: result.lon,
+    }
+  } catch (error) {
+    // Geocoding failed - return null to signal failure
+    return null
   }
 }
 
@@ -509,6 +514,16 @@ export function ConversationalWizard() {
 
       if (currentField === 'origin') {
         const place = await resolvePlace(value)
+        
+        if (!place) {
+          // Geocoding failed - invalid location
+          addMessage(botMessage(
+            `Hmm, I couldn't find "${value}". Could you try again with a city name? (e.g., "Mumbai", "New Delhi", "Bangalore")`,
+            { inputType: 'text' }
+          ))
+          return
+        }
+        
         setOrigin({ city: place.city, iata: '', lat: place.lat, lon: place.lon })
         addLabel('origin', place.city)
         pushNextField('destination_mode')
@@ -570,6 +585,16 @@ export function ConversationalWizard() {
 
         if (mode === 'fixed') {
           const place = await resolvePlace(value)
+          
+          if (!place) {
+            // Geocoding failed - invalid location
+            addMessage(botMessage(
+              `I couldn't find "${value}". Please enter a valid city or destination (e.g., "Paris, France", "Tokyo, Japan")`,
+              { inputType: 'text' }
+            ))
+            return
+          }
+          
           setDestination({ city: place.city, country: place.country, lat: place.lat, lon: place.lon })
           updateConfig({ destination_country: null })
           addLabel('destination', value || `${place.city}, ${place.country}`)
@@ -616,6 +641,16 @@ export function ConversationalWizard() {
             addLabel('destination', recommendedCityChip(matchedCity))
           } else {
             const place = await resolvePlace(config.destination_country ? `${value}, ${config.destination_country}` : value)
+            
+            if (!place) {
+              // Geocoding failed
+              addMessage(botMessage(
+                `I couldn't find "${value}". Please enter a valid city name from ${config.destination_country || 'your chosen destination'}.`,
+                { inputType: 'text' }
+              ))
+              return
+            }
+            
             setDestination({ city: place.city, country: place.country, lat: place.lat, lon: place.lon })
             updateConfig({ destination_country: config.destination_country ?? place.country })
             addLabel('destination', value)
@@ -704,6 +739,16 @@ export function ConversationalWizard() {
             addLabel('destination', recommendedCityChip(matchedCity))
           } else {
             const place = await resolvePlace(value)
+            
+            if (!place) {
+              // Geocoding failed
+              addMessage(botMessage(
+                `I couldn't find "${value}". Please enter a valid city or destination name.`,
+                { inputType: 'text' }
+              ))
+              return
+            }
+            
             setDestination({ city: place.city, country: place.country, lat: place.lat, lon: place.lon })
             updateConfig({ destination_country: place.country })
             addLabel('destination', value)
