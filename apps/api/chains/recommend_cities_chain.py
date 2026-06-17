@@ -127,6 +127,7 @@ def _calc_days(dates: dict) -> int:
 
 
 def _mock_response(country: str) -> RecommendCitiesResponse:
+    # Default city recommendations by country
     defaults: dict[str, list[dict]] = {
         "japan": [
             {"name": "Tokyo", "country": "Japan", "reason": "World-class city with iconic sights, food, and culture", "lat": 35.6762, "lon": 139.6503},
@@ -138,10 +139,35 @@ def _mock_response(country: str) -> RecommendCitiesResponse:
             {"name": "Nice", "country": "France", "reason": "Mediterranean coast, beaches, and relaxed pace", "lat": 43.7102, "lon": 7.2620},
             {"name": "Lyon", "country": "France", "reason": "Gastronomic capital, fewer tourists, more affordable", "lat": 45.7640, "lon": 4.8357},
         ],
+        "thailand": [
+            {"name": "Bangkok", "country": "Thailand", "reason": "Vibrant street food, temples, and shopping — great starting point", "lat": 13.7563, "lon": 100.5018},
+            {"name": "Phuket", "country": "Thailand", "reason": "Beach paradise with nightlife and water sports", "lat": 7.8804, "lon": 98.3923},
+            {"name": "Chiang Mai", "country": "Thailand", "reason": "Cultural heart with temples, mountains, and affordable living", "lat": 18.7883, "lon": 98.9853},
+        ],
     }
+    
     key = country.lower()
+    
+    # Check if this looks like preferences rather than a country (contains keywords like beach, cafe, food, etc.)
+    preference_keywords = ['beach', 'cafe', 'food', 'mountain', 'culture', 'history', 'adventure', 'relax', 'party', 'shopping']
+    is_preference = any(keyword in key for keyword in preference_keywords)
+    
+    if is_preference:
+        # Return diverse popular destinations for preference-based searches
+        return RecommendCitiesResponse(cities=[
+            RecommendedCity(name="Bali", country="Indonesia", reason="Perfect mix of beaches, culture, and affordability for Indian travelers", lat=-8.4095, lon=115.1889),
+            RecommendedCity(name="Phuket", country="Thailand", reason="Beach paradise with great food scene and easy visa access", lat=7.8804, lon=98.3923),
+            RecommendedCity(name="Dubai", country="UAE", reason="Luxury shopping and dining with direct flights from India", lat=25.2048, lon=55.2708),
+            RecommendedCity(name="Barcelona", country="Spain", reason="Mediterranean beaches, architecture, and vibrant cafe culture", lat=41.3851, lon=2.1734),
+            RecommendedCity(name="Prague", country="Czech Republic", reason="Charming cafes, historic sites, and budget-friendly for longer stays", lat=50.0755, lon=14.4378),
+        ])
+    
+    # Return country-specific or generic fallback
     cities_data = defaults.get(key, [
         {"name": f"Capital of {country}", "country": country, "reason": "Primary city with best connectivity from India", "lat": 0.0, "lon": 0.0},
         {"name": f"Second city of {country}", "country": country, "reason": "Cultural hub with rich history", "lat": 0.0, "lon": 0.0},
+    ])
+    
+    return RecommendCitiesResponse(cities=[RecommendedCity(**c) for c in cities_data])
     ])
     return RecommendCitiesResponse(cities=[RecommendedCity(**c) for c in cities_data])
