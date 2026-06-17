@@ -1,24 +1,31 @@
 'use client'
 
-import { useAppStore } from '@/store/appStore'
-import { WizardForm } from '@/components/wizard/WizardForm'
-import { ItineraryOverview } from '@/components/itinerary/ItineraryOverview'
 import { ThreeColumnLayout } from '@/components/layout/ThreeColumnLayout'
-import { TopNav } from '@/components/layout/TopNav'
-import { StepProgress } from '@/components/layout/StepProgress'
+import { ConversationalWizard } from '@/components/wizard/ConversationalWizard'
+import { FloatingAnyaButton } from '@/components/common/FloatingAnyaButton'
+import { useAppStore } from '@/store/appStore'
 
 export default function Home() {
-  const step = useAppStore((s) => s.step)
+  const wizardOpen = useAppStore((state) => state.wizardOpen)
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
-      <TopNav />
-      <StepProgress currentStep={step} />
-      <main id="main-content" role="main" className="flex-1 overflow-hidden">
-        {step === 1 && <WizardForm />}
-        {step === 2 && <ItineraryOverview />}
-        {step === 3 && <ThreeColumnLayout />}
-      </main>
+    <div className="flex h-screen flex-col overflow-hidden">
+      <div
+        className={wizardOpen
+          ? 'pointer-events-none flex-1 select-none overflow-hidden blur-sm'
+          : 'flex-1 overflow-hidden'}
+      >
+        <ThreeColumnLayout />
+      </div>
+
+      {/* Floating Anya button - always visible on itinerary page */}
+      <FloatingAnyaButton />
+
+      {wizardOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <ConversationalWizard />
+        </div>
+      )}
     </div>
   )
 }

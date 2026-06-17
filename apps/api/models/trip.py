@@ -57,10 +57,10 @@ class OriginInput(BaseModel):
 
 
 class TripConfig(BaseModel):
-    purpose: str
-    dates: dict  # {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD", "flexible": bool}
-    scope: str   # "local" | "domestic" | "international"
-    origin: OriginInput
+    purpose: str = ""
+    dates: dict = Field(default_factory=lambda: {"start": None, "end": None, "flexible": False})  # {"start": "YYYY-MM-DD" | null, "end": "YYYY-MM-DD" | null, "flexible": bool}
+    scope: str = "international"   # "local" | "domestic" | "international"
+    origin: OriginInput = Field(default_factory=lambda: OriginInput(city="", lat=0, lon=0))
     destination: DestinationInput | None = None
     destination_mode: str = "fixed"  # "fixed" | "exploring" | "country"
     destination_country: str | None = None  # used when mode = "country"

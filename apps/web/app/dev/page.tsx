@@ -7,23 +7,18 @@ import { useAppStore } from '@/store/appStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { MOCK_DAYS } from './mockData'
 
-type Target = '1' | '2' | '3'
-
-export default function DevPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ step?: string }>
-}) {
+export default function DevPage() {
   const router = useRouter()
-  const setDays = useItineraryStore((s) => s.setDays)
-  const setStatus = useItineraryStore((s) => s.setStatus)
-  const goToStep = useAppStore((s) => s.goToStep)
-  const setDestination = useTripConfigStore((s) => s.setDestination)
-  const updateConfig = useTripConfigStore((s) => s.updateConfig)
-  const updateBudget = useTripConfigStore((s) => s.updateBudget)
+  const setDays = useItineraryStore((state) => state.setDays)
+  const setStatus = useItineraryStore((state) => state.setStatus)
+  const openWizard = useAppStore((state) => state.openWizard)
+  const closeWizard = useAppStore((state) => state.closeWizard)
+  const setStep3View = useAppStore((state) => state.setStep3View)
+  const setDestination = useTripConfigStore((state) => state.setDestination)
+  const updateConfig = useTripConfigStore((state) => state.updateConfig)
+  const updateBudget = useTripConfigStore((state) => state.updateBudget)
 
   useEffect(() => {
-    // Inject mock data into all stores
     setDestination({ city: 'Tokyo', country: 'JP', lat: 35.6762, lon: 139.6503 })
     updateConfig({
       purpose: 'explore',
@@ -33,54 +28,49 @@ export default function DevPage({
     updateBudget({ amount: 150000, currency: 'INR' })
     setDays(MOCK_DAYS, 87)
     setStatus('success')
-  }, [setDays, setStatus, setDestination, updateConfig, updateBudget])
+  }, [setDays, setDestination, setStatus, updateBudget, updateConfig])
 
-  function go(step: Target) {
-    goToStep(parseInt(step) as 1 | 2 | 3)
+  function goHome(mode: 'wizard' | 'itinerary' | 'comparison') {
+    if (mode === 'wizard') {
+      openWizard()
+      setStep3View('itinerary')
+    } else if (mode === 'comparison') {
+      closeWizard()
+      setStep3View('comparison')
+    } else {
+      closeWizard()
+      setStep3View('itinerary')
+    }
     router.push('/')
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-      <div className="bg-white rounded-2xl shadow-lg p-10 max-w-md w-full">
-        <div className="text-center mb-8">
+    <div className="flex min-h-screen items-center justify-center bg-slate-50">
+      <div className="w-full max-w-md rounded-2xl bg-white p-10 shadow-lg">
+        <div className="mb-8 text-center">
           <p className="text-2xl font-bold text-[#1E40AF]">✈ WanderPlan</p>
-          <p className="text-sm text-slate-500 mt-1">Dev Preview — Tokyo 3-day itinerary pre-loaded</p>
+          <p className="mt-1 text-sm text-slate-500">Dev Preview — Tokyo 3-day itinerary pre-loaded</p>
         </div>
 
         <div className="space-y-3">
           <PreviewButton
-            step="1"
-            label="Step 1 — Onboarding Wizard"
-            desc="All inputs, 7 sections, pace & budget"
-            onClick={() => go('1')}
+            label="Open setup wizard"
+            desc="Single-screen redesign with conversational overlay"
+            onClick={() => goHome('wizard')}
           />
           <PreviewButton
-            step="2"
-            label="Step 2 — Itinerary Overview"
-            desc="Day cards, finalize CTA, error states"
-            onClick={() => go('2')}
+            label="Open itinerary workspace"
+            desc="Three-column itinerary view with setup dismissed"
+            onClick={() => goHome('itinerary')}
           />
           <PreviewButton
-            step="3"
-            label="Step 3 — Detailed Itinerary"
-            desc="3-column: metrics · timeline · map+social"
-            onClick={() => go('3')}
+            label="Open comparison panel"
+            desc="Detailed layout with comparison mode active"
+            onClick={() => goHome('comparison')}
           />
         </div>
 
-        <div className="mt-8 pt-6 border-t border-slate-100">
-          <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide mb-3">Step 3 sub-views</p>
-          <div className="space-y-2">
-            <SubViewButton label="🗺️ Compare Destinations panel" onClick={() => {
-              useAppStore.getState().goToStep(3)
-              useAppStore.getState().setStep3View('comparison')
-              router.push('/')
-            }} />
-          </div>
-        </div>
-
-        <p className="text-xs text-slate-400 text-center mt-6">
+        <p className="mt-6 text-center text-xs text-slate-400">
           This page is for local development only.
         </p>
       </div>
@@ -88,37 +78,27 @@ export default function DevPage({
   )
 }
 
-function PreviewButton({ step, label, desc, onClick }: {
-  step: string; label: string; desc: string; onClick: () => void
+function PreviewButton({ label, desc, onClick }: {
+  label: string
+  desc: string
+  onClick: () => void
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="w-full text-left px-4 py-3 rounded-xl border-2 border-slate-200 hover:border-[#1E40AF] hover:bg-blue-50 transition-all group"
+      className="group w-full rounded-xl border-2 border-slate-200 px-4 py-3 text-left transition-all hover:border-[#1E40AF] hover:bg-blue-50"
     >
       <div className="flex items-center gap-3">
-        <span className="w-8 h-8 rounded-full bg-[#1E40AF] text-white text-sm font-bold flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-          {step}
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1E40AF] text-sm font-bold text-white transition-transform group-hover:scale-105">
+          ✈
         </span>
         <div>
-          <p className="font-semibold text-slate-800 text-sm">{label}</p>
+          <p className="text-sm font-semibold text-slate-800">{label}</p>
           <p className="text-xs text-slate-500">{desc}</p>
         </div>
         <span className="ml-auto text-slate-400 group-hover:text-[#1E40AF]">→</span>
       </div>
-    </button>
-  )
-}
-
-function SubViewButton({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="w-full text-left px-4 py-2.5 rounded-lg border border-slate-200 hover:border-[#1E40AF] hover:bg-blue-50 transition-all text-sm text-slate-700"
-    >
-      {label} →
     </button>
   )
 }

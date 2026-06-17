@@ -1,33 +1,55 @@
 # WanderPlan
 
-> Desktop-first AI travel advisor — plan group trips with AI-powered, personalized itineraries. No sign-up required.
+> AI-powered travel planning with Anya, your conversational voice assistant. Desktop-first experience with personalized itineraries. No sign-up required.
 
-[![Next.js](https://img.shields.io/badge/Next.js-14-black)](https://nextjs.org)
+[![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688)](https://fastapi.tiangolo.com)
+[![Gemini](https://img.shields.io/badge/Gemini-2.0%20Flash-4285F4)](https://ai.google.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+---
+
+## ✨ Meet Anya
+
+**Anya** is your AI travel assistant — talk to her (literally!) to plan your trip. She asks questions, gives suggestions, and builds a complete itinerary tailored to you.
+
+🎙️ **Voice Mode**: Click the voice button to have a natural conversation with Anya. She speaks with a young Indian female voice and listens to your responses.
 
 ---
 
 ## What It Does
 
-WanderPlan consolidates destination discovery, side-by-side location comparisons, AI-generated itinerary building, and post-selection logistics into a single desktop interface.
+WanderPlan uses conversational AI to help you plan trips through a natural chat interface. You tell Anya about your trip — who's coming, what you like, your budget — and she generates a day-by-day itinerary with:
 
-You describe your trip — who's coming, what you like, how much you have — and WanderPlan produces a timestamped, day-by-day schedule grounded in real traveler content from Reddit and Wikivoyage, with maps, YouTube travel guides, and booking deep-links all in one place.
+- 📍 Timestamped activities with locations
+- 🗺️ Interactive maps with route visualization
+- 🌐 Community travel tips (Gemini-powered + Reddit)
+- 🎥 YouTube video recommendations
+- ✈️ Booking links (flights, hotels, activities)
+- 💰 Budget breakdown and expense tracking
+- 🌤️ Best time to visit recommendations
+
+**Single-screen interface** with conversational chat overlay — everything in one place.
 
 **No API keys needed. No login. No subscriptions.**
 
 ---
 
-## Features (Phase 1)
+## Features
 
-| Epic | Feature |
+| Feature | Description |
 |---|---|
-| **Onboarding Wizard** | Multi-step trip configuration: purpose, dates, personas, group composition, budget, accommodation preferences |
-| **AI Itinerary Engine** | LLM-generated day-by-day schedule with timestamped routing, persona-gated work/fitness blocks, kid safety filtering, and social trend signals from Reddit |
-| **Dual-Location Comparison** | Side-by-side grid comparing two destinations across budget, visa friction, travel time, kid/pet suitability, and weather |
-| **Best Time to Travel** | Visual analytics: historical weather, busy tourist periods, seasonal cost index, local events calendar |
-| **Ancillary Dashboard** | Visa advisory, flight/hotel booking redirects, live currency converter, packing checklist, safety notes |
-| **PDF Export** | Download your full itinerary as a PDF — no account needed |
+| **🎙️ Anya Voice Assistant** | Conversational AI with voice input/output. Talk naturally to plan your trip. Young Indian female voice (20-25 yrs). Now with persistent floating orb for always-on access. |
+| **💬 Chat Interface** | Full conversational wizard with quick-reply chips, city suggestions, multi-city support, and context-aware responses. |
+| **🤖 AI Itinerary Engine** | Gemini 2.0 Flash generates day-by-day schedules with timestamped activities, routing, and budget allocation. Supports flexible trip durations. |
+| **🗺️ Interactive Maps** | OpenStreetMap with itinerary pins, click-to-navigate, and route visualization. |
+| **🌐 Travel Tips** | Gemini-powered community-style tips + Reddit highlights, with YouTube video thumbnails. Fallback curated tips ensure content is always available. |
+| **📊 Destination Comparison** | Side-by-side grid comparing budget, weather, visa, and suitability. |
+| **🌤️ Best Time Widget** | Historical weather data, tourist seasons, and local events. |
+| **✈️ Booking Integration** | Deep-links to Skyscanner, Booking.com, and Viator. |
+| **💰 Budget Tracking** | Expense breakdown by category with currency conversion. |
+| **📄 PDF Export** | Download your full itinerary — no account needed. |
+| **🎨 Distinctive Design** | Travel-inspired visual identity with passport navy, horizon amber, and vintage stamp aesthetics. Fraunces display font with personality. |
 
 ---
 
@@ -36,24 +58,25 @@ You describe your trip — who's coming, what you like, how much you have — an
 ### Frontend (`/apps/web`)
 | Technology | Purpose |
 |---|---|
-| Next.js 14 (App Router) + TypeScript | Framework, SSR, API proxy routes |
-| Tailwind CSS + shadcn/ui | Design system (Horizon Blue / Emerald / Amber Gold tokens) |
-| Zustand | Wizard + session state management |
-| react-leaflet + OpenStreetMap | Interactive maps, scroll-synced itinerary pins |
-| react-pdf | Client-side PDF itinerary export |
-| Axios | HTTP client with error interceptors |
+| Next.js 16 (Turbopack) + TypeScript | Framework, App Router, streaming, API routes |
+| Tailwind CSS v4 | Modern utility-first styling with custom design tokens |
+| Zustand | Lightweight state management (wizard, itinerary, config) |
+| react-leaflet + OpenStreetMap | Interactive maps with activity pins |
+| Web Speech API | Voice input (speech-to-text) |
+| Speech Synthesis API | Voice output (text-to-speech) |
+| Fraunces, Inter, JetBrains Mono | Custom font trio: display (wonky axis), body (tight tracking), data |
+| Axios | HTTP client |
 
 ### Backend (`/apps/api`)
 | Technology | Purpose |
 |---|---|
-| Python 3.11 + FastAPI | Async REST API, Pydantic validation, OpenAPI docs |
-| LangChain + Groq (Llama 3.1 70B) | LLM orchestration, itinerary generation |
-| Qdrant | Vector database for semantic travel content search |
-| sentence-transformers (all-MiniLM-L6-v2) | Local text embeddings — no API key |
-| BeautifulSoup4 + httpx | Wikivoyage, Wikipedia, OpenStreetMap scraping |
-| Open-Meteo | Weather data (free, no key) |
-| APScheduler | Scheduled Reddit content refresh |
-| better-profanity | Safe content filtering |
+| Python 3.9+ + FastAPI | Async REST API, Pydantic validation |
+| Google Gemini 2.0 Flash | LLM for itinerary generation, chat, city recommendations |
+| Qdrant (in-memory) | Vector database for semantic search |
+| sentence-transformers | Local text embeddings (all-MiniLM-L6-v2) |
+| httpx + BeautifulSoup4 | Web scraping (Wikivoyage, Reddit, YouTube) |
+| Open-Meteo API | Historical weather data (free, no key) |
+| APScheduler | Background jobs (Reddit content refresh) |
 
 ### Infrastructure
 | Service | Role |
@@ -70,22 +93,27 @@ You describe your trip — who's coming, what you like, how much you have — an
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     Browser (Desktop)                        │
-│  Next.js 14 — 3-column layout (20% | 55% | 25%)             │
-│  Zustand session state │ react-leaflet │ react-pdf           │
+│                                                              │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │    Anya - Conversational Wizard (Overlay)            │  │
+│  │    🎙️ Voice Mode | 💬 Chat Interface               │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                                                              │
+│  Next.js 16 — 3-column layout (20% | 55% | 25%)            │
+│  Zustand state | react-leaflet | Speech APIs                │
 └────────────────────────┬────────────────────────────────────┘
                          │ HTTPS
 ┌────────────────────────▼────────────────────────────────────┐
-│              FastAPI (Railway)                               │
-│  /generate-itinerary  /compare  /search  /best-time         │
-│  LangChain → Groq (Llama 3.1 70B)                           │
-│  Qdrant semantic search                                      │
-│  APScheduler ingestion jobs                                  │
+│              FastAPI (Python 3.9+)                           │
+│  /api/generate-itinerary  /api/chat-refine                  │
+│  /api/recommend-cities    /api/travel-tips                  │
+│  Gemini 2.0 Flash | Qdrant | APScheduler                   │
 └───────┬───────────┬──────────────┬──────────────┬───────────┘
         │           │              │              │
    ┌────▼────┐ ┌────▼────┐  ┌─────▼─────┐  ┌────▼────────┐
-   │  Qdrant  │ │  Groq   │  │  OSM /    │  │ Wikivoyage  │
-   │ (vector  │ │  API    │  │ Open-Meteo│  │ Wikipedia   │
-   │   DB)   │ │ (LLM)   │  │ Nominatim │  │ Reddit JSON │
+   │ Qdrant  │ │ Gemini  │  │ Open-Meteo│  │ Reddit JSON │
+   │ (vector │ │ 2.0     │  │ Nominatim │  │ YouTube     │
+   │   DB)   │ │ Flash   │  │    OSM    │  │ Wikivoyage  │
    └─────────┘ └─────────┘  └───────────┘  └─────────────┘
 ```
 
@@ -96,9 +124,8 @@ You describe your trip — who's coming, what you like, how much you have — an
 ### Prerequisites
 
 - **Node.js** 20+ and **npm** 10+
-- **Python** 3.11+
-- **Docker** and **Docker Compose** v2+
-- A free [Groq API key](https://console.groq.com) (free tier, no credit card)
+- **Python** 3.9+
+- A free [Google Gemini API key](https://aistudio.google.com/app/apikey)
 
 ### 1. Clone the repository
 
@@ -117,18 +144,18 @@ cp apps/web/.env.example apps/web/.env.local
 cp apps/api/.env.example apps/api/.env
 ```
 
-Edit `apps/api/.env` and set your `GROQ_API_KEY`.  
-See the [Environment Variables](#environment-variables) section for all variables.
+Edit `apps/api/.env` and set your `GEMINI_API_KEY`.  
+See the [Technical Documentation](TECHNICAL_DOCUMENTATION.md) for all variables.
 
-### 3. Start all services with Docker Compose
+### 3. Start the backend
 
 ```bash
-docker-compose up
+cd apps/api
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
-
-This starts:
-- **`api`** — FastAPI on `http://localhost:8000`
-- **`qdrant`** — Vector DB on `http://localhost:6333`
 
 ### 4. Start the frontend development server
 
@@ -140,47 +167,16 @@ npm run dev
 
 Open `http://localhost:3000` in your browser.
 
-> **Tip:** On first run, the backend will populate the Qdrant collections by scraping Wikivoyage and Reddit. This takes 2–5 minutes. The `/health` endpoint returns `{"status": "ready"}` when ingestion is complete.
+**🎙️ Voice Mode**: Click the animated microphone button to talk with Anya!
 
-### 5. (Optional) Use Ollama for local LLM during development
-
-To avoid consuming Groq free-tier quota during development:
-
-```bash
-# Install Ollama: https://ollama.ai
-ollama pull llama3.2
-```
-
-Then in `apps/api/.env`, set `LLM_PROVIDER=ollama`.
+> **Note:** On first run, the backend populates Qdrant with Reddit/Wikivoyage content (2-3 minutes). The `/health` endpoint returns `{"status": "ready"}` when complete.
 
 ---
 
-## Running Tests
+## Documentation
 
-### Backend
-
-```bash
-cd apps/api
-pip install -r requirements-dev.txt
-pytest                        # All unit + integration tests
-pytest tests/unit/            # Unit tests only
-pytest tests/integration/     # Requires Docker (Qdrant container)
-```
-
-### Frontend
-
-```bash
-cd apps/web
-npm run test                  # Vitest unit + component tests
-npm run test:e2e              # Playwright E2E (requires both servers running)
-```
-
-### Full CI suite (mirrors GitHub Actions)
-
-```bash
-# From repo root
-npm run ci                    # Lint + type-check + all tests
-```
+- **[Technical Documentation](TECHNICAL_DOCUMENTATION.md)** — Complete tech stack, APIs, models, and architecture
+- **[System Design](docs/system-design.md)** — Detailed system design document
 
 ---
 
@@ -197,92 +193,55 @@ npm run ci                    # Lint + type-check + all tests
 
 | Variable | Description | Required |
 |---|---|---|
-| `GROQ_API_KEY` | Groq API key for Llama 3.1 70B inference | ✅ |
-| `LLM_PROVIDER` | `groq` (default) or `ollama` | ❌ |
-| `OLLAMA_BASE_URL` | Ollama server URL (default: `http://localhost:11434`) | ❌ |
-| `QDRANT_URL` | Qdrant instance URL (default: `http://localhost:6333`) | ✅ |
-| `QDRANT_API_KEY` | Qdrant API key (only needed for Qdrant Cloud; leave blank for self-hosted) | ❌ |
-| `ALLOWED_ORIGINS` | Comma-separated CORS origins (e.g., `http://localhost:3000`) | ✅ |
-| `INGESTION_REFRESH_HOURS` | How often Reddit content is re-indexed (default: `6`) | ❌ |
-| `CONTENT_FILTER_LEVEL` | `strict` or `moderate` (default: `strict`) | ❌ |
+| `GEMINI_API_KEY` | Google Gemini API key | ✅ |
+| `LLM_PROVIDER` | `gemini` (default) or `mock` | ❌ |
+| `GEMINI_MODEL` | Model ID (default: `gemini-2.0-flash-exp`) | ❌ |
+| `QDRANT_URL` | Qdrant instance (default: `:memory:`) | ❌ |
+| `ALLOWED_ORIGINS` | CORS origins (e.g., `http://localhost:3000`) | ✅ |
 
 ---
 
-## Deployment
+## Cost Analysis
 
-### Frontend → Vercel
+**Monthly cost for 100 active users**: ~₹20-40 (~₹0.20-0.40 per user)
 
-1. Push your repo to GitHub
-2. Import the repository in [Vercel](https://vercel.com/new)
-3. Set **Root Directory** to `apps/web`
-4. Add environment variables from the table above
-5. Deploy — subsequent pushes to `main` auto-deploy
+All external APIs are free except Gemini:
+- **Gemini 2.0 Flash**: ~₹0.10-0.15 per session (itinerary + chat + tips)
+- **Nominatim, Open-Meteo, Reddit, OSM**: Free
+- **Vercel/Railway**: Free tiers sufficient for MVP
 
-### Backend → Railway
-
-1. Create a new Railway project
-2. Add a **GitHub** service pointing to `/apps/api`
-3. Add a **Qdrant** service (Railway template available) with a persistent volume
-4. Set environment variables in Railway dashboard
-5. Deploy
-
-Full deployment guide: [`docs/deployment.md`](docs/deployment.md)
-
----
-
-## Project Structure
-
-```
-wanderplan/
-├── apps/
-│   ├── web/                    # Next.js 14 frontend
-│   │   ├── app/                # App Router pages and layouts
-│   │   ├── components/         # UI components (wizard, itinerary, map, etc.)
-│   │   ├── store/              # Zustand state stores
-│   │   ├── lib/                # API client, utilities, PDF templates
-│   │   └── public/             # Static assets
-│   └── api/                    # FastAPI backend
-│       ├── routers/            # FastAPI route handlers
-│       ├── chains/             # LangChain chain definitions
-│       ├── scrapers/           # Wikivoyage, Wikipedia, Reddit scrapers
-│       ├── models/             # Pydantic request/response models
-│       ├── services/           # Qdrant, Open-Meteo, Nominatim clients
-│       └── tests/              # Pytest test suite
-├── packages/
-│   └── types/                  # Shared TypeScript + JSON Schema type definitions
-├── docs/
-│   ├── system-design.md        # Full system design document
-│   └── deployment.md           # Step-by-step deployment guide
-├── .github/
-│   ├── workflows/              # GitHub Actions CI
-│   └── ISSUE_TEMPLATE/         # Bug report template
-├── docker-compose.yml
-└── README.md
-```
-
----
-
-## Bug Reports
-
-Found a bug? [Open a GitHub Issue](https://github.com/your-username/wanderplan/issues/new?template=bug_report.md).
-
-Please include: steps to reproduce, expected vs. actual behavior, browser, OS, and a screenshot if possible.
+See [Technical Documentation](TECHNICAL_DOCUMENTATION.md#cost-analysis) for detailed breakdown.
 
 ---
 
 ## Roadmap
 
-### Phase 1 (current)
-- All 5 active Epics (Wizard, Itinerary Engine, Comparison, Best Time, Dashboard)
-- No-API-key data stack
-- Session-based, no login required
+### Current (v2.1) — NEW: Design Revamp & Enhanced UX 🎨
+- ✅ Conversational wizard with Anya
+- ✅ Voice input/output (Indian English, young female)
+- ✅ Single-screen interface with chat overlay
+- ✅ Gemini 2.0 Flash for all LLM tasks
+- ✅ Real-time travel tips with caching
+- ✅ **NEW: Distinctive travel-inspired design system** (passport navy, horizon amber, vintage stamps)
+- ✅ **NEW: Persistent floating Anya button** for always-on voice access
+- ✅ **NEW: Multi-city selection** in exploring mode
+- ✅ **NEW: Trip duration question** in suggest flow
+- ✅ **NEW: YouTube thumbnails** for travel tips
+- ✅ **NEW: Fallback curated tips** when APIs are unavailable
 
-### Phase 2 (planned)
-- Live flight pricing (Skyscanner/Amadeus API)
-- Live hotel inventory (Booking.com API)
-- Verified visa data (Sherpa API)
-- Smart Calendar sync (Google Calendar, Outlook)
-- Saved itineraries with user accounts
+### Bug Fixes (v2.1)
+- ✅ Fixed: Listening Orb now persistent across itinerary page
+- ✅ Fixed: Multi-destination flow allows multiple cities
+- ✅ Fixed: Suggest flow asks for trip duration before destination
+- ✅ Fixed: Travel tips API with fallback content
+- ✅ Fixed: YouTube thumbnails display in tip cards
+
+### Next (v2.2)
+- User accounts & saved itineraries
+- Mobile-responsive redesign
+- Multilingual support (Hindi, Spanish)
+- Calendar sync (Google Calendar)
+- Live flight pricing (Skyscanner API)
 
 ---
 

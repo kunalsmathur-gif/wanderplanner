@@ -65,10 +65,12 @@ async def recommend_cities(request: RecommendCitiesRequest) -> RecommendCitiesRe
         from google import genai as google_genai
         from google.genai import types as genai_types
     except ImportError:
-        raise RuntimeError("google-genai not installed.")
+        print("⚠️ google-genai not installed, using mock")
+        return _mock_response(request.country)
 
     if not settings.gemini_api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set.")
+        print("⚠️ GEMINI_API_KEY not set, using mock")
+        return _mock_response(request.country)
 
     cfg = request.trip_config
     duration_days = _calc_days(cfg.dates)
@@ -100,15 +102,17 @@ async def recommend_cities(request: RecommendCitiesRequest) -> RecommendCitiesRe
         )
         return response.text
 
-    loop = asyncio.get_event_loop()
-    raw = await loop.run_in_executor(None, _call_sync)
-
     try:
+        loop = asyncio.get_event_loop()
+        raw = await loop.run_in_executor(None, _call_sync)
+
         cleaned = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         cities_data = json.loads(cleaned)
         cities = [RecommendedCity(**c) for c in cities_data[:6]]
         return RecommendCitiesResponse(cities=cities)
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ Gemini API failed for recommend_cities: {type(e).__name__}: {e}")
+        print(f"   Returning mock response for {request.country}")
         return _mock_response(request.country)
 
 

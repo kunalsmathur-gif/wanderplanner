@@ -1,0 +1,665 @@
+# WanderPlan — System Design Document
+**Version:** 1.0 (Phase 1)  
+**Last Updated:** June 2026  
+**Audience:** Engineering (solo developer reference + future team onboarding)
+
+---
+
+## Table of Contents
+1. [High-Level Architecture](#1-high-level-architecture)
+2. [Data Flow: Itinerary Generation](#2-data-flow-itinerary-generation)
+3. [Data Flow: Content Ingestion Pipeline](#3-data-flow-content-ingestion-pipeline)
+4. [API Contract](#4-api-contract)
+5. [Qdrant Collection Schema](#5-qdrant-collection-schema)
+6. [LangChain Prompt Chain Design](#6-langchain-prompt-chain-design)
+7. [Frontend State Architecture (Zustand)](#7-frontend-state-architecture-zustand)
+8. [PDF Document Schema](#8-pdf-document-schema)
+9. [Environment Variables Reference](#9-environment-variables-reference)
+10. [Dependency Risk Register](#10-dependency-risk-register)
+
+---
+
+## 1. High-Level Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                         BROWSER (Desktop)                             │
+│                                                                        │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │  Next.js 14 (App Router) — Vercel                              │  │
+│  │                                                                  │  │
+│  │  ┌───────────┐  ┌──────────────────────┐  ┌─────────────────┐  │  │
+│  │  │  Column 1  │  │      Column 2         │  │    Column 3     │  │  │
+│  │  │  20% width │  │      55% width        │  │    25% width    │  │  │
+│  │  │            │  │                       │  │                 │  │  │
+│  │  │ Trip       │  │ Wizard (onboarding)   │  │ Reddit excerpts │  │  │
+│  │  │ Metrics    │  │ Itinerary Timeline    │  │ YouTube embeds  │  │  │
+│  │  │ Budget     │  │ Comparison Grid       │  │ Wikivoyage tips │  │  │
+│  │  │ Visa badge │  │ Best Time charts      │  │                 │  │  │
+│  │  │ Currency   │  │ Dashboard             │  │                 │  │  │
+│  │  └───────────┘  └──────────────────────┘  └─────────────────┘  │  │
+│  │                                                                  │  │
+│  │  Zustand stores: TripConfigStore | ItineraryStore | UIStore     │  │
+│  │  react-leaflet (OpenStreetMap tiles)                            │  │
+│  │  react-pdf (client-side PDF generation)                         │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────┬────────────────────────────────────────┘
+                              │ HTTPS / JSON
+┌─────────────────────────────▼────────────────────────────────────────┐
+│                     FastAPI (Python 3.11) — Railway                   │
+│                                                                        │
+│  Routers:                                                              │
+│  POST /api/generate-itinerary   → LangChain itinerary chain           │
+│  POST /api/compare-destinations → Comparison data assembly             │
+│  GET  /api/best-time/{dest}     → Weather + tourist period data        │
+│  GET  /api/search               → Qdrant semantic search               │
+│  GET  /api/geocode              → Nominatim proxy (rate-limited)       │
+│  GET  /health                   → Readiness check                      │
+│                                                                        │
+│  Background:                                                           │
+│  APScheduler → Ingestion jobs (Reddit refresh every 6hrs)             │
+└──────┬──────────────┬─────────────────┬──────────────────┬────────────┘
+       │              │                 │                  │
+┌──────▼──────┐ ┌─────▼──────┐ ┌───────▼──────┐ ┌────────▼───────────┐
+│   Qdrant    │ │    Groq     │ │  Open-Meteo  │ │  Public Data       │
+│  (Railway)  │ │  (Groq API) │ │  (Free API)  │ │  Sources           │
+│             │ │             │ │              │ │                    │
+│ Collections:│ │ Llama 3.1   │ │ Historical + │ │ Wikivoyage HTML    │
+│ - wiki      │ │ 70B         │ │ Forecast     │ │ Wikipedia API      │
+│ - reddit    │ │             │ │ weather data │ │ Reddit JSON feeds  │
+│ - osm_pois  │ │             │ │              │ │ OSM Overpass API   │
+│             │ │             │ │              │ │ Nominatim          │
+└─────────────┘ └────────────┘ └──────────────┘ └────────────────────┘
+
+Browser-direct (no backend proxy):
+  Frankfurter.app → currency rates (CORS-open)
+  YouTube oEmbed  → video metadata (CORS-open)
+```
+
+---
+
+## 2. Data Flow: Itinerary Generation
+
+```
+User completes Wizard
+        │
+        ▼
+TripConfig object assembled in Zustand
+{
+  purpose, dates, scope, origin, destination,
+  personas: string[],
+  group: { infants, kids: [{age}], adults, seniors, pets },
+  accommodation: { style, properties },
+  pace, budget, currency
+}
+        │
+        ▼
+POST /api/generate-itinerary  ──────────────────────────────────┐
+        │                                                         │
+        ▼                                                         │
+[1] Context Retrieval Chain (LangChain)                          │
+    Query Qdrant with:                                           │
+    - destination name                                           │
+    - persona keywords (e.g., "digital nomad coworking wifi")   │
+    - group constraints (e.g., "kid friendly stroller")         │
+    Returns: top-20 relevant chunks from wiki/reddit/osm_pois   │
+        │                                                         │
+        ▼                                                         │
+[2] Itinerary Generation Chain (LangChain → Groq)               │
+    System prompt: see Section 6                                 │
+    User context: TripConfig + retrieved chunks                  │
+    Output parser: enforces ItineraryDay[] Pydantic schema       │
+        │                                                         │
+        ▼                                                         │
+[3] Post-Processing                                              │
+    - Kid safety filter: remove OSM venues tagged               │
+      amenity=bar | amenity=nightclub | tourism=adult            │
+    - Persona module injection:                                  │
+      Digital Nomad  → insert Work Blocks                        │
+      Sports/Fitness → insert Training Windows                   │
+      Pet Parent     → filter to dog_friendly=yes venues         │
+    - Alignment score calculation (Section 6.2 of PRD)          │
+    - Conflict detection: overlapping transit windows           │
+        │                                                         │
+        ▼                                                         │
+[4] Streaming Response (Server-Sent Events)                     │
+    Events: "status" (progress updates) + "data" (itinerary)   │
+    Timeout: 20s hard limit → error event with retry signal     │
+        │                                                         │
+        ▼                                                         │
+Frontend receives ItineraryDay[] → renders timeline + map pins  │
+        │                                                         │
+        ▼                                                         │
+[FALLBACK] If Groq unavailable → Ollama (if configured)         │
+           If both fail → error state with retry CTA ───────────┘
+```
+
+---
+
+## 3. Data Flow: Content Ingestion Pipeline
+
+```
+APScheduler (on startup + every 6 hours for Reddit)
+        │
+        ├── [A] Wikivoyage Scraper
+        │       URL pattern: https://en.wikivoyage.org/wiki/{Destination}
+        │       Extracts: "Go" section (seasons), "Stay safe", visa info,
+        │                 "See", "Do", "Eat", "Drink" sections
+        │       Output: List[Document(text, metadata={source, destination, section})]
+        │
+        ├── [B] Wikipedia Scraper
+        │       URL: https://en.wikipedia.org/api/rest_v1/page/summary/{dest}
+        │            + sections: "Events", "Tourism", "Climate"
+        │       Output: List[Document]
+        │
+        ├── [C] Reddit JSON Feed Ingester
+        │       Endpoints: reddit.com/r/travel.json
+        │                  reddit.com/r/solotravel.json
+        │                  reddit.com/r/digitalnomad.json
+        │       Filter: posts mentioning destination name
+        │               + safe content filter (better-profanity + keyword blocklist)
+        │       Output: List[Document(text=post_title+selftext, metadata)]
+        │
+        └── [D] OSM Overpass POI Fetcher
+                Query: POIs within 50km radius of destination coords
+                Tags: amenity=*, tourism=*, leisure=*, dog_friendly=yes
+                Output: List[POI(name, lat, lon, tags)]
+                        → stored in structured DB (not vector)
+
+For A, B, C:
+        │
+        ▼
+[E] Embedding Generation
+    Model: sentence-transformers/all-MiniLM-L6-v2 (local, no API)
+    Batch size: 64 documents
+    Output: List[vector(384 dimensions)]
+        │
+        ▼
+[F] Qdrant Upsert
+    Collection assignment:
+      Wikivoyage/Wikipedia → collection: "wiki"
+      Reddit               → collection: "reddit"
+    Payload stored with each vector:
+      { destination, source_url, section, text_preview, scraped_at }
+    Deduplication: hash(source_url + section) as point ID
+```
+
+---
+
+## 4. API Contract
+
+All request/response bodies are JSON. All endpoints return `Content-Type: application/json` unless noted.
+
+---
+
+### `POST /api/generate-itinerary`
+
+**Request:**
+```json
+{
+  "purpose": "explore",
+  "dates": { "start": "2026-11-13", "end": "2026-11-19" },
+  "scope": "international",
+  "origin": { "city": "Bangalore", "iata": "BLR" },
+  "destination": { "city": "Kuala Lumpur", "country": "Malaysia" },
+  "personas": ["digital_nomad", "aesthetic_explorer"],
+  "group": {
+    "infants": 0,
+    "kids": [{ "age": 5 }, { "age": 8 }],
+    "adults": 2,
+    "seniors": 0,
+    "pets": 0
+  },
+  "accommodation": {
+    "style": ["hotel", "bnb"],
+    "min_bedrooms": 2,
+    "wheelchair_accessible": false,
+    "pet_friendly": false,
+    "private_pool": false,
+    "kitchen": true
+  },
+  "pace": "moderate",
+  "budget": { "amount": 150000, "currency": "INR" }
+}
+```
+
+**Response (SSE stream):**
+```
+event: status
+data: {"message": "Searching destinations...", "step": 1, "total_steps": 4}
+
+event: status
+data: {"message": "Building your schedule...", "step": 3, "total_steps": 4}
+
+event: data
+data: { "days": [ <ItineraryDay[]> ], "alignment_score": 87.5, "warnings": [] }
+
+event: error  (only on failure)
+data: {"code": "LLM_TIMEOUT", "message": "Generation timed out. Please retry.", "retryable": true}
+```
+
+**`ItineraryDay` schema:**
+```json
+{
+  "day_number": 2,
+  "date": "2026-11-14",
+  "theme": "Theme Parks & City Exploration",
+  "items": [
+    {
+      "id": "item_uuid",
+      "time_start": "09:00",
+      "time_end": "17:00",
+      "title": "Sunway Lagoon",
+      "description": "...",
+      "location": { "lat": 3.0731, "lon": 101.6079, "address": "..." },
+      "tags": ["kid_friendly", "instaworthy", "outdoor"],
+      "booking_url": "https://booking.com/...",
+      "youtube_video_id": "dQw4w9WgXcQ",
+      "alignment_score": 92.0,
+      "warnings": []
+    }
+  ],
+  "transit_warnings": [
+    { "between_items": ["item_uuid_1", "item_uuid_2"], "message": "Tight 20-min window" }
+  ]
+}
+```
+
+---
+
+### `POST /api/compare-destinations`
+
+**Request:**
+```json
+{
+  "destinations": [
+    { "city": "Bali", "country": "Indonesia" },
+    { "city": "Chiang Mai", "country": "Thailand" }
+  ],
+  "trip_config": { ... }
+}
+```
+
+**Response:**
+```json
+{
+  "comparison": [
+    {
+      "parameter": "Total Estimated Budget",
+      "unit": "INR",
+      "values": { "Bali": 95000, "Chiang Mai": 72000 },
+      "winner": "Chiang Mai"
+    },
+    {
+      "parameter": "Visa Friction",
+      "values": { "Bali": "Visa on Arrival (free)", "Chiang Mai": "Visa Exempt (30 days)" },
+      "winner": "Chiang Mai",
+      "highlight": "bottleneck"
+    }
+  ],
+  "partial_failures": []
+}
+```
+
+---
+
+### `GET /api/best-time/{destination}`
+
+**Response:**
+```json
+{
+  "destination": "Bali",
+  "monthly_weather": [
+    { "month": "Jan", "avg_temp_c": 27, "avg_rain_mm": 350, "sunshine_hours": 5 }
+  ],
+  "busy_periods": [
+    { "months": ["Jul", "Aug"], "label": "Peak tourist season", "source": "wikivoyage" },
+    { "months": ["Dec"], "label": "Nyepi (Hindu New Year) — limited movement", "source": "wikipedia" }
+  ],
+  "best_months": ["Apr", "May", "Sep", "Oct"],
+  "events": [
+    { "name": "Bali Arts Festival", "month": "Jun", "duration_days": 30, "source": "wikipedia" }
+  ]
+}
+```
+
+---
+
+### `GET /api/search?q={query}&destination={dest}&limit={n}`
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "text": "Canggu has become the go-to spot for digital nomads...",
+      "source": "reddit",
+      "source_url": "https://reddit.com/r/digitalnomad/...",
+      "score": 0.91,
+      "destination": "Bali"
+    }
+  ]
+}
+```
+
+---
+
+### `GET /api/geocode?q={city_name}`
+
+Proxies Nominatim with rate limiting and caching.
+
+**Response:**
+```json
+{
+  "display_name": "Bali, Indonesia",
+  "lat": -8.4095,
+  "lon": 115.1889,
+  "country_code": "id"
+}
+```
+
+---
+
+## 5. Qdrant Collection Schema
+
+### Collection: `wiki`
+Stores scraped Wikivoyage and Wikipedia content.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `uuid` (hash of URL+section) | Deduplication key |
+| `vector` | `float[384]` | all-MiniLM-L6-v2 embedding |
+| `payload.destination` | `string` | Normalized destination name |
+| `payload.source` | `"wikivoyage"` \| `"wikipedia"` | Content origin |
+| `payload.section` | `string` | e.g., `"go"`, `"stay_safe"`, `"see"` |
+| `payload.text` | `string` | Full chunk text (max 512 tokens) |
+| `payload.source_url` | `string` | Original URL |
+| `payload.scraped_at` | `datetime` | Ingestion timestamp |
+
+**Index:** HNSW (default Qdrant). Payload index on `destination` (keyword filter).
+
+---
+
+### Collection: `reddit`
+Stores filtered Reddit post content.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `uuid` (hash of post ID) | Deduplication key |
+| `vector` | `float[384]` | Embedding of title + selftext |
+| `payload.destination` | `string` | Destination extracted from post |
+| `payload.subreddit` | `string` | Source subreddit |
+| `payload.title` | `string` | Post title |
+| `payload.text_preview` | `string` | First 300 chars of selftext |
+| `payload.post_url` | `string` | Reddit post URL |
+| `payload.score` | `int` | Reddit upvote score (quality signal) |
+| `payload.scraped_at` | `datetime` | |
+
+**Filter:** Only posts with `score >= 10` are indexed to reduce noise.
+
+---
+
+### Collection: `osm_pois`
+Stores OpenStreetMap POI data per destination. Used for venue lookup, not semantic search.
+
+> **Note:** OSM POIs are stored in Qdrant for convenience (proximity search) but are also cached in a local SQLite file (`poi_cache.db`) for fast structured queries by tag.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `uuid` (hash of OSM node ID) | |
+| `vector` | `float[384]` | Embedding of name + tags |
+| `payload.name` | `string` | Venue name |
+| `payload.lat`, `payload.lon` | `float` | Coordinates |
+| `payload.destination` | `string` | |
+| `payload.amenity` | `string` | OSM amenity tag |
+| `payload.tourism` | `string` | OSM tourism tag |
+| `payload.dog_friendly` | `bool` | `dog_friendly=yes` tag |
+| `payload.wheelchair` | `string` | `wheelchair=yes/limited/no` |
+
+---
+
+## 6. LangChain Prompt Chain Design
+
+### Chain 1: Context Retrieval
+
+```python
+# Input: TripConfig + destination
+# Output: List[Document] (top-20 relevant chunks)
+
+retriever = QdrantRetriever(
+    client=qdrant_client,
+    collections=["wiki", "reddit", "osm_pois"],
+    embedding_model="all-MiniLM-L6-v2",
+    k=20,
+    filter={"destination": trip_config.destination.city}
+)
+
+query = build_retrieval_query(trip_config)
+# e.g., "digital nomad coworking wifi coffee Bali kid friendly outdoor activities"
+```
+
+---
+
+### Chain 2: Itinerary Generation
+
+**System Prompt Template:**
+```
+You are WanderPlan, an expert AI travel advisor. Generate a detailed, realistic,
+day-by-day travel itinerary based on the user's trip configuration and the
+provided destination research.
+
+Rules:
+- Output ONLY valid JSON conforming to the ItineraryDay[] schema. No prose.
+- Each day must have 3–6 activity items with realistic time allocations.
+- Respect the pace setting: relaxed (3–4 activities/day), moderate (4–5),
+  packed (5–6).
+- Total costs across all activities must not exceed budget: {budget} {currency}.
+- If personas include "digital_nomad": include one 2-hour Work Block per day
+  at a venue tagged as coworking or café with wifi.
+- If personas include "sports_fitness": include one 1-hour Training Window
+  per day at a gym, trail, or sports venue.
+- If personas include "pet_parent": only include venues explicitly tagged
+  dog_friendly.
+- If kids are present (ages: {kid_ages}): exclude any venue tagged as
+  bar, nightclub, or adult entertainment.
+- Flag any activity with a great photo opportunity with tag "instaworthy".
+- Flag schedule conflicts (less than 30 minutes between transit-separated
+  activities) in transit_warnings.
+
+Destination research context:
+{retrieved_context}
+
+Trip configuration:
+{trip_config_json}
+```
+
+**Output parser:** `PydanticOutputParser(pydantic_object=ItineraryResponse)` — enforces the schema and retries once on parse failure with a correction prompt.
+
+---
+
+### Chain 3: Alignment Scoring
+
+Applied per `ItineraryItem` after generation. Not an LLM call — pure Python heuristic.
+
+```python
+def calculate_alignment_score(item, trip_config, social_signals):
+    persona_match   = compute_vector_similarity(item.tags, trip_config.personas)
+    budget_score    = 1.0 if item.cost <= per_item_budget else max(0.0,
+                        1.0 - ((item.cost - per_item_budget) / per_item_budget))
+    access_score    = 1.0 if trip_config.accommodation.wheelchair_accessible
+                           and item.wheelchair == "yes" else 0.8
+    social_penalty  = 0.05 if "avoid" in social_signals.get(item.id, []) else 0.0
+
+    # Weights: these are FIXED in Phase 1 (see PRD Open Clarification #4)
+    score = (0.5 * persona_match) + (0.3 * budget_score) + (0.2 * access_score)
+    score -= social_penalty
+    return round(score * 100, 2)
+```
+
+> **Open Clarification #4:** Weights are currently hardcoded at 0.5/0.3/0.2. PM to confirm whether these should become persona-dynamic in a future release.
+
+---
+
+## 7. Frontend State Architecture (Zustand)
+
+### `useTripConfigStore`
+Persists wizard state. Cleared on session end.
+
+```typescript
+interface TripConfigStore {
+  // Wizard state
+  currentStep: number;
+  completedSteps: number[];
+
+  // Trip configuration
+  config: {
+    purpose: TripPurpose;
+    dates: { start: Date | null; end: Date | null; flexible: boolean };
+    scope: 'local' | 'domestic' | 'international';
+    origin: { city: string; iata?: string; lat: number; lon: number };
+    destination: { city: string; country: string; lat: number; lon: number } | null;
+    destinationMode: 'fixed' | 'exploring';
+    themes: TripTheme[];
+    personas: PersonaType[];
+    group: GroupComposition;
+    accommodation: AccommodationPrefs;
+    pace: 'relaxed' | 'moderate' | 'packed';
+    budget: { amount: number; currency: string };
+  };
+
+  // Actions
+  setStep: (step: number) => void;
+  updateConfig: (partial: Partial<TripConfig>) => void;
+  resetWizard: () => void;
+}
+```
+
+---
+
+### `useItineraryStore`
+Holds generated itinerary and map state.
+
+```typescript
+interface ItineraryStore {
+  days: ItineraryDay[];
+  activeDay: number;
+  hoveredItemId: string | null;   // Drives map pin highlight
+  generationStatus: 'idle' | 'loading' | 'success' | 'error';
+  generationProgress: { message: string; step: number; total: number };
+  error: { code: string; message: string; retryable: boolean } | null;
+  alignmentScore: number;
+
+  // Actions
+  setDays: (days: ItineraryDay[]) => void;
+  setHoveredItem: (id: string | null) => void;
+  setActiveDay: (day: number) => void;
+  retryGeneration: () => void;
+}
+```
+
+---
+
+### `useComparisonStore`
+
+```typescript
+interface ComparisonStore {
+  destinationA: DestinationInput | null;
+  destinationB: DestinationInput | null;
+  result: ComparisonResult | null;
+  status: 'idle' | 'loading' | 'success' | 'partial' | 'error';
+}
+```
+
+---
+
+## 8. PDF Document Schema
+
+Built with `react-pdf`. Components map to the following structure:
+
+```
+<Document>
+  <Page size="A4" style={styles.page}>
+
+    ── Cover Page ──
+    <TripCoverPage>
+      Title: "{Origin} → {Destination}"
+      Subtitle: "{dates} • {group_size} travelers • {budget}"
+      Generated by WanderPlan watermark
+
+    ── One section per day ──
+    <DaySection> (repeated for each ItineraryDay)
+      <DayHeader> Day {n} — {date} — {theme} </DayHeader>
+
+      <ActivityRow> (repeated for each ItineraryItem)
+        {time_start} – {time_end}  |  {title}
+        {description}
+        Tags: [Kid Friendly] [📸 Instaworthy] [Work Block]
+        ↗ {booking_url} (clickable hyperlink)
+
+      <TransitWarnings> (if any)
+        ⚠ {warning_message}
+
+    ── Final Page ──
+    <DashboardSummaryPage>
+      Visa advisory + disclaimer
+      Flight search link (Skyscanner)
+      Hotel search link (Booking.com)
+      Currency: 1 {home_currency} = {rate} {destination_currency}
+      Packing checklist (weather-adjusted)
+
+  </Page>
+</Document>
+```
+
+> **Open Clarification #6:** Map snapshot inclusion and exact page-per-day layout pending PM confirmation. Current default: no map images in PDF; all content on continuous pages.
+
+---
+
+## 9. Environment Variables Reference
+
+### `apps/api/.env`
+
+| Variable | Default | Description |
+|---|---|---|
+| `GROQ_API_KEY` | — | **Required.** Groq console API key |
+| `LLM_PROVIDER` | `groq` | `groq` or `ollama` |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server (local dev only) |
+| `OLLAMA_MODEL` | `llama3.2` | Ollama model name |
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant instance URL |
+| `QDRANT_API_KEY` | — | Qdrant Cloud only; blank for self-hosted |
+| `QDRANT_COLLECTION_WIKI` | `wiki` | Collection name for Wikivoyage/Wikipedia |
+| `QDRANT_COLLECTION_REDDIT` | `reddit` | Collection name for Reddit content |
+| `QDRANT_COLLECTION_OSM` | `osm_pois` | Collection name for OSM POIs |
+| `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | sentence-transformers model |
+| `ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated CORS origins |
+| `NOMINATIM_USER_AGENT` | `wanderplan/1.0` | Required by Nominatim ToS |
+| `NOMINATIM_RATE_LIMIT` | `1` | Requests per second (do not exceed 1) |
+| `REDDIT_REFRESH_HOURS` | `6` | Reddit ingestion frequency |
+| `REDDIT_MIN_SCORE` | `10` | Minimum upvotes to index a post |
+| `CONTENT_FILTER_LEVEL` | `strict` | `strict` or `moderate` |
+| `LLM_TIMEOUT_SECONDS` | `20` | Hard timeout for LLM calls |
+| `LOG_LEVEL` | `INFO` | Python logging level |
+
+### `apps/web/.env.local`
+
+| Variable | Default | Description |
+|---|---|---|
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | FastAPI backend base URL |
+| `NEXT_PUBLIC_APP_ENV` | `development` | `development` or `production` |
+
+---
+
+## 10. Dependency Risk Register
+
+| Dependency | Risk | Likelihood | Mitigation |
+|---|---|---|---|
+| **Groq API** (free tier) | Rate limit hit during peak usage; free tier discontinued | Medium | Implement Ollama fallback. Queue requests client-side if 429 received. |
+| **Wikivoyage HTML scraping** | Page structure change breaks parser | Low | Write defensive parsers with broad CSS selectors. Add CI smoke test that fetches a live page weekly. |
+| **Reddit JSON feeds** | Reddit rate-limits or blocks unauthenticated JSON access | Medium | Cache aggressively (6hr TTL). Gracefully degrade to Wikipedia-only content if Reddit unavailable. |
+| **Nominatim geocoding** | 1 req/s limit; ToS violation if exceeded | High | Enforce rate limiter in the proxy. Cache geocoding results by city name (LRU cache, TTL 30 days). |
+| **Open-Meteo** | Service outage | Low | Cache last-known weather data. Show "Weather data temporarily unavailable" badge on cards. |
+| **sentence-transformers model** | Large model file (~90MB) slows Railway cold starts | Medium | Pre-bake model into the Docker image. Consider quantized model variant for faster load. |
+| **YouTube oEmbed** | Video removed or geo-blocked | Medium | Handle oEmbed 404 silently — hide video embed slot if unavailable. |
+| **Qdrant on Railway** | Persistent volume reset on Railway plan changes | Low | Document volume backup procedure. Export Qdrant snapshots weekly. |
+| **Wikipedia API** | API structure change for section extraction | Low | Version-pin the API endpoint. Defensive error handling with section fallback. |
+| **OSM Overpass API** | Rate limits for large bounding box queries | Medium | Cache POI results per destination (TTL 7 days). Limit bounding box to 50km radius. |

@@ -48,6 +48,7 @@ export interface TripDates {
   end: string | null
   flexible: boolean
   season?: string
+  duration_days?: number  // Desired trip duration when dates are flexible
 }
 
 export interface TripConfig {

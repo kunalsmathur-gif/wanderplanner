@@ -139,3 +139,34 @@ export function streamItinerary(
 
   return () => controller.abort()
 }
+
+// ── Travel tips (Reddit + web articles fallback) ──────────────────────────
+export interface TravelTip {
+  title: string
+  text_preview: string
+  post_url: string
+  source: string
+  score: number
+  thumbnailUrl?: string | null  // YouTube thumbnail URL
+}
+
+export async function getTravelTips(destination: string, limit = 6): Promise<TravelTip[]> {
+  const { data } = await api.get('/api/travel-tips', {
+    params: { destination, limit },
+  })
+  return (data as { tips: TravelTip[] }).tips
+}
+export interface RedditPost {
+  title: string
+  text_preview: string
+  post_url: string
+  subreddit: string
+  score: number
+}
+
+export async function getRedditHighlights(destination: string, limit = 5): Promise<RedditPost[]> {
+  const { data } = await api.get('/api/reddit-highlights', {
+    params: { destination, limit },
+  })
+  return (data as { posts: RedditPost[] }).posts
+}

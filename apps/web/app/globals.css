@@ -1,28 +1,50 @@
 @import "tailwindcss";
 
-/* ── WanderPlan design tokens (PRD Section 5.1) ─────────────────────── */
+/* ── WanderPlan design tokens — Travel Artifacts Palette ─────────────────────── */
 @theme inline {
-  /* Brand colours */
-  --color-brand:      #1E40AF; /* Horizon Blue  */
-  --color-accent:     #047857; /* Emerald Green */
-  --color-warning:    #D97706; /* Amber Gold    */
+  /* Primary palette — rooted in physical travel materials */
+  --color-passport-navy:   #1A3A52; /* Deep trustworthy blue (replaces old brand) */
+  --color-horizon-amber:   #E88D3A; /* Sunset glow, warmth, adventure */
+  --color-map-ivory:       #F7F4EF; /* Aged paper texture */
+  --color-ink-charcoal:    #2C3338; /* Grounded body text */
+  --color-sky-periwinkle:  #A8BFDB; /* Light accents */
+  --color-earth-clay:      #B85C3F; /* CTAs, urgency */
 
-  /* Neutrals */
-  --color-surface:    #F1F5F9; /* container bg  */
-  --color-ink:        #0F172A; /* body text     */
+  /* Semantic mappings for easier migration */
+  --color-brand:      var(--color-passport-navy);
+  --color-accent:     var(--color-horizon-amber);
+  --color-warning:    var(--color-earth-clay);
+  --color-surface:    var(--color-map-ivory);
+  --color-ink:        var(--color-ink-charcoal);
 
-  /* Typography — PRD specifies Inter/system sans */
-  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  /* Typography — Distinctive trio */
+  --font-display: var(--font-fraunces), ui-serif, Georgia, serif;          /* Headers, Anya's name */
+  --font-body:    var(--font-inter), ui-sans-serif, system-ui, sans-serif;  /* Main content */
+  --font-mono:    var(--font-jetbrains), "Courier New", monospace;    /* Timestamps, data */
+  --font-sans:    var(--font-body); /* Default fallback */
 
   /* Elevation */
-  --shadow-card: 0 4px 6px -1px rgb(0 0 0 / 0.05);
+  --shadow-card: 0 2px 8px rgb(26 58 82 / 0.1);
+  --shadow-polaroid: 0 4px 12px rgb(26 58 82 / 0.15);
 
-  /* Border radius — PRD: 8px global */
-  --radius-card: 8px;
+  /* Border radius — Reduced for travel stamp aesthetic */
+  --radius-card: 4px;
+  --radius-stamp: 2px;
 }
 
 body {
-  font-family: var(--font-sans);
-  color: var(--color-ink);
+  font-family: var(--font-body);
+  color: var(--color-ink-charcoal);
   background: #ffffff;
+  letter-spacing: -0.01em; /* Tighter Inter for confidence */
 }
+
+/* Typography scale with intentional weights */
+h1, h2, h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+
+.font-display { font-family: var(--font-display); }
+.font-body { font-family: var(--font-body); font-weight: 500; }
+.font-mono { font-family: var(--font-mono); }

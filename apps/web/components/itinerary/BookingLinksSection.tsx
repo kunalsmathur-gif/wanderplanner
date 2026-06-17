@@ -106,7 +106,7 @@ export function BookingLinksSection() {
   const checkout = config.dates.end ?? ''
   const adults = Math.max(1, config.group.adults + config.group.seniors)
 
-  if (!dest || !checkin) return null
+  if (!dest) return null
 
   const links = buildLinks(origin, dest, checkin, checkout, adults)
 
