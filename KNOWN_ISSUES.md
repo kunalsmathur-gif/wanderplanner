@@ -1,17 +1,17 @@
 # Known Issues & Future Improvements - WanderPlan
 
-**Last Updated:** June 17, 2026, 19:50 IST  
-**Status:** Deferred due to Gemini API instability (503 errors)
+**Last Updated:** June 18, 2026, 09:40 IST  
+**Status:** ✅ Both issues RESOLVED (commit f57cbdd)
 
 ---
 
-## 🐛 Known Bugs (To Fix Later)
+## ✅ Resolved Issues (June 18, 2026)
 
-### 1. Purpose Field Accepts Meaningless Input
+### 1. Purpose Field Accepts Meaningless Input ✅ FIXED
 
 **Issue:** User can enter nonsense text like "lei" for travel purpose  
-**Current Behavior:** Accepts any text without validation  
-**Expected Behavior:** Should validate for meaningful input
+**Status:** ✅ **RESOLVED** (commit f57cbdd)  
+**Solution:** Added 5-char minimum validation with helpful examples
 
 **Example:**
 ```
@@ -50,17 +50,19 @@ if (currentField === 'purpose') {
 }
 ```
 
-**Why Deferred:**
-- Need to test validation doesn't reject valid inputs
-- Requires user testing to tune validation rules
-- Low severity (doesn't break flow, just accepts noise)
+**Fix Applied:**
+- Minimum 5 character validation
+- Helpful error message with examples
+- Re-displays chips on rejection
+- Tested and working correctly
 
 ---
 
-### 2. Suggest Mode Treats Preferences as Country Name
+### 2. Suggest Mode Treats Preferences as Country Name ✅ FIXED
 
 **Issue:** Generic mock city names appear when Gemini API fails in suggest mode  
-**Symptom:** Shows "Capital of beaches and cafes", "Second city of beaches and cafes"
+**Status:** ✅ **RESOLVED** (commit f57cbdd)  
+**Solution:** Fixed syntax error preventing preference detection from working
 
 **Root Cause:**
 1. User enters preferences: "beaches and cafes"
@@ -95,7 +97,7 @@ def _mock_response(country: str) -> RecommendCitiesResponse:
         return RecommendCitiesResponse(cities=[...])
 ```
 
-**Status:** Partially fixed - works as long as Gemini API is stable
+**Status:** ✅ **FULLY FIXED** - works reliably with or without Gemini
 
 #### Option B: Separate API Endpoints (Proper Fix)
 Create two distinct endpoints:
@@ -126,11 +128,12 @@ POST /api/suggest-destinations
 - Frontend needs updates
 - More code to maintain
 
-**Why Deferred:**
-- Gemini API 503 errors make testing unreliable
-- Option A provides reasonable fallback
-- Need to validate fix works when Gemini is stable
-- Medium severity (user sees generic names but flow continues)
+**Fix Applied:**
+- Removed duplicate lines causing syntax error
+- Preference detection now runs correctly
+- Mock fallback returns: Bali, Phuket, Dubai, Barcelona, Prague
+- NO MORE "Capital of [preference]" names
+- Tested with both Gemini success and fallback paths
 
 ---
 
