@@ -506,8 +506,19 @@ export function ConversationalWizard() {
       }
 
       if (currentField === 'purpose') {
-        updateConfig({ purpose: stripEmoji(value) })
-        addLabel('purpose', stripEmoji(value))
+        const trimmed = stripEmoji(value).trim()
+        
+        // Minimum length validation
+        if (trimmed.length < 5) {
+          addMessage(botMessage(
+            `Please provide more detail about your trip purpose. For example: "birthday celebration", "honeymoon", "family reunion", "Diwali festival"`,
+            { chips: PURPOSE_CHIPS }
+          ))
+          return
+        }
+        
+        updateConfig({ purpose: trimmed })
+        addLabel('purpose', trimmed)
         pushNextField('origin')
         return
       }

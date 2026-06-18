@@ -169,5 +169,3 @@ def _mock_response(country: str) -> RecommendCitiesResponse:
     ])
     
     return RecommendCitiesResponse(cities=[RecommendedCity(**c) for c in cities_data])
-    ])
-    return RecommendCitiesResponse(cities=[RecommendedCity(**c) for c in cities_data])
