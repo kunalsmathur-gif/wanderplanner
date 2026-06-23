@@ -1,9 +1,62 @@
 from __future__ import annotations
-"""Comparison engine — assembles side-by-side destination data."""
+"""Comparison engine — assembles side-by-side destination data with AI qualitative analysis."""
+
+import asyncio
+import json
+import logging
+
+import google.generativeai as google_genai
+
+from core.config import settings
 from models.itinerary import ComparisonResponse, ComparisonParameter
 from models.trip import TripConfig, DestinationInput
 from services.geocode import geocode_city
 from services.best_time import _fetch_weather
+
+logger = logging.getLogger(__name__)
+
+_QUALITATIVE_PROMPT = """\
+You are a world travel expert. Compare two travel destinations for an Indian traveller.
+
+Destination A: {dest_a}
+Destination B: {dest_b}
+
+Trip context:
+- Purpose: {purpose}
+- Duration: {duration} days
+- Group: {group}
+- Budget (INR): {budget}
+- Themes: {themes}
+- Travel pace: {pace}
+
+Return a JSON array of exactly 10 comparison parameters. Each element must be:
+{{
+  "parameter": "Short label (3-5 words)",
+  "values": {{
+    "{dest_a}": "Concise value (1-2 sentences max)",
+    "{dest_b}": "Concise value (1-2 sentences max)"
+  }},
+  "winner": "{dest_a}" | "{dest_b}" | null
+}}
+
+Parameters to cover (use these exact labels):
+1. "Food & Cuisine"
+2. "Culture & Heritage"
+3. "Adventure Activities"
+4. "Family Friendliness"
+5. "Nightlife & Entertainment"
+6. "English Proficiency"
+7. "Safety & Crime"
+8. "Best Travel Season"
+9. "Cost of Living"
+10. "Crowd & Tourism Level"
+
+Rules:
+- winner is the better destination for the trip context provided, or null if comparable
+- Keep each value under 20 words
+- Be factual and specific, not generic
+- Respond with ONLY the JSON array, no markdown fences
+"""
 
 
 async def build_comparison(
@@ -11,25 +64,34 @@ async def build_comparison(
 ) -> ComparisonResponse:
     params: list[ComparisonParameter] = []
     partial_failures: list[str] = []
-    data: dict[str, dict] = {}
+    weather_data: dict[str, dict] = {}
 
-    for dest in destinations:
+    # Fetch weather data for both destinations concurrently
+    async def _fetch_dest_data(dest: DestinationInput) -> None:
         try:
             geo = await geocode_city(dest.city)
             weather = await _fetch_weather(dest.city)
             avg_temp = (
                 sum(w.avg_temp_c for w in weather) / len(weather) if weather else None
             )
-            data[dest.city] = {"geo": geo, "avg_temp": avg_temp, "weather": weather}
+            weather_data[dest.city] = {"geo": geo, "avg_temp": avg_temp}
         except Exception:
             partial_failures.append(dest.city)
-            data[dest.city] = {}
+            weather_data[dest.city] = {}
+
+    await asyncio.gather(*[_fetch_dest_data(d) for d in destinations])
 
     dest_names = [d.city for d in destinations]
 
-    params.append(_compare_weather(dest_names, data))
-    params.append(_compare_budget_estimate(dest_names, trip_config))
-    params.append(_compare_visa_friction(dest_names))
+    # Static factual parameters
+    weather_param = _compare_weather(dest_names, weather_data)
+    if weather_param:
+        params.append(weather_param)
+
+    # AI qualitative parameters (10 rich dimensions)
+    if len(destinations) >= 2:
+        ai_params = await _compare_qualitative(destinations[0].city, destinations[1].city, trip_config)
+        params.extend(ai_params)
 
     params = [p for p in params if p is not None]
     _annotate_winners(params)
@@ -41,30 +103,88 @@ def _compare_weather(names: list[str], data: dict) -> ComparisonParameter | None
     values = {}
     for name in names:
         temp = data.get(name, {}).get("avg_temp")
-        values[name] = f"{round(temp, 1)}°C avg" if temp is not None else "Data unavailable"
+        values[name] = f"{round(temp, 1)}°C annual avg" if temp is not None else "Data unavailable"
     return ComparisonParameter(parameter="Average Temperature", values=values)
 
 
-def _compare_budget_estimate(
-    names: list[str], trip_config: TripConfig
-) -> ComparisonParameter:
-    # Placeholder: real cost-of-living data deferred to Phase 2 API integrations
-    values = {n: "See booking platforms" for n in names}
-    return ComparisonParameter(
-        parameter="Total Estimated Budget",
-        unit=trip_config.budget.currency,
-        values=values,
+async def _compare_qualitative(
+    dest_a: str, dest_b: str, trip_config: TripConfig
+) -> list[ComparisonParameter]:
+    """Ask Gemini for 10 qualitative comparison parameters."""
+    if settings.llm_provider == "mock" or not settings.gemini_api_key:
+        return _mock_qualitative(dest_a, dest_b)
+
+    group = trip_config.group
+    group_desc = f"{group.adults} adult(s)"
+    if group.kids:
+        group_desc += f" + {len(group.kids)} kid(s)"
+
+    prompt = _QUALITATIVE_PROMPT.format(
+        dest_a=dest_a,
+        dest_b=dest_b,
+        purpose=trip_config.purpose or "leisure",
+        duration=trip_config.dates.duration_days or 7,
+        group=group_desc,
+        budget=trip_config.budget.amount,
+        themes=", ".join(trip_config.themes) if trip_config.themes else "general",
+        pace=trip_config.pace,
     )
 
+    try:
+        client = google_genai.Client(api_key=settings.gemini_api_key)
 
-def _compare_visa_friction(names: list[str]) -> ComparisonParameter:
-    values = {n: "Check Wikivoyage visa section" for n in names}
-    return ComparisonParameter(parameter="Visa Requirements", values=values)
+        def _call_sync() -> str:
+            resp = client.models.generate_content(
+                model=settings.gemini_model,
+                contents=prompt,
+            )
+            return resp.text or ""
+
+        raw = await asyncio.get_event_loop().run_in_executor(None, _call_sync)
+        rows = json.loads(raw.strip())
+
+        return [
+            ComparisonParameter(
+                parameter=row["parameter"],
+                values={dest_a: str(row["values"].get(dest_a, "—")),
+                        dest_b: str(row["values"].get(dest_b, "—"))},
+                winner=row.get("winner"),
+            )
+            for row in rows
+            if isinstance(row, dict)
+        ]
+    except Exception as exc:
+        logger.warning("AI comparison failed: %s — using fallback", exc)
+        return _mock_qualitative(dest_a, dest_b)
 
 
-def _annotate_winners(params: list[ComparisonParameter]):
+def _mock_qualitative(dest_a: str, dest_b: str) -> list[ComparisonParameter]:
+    labels = [
+        "Food & Cuisine",
+        "Culture & Heritage",
+        "Adventure Activities",
+        "Family Friendliness",
+        "Nightlife & Entertainment",
+        "English Proficiency",
+        "Safety & Crime",
+        "Best Travel Season",
+        "Cost of Living",
+        "Crowd & Tourism Level",
+    ]
+    return [
+        ComparisonParameter(
+            parameter=label,
+            values={dest_a: "See travel guides", dest_b: "See travel guides"},
+        )
+        for label in labels
+    ]
+
+
+def _annotate_winners(params: list[ComparisonParameter]) -> None:
     for param in params:
-        numeric_vals = {}
+        if param.winner:
+            continue  # already set by AI
+        numeric_vals: dict[str, float] = {}
         for k, v in param.values.items():
             try:
                 numeric_vals[k] = float(str(v).split("°")[0].split(" ")[0])

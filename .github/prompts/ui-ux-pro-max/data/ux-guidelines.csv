@@ -1,0 +1,23 @@
+No,Category,Issue,Platform,Description,Do,Don't,Code Example Good,Code Example Bad,Severity
+1,Navigation,Smooth Scroll,Web,Anchor links should scroll smoothly to target section,Use scroll-behavior: smooth on html element,Jump directly without transition,html { scroll-behavior: smooth; },<a href='#section'> without CSS,High
+2,Navigation,Sticky Navigation,Web,Fixed nav should not obscure content,Add padding-top to body equal to nav height,Let nav overlap first section content,pt-20 (if nav is h-20),No padding compensation,Medium
+7,Animation,Excessive Motion,All,Too many animations cause distraction and motion sickness,Animate 1-2 key elements per view maximum,Animate everything that moves,Single hero animation,animate-bounce on 5+ elements,High
+8,Animation,Duration Timing,All,Animations should feel responsive not sluggish,Use 150-300ms for micro-interactions,Use animations longer than 500ms for UI,transition-all duration-200,duration-1000,Medium
+9,Animation,Reduced Motion,All,Respect user's motion preferences,Check prefers-reduced-motion media query,Ignore accessibility motion settings,@media (prefers-reduced-motion: reduce),No motion query check,High
+10,Animation,Loading States,All,Show feedback during async operations,Use skeleton screens or spinners,Leave UI frozen with no feedback,animate-pulse skeleton,Blank screen while loading,High
+15,Layout,Z-Index Management,Web,Stacking context conflicts cause hidden elements,Define z-index scale system (10 20 30 50),Use arbitrary large z-index values,z-10 z-20 z-50,z-[9999],High
+19,Layout,Content Jumping,Web,Layout shift when content loads is jarring,Reserve space for async content,Let images/content push layout around,aspect-ratio or fixed height,No dimensions on images,High
+22,Touch,Touch Target Size,Mobile,Small buttons are hard to tap accurately,Minimum 44x44px touch targets,Tiny clickable areas,min-h-[44px] min-w-[44px],w-6 h-6 buttons,High
+28,Interaction,Focus States,All,Keyboard users need visible focus indicators,Use visible focus rings on interactive elements,Remove focus outline without replacement,focus:ring-2 focus:ring-blue-500,outline-none without alternative,High
+29,Interaction,Hover States,Web,Visual feedback on interactive elements,Change cursor and add subtle visual change,No hover feedback on clickable elements,hover:bg-gray-100 cursor-pointer,No hover style,Medium
+32,Interaction,Loading Buttons,All,Prevent double submission during async actions,Disable button and show loading state,Allow multiple clicks during processing,disabled={loading} spinner,Button clickable while loading,High
+33,Interaction,Error Feedback,All,Users need to know when something fails,Show clear error messages near problem,Silent failures with no feedback,Red border + error message,No indication of error,High
+36,Accessibility,Color Contrast,All,Text must be readable against background,Minimum 4.5:1 ratio for normal text,Low contrast text,#333 on white (7:1),#999 on white (2.8:1),High
+40,Accessibility,ARIA Labels,All,Interactive elements need accessible names,Add aria-label for icon-only buttons,Icon buttons without labels,aria-label=Close menu,<button><Icon/></button>,High
+41,Accessibility,Keyboard Navigation,Web,All functionality accessible via keyboard,Tab order matches visual order,Keyboard traps or illogical tab order,tabIndex for custom order,Unreachable elements,High
+43,Accessibility,Form Labels,All,Inputs must have associated labels,Use label with for attribute or wrap input,Placeholder-only inputs,<label for=email>,placeholder=Email only,High
+54,Forms,Input Labels,All,Every input needs a visible label,Always show label above or beside input,Placeholder as only label,<label>Email</label><input>,placeholder=Email only,High
+78,Feedback,Loading Indicators,All,Show system status during waits,Show spinner/skeleton for operations > 300ms,No feedback during loading,Skeleton or spinner,Frozen UI,High
+79,Feedback,Empty States,All,Guide users when no content exists,Show helpful message and action,Blank empty screens,No items yet. Create one!,Empty white space,Medium
+80,Feedback,Error Recovery,All,Help users recover from errors,Provide clear next steps,Error without recovery path,Try again button + help link,Error message only,Medium
+81,Feedback,Progress Indicators,All,Show progress for multi-step processes,Step indicators or progress bar,No indication of progress,Step 2 of 4 indicator,No step information,Medium

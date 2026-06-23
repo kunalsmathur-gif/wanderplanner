@@ -7,6 +7,7 @@ import { useWizardChatStore } from '@/store/wizardChatStore'
 import { getTravelTips, type TravelTip } from '@/lib/api'
 import { MapWrapper } from '@/components/map/MapWrapper'
 import { BestTimeWidget } from '@/components/dashboard/BestTimeWidget'
+import { BookingLinksSection } from '@/components/itinerary/BookingLinksSection'
 
 export function Column3Sidebar() {
   const days = useItineraryStore((state) => state.days)
@@ -61,25 +62,31 @@ export function Column3Sidebar() {
       <MapWrapper />
 
       {destination && (
-        <div className="border-t border-slate-100 pt-2">
+        <div className="border-t border-[var(--_border)] pt-2">
           <BestTimeWidget destination={destination} />
         </div>
       )}
 
+      {destination && (
+        <div className="border-t border-[var(--_border)] pt-2">
+          <BookingLinksSection />
+        </div>
+      )}
+
       <div>
-        <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-          🌐 Travel Tips &amp; Community
+        <h4 className="mb-2 text-xs font-semibold uppercase tracking-widest text-[var(--_muted-fg)]">
+          Travel Tips &amp; Community
         </h4>
 
         {!destination ? (
-          <p className="text-xs text-slate-400">No destination selected.</p>
+          <p className="text-xs text-[var(--_muted-fg)]">No destination selected.</p>
         ) : loadingTips ? (
           <div className="space-y-2">
             <TipSkeletonCard />
             <TipSkeletonCard />
           </div>
         ) : tips.length === 0 ? (
-          <p className="text-xs text-slate-500">No tips found for this destination yet.</p>
+          <p className="text-xs text-[var(--_muted-fg)]">No tips found for this destination yet.</p>
         ) : (
           <div className="space-y-2">
             {tips.map((tip, idx) => (
@@ -88,28 +95,28 @@ export function Column3Sidebar() {
                 href={tip.post_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="block rounded-xl border border-slate-200 bg-white transition-colors hover:border-[#1E40AF] overflow-hidden"
+                className="block overflow-hidden rounded-xl border border-[var(--_border)] bg-[var(--_card)] transition-colors hover:border-[var(--_primary)]"
               >
                 {tip.thumbnailUrl && (
                   <img
                     src={tip.thumbnailUrl}
                     alt={tip.title}
-                    className="w-full h-32 object-cover"
+                    className="h-32 w-full object-cover"
                     loading="lazy"
                   />
                 )}
                 <div className="p-3">
                   <div className="mb-1.5 flex items-center justify-between gap-2">
-                    <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-600">
+                    <span className="rounded-full bg-[var(--_muted)] px-2 py-0.5 text-[11px] font-semibold text-[var(--_primary)]">
                       {tip.source}
                     </span>
                     {tip.score > 0 && (
-                      <span className="text-[11px] font-medium text-slate-400">⬆ {tip.score}</span>
+                      <span className="text-[11px] font-medium text-[var(--_muted-fg)]">↑ {tip.score}</span>
                     )}
                   </div>
-                  <p className="line-clamp-2 text-sm font-semibold text-slate-800">{tip.title}</p>
+                  <p className="line-clamp-2 text-sm font-semibold text-[var(--_fg)]">{tip.title}</p>
                   {tip.text_preview && (
-                    <p className="mt-1 line-clamp-3 text-xs text-slate-500">{tip.text_preview}</p>
+                    <p className="mt-1 line-clamp-3 text-xs text-[var(--_muted-fg)]">{tip.text_preview}</p>
                   )}
                 </div>
               </a>
@@ -123,11 +130,10 @@ export function Column3Sidebar() {
 
 function TipSkeletonCard() {
   return (
-    <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
-      <div className="h-4 w-20 animate-pulse rounded-full bg-slate-100" />
-      <div className="h-4 w-full animate-pulse rounded bg-slate-100" />
-      <div className="h-4 w-4/5 animate-pulse rounded bg-slate-100" />
-      <div className="h-3 w-full animate-pulse rounded bg-slate-100" />
+    <div className="space-y-2 rounded-xl border border-[var(--_border)] bg-[var(--_card)] p-3">
+      <div className="h-4 w-20 animate-pulse rounded-full bg-[var(--_muted)]" />
+      <div className="h-4 w-full animate-pulse rounded bg-[var(--_muted)]" />
+      <div className="h-4 w-4/5 animate-pulse rounded bg-[var(--_muted)]" />
     </div>
   )
 }

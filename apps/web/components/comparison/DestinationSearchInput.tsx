@@ -31,7 +31,6 @@ export function DestinationSearchInput({ label, value, onChange }: Props) {
       setLoading(true)
       try {
         const result = await geocode(query)
-        // Wrap single result into array for UI
         setSuggestions([result])
         setOpen(true)
       } catch {
@@ -43,6 +42,7 @@ export function DestinationSearchInput({ label, value, onChange }: Props) {
   }, [query])
 
   function handleSelect(s: GeocodeSuggestion) {
+    // Use the first segment of display_name (already English from backend)
     const city = s.display_name.split(',')[0].trim()
     setQuery(city)
     setOpen(false)
@@ -51,27 +51,28 @@ export function DestinationSearchInput({ label, value, onChange }: Props) {
 
   return (
     <div className="relative">
-      <label className="block text-xs font-medium text-slate-500 mb-1">{label}</label>
+      <label className="mb-1 block text-xs font-medium text-[var(--_muted-fg)]">{label}</label>
       <div className="relative">
         <input
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => suggestions.length > 0 && setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
           placeholder="City, country…"
-          className="w-full h-10 px-3 border border-slate-300 rounded-lg text-sm focus:outline-none focus:border-[#1E40AF] bg-white"
+          className="input"
         />
         {loading && (
-          <span className="absolute right-3 top-2.5 w-4 h-4 border-2 border-[#1E40AF] border-t-transparent rounded-full animate-spin" />
+          <span className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin rounded-full border-2 border-[var(--_primary)] border-t-transparent" />
         )}
       </div>
       {open && suggestions.length > 0 && (
-        <ul className="absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg text-sm overflow-hidden">
+        <ul className="absolute left-0 right-0 z-50 mt-1 overflow-hidden rounded-xl border border-[var(--_border)] bg-[var(--_card)] shadow-lg">
           {suggestions.map((s, i) => (
             <li
               key={i}
-              onClick={() => handleSelect(s)}
-              className="px-3 py-2.5 cursor-pointer hover:bg-blue-50 text-slate-700 border-b border-slate-100 last:border-0"
+              onMouseDown={() => handleSelect(s)}
+              className="cursor-pointer border-b border-[var(--_border)] px-3 py-2.5 text-sm text-[var(--_fg)] last:border-0 hover:bg-[var(--_muted)]"
             >
               {s.display_name}
             </li>

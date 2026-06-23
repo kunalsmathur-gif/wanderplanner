@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { AlertTriangle, X } from 'lucide-react'
 
 export function MobileWarningBanner() {
   const [dismissed, setDismissed] = useState(false)
@@ -9,18 +10,18 @@ export function MobileWarningBanner() {
   return (
     <div
       role="alert"
-      className="lg:hidden flex items-start gap-3 bg-amber-50 border-b border-amber-200 px-4 py-3 text-sm text-amber-800"
+      className="flex items-start gap-3 border-b border-[var(--_border)] bg-[var(--_card)] px-4 py-3 text-sm text-[var(--_fg)] lg:hidden"
     >
-      <span aria-hidden="true">⚠️</span>
+      <AlertTriangle size={16} className="mt-0.5 shrink-0 text-[var(--_accent)]" aria-hidden="true" />
       <p className="flex-1">
         WanderPlan is designed for desktop. For the best experience, open it on a laptop or desktop screen (1200px+).
       </p>
       <button
         onClick={() => setDismissed(true)}
         aria-label="Dismiss warning"
-        className="text-amber-600 hover:text-amber-900 font-bold shrink-0"
+        className="shrink-0 rounded p-0.5 text-[var(--_muted-fg)] transition-colors hover:text-[var(--_fg)]"
       >
-        ✕
+        <X size={16} />
       </button>
     </div>
   )

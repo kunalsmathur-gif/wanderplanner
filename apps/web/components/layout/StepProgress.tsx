@@ -1,5 +1,6 @@
 'use client'
 
+import { Check } from 'lucide-react'
 import type { AppStep } from '@/store/appStore'
 
 const STEPS = [
@@ -10,7 +11,10 @@ const STEPS = [
 
 export function StepProgress({ currentStep }: { currentStep: AppStep }) {
   return (
-    <nav aria-label="Wizard progress" className="flex items-center gap-0 bg-white border-b border-slate-200 px-6 py-2 shrink-0">
+    <nav
+      aria-label="Wizard progress"
+      className="flex shrink-0 items-center border-b border-[var(--_border)] bg-[var(--_card)] px-6 py-2.5"
+    >
       <ol className="flex items-center">
         {STEPS.map((s, i) => {
           const stepNum = (i + 1) as AppStep
@@ -23,21 +27,25 @@ export function StepProgress({ currentStep }: { currentStep: AppStep }) {
                 <span
                   aria-hidden="true"
                   className={[
-                    'w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold shrink-0',
-                    isActive ? 'bg-[#1E40AF] text-white' : '',
-                    isDone ? 'bg-[#047857] text-white' : '',
-                    !isActive && !isDone ? 'bg-slate-200 text-slate-500' : '',
+                    'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
+                    isActive
+                      ? 'bg-[var(--_primary)] text-[var(--_on-primary)]'
+                      : isDone
+                        ? 'bg-[var(--_success)] text-white'
+                        : 'bg-[var(--_muted)] text-[var(--_muted-fg)]',
                   ].join(' ')}
                 >
-                  {isDone ? '✓' : stepNum}
+                  {isDone ? <Check size={12} strokeWidth={3} /> : stepNum}
                 </span>
                 <span
                   aria-current={isActive ? 'step' : undefined}
                   className={[
                     'text-sm',
-                    isActive ? 'text-[#1E40AF] font-medium' : '',
-                    isDone ? 'text-[#047857]' : '',
-                    !isActive && !isDone ? 'text-slate-400' : '',
+                    isActive
+                      ? 'font-semibold text-[var(--_primary)]'
+                      : isDone
+                        ? 'text-[var(--_success)]'
+                        : 'text-[var(--_muted-fg)]',
                   ].join(' ')}
                 >
                   {s.label}
@@ -50,8 +58,8 @@ export function StepProgress({ currentStep }: { currentStep: AppStep }) {
                 <div
                   aria-hidden="true"
                   className={[
-                    'h-px w-10 mx-3',
-                    isDone ? 'bg-[#047857]' : 'bg-slate-200',
+                    'mx-3 h-px w-10',
+                    isDone ? 'bg-[var(--_success)]' : 'bg-[var(--_border)]',
                   ].join(' ')}
                 />
               )}

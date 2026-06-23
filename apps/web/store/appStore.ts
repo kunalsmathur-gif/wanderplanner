@@ -19,7 +19,7 @@ interface AppStore {
 }
 
 export const useAppStore = create<AppStore>((set) => ({
-  wizardOpen: true,
+  wizardOpen: false,
   step: 1,
   step3View: 'itinerary',
   openWizard: () => set({ wizardOpen: true, step: 1 }),

@@ -1,17 +1,32 @@
 'use client'
 
 import dynamic from 'next/dynamic'
+import { Edit2, BarChart2, MapPin, Wallet, CalendarDays, Target, Wifi } from 'lucide-react'
+import { BookingLinksSection } from '@/components/itinerary/BookingLinksSection'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useAppStore } from '@/store/appStore'
 import { CurrencyWidget } from '@/components/dashboard/CurrencyWidget'
 import { ExpenseBreakupCard } from '@/components/dashboard/ExpenseBreakupCard'
-import { BookingLinksSection } from '@/components/itinerary/BookingLinksSection'
 
 const PdfDownloadButton = dynamic(
   () => import('@/components/pdf/PdfDownloadButton').then((m) => ({ default: m.PdfDownloadButton })),
-  { ssr: false, loading: () => <div className="h-9 w-full animate-pulse rounded-lg bg-slate-100" /> },
+  { ssr: false, loading: () => <div className="h-9 w-full animate-pulse rounded-lg bg-[var(--_muted)]" /> },
 )
+
+function MetricRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return (
+    <div className="flex items-center gap-3 border-b border-[var(--_border)] py-2.5 last:border-0">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[var(--_muted)] text-[var(--_primary)]">
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-[var(--_muted-fg)]">{label}</p>
+        <p className="truncate text-sm font-semibold text-[var(--_fg)]">{value}</p>
+      </div>
+    </div>
+  )
+}
 
 export function Column1Metrics() {
   const budget = useTripConfigStore((state) => state.config.budget)
@@ -22,67 +37,46 @@ export function Column1Metrics() {
   const openWizard = useAppStore((state) => state.openWizard)
 
   const totalActivities = days.reduce((sum, day) => sum + day.items.length, 0)
+  void totalActivities // used only for potential future re-add
 
   return (
     <div className="space-y-4 p-4">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-        🛄 Trip Metrics
+      <h3 className="text-xs font-semibold uppercase tracking-widest text-[var(--_muted-fg)]">
+        Trip Metrics
       </h3>
 
-      <div className="space-y-0">
-        <MetricRow icon="📍" label="Destination" value={destination?.city ?? '—'} />
-        <MetricRow icon="💶" label="Budget" value={`${budget.currency} ${budget.amount.toLocaleString()}`} />
-        <MetricRow icon="🗓️" label="Days" value={String(days.length)} />
-        <MetricRow icon="🎯" label="Activities" value={String(totalActivities)} />
-        <MetricRow icon="🛂" label="Visa" value="Check embassy" />
-        <MetricRow icon="📶" label="eSIM" value="See provider" />
+      <div className="overflow-hidden rounded-xl border border-[var(--_border)] bg-[var(--_card)]">
+        <MetricRow icon={<MapPin size={14} />}       label="Destination" value={destination?.city ?? '—'} />
+        <MetricRow icon={<Wallet size={14} />}       label="Budget"      value={`${budget.currency} ${budget.amount.toLocaleString()}`} />
+        <MetricRow icon={<CalendarDays size={14} />} label="Days"        value={String(days.length)} />
       </div>
 
       <div className="space-y-2 pt-1">
-        <button
-          onClick={openWizard}
-          className="h-9 w-full rounded-lg border border-slate-300 text-xs font-semibold text-slate-700 transition-all hover:bg-slate-100"
-          type="button"
-        >
-          ✏️ Edit Trip
+        <button onClick={openWizard} type="button" className="btn btn-ghost w-full">
+          <Edit2 size={14} />
+          Edit Trip
         </button>
         <button
           onClick={() => setStep3View(step3View === 'comparison' ? 'itinerary' : 'comparison')}
-          className={[
-            'h-9 w-full rounded-lg border text-xs font-semibold transition-all',
-            step3View === 'comparison'
-              ? 'border-[#1E40AF] bg-[#1E40AF] text-white'
-              : 'border-[#1E40AF] text-[#1E40AF] hover:bg-blue-50',
-          ].join(' ')}
           type="button"
+          className={step3View === 'comparison' ? 'btn btn-primary w-full' : 'btn btn-outline w-full'}
         >
-          {step3View === 'comparison' ? '← Back to itinerary' : '🗺️ Compare destinations'}
+          <BarChart2 size={14} />
+          {step3View === 'comparison' ? 'Back to itinerary' : 'Compare destinations'}
         </button>
         <PdfDownloadButton />
       </div>
 
       {destination?.city && (
         <>
-          <div className="border-t border-slate-100 pt-2">
-            <BookingLinksSection />
-          </div>
-          <div className="border-t border-slate-100 pt-2">
+          <div className="border-t border-[var(--_border)] pt-3">
             <ExpenseBreakupCard />
           </div>
-          <div className="border-t border-slate-100 pt-2">
+          <div className="border-t border-[var(--_border)] pt-3">
             <CurrencyWidget baseCurrency={budget.currency} />
           </div>
         </>
       )}
-    </div>
-  )
-}
-
-function MetricRow({ icon, label, value }: { icon: string; label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between border-b border-slate-100 py-1.5 last:border-0">
-      <span className="text-xs text-slate-500">{icon} {label}</span>
-      <span className="ml-2 max-w-[110px] truncate text-xs font-medium text-[#0F172A]">{value}</span>
     </div>
   )
 }

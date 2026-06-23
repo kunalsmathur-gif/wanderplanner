@@ -2,23 +2,36 @@
 
 import { useAppStore } from '@/store/appStore'
 import { useItineraryStore } from '@/store/itineraryStore'
+import { WanderplanLogo } from '@/components/common/WanderplanLogo'
+import { ThemeToggle } from '@/components/common/ThemeToggle'
 
 export function TopNav() {
   const step = useAppStore((s) => s.step)
   const days = useItineraryStore((s) => s.days)
 
   return (
-    <header role="banner" className="h-12 bg-[#1E40AF] text-white flex items-center px-6 gap-4 shrink-0">
-      <span className="font-semibold text-base tracking-wide select-none">
-        <span aria-hidden="true">✈ </span>WanderPlan
-      </span>
+    <header
+      role="banner"
+      className="nav-header flex h-14 shrink-0 items-center gap-4 px-5"
+    >
+      <WanderplanLogo size="sm" inverted />
+
       {step > 1 && days.length > 0 && (
-        <span className="text-sm text-blue-200 truncate hidden lg:block" aria-label="Trip date range">
+        <span
+          className="hidden truncate text-sm text-white/70 lg:block"
+          aria-label="Trip date range"
+        >
           {days[0]?.date} – {days[days.length - 1]?.date}
         </span>
       )}
-      <div className="ml-auto text-sm text-blue-200" aria-live="polite">
-        {step > 1 && `${days.length} day${days.length !== 1 ? 's' : ''} planned`}
+
+      <div className="ml-auto flex items-center gap-3">
+        {step > 1 && days.length > 0 && (
+          <span className="text-sm text-white/70" aria-live="polite">
+            {days.length} day{days.length !== 1 ? 's' : ''} planned
+          </span>
+        )}
+        <ThemeToggle />
       </div>
     </header>
   )

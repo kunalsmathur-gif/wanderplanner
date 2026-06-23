@@ -15,7 +15,7 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 
 
 @lru_cache(maxsize=512)
-def _cached_geocode(city: str) -> dict | None:
+def _cached_geocode(city: str, lang: str = "en") -> dict | None:
     return None
 
 
@@ -34,10 +34,14 @@ async def geocode_city(city: str, countrycodes: str = "") -> GeocodeResponse:
         "format": "json",
         "limit": 1,
         "addressdetails": 1,
+        "namedetails": 1,       # request English name details
     }
     if countrycodes:
         params["countrycodes"] = countrycodes
-    headers = {"User-Agent": settings.nominatim_user_agent}
+    headers = {
+        "User-Agent": settings.nominatim_user_agent,
+        "Accept-Language": "en",  # force English names from Nominatim
+    }
 
     async with httpx.AsyncClient(timeout=10, headers=headers) as client:
         resp = await client.get(NOMINATIM_URL, params=params)
@@ -48,9 +52,26 @@ async def geocode_city(city: str, countrycodes: str = "") -> GeocodeResponse:
         raise ValueError(f"Location not found: {city}")
 
     hit = data[0]
+
+    # Resolve English city name: prefer namedetails["name:en"] > address["city"|"town"|"village"] > display_name first segment
+    namedetails = hit.get("namedetails", {})
+    address = hit.get("address", {})
+    english_name = (
+        namedetails.get("name:en")
+        or address.get("city")
+        or address.get("town")
+        or address.get("village")
+        or address.get("municipality")
+        or hit.get("display_name", city).split(",")[0].strip()
+    )
+
+    # Build a clean display name: "City, Country"
+    country = address.get("country", "")
+    clean_display = f"{english_name}, {country}".strip(", ") if country else english_name
+
     return GeocodeResponse(
-        display_name=hit.get("display_name", city),
+        display_name=clean_display,
         lat=float(hit.get("lat", 0)),
         lon=float(hit.get("lon", 0)),
-        country_code=hit.get("address", {}).get("country_code", ""),
+        country_code=address.get("country_code", ""),
     )

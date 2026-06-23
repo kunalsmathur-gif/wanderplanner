@@ -8,7 +8,27 @@ import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useWizardChatStore, type WizardField, type WizardMessage } from '@/store/wizardChatStore'
 import type { Pace, RecommendedCity, TripConfig } from '@/types'
 import { ListeningOrb } from '@/components/voice/ListeningOrb'
-import { StampChip } from './StampChip'
+import {
+  AlertCircle,
+  Bed,
+  Calendar,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Globe,
+  Heart,
+  Loader2,
+  MapPin,
+  Mic,
+  MicOff,
+  Plane,
+  Target,
+  type LucideIcon,
+  Users,
+  Wallet,
+  X,
+  Zap,
+} from 'lucide-react'
 
 type DateStage = 'preset' | 'custom-start' | 'custom-end'
 type GroupStage = 'adults' | 'kids-count' | 'kids-ages'
@@ -43,44 +63,44 @@ declare global {
 }
 
 const PURPOSE_CHIPS = [
-  'Leisure 🏖️',
-  'Adventure 🏔️',
-  'Honeymoon 💑',
-  'Family Vacation 👨‍👩‍👧',
-  'Business + Leisure 💼',
-  'Solo Backpacking 🎒',
-  'Group Holiday 🎉',
+  'Leisure',
+  'Adventure',
+  'Honeymoon',
+  'Family Vacation',
+  'Business + Leisure',
+  'Solo Backpacking',
+  'Group Holiday',
 ]
 
-const DESTINATION_MODE_CHIPS = ['Yes, I have one 📍', 'Suggest me! ✨', 'Exploring a country 🗺️']
+const DESTINATION_MODE_CHIPS = ['Yes, I have one', 'Suggest me!', 'Exploring a country']
 const DURATION_CHIPS = ['3 days', '5 days', '7 days', '10 days', '14 days', 'Flexible']
-const DATE_CHIPS = ['This month', 'Next month', 'In 3 months', 'Custom dates 📅', 'Flexible 🔄']
+const DATE_CHIPS = ['This month', 'Next month', 'In 3 months', 'Custom dates', 'Flexible']
 const BUDGET_CHIPS = ['50,000', '1,00,000', '2,50,000', '5,00,000', '10,00,000+']
 const PACE_CHIPS = [
-  'Relaxed 😌 (fewer activities, more leisure)',
-  'Moderate ⚡ (balanced mix)',
-  'Packed 🚀 (maximum experiences)',
+  'Relaxed (fewer activities, more leisure)',
+  'Moderate (balanced mix)',
+  'Packed (maximum experiences)',
 ]
 const THEME_CHIPS = [
-  '🏛️ Culture',
-  '🍜 Food',
-  '🧗 Adventure',
-  '🌿 Nature',
-  '🛍️ Shopping',
-  '📸 Photography',
-  '🌙 Nightlife',
-  '⚽ Sports',
+  'Culture',
+  'Food',
+  'Adventure',
+  'Nature',
+  'Shopping',
+  'Photography',
+  'Nightlife',
+  'Sports',
   'Skip →',
 ]
 const ACCOMMODATION_CHIPS = [
-  '🏨 Hotel',
-  '🏡 Airbnb / Villa',
-  '🛏️ Hostel',
-  '🏕️ Resort',
-  '🏢 Service Apartment',
+  'Hotel',
+  'Airbnb / Villa',
+  'Hostel',
+  'Resort',
+  'Service Apartment',
   'No preference',
 ]
-const SUMMARY_KEYS = ['purpose', 'origin', 'destination', 'dates', 'group', 'budget', 'accommodation', 'pace', 'themes'] as const
+const SUMMARY_KEYS = ['purpose', 'origin', 'destination', 'duration', 'dates', 'group', 'budget', 'accommodation', 'pace', 'themes'] as const
 
 function botMessage(content: string, options?: Pick<WizardMessage, 'chips' | 'inputType'>): Omit<WizardMessage, 'id'> {
   return {
@@ -249,6 +269,7 @@ export function ConversationalWizard() {
   const updateDates = useTripConfigStore((state) => state.updateDates)
   const updateBudget = useTripConfigStore((state) => state.updateBudget)
   const updateGroup = useTripConfigStore((state) => state.updateGroup)
+  const resetConfig = useTripConfigStore((state) => state.resetConfig)
   const setOrigin = useTripConfigStore((state) => state.setOrigin)
   const setDestination = useTripConfigStore((state) => state.setDestination)
 
@@ -269,6 +290,7 @@ export function ConversationalWizard() {
   const setCurrentField = useWizardChatStore((state) => state.setCurrentField)
   const setPhase = useWizardChatStore((state) => state.setPhase)
   const addLabel = useWizardChatStore((state) => state.addLabel)
+  const resetWizardChat = useWizardChatStore((state) => state.reset)
 
   const [input, setInput] = useState('')
   const [dateStage, setDateStage] = useState<DateStage>('preset')
@@ -281,7 +303,15 @@ export function ConversationalWizard() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [voiceModeActive, setVoiceModeActive] = useState(false)
+  const [stepDirection, setStepDirection] = useState<'forward' | 'back'>('forward')
+  const [showEditEntry, setShowEditEntry] = useState(false)
+  const [adultCountDraft, setAdultCountDraft] = useState(tripConfig.group.adults || 1)
+  const [kidsCountDraft, setKidsCountDraft] = useState(tripConfig.group.kids.length)
+  const [kidsAgesDraft, setKidsAgesDraft] = useState(
+    tripConfig.group.kids.map(({ age }) => String(age)).join(', '),
+  )
 
+  const dialogRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const recognitionRef = useRef<RecognitionInstance | null>(null)
   const streamCleanupRef = useRef<(() => void) | null>(null)
@@ -289,10 +319,6 @@ export function ConversationalWizard() {
   const [isSpeaking, setIsSpeaking] = useState(false)
 
   const hasExistingItinerary = days.length > 0
-  const completedCount = SUMMARY_KEYS.filter((key) => collectedLabels[key]).length
-  const progressPercent = phase === 'summary' || phase === 'generating' || phase === 'done'
-    ? 100
-    : Math.round((completedCount / SUMMARY_KEYS.length) * 100)
 
   const currentPrompt = useMemo(() => {
     const latestBotMessage = [...messages].reverse().find((message) => message.role === 'bot')
@@ -326,9 +352,153 @@ export function ConversationalWizard() {
       addMessage(botMessage('Welcome back! Your trip details are below. You can refine them or regenerate the itinerary.'))
     }
     if (messages.length === 0) {
-      addMessage(botMessage("Hi! I'm Anya from WanderPlan 👋\n\nI'm here to help you plan your perfect trip. Let's get started!\n\nWhat's the main purpose of your trip?", { chips: PURPOSE_CHIPS }))
+      addMessage(botMessage("Hi! I'm Anya, your Wanderplan travel concierge 👋\n\nI'll help you build a personalised trip plan in just a few steps. Let's start!\n\nWhat's the main purpose of your trip?", { chips: PURPOSE_CHIPS }))
     }
   }, [addMessage, messages.length, phase, setPhase, tripConfig, wizardOpen])
+
+  useEffect(() => {
+    if (!wizardOpen) {
+      setShowEditEntry(false)
+      return
+    }
+
+    if (hasExistingItinerary && phase !== 'generating') {
+      setShowEditEntry(true)
+    }
+  }, [wizardOpen])
+
+  useEffect(() => {
+    if (currentField !== 'group') return
+
+    const config = useTripConfigStore.getState().config
+    setAdultCountDraft(config.group.adults || 1)
+    setKidsCountDraft(config.group.kids.length)
+    setKidsAgesDraft(config.group.kids.map(({ age }) => String(age)).join(', '))
+  }, [currentField])
+
+  useEffect(() => {
+    if (phase !== 'chatting') {
+      setInput('')
+      return
+    }
+
+    const config = useTripConfigStore.getState().config
+
+    if (currentField === 'origin') {
+      setInput(config.origin.city ?? '')
+      return
+    }
+
+    if (currentField === 'destination') {
+      if (config.destination_mode === 'country') {
+        if (destinationSubStage === 'input') {
+          setInput(config.destination_country ?? '')
+          return
+        }
+
+        if (destinationSubStage === 'city-select') {
+          setInput(config.destination?.city ?? '')
+          return
+        }
+      }
+
+      setInput(config.destination?.city ?? '')
+      return
+    }
+
+    if (currentField === 'budget') {
+      setInput(config.budget.amount > 0 ? String(config.budget.amount) : '')
+      return
+    }
+
+    if (currentField === 'dates') {
+      if (dateStage === 'custom-start') {
+        setInput(config.dates.start ?? '')
+        return
+      }
+
+      if (dateStage === 'custom-end') {
+        setInput(config.dates.end ?? '')
+        return
+      }
+    }
+
+    if (currentField === 'group' && groupStage === 'kids-ages') {
+      setInput(config.group.kids.map(({ age }) => String(age)).join(', '))
+      return
+    }
+
+    setInput('')
+  }, [currentField, dateStage, destinationSubStage, groupStage, phase])
+
+  useEffect(() => {
+    if (!wizardOpen) return
+
+    const dialog = dialogRef.current
+    if (!dialog || typeof window === 'undefined') return
+
+    const previousActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const focusableSelector = [
+      'button:not([disabled])',
+      '[href]',
+      'input:not([disabled])',
+      'select:not([disabled])',
+      'textarea:not([disabled])',
+      '[tabindex]:not([tabindex="-1"])',
+    ].join(', ')
+
+    const getFocusableElements = () => (
+      Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector))
+        .filter((element) => !element.hasAttribute('aria-hidden'))
+    )
+
+    const focusFirstElement = () => {
+      const [firstElement] = getFocusableElements()
+      firstElement?.focus()
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && hasExistingItinerary) {
+        event.preventDefault()
+        closeWizard()
+        return
+      }
+
+      if (event.key !== 'Tab') return
+
+      const focusableElements = getFocusableElements()
+      if (focusableElements.length === 0) {
+        event.preventDefault()
+        return
+      }
+
+      const firstElement = focusableElements[0]
+      const lastElement = focusableElements[focusableElements.length - 1]
+      const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+
+      if (event.shiftKey) {
+        if (!activeElement || activeElement === firstElement || !dialog.contains(activeElement)) {
+          event.preventDefault()
+          lastElement.focus()
+        }
+        return
+      }
+
+      if (!activeElement || activeElement === lastElement || !dialog.contains(activeElement)) {
+        event.preventDefault()
+        firstElement.focus()
+      }
+    }
+
+    const focusTimer = window.setTimeout(focusFirstElement, 0)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      window.clearTimeout(focusTimer)
+      document.removeEventListener('keydown', handleKeyDown)
+      previousActiveElement?.focus()
+    }
+  }, [closeWizard, hasExistingItinerary, wizardOpen])
 
   useEffect(() => () => {
     streamCleanupRef.current?.()
@@ -595,7 +765,7 @@ export function ConversationalWizard() {
           addLabel('duration', 'Flexible')
         }
         
-        pushNextField('destination')
+        pushNextField('dates')
         return
       }
 
@@ -618,7 +788,7 @@ export function ConversationalWizard() {
           setDestination({ city: place.city, country: place.country, lat: place.lat, lon: place.lon })
           updateConfig({ destination_country: null })
           addLabel('destination', value || `${place.city}, ${place.country}`)
-          pushNextField('dates')
+          pushNextField('duration')
           return
         }
 
@@ -710,7 +880,7 @@ export function ConversationalWizard() {
             return
           } else {
             // User is done adding cities, proceed to dates
-            pushNextField('dates')
+            pushNextField('duration')
             return
           }
         }
@@ -774,7 +944,7 @@ export function ConversationalWizard() {
             addLabel('destination', value)
           }
 
-          pushNextField('dates')
+          pushNextField('duration')
           return
         }
       }
@@ -976,15 +1146,18 @@ export function ConversationalWizard() {
   }
 
   function handleChipSelect(chip: string) {
+    setStepDirection('forward')
     void handleAnswer(chip)
   }
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    setStepDirection('forward')
     void handleAnswer(input)
   }
 
   function handleEditLastStep() {
+    setStepDirection('back')
     setPendingThemeSelections([])
     setPhase('chatting')
     setCurrentField('themes')
@@ -1089,319 +1262,1181 @@ export function ConversationalWizard() {
     recognition.start()
   }
 
+  function handleGroupContinue() {
+    setStepDirection('forward')
+
+    if (groupStage === 'adults') {
+      void handleAnswer(String(Math.max(1, adultCountDraft)))
+      return
+    }
+
+    if (groupStage === 'kids-count') {
+      void handleAnswer(String(Math.max(0, kidsCountDraft)))
+      return
+    }
+
+    void handleAnswer(kidsAgesDraft)
+  }
+
+  function handleThemeToggle(chip: string) {
+    if (chip === 'Skip →') return
+
+    const theme = themeFromChip(chip)
+    setPendingThemeSelections((previous) => (
+      previous.includes(theme)
+        ? previous.filter((selectedTheme) => selectedTheme !== theme)
+        : [...previous, theme]
+    ))
+  }
+
+  function handleThemesContinue() {
+    if (pendingThemeSelections.length === 0) return
+
+    setStepDirection('forward')
+    void handleAnswer(pendingThemeSelections.join(', '))
+    setPendingThemeSelections([])
+  }
+
+  function revisitField(field: WizardField) {
+    const config = useTripConfigStore.getState().config
+
+    if (field === 'destination') {
+      if (config.destination_mode === 'country') {
+        setDestinationSubStage(config.destination_country ? 'city-select' : 'input')
+      } else if (config.destination_mode === 'exploring') {
+        setDestinationSubStage(suggestedCities.length > 0 ? 'suggest-select' : 'input')
+      } else {
+        setDestinationSubStage('input')
+      }
+    }
+
+    if (field === 'dates') {
+      setDateStage('preset')
+      setPendingStartDate(null)
+    }
+
+    if (field === 'group') {
+      setGroupStage('adults')
+      setPendingKidsCount(0)
+    }
+
+    if (field === 'themes') {
+      setPendingThemeSelections([...useTripConfigStore.getState().config.themes])
+    }
+
+    setCurrentField(field)
+    setPhase('chatting')
+    addMessage(promptForField(field, config))
+  }
+
+  function handleStartNewTrip() {
+    setShowEditEntry(false)
+    resetConfig()
+    resetWizardChat()
+    setStepDirection('forward')
+    setInput('')
+    setPendingThemeSelections([])
+    setDateStage('preset')
+    setGroupStage('adults')
+    setDestinationSubStage('input')
+    setSuggestedCities([])
+    setPendingStartDate(null)
+    setPendingKidsCount(0)
+    setAdultCountDraft(1)
+    setKidsCountDraft(0)
+    setKidsAgesDraft('')
+  }
+
+  function handleBack() {
+    setStepDirection('back')
+    setInput('')
+
+    if (phase === 'summary' || currentField === 'refinement' || currentField === 'done') {
+      revisitField('themes')
+      return
+    }
+
+    if (currentField === 'group') {
+      if (groupStage === 'kids-ages') {
+        setGroupStage('kids-count')
+        return
+      }
+
+      if (groupStage === 'kids-count') {
+        setGroupStage('adults')
+        return
+      }
+    }
+
+    if (currentField === 'dates') {
+      if (dateStage === 'custom-end') {
+        setDateStage('custom-start')
+        return
+      }
+
+      if (dateStage === 'custom-start') {
+        setDateStage('preset')
+        setPendingStartDate(null)
+        return
+      }
+    }
+
+    if (currentField === 'destination') {
+      if (tripConfig.destination_mode === 'country' && destinationSubStage === 'multi-city-confirm') {
+        setDestinationSubStage('city-select')
+        return
+      }
+
+      if (tripConfig.destination_mode === 'country' && destinationSubStage === 'city-select') {
+        setDestinationSubStage('input')
+        return
+      }
+
+      if (tripConfig.destination_mode === 'exploring' && destinationSubStage === 'suggest-select') {
+        setDestinationSubStage('input')
+        return
+      }
+
+      revisitField('destination_mode')
+      return
+    }
+
+    const previousFieldMap: Partial<Record<WizardField, WizardField>> = {
+      origin: 'purpose',
+      destination_mode: 'origin',
+      duration: 'destination',
+      dates: 'duration',
+      group: 'dates',
+      budget: 'group',
+      accommodation: 'budget',
+      pace: 'accommodation',
+      themes: 'pace',
+    }
+
+    const previousField = previousFieldMap[currentField]
+    if (previousField) revisitField(previousField)
+  }
+
+  const currentStep = useMemo(() => {
+    if (phase === 'summary' || phase === 'generating' || phase === 'done' || currentField === 'refinement' || currentField === 'done') {
+      return 11
+    }
+
+    switch (currentField) {
+      case 'purpose':
+        return 1
+      case 'origin':
+        return 2
+      case 'destination_mode':
+      case 'destination':
+        return 3
+      case 'duration':
+        return 4
+      case 'dates':
+        return 5
+      case 'group':
+        return 6
+      case 'budget':
+        return 7
+      case 'accommodation':
+        return 8
+      case 'pace':
+        return 9
+      case 'themes':
+        return 10
+      default:
+        return 11
+    }
+  }, [currentField, phase])
+
+  const stepHeading = getStepHeading(currentField, phase, groupStage, dateStage, destinationSubStage)
+  const stepHint = getStepHint(currentField, phase, groupStage, dateStage, destinationSubStage, tripConfig)
+  const stepPrompt = phase === 'chatting' ? promptForField(currentField, tripConfig).content.trim() : null
+  const contextualMessage = currentPrompt?.content?.trim() && currentPrompt.content.trim() !== stepPrompt
+    ? currentPrompt.content.trim()
+    : null
+  const errorMessage = contextualMessage && isWizardErrorMessage(contextualMessage) ? stripEmoji(contextualMessage) : null
+  const helperMessage = errorMessage ? stepHint : (contextualMessage ?? stepHint)
+
+  const summaryLabels = {
+    purpose: collectedLabels.purpose ?? tripConfig.purpose ?? '—',
+    origin: collectedLabels.origin ?? tripConfig.origin.city ?? '—',
+    destination: collectedLabels.destination ?? formatDestinationLabel(tripConfig),
+    duration: collectedLabels.duration ?? (tripConfig.dates.duration_days ? `${tripConfig.dates.duration_days} days` : 'Flexible'),
+    dates: collectedLabels.dates ?? formatDateLabel(tripConfig.dates),
+    group: collectedLabels.group ?? formatGroupLabel(tripConfig.group),
+    budget: collectedLabels.budget ?? formatBudget(tripConfig.budget.amount),
+    accommodation: collectedLabels.accommodation ?? (tripConfig.accommodation.style.length > 0 ? tripConfig.accommodation.style.join(', ') : 'No preference'),
+    pace: collectedLabels.pace ?? (tripConfig.pace.charAt(0).toUpperCase() + tripConfig.pace.slice(1)),
+    themes: collectedLabels.themes ?? formatThemeLabel(tripConfig.themes),
+  }
+
+  const showNavigation = !showEditEntry
+    && phase === 'chatting'
+    && currentField !== 'purpose'
+    && currentField !== 'destination_mode'
+    && currentField !== 'duration'
+    && currentField !== 'accommodation'
+    && currentField !== 'pace'
+    && !(currentField === 'dates' && dateStage === 'preset')
+    && !(currentField === 'destination' && (
+      destinationSubStage === 'city-select'
+      || destinationSubStage === 'suggest-select'
+      || destinationSubStage === 'multi-city-confirm'
+    ))
+
+  const continueDisabled = (() => {
+    if (isProcessing) return true
+
+    if (currentField === 'purpose') return true
+    if (currentField === 'origin') return input.trim().length < 3
+    if (currentField === 'destination') {
+      if (destinationSubStage === 'city-select' || destinationSubStage === 'suggest-select' || destinationSubStage === 'multi-city-confirm') {
+        return true
+      }
+
+      return input.trim().length < 2
+    }
+
+    if (currentField === 'dates') {
+      return dateStage === 'preset' ? true : !input.trim()
+    }
+
+    if (currentField === 'group') {
+      if (groupStage === 'adults') return adultCountDraft < 1
+      if (groupStage === 'kids-count') return kidsCountDraft < 0
+      return !kidsAgesDraft.trim()
+    }
+
+    if (currentField === 'budget') {
+      return !input.trim()
+    }
+
+    if (currentField === 'themes') {
+      return pendingThemeSelections.length === 0
+    }
+
+    return !input.trim()
+  })()
+
+  const continueLabel = (() => {
+    if (currentField === 'group') return groupStage === 'kids-ages' ? 'Continue' : 'Continue'
+    if (currentField === 'themes') return `Continue (${pendingThemeSelections.length} selected)`
+    return 'Continue'
+  })()
+
+  const stepKey = `${phase}-${currentField}-${dateStage}-${groupStage}-${destinationSubStage}`
+
   return (
-    <div className="mx-4 flex h-[85vh] max-h-[600px] w-full max-w-[900px] flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
-      {/* Redesigned Anya Header */}
-      <div className="relative overflow-hidden bg-[#1A3A52] px-6 py-5">
-        {/* Subtle map texture background */}
-        <div 
-          className="absolute inset-0 opacity-5" 
-          style={{
-            backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cpath d=\'M0 0h60v60H0z\' fill=\'none\'/%3E%3Cpath d=\'M30 0v60M0 30h60\' stroke=\'%23fff\' stroke-width=\'0.5\'/%3E%3C/svg%3E")'
-          }} 
-        />
-        
-        <div className="relative flex items-start justify-between gap-4">
-          <div>
-            <h1 
-              className="font-display text-[28px] font-bold leading-none text-white" 
-              style={{ fontVariationSettings: '"WONK" 1, "opsz" 144' }}
-            >
-              Anya
-            </h1>
-            <p className="mt-1 font-body text-[13px] font-medium tracking-tight text-[#A8BFDB]">
-              Your AI travel companion — tap the orb to chat by voice
-            </p>
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Trip Planning Wizard"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm [--color-primary:#0EA5E9] [--color-accent:#EA580C] [--color-background:#F0F9FF] [--color-card:#FFFFFF] [--color-foreground:#0C4A6E] [--color-foreground-muted:#64748B] [--color-border:#BAE6FD] [--color-ring:#0EA5E9] dark:[--color-background:#040D14] dark:[--color-card:#071522] dark:[--color-foreground:#E0F2FE] dark:[--color-primary:#38BDF8] dark:[--color-accent:#FB923C] dark:[--color-border:#0E3A57]"
+    >
+      <div className="card relative mx-4 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border-[var(--color-border)] bg-[var(--color-card)] shadow-2xl">
+        <div className="flex items-start justify-between gap-4 bg-[var(--color-primary)] px-8 py-4 text-white">
+          <div className="min-w-0">
+            <p className="text-xl font-bold leading-tight [font-family:var(--font-space-grotesk)]">Wanderplan</p>
+            <p className="mt-1 text-sm text-white/80 [font-family:var(--font-dm-sans)]">Anya · Your travel concierge</p>
           </div>
+
           <div className="flex items-center gap-3">
             <button
-              onClick={toggleVoiceMode}
-              className="transition-transform hover:scale-105"
-              aria-label={voiceModeActive ? 'Deactivate voice mode' : 'Activate voice mode'}
               type="button"
+              onClick={toggleVoiceMode}
+              aria-label={voiceModeActive ? 'Deactivate voice mode' : 'Activate voice mode'}
+              className="focus-ring rounded-full"
             >
-              <ListeningOrb 
-                isActive={voiceModeActive}
-                isRecording={isRecording}
-              />
+              <ListeningOrb isActive={voiceModeActive} isRecording={isRecording} />
             </button>
+
             {hasExistingItinerary && (
-              <button
-                type="button"
-                onClick={closeWizard}
-                className="text-sm text-[#A8BFDB] underline-offset-2 hover:underline hover:text-white"
-              >
-                Skip to itinerary
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={closeWizard}
+                  className="btn btn-ghost min-h-[44px] border-white/20 bg-white/10 px-3 text-white hover:bg-white/20 hover:text-white"
+                >
+                  Skip to itinerary
+                </button>
+                <button
+                  type="button"
+                  onClick={closeWizard}
+                  aria-label="Close wizard"
+                  className="focus-ring inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-white/20 bg-white/10 text-white transition-colors hover:bg-white/20"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </>
             )}
           </div>
         </div>
-      </div>
 
-      <div className="border-b border-slate-200 px-6 py-3">
-        <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-500">
-          <span>{completedCount} / {SUMMARY_KEYS.length} details captured</span>
-          <span>{progressPercent}%</span>
+        {/* Progress bar — sky-blue track fills white as steps complete */}
+        <div
+          className="relative h-1.5 w-full overflow-hidden bg-[var(--color-primary)]/20"
+          role="progressbar"
+          aria-valuenow={currentStep}
+          aria-valuemin={1}
+          aria-valuemax={11}
+        >
+          <div
+            className="h-full rounded-r-full bg-gradient-to-r from-[var(--color-primary)] to-[#38bdf8] shadow-[0_0_8px_var(--color-primary)] transition-all duration-500 ease-out"
+            style={{ width: `${(currentStep / 11) * 100}%` }}
+          />
         </div>
-        <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-          <div className="h-full rounded-full bg-[#E88D3A] transition-all" style={{ width: `${progressPercent}%` }} />
+
+        <div className="border-b border-[var(--color-border)] px-8 py-3">
+          <p className="text-sm text-[var(--color-foreground-muted)] [font-family:var(--font-dm-sans)]">
+            Step {currentStep} of 11
+          </p>
         </div>
-      </div>
 
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
-          {messages.map((message, index) => {
-            const canUseChips = phase === 'chatting' && message.role === 'bot' && index === messages.length - 1
-            return (
-              <div key={message.id} className="space-y-2">
-                <WizardMessageBubble message={message} />
-                {message.role === 'bot' && message.chips && message.chips.length > 0 && (
-                  <div className="space-y-2">
-                    <QuickReplyChips
-                      chips={message.chips}
-                      disabled={!canUseChips || isProcessing}
-                      onSelect={currentField === 'themes' && canUseChips
-                        ? (chip) => {
-                            if (chip === 'Skip →') {
-                              setPendingThemeSelections([])
-                              void handleAnswer(chip)
-                              return
-                            }
+        <div className="relative flex-1 overflow-y-auto bg-[var(--color-background)]">
+          <div className="p-8">
+            {voiceModeActive && (
+              <div className="mb-6 flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 text-sm text-[var(--color-foreground)]">
+                <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)]">
+                  {isRecording ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+                </span>
+                <div>
+                  <p className="font-semibold">Listening...</p>
+                  <p className="text-[var(--color-foreground-muted)]">Your voice reply will fill the current step.</p>
+                </div>
+              </div>
+            )}
 
-                            const theme = themeFromChip(chip)
-                            setPendingThemeSelections((previous) => (
-                              previous.includes(theme)
-                                ? previous.filter((selectedTheme) => selectedTheme !== theme)
-                                : [...previous, theme]
-                            ))
-                          }
-                        : handleChipSelect}
-                      selected={currentField === 'themes' ? pendingThemeSelections : []}
+            {phase === 'generating' && (
+              <GeneratingView
+                message={itineraryProgress.message || 'Gathering the best route, budget and day plans.'}
+                step={Math.max(itineraryProgress.step, 0)}
+                total={Math.max(itineraryProgress.total, 4)}
+              />
+            )}
+
+            {phase === 'done' && <DoneView onViewItinerary={closeWizard} />}
+
+            {showEditEntry && (
+              <div className="space-y-4 fade-up">
+                <h2 className="text-2xl font-bold leading-tight text-[var(--color-foreground)] [font-family:var(--font-space-grotesk)]">
+                  What would you like to do?
+                </h2>
+                <p className="text-sm text-[var(--color-foreground-muted)]">Your itinerary is saved. You can add instructions or start fresh.</p>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditEntry(false)
+                    revisitField('refinement')
+                  }}
+                  className="chip w-full rounded-xl p-4 text-left"
+                  style={{ minHeight: '64px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}
+                >
+                  <span className="font-semibold text-[var(--color-foreground)]">Add custom instructions</span>
+                  <span className="mt-0.5 text-xs text-[var(--color-foreground-muted)]">Add requests to the current trip configuration</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleStartNewTrip}
+                  className="chip w-full rounded-xl p-4 text-left"
+                  style={{ minHeight: '64px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}
+                >
+                  <span className="font-semibold text-[var(--color-foreground)]">Plan a new trip</span>
+                  <span className="mt-0.5 text-xs text-[var(--color-foreground-muted)]">Start fresh with a new destination and preferences</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={closeWizard}
+                  className="btn btn-ghost w-full rounded-xl border-[var(--color-border)] text-[var(--color-foreground-muted)]"
+                >
+                  Cancel — keep viewing itinerary
+                </button>
+              </div>
+            )}
+
+            {!showEditEntry && phase !== 'generating' && phase !== 'done' && (
+              <div key={stepKey} className={stepDirection === 'back' ? 'step-enter-back' : 'step-enter'}>
+                <h2 className="text-2xl font-bold leading-tight text-[var(--color-foreground)] [font-family:var(--font-space-grotesk)]">
+                  {stepHeading}
+                </h2>
+
+                {helperMessage && (
+                  <p className="mt-1 mb-6 text-sm text-[var(--color-foreground-muted)] [font-family:var(--font-dm-sans)]">
+                    {helperMessage}
+                  </p>
+                )}
+
+                {errorMessage && <ErrorBanner message={errorMessage} />}
+
+                <div className="mt-6 space-y-6">
+                  {phase === 'summary' && (
+                    <SummaryStepCard
+                      labels={summaryLabels}
+                      errorMessage={itineraryStatus === 'error' ? itineraryError?.message ?? null : null}
+                      hasExistingItinerary={hasExistingItinerary}
+                      generateLabel={itineraryStatus === 'error'
+                        ? 'Retry Itinerary'
+                        : hasExistingItinerary
+                          ? 'Regenerate Itinerary'
+                          : 'Generate Itinerary'}
+                      onEdit={handleEditLastStep}
+                      onGenerate={handleGenerate}
+                      onViewItinerary={closeWizard}
                     />
-                    {currentField === 'themes' && canUseChips && pendingThemeSelections.length > 0 && (
+                  )}
+
+                  {phase === 'chatting' && currentField === 'purpose' && (
+                    <ChipGrid
+                      chips={PURPOSE_CHIPS}
+                      columns={2}
+                      disabled={isProcessing}
+                      onSelect={handleChipSelect}
+                    />
+                  )}
+
+                  {phase === 'chatting' && currentField === 'origin' && (
+                    <form onSubmit={handleSubmit} className="space-y-3">
+                      <input
+                        autoFocus
+                        value={input}
+                        onChange={(event) => setInput(event.target.value)}
+                        type="text"
+                        placeholder="Enter your departure city"
+                        disabled={isProcessing}
+                        className="input min-h-[52px] rounded-xl border-[var(--color-border)] bg-[var(--color-card)] px-4 text-[var(--color-foreground)]"
+                      />
+                    </form>
+                  )}
+
+                  {phase === 'chatting' && currentField === 'destination_mode' && (
+                    <ChipGrid
+                      chips={DESTINATION_MODE_CHIPS}
+                      columns={1}
+                      disabled={isProcessing}
+                      onSelect={handleChipSelect}
+                      icons={{
+                        'Yes, I have one': MapPin,
+                        'Suggest me!': Plane,
+                        'Exploring a country': Globe,
+                      }}
+                      descriptions={{
+                        'Yes, I have one': 'I already know the city or destination.',
+                        'Suggest me!': 'Show me places based on my vibe.',
+                        'Exploring a country': 'Help me pick cities within a country.',
+                      }}
+                    />
+                  )}
+
+                  {phase === 'chatting' && currentField === 'destination' && (
+                    <>
+                      {tripConfig.destination_mode === 'fixed' && (
+                        <form onSubmit={handleSubmit} className="space-y-3">
+                          <input
+                            autoFocus
+                            value={input}
+                            onChange={(event) => setInput(event.target.value)}
+                            type="text"
+                            placeholder="Search city or destination"
+                            disabled={isProcessing}
+                            className="input min-h-[52px] rounded-xl border-[var(--color-border)] bg-[var(--color-card)] px-4 text-[var(--color-foreground)]"
+                          />
+                        </form>
+                      )}
+
+                      {tripConfig.destination_mode === 'country' && destinationSubStage === 'input' && (
+                        <form onSubmit={handleSubmit} className="space-y-3">
+                          <input
+                            autoFocus
+                            value={input}
+                            onChange={(event) => setInput(event.target.value)}
+                            type="text"
+                            placeholder="Enter a country"
+                            disabled={isProcessing}
+                            className="input min-h-[52px] rounded-xl border-[var(--color-border)] bg-[var(--color-card)] px-4 text-[var(--color-foreground)]"
+                          />
+                        </form>
+                      )}
+
+                      {tripConfig.destination_mode === 'country' && destinationSubStage === 'city-select' && suggestedCities.length > 0 && (
+                        <ChipGrid
+                          chips={suggestedCities.map(recommendedCityChip)}
+                          columns={1}
+                          disabled={isProcessing}
+                          onSelect={handleChipSelect}
+                        />
+                      )}
+
+                      {tripConfig.destination_mode === 'country' && destinationSubStage === 'city-select' && suggestedCities.length === 0 && (
+                        <form onSubmit={handleSubmit} className="space-y-3">
+                          <input
+                            autoFocus
+                            value={input}
+                            onChange={(event) => setInput(event.target.value)}
+                            type="text"
+                            placeholder={`Enter a city in ${tripConfig.destination_country ?? 'your chosen country'}`}
+                            disabled={isProcessing}
+                            className="input min-h-[52px] rounded-xl border-[var(--color-border)] bg-[var(--color-card)] px-4 text-[var(--color-foreground)]"
+                          />
+                        </form>
+                      )}
+
+                      {tripConfig.destination_mode === 'country' && destinationSubStage === 'multi-city-confirm' && (
+                        <ChipGrid
+                          chips={['Yes, add another city', 'No, continue']}
+                          columns={1}
+                          disabled={isProcessing}
+                          onSelect={handleChipSelect}
+                          icons={{
+                            'Yes, add another city': Globe,
+                            'No, continue': ChevronRight,
+                          }}
+                        />
+                      )}
+
+                      {tripConfig.destination_mode === 'exploring' && destinationSubStage === 'input' && (
+                        <form onSubmit={handleSubmit} className="space-y-3">
+                          <input
+                            autoFocus
+                            value={input}
+                            onChange={(event) => setInput(event.target.value)}
+                            type="text"
+                            placeholder="Describe the kind of trip you want"
+                            disabled={isProcessing}
+                            className="input min-h-[52px] rounded-xl border-[var(--color-border)] bg-[var(--color-card)] px-4 text-[var(--color-foreground)]"
+                          />
+                        </form>
+                      )}
+
+                      {tripConfig.destination_mode === 'exploring' && destinationSubStage === 'suggest-select' && (
+                        <ChipGrid
+                          chips={suggestedCities.map(recommendedCityChip)}
+                          columns={1}
+                          disabled={isProcessing}
+                          onSelect={handleChipSelect}
+                        />
+                      )}
+                    </>
+                  )}
+
+                  {phase === 'chatting' && currentField === 'duration' && (
+                    <ChipGrid
+                      chips={DURATION_CHIPS}
+                      columns={2}
+                      disabled={isProcessing}
+                      onSelect={handleChipSelect}
+                    />
+                  )}
+
+                  {phase === 'chatting' && currentField === 'dates' && dateStage === 'preset' && (
+                    <ChipGrid
+                      chips={DATE_CHIPS}
+                      columns={2}
+                      disabled={isProcessing}
+                      onSelect={handleChipSelect}
+                      icons={{ 'Custom dates': Calendar }}
+                    />
+                  )}
+
+                  {phase === 'chatting' && currentField === 'dates' && dateStage !== 'preset' && (
+                    <form onSubmit={handleSubmit} className="space-y-3">
+                      <input
+                        autoFocus
+                        value={input}
+                        onChange={(event) => setInput(event.target.value)}
+                        type="date"
+                        disabled={isProcessing}
+                        className="input min-h-[52px] rounded-xl border-[var(--color-border)] bg-[var(--color-card)] px-4 text-[var(--color-foreground)]"
+                      />
+                    </form>
+                  )}
+
+                  {phase === 'chatting' && currentField === 'group' && (
+                    <div className="space-y-4">
+                      {groupStage === 'adults' && (
+                        <CounterCard
+                          label="Adults"
+                          hint="Minimum 1 adult"
+                          value={adultCountDraft}
+                          onDecrease={() => setAdultCountDraft((value) => Math.max(1, value - 1))}
+                          onIncrease={() => setAdultCountDraft((value) => value + 1)}
+                        />
+                      )}
+
+                      {groupStage === 'kids-count' && (
+                        <CounterCard
+                          label="Kids"
+                          hint="Add children travelling with you"
+                          value={kidsCountDraft}
+                          onDecrease={() => setKidsCountDraft((value) => Math.max(0, value - 1))}
+                          onIncrease={() => setKidsCountDraft((value) => value + 1)}
+                        />
+                      )}
+
+                      {groupStage === 'kids-ages' && (
+                        <div className="space-y-3">
+                          <label className="block text-sm font-bold text-[var(--color-primary)] [font-family:var(--font-dm-sans)]">
+                            Kids ages
+                          </label>
+                          <input
+                            autoFocus
+                            value={kidsAgesDraft}
+                            onChange={(event) => setKidsAgesDraft(event.target.value)}
+                            type="text"
+                            placeholder="e.g. 4, 8"
+                            disabled={isProcessing}
+                            className="min-h-[52px] w-full rounded-xl border border-slate-200 bg-white px-4 text-base font-medium text-slate-900 placeholder-slate-400 outline-none transition-colors focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-white dark:placeholder-slate-500 [font-family:var(--font-dm-sans)]"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {phase === 'chatting' && currentField === 'budget' && (
+                    <div className="space-y-4">
+                      <ChipGrid
+                        chips={BUDGET_CHIPS.map((chip) => `INR ${chip}`)}
+                        columns={2}
+                        disabled={isProcessing}
+                        onSelect={(chip) => handleChipSelect(chip.replace(/^INR\s+/, ''))}
+                      />
+                      <form onSubmit={handleSubmit} className="space-y-3">
+                        <label className="block text-sm font-medium text-[var(--color-foreground)] [font-family:var(--font-dm-sans)]">
+                          Or enter a custom budget
+                        </label>
+                        <div className="relative">
+                          <span className="pointer-events-none absolute inset-y-0 left-4 inline-flex items-center text-sm text-[var(--color-foreground-muted)]">
+                            INR
+                          </span>
+                          <input
+                            autoFocus
+                            value={input}
+                            onChange={(event) => setInput(event.target.value)}
+                            type="text"
+                            placeholder="150000"
+                            disabled={isProcessing}
+                            className="input min-h-[52px] rounded-xl border-[var(--color-border)] bg-[var(--color-card)] pl-14 pr-4 text-[var(--color-foreground)]"
+                          />
+                        </div>
+                      </form>
+                    </div>
+                  )}
+
+                  {phase === 'chatting' && currentField === 'accommodation' && (
+                    <ChipGrid
+                      chips={ACCOMMODATION_CHIPS}
+                      columns={2}
+                      disabled={isProcessing}
+                      onSelect={handleChipSelect}
+                      icons={{
+                        Hotel: Bed,
+                        'Airbnb / Villa': Bed,
+                        Hostel: Bed,
+                        Resort: Bed,
+                        'Service Apartment': Bed,
+                        'No preference': Bed,
+                      }}
+                    />
+                  )}
+
+                  {phase === 'chatting' && currentField === 'pace' && (
+                    <ChipGrid
+                      chips={PACE_CHIPS}
+                      columns={1}
+                      disabled={isProcessing}
+                      onSelect={handleChipSelect}
+                      icons={{
+                        'Relaxed (fewer activities, more leisure)': Zap,
+                        'Moderate (balanced mix)': Zap,
+                        'Packed (maximum experiences)': Zap,
+                      }}
+                    />
+                  )}
+
+                  {phase === 'chatting' && currentField === 'themes' && (
+                    <div className="space-y-4">
+                      <ChipGrid
+                        chips={THEME_CHIPS.filter((chip) => chip !== 'Skip →')}
+                        columns={2}
+                        disabled={isProcessing}
+                        onSelect={handleThemeToggle}
+                        selected={pendingThemeSelections}
+                      />
                       <button
                         type="button"
                         onClick={() => {
-                          void handleAnswer(pendingThemeSelections.join(', '))
-                          setPendingThemeSelections([])
+                          setStepDirection('forward')
+                          void handleAnswer('Skip →')
                         }}
-                        className="rounded-full bg-[#1E40AF] px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-800"
+                        className="btn btn-ghost w-full justify-center rounded-xl border-[var(--color-border)] text-[var(--color-foreground-muted)]"
                       >
-                        Done ✓ ({pendingThemeSelections.length} selected)
+                        Skip for now
                       </button>
-                    )}
-                  </div>
-                )}
+                    </div>
+                  )}
+
+                  {phase === 'chatting' && currentField === 'refinement' && (
+                    <div className="space-y-4">
+                      <p className="text-sm text-[var(--color-foreground-muted)] [font-family:var(--font-dm-sans)]">
+                        Type any special requests — dietary needs, mobility requirements, must-visit places, preferred transport, anything at all. Or skip ahead.
+                      </p>
+                      <form onSubmit={handleSubmit} className="space-y-3">
+                        <textarea
+                          autoFocus
+                          value={input}
+                          onChange={(e) => setInput(e.target.value)}
+                          placeholder="e.g. Vegetarian meals only, avoid museums, include a beach day…"
+                          rows={4}
+                          disabled={isProcessing}
+                          className="input min-h-[100px] resize-none rounded-xl border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 text-[var(--color-foreground)] [font-family:var(--font-dm-sans)]"
+                          style={{ width: '100%' }}
+                        />
+                      </form>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={isProcessing || !input.trim()}
+                          onClick={() => {
+                            setStepDirection('forward')
+                            void handleAnswer(input)
+                          }}
+                          className="btn btn-primary flex-1 min-h-[44px] rounded-xl bg-[var(--color-primary)] text-[var(--color-on-primary)]"
+                        >
+                          {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Send & Proceed'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isProcessing}
+                          onClick={() => {
+                            setStepDirection('forward')
+                            void handleAnswer('Looks good, proceed ✓')
+                          }}
+                          className="btn btn-ghost rounded-xl border-[var(--color-border)] px-4 text-[var(--color-foreground-muted)]"
+                        >
+                          Skip
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-            )
-          })}
+            )}
 
-          {phase === 'summary' && (
-            <TripSummaryCard
-              labels={{
-                purpose: collectedLabels.purpose ?? '—',
-                origin: collectedLabels.origin ?? tripConfig.origin.city ?? '—',
-                destination: collectedLabels.destination ?? formatDestinationLabel(tripConfig),
-                dates: collectedLabels.dates ?? '—',
-                group: collectedLabels.group ?? `${tripConfig.group.adults} adults`,
-                budget: collectedLabels.budget ?? formatBudget(tripConfig.budget.amount),
-                accommodation: collectedLabels.accommodation ?? (tripConfig.accommodation.style.length > 0 ? tripConfig.accommodation.style.join(', ') : 'No preference'),
-                pace: collectedLabels.pace ?? (tripConfig.pace.charAt(0).toUpperCase() + tripConfig.pace.slice(1)),
-                themes: collectedLabels.themes ?? formatThemeLabel(tripConfig.themes),
-              }}
-              isRetry={itineraryStatus === 'error' && !!itineraryError}
-              hasExistingItinerary={hasExistingItinerary}
-              errorMessage={itineraryStatus === 'error' ? itineraryError?.message ?? null : null}
-              onEdit={handleEditLastStep}
-              onGenerate={handleGenerate}
-              onViewItinerary={closeWizard}
-            />
-          )}
-
-          {phase === 'generating' && (
-            <div className="flex min-h-[240px] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 px-6 text-center">
-              <div className="h-12 w-12 animate-spin rounded-full border-4 border-[#E88D3A] border-t-transparent" />
-              <p className="mt-4 text-base font-semibold text-slate-800">Generating your itinerary…</p>
-              <p className="mt-2 text-sm text-slate-500">{itineraryProgress.message || 'Gathering the best route, budget and day plans.'}</p>
-              <p className="mt-2 text-xs text-slate-400">Step {Math.max(itineraryProgress.step, 1)} of {itineraryProgress.total}</p>
-            </div>
-          )}
-
-          {phase === 'done' && (
-            <div className="rounded-2xl border border-green-200 bg-green-50 p-5 text-center">
-              <p className="text-2xl">🗺️</p>
-              <p className="mt-2 text-base font-semibold text-slate-800">Your itinerary is ready!</p>
-              <button
-                type="button"
-                onClick={closeWizard}
-                className="mt-4 h-12 w-full rounded-2xl bg-[#B85C3F] text-sm font-semibold text-white transition-colors hover:bg-[#9a4b34]"
-              >
-                View Itinerary →
-              </button>
-              <button
-                type="button"
-                onClick={handleEditLastStep}
-                className="mt-2 block w-full text-sm font-medium text-slate-500 transition-colors hover:text-[#1A3A52]"
-              >
-                ← Edit Trip Details
-              </button>
-            </div>
-          )}
-          <div ref={messagesEndRef} />
+            <div ref={messagesEndRef} className="sr-only" />
+          </div>
         </div>
 
-        {(phase === 'chatting' || phase === 'summary') && (
-          <form onSubmit={handleSubmit} className="border-t border-slate-200 bg-white px-6 py-4">
-            <div className="flex items-end gap-3">
-              <div className="relative flex-1">
-                <input
-                  value={input}
-                  onChange={(event) => setInput(event.target.value)}
-                  type={currentInputType}
-                  placeholder={phase === 'summary'
-                    ? 'Refine your trip details...'
-                    : currentInputType === 'date'
-                      ? 'YYYY-MM-DD'
-                      : 'Type your reply...'}
-                  disabled={isProcessing}
-                  className="h-12 w-full rounded-2xl border border-slate-300 px-4 pr-12 text-sm text-slate-800 outline-none transition-colors focus:border-[#E88D3A] disabled:bg-slate-50"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={!input.trim() || isProcessing}
-                className="h-12 rounded-2xl bg-[#B85C3F] px-5 text-sm font-semibold text-white transition-colors hover:bg-[#9a4b34] disabled:cursor-not-allowed disabled:bg-slate-200"
-              >
-                Send
-              </button>
+        {showNavigation && (
+          <div className="flex items-center justify-between border-t border-[var(--color-border)] bg-[var(--color-card)] px-8 py-6">
+            <div>
+              {currentStep > 1 ? (
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  className="btn btn-ghost min-h-[44px] rounded-xl border-[var(--color-border)] px-4 text-[var(--color-foreground-muted)]"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Back
+                </button>
+              ) : <span />}
             </div>
-          </form>
+
+            <div className="flex items-center gap-3">
+              {currentField === 'refinement' ? (
+                <span />
+              ) : currentField === 'themes' ? (
+                <button
+                  type="button"
+                  onClick={handleThemesContinue}
+                  disabled={continueDisabled}
+                  className="btn btn-primary min-h-[44px] rounded-xl border-[var(--color-primary)] bg-[var(--color-primary)] px-5 text-white"
+                >
+                  {continueLabel}
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              ) : currentField === 'group' ? (
+                <button
+                  type="button"
+                  onClick={handleGroupContinue}
+                  disabled={continueDisabled}
+                  className="btn btn-primary min-h-[44px] rounded-xl border-[var(--color-primary)] bg-[var(--color-primary)] px-5 text-white"
+                >
+                  {continueLabel}
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (currentField === 'origin' || currentField === 'destination' || currentField === 'dates' || currentField === 'budget') {
+                      setStepDirection('forward')
+                      void handleAnswer(input)
+                    }
+                  }}
+                  disabled={continueDisabled}
+                  className="btn btn-primary min-h-[44px] rounded-xl border-[var(--color-primary)] bg-[var(--color-primary)] px-5 text-white"
+                >
+                  {continueLabel}
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+          </div>
         )}
       </div>
     </div>
   )
 }
 
-function WizardMessageBubble({ message }: { message: WizardMessage }) {
-  const isBot = message.role === 'bot'
+function getStepHeading(
+  field: WizardField,
+  phase: 'chatting' | 'summary' | 'generating' | 'done',
+  groupStage: GroupStage,
+  dateStage: DateStage,
+  destinationSubStage: DestinationSubStage,
+) {
+  if (phase === 'summary') return 'Review your trip'
+  if (phase === 'generating') return 'Creating your itinerary'
+  if (phase === 'done') return 'Your itinerary is ready!'
 
+  switch (field) {
+    case 'purpose':
+      return "What's the occasion?"
+    case 'origin':
+      return 'Flying from?'
+    case 'destination_mode':
+    case 'destination':
+      if (destinationSubStage === 'multi-city-confirm') return 'Add another stop?'
+      return 'Where to?'
+    case 'duration':
+      return 'How long?'
+    case 'dates':
+      return dateStage === 'custom-end' ? 'When do you return?' : 'When?'
+    case 'group':
+      if (groupStage === 'kids-count') return 'Any kids joining?'
+      if (groupStage === 'kids-ages') return "What are the kids' ages?"
+      return "Who's coming?"
+    case 'budget':
+      return "What's your budget?"
+    case 'accommodation':
+      return 'Where will you stay?'
+    case 'pace':
+      return "What's your pace?"
+    case 'themes':
+      return 'What interests you?'
+    default:
+      return 'Review your trip'
+  }
+}
+
+function getStepHint(
+  field: WizardField,
+  phase: 'chatting' | 'summary' | 'generating' | 'done',
+  groupStage: GroupStage,
+  dateStage: DateStage,
+  destinationSubStage: DestinationSubStage,
+  config: TripConfig,
+) {
+  if (phase === 'summary') return 'Check everything once before generating your itinerary.'
+  if (phase === 'generating') return 'We are turning your answers into a day-by-day plan.'
+  if (phase === 'done') return 'Your trip plan is ready to explore.'
+
+  switch (field) {
+    case 'purpose':
+      return 'Choose the main reason for this trip.'
+    case 'origin':
+      return 'Type the city you will be departing from.'
+    case 'destination_mode':
+      return 'Pick how you want to choose your destination.'
+    case 'destination':
+      if (config.destination_mode === 'country' && destinationSubStage === 'input') return 'Start with a country, then choose one or more cities.'
+      if (config.destination_mode === 'country' && destinationSubStage === 'city-select') return 'Pick a city or type your own.'
+      if (config.destination_mode === 'exploring' && destinationSubStage === 'input') return 'Describe the vibe, weather, or experiences you want.'
+      if (config.destination_mode === 'exploring' && destinationSubStage === 'suggest-select') return 'Choose one of the recommended places.'
+      if (destinationSubStage === 'multi-city-confirm') return 'You can add another city before continuing.'
+      return 'Enter the destination city you have in mind.'
+    case 'duration':
+      return 'Choose a trip length that feels right.'
+    case 'dates':
+      return dateStage === 'preset' ? 'Choose a time window or enter exact dates.' : 'Use the YYYY-MM-DD format.'
+    case 'group':
+      if (groupStage === 'kids-count') return 'Add the number of children travelling with you.'
+      if (groupStage === 'kids-ages') return 'Separate each age with a comma.'
+      return 'Tell us who is travelling so we can tailor the itinerary.'
+    case 'budget':
+      return 'Select a range or enter a custom amount in INR.'
+    case 'accommodation':
+      return 'Choose the stay style you would enjoy most.'
+    case 'pace':
+      return 'Pick how relaxed or busy your trip should feel.'
+    case 'themes':
+      return 'Tap multiple themes, then continue.'
+    default:
+      return ''
+  }
+}
+
+function isWizardErrorMessage(message: string) {
+  const normalized = stripEmoji(message).toLowerCase()
+  return normalized.includes('please')
+    || normalized.includes("couldn't")
+    || normalized.includes('could not')
+    || normalized.includes('sorry')
+    || normalized.includes('didn\'t quite understand')
+    || normalized.includes('make sure')
+}
+
+function ErrorBanner({ message }: { message: string }) {
   return (
-    <div className={`flex ${isBot ? 'justify-start' : 'justify-end'}`}>
-      <div
-        className={[
-          'max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm',
-          isBot ? 'rounded-tl-md bg-slate-100 text-slate-800' : 'rounded-tr-md bg-[#1A3A52] text-white',
-        ].join(' ')}
-      >
-        {message.content}
-      </div>
+    <div className="mt-4 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/50 dark:text-red-400">
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+      <span>{message}</span>
     </div>
   )
 }
 
-function QuickReplyChips({
+function ChipGrid({
   chips,
   disabled,
   onSelect,
-  selected,
+  selected = [],
+  columns = 2,
+  icons,
+  descriptions,
 }: {
   chips: string[]
   disabled: boolean
   onSelect: (chip: string) => void
-  selected: string[]
+  selected?: string[]
+  columns?: 1 | 2 | 3
+  icons?: Partial<Record<string, LucideIcon>>
+  descriptions?: Partial<Record<string, string>>
 }) {
   return (
-    <div className="flex flex-wrap gap-3 pl-1">
+    <div className={`grid gap-2.5 ${columns === 1 ? 'grid-cols-1' : columns === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
       {chips.map((chip) => {
-        const label = chip === 'Skip →' ? chip : stripEmoji(chip)
-        const isSelected = chip !== 'Skip →' && selected.includes(label)
+        const cleanLabel = chip === 'Skip →' ? chip : stripEmoji(chip)
+        const isSelected = selected.includes(cleanLabel)
+        const Icon = icons?.[chip]
 
         return (
-          <StampChip
+          <button
             key={chip}
-            label={chip}
-            isSelected={isSelected}
-            onClick={() => !disabled && onSelect(chip)}
-          />
+            type="button"
+            disabled={disabled}
+            onClick={() => onSelect(chip)}
+            className={[
+              'focus-ring flex min-h-[44px] cursor-pointer items-start gap-3 rounded-xl border bg-[var(--color-card)] px-4 py-3 text-left transition-all duration-150',
+              isSelected
+                ? 'border-[var(--color-primary)] bg-[color:color-mix(in_srgb,var(--color-primary)_10%,transparent)] text-[var(--color-primary)]'
+                : 'border-[var(--color-border)] text-[var(--color-foreground)] hover:border-[var(--color-primary)] hover:bg-sky-50 dark:hover:bg-sky-950/30',
+              disabled ? 'cursor-not-allowed opacity-60' : '',
+            ].join(' ')}
+          >
+            {Icon && <Icon className="mt-0.5 h-4 w-4 shrink-0" />}
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">{cleanLabel}</span>
+              {descriptions?.[chip] && (
+                <span className="mt-1 block text-xs text-[var(--color-foreground-muted)]">
+                  {descriptions[chip]}
+                </span>
+              )}
+            </span>
+          </button>
         )
       })}
     </div>
   )
 }
 
-function TripSummaryCard({
+function CounterCard({
+  label,
+  hint,
+  value,
+  onDecrease,
+  onIncrease,
+}: {
+  label: string
+  hint: string
+  value: number
+  onDecrease: () => void
+  onIncrease: () => void
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+      <div className="mb-4">
+        <p className="text-sm font-bold text-[var(--color-primary)] [font-family:var(--font-dm-sans)]">{label}</p>
+        <p className="mt-0.5 text-sm font-medium text-slate-500 dark:text-slate-400 [font-family:var(--font-dm-sans)]">{hint}</p>
+      </div>
+
+      <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-600 dark:bg-slate-700/60">
+        <button
+          type="button"
+          onClick={onDecrease}
+          className="focus-ring inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-slate-300 bg-white text-xl font-bold text-slate-700 transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] dark:border-slate-500 dark:bg-slate-600 dark:text-slate-100 dark:hover:border-[var(--color-primary)] dark:hover:text-[var(--color-primary)]"
+        >
+          −
+        </button>
+        <span className="text-3xl font-extrabold text-slate-900 dark:text-white [font-family:var(--font-space-grotesk)]">
+          {value}
+        </span>
+        <button
+          type="button"
+          onClick={onIncrease}
+          className="focus-ring inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-slate-300 bg-white text-xl font-bold text-slate-700 transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] dark:border-slate-500 dark:bg-slate-600 dark:text-slate-100 dark:hover:border-[var(--color-primary)] dark:hover:text-[var(--color-primary)]"
+        >
+          +
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function SummaryStepCard({
   labels,
-  isRetry,
-  hasExistingItinerary,
   errorMessage,
+  hasExistingItinerary,
+  generateLabel,
   onEdit,
   onGenerate,
   onViewItinerary,
 }: {
-  labels: Record<string, string>
-  isRetry: boolean
-  hasExistingItinerary: boolean
+  labels: Record<(typeof SUMMARY_KEYS)[number], string>
   errorMessage: string | null
+  hasExistingItinerary: boolean
+  generateLabel: string
   onEdit: () => void
   onGenerate: () => void
   onViewItinerary: () => void
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
-      <div className="space-y-2 text-sm text-slate-700">
-        <SummaryRow icon="🎯" label="Purpose" value={labels.purpose} />
-        <SummaryRow icon="📍" label="From" value={labels.origin} />
-        <SummaryRow icon="🗺️" label="Destination" value={labels.destination} />
-        <SummaryRow icon="📅" label="Dates" value={labels.dates} />
-        <SummaryRow icon="👥" label="Group" value={labels.group} />
-        <SummaryRow icon="💰" label="Budget" value={labels.budget} />
-        <SummaryRow icon="🏨" label="Stay" value={labels.accommodation} />
-        <SummaryRow icon="⚡" label="Pace" value={labels.pace} />
-        <SummaryRow icon="🎨" label="Themes" value={labels.themes} />
+    <div className="space-y-5">
+      <div className="card rounded-2xl border-[var(--color-border)] bg-[var(--color-card)] p-5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <SummaryRow icon={Target} label="Purpose" value={labels.purpose} />
+          <SummaryRow icon={MapPin} label="From" value={labels.origin} />
+          <SummaryRow icon={MapPin} label="Destination" value={labels.destination} />
+          <SummaryRow icon={Calendar} label="Duration" value={labels.duration} />
+          <SummaryRow icon={Calendar} label="Dates" value={labels.dates} />
+          <SummaryRow icon={Users} label="Group" value={labels.group} />
+          <SummaryRow icon={Wallet} label="Budget" value={labels.budget} />
+          <SummaryRow icon={Bed} label="Stay" value={labels.accommodation} />
+          <SummaryRow icon={Zap} label="Pace" value={labels.pace} />
+          <SummaryRow icon={Heart} label="Themes" value={labels.themes} />
+        </div>
       </div>
 
-      {errorMessage && (
-        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
-          ⚠️ {errorMessage}
-        </div>
-      )}
+      {errorMessage && <ErrorBanner message={stripEmoji(errorMessage)} />}
 
       <button
         type="button"
         onClick={onGenerate}
-        className="mt-5 h-12 w-full rounded-2xl bg-[#1E40AF] text-sm font-semibold text-white transition-colors hover:bg-blue-800"
+        className="btn btn-accent h-14 w-full rounded-xl border-[var(--color-accent)] bg-[var(--color-accent)] text-base font-bold text-white"
       >
-        {isRetry ? 'Retry Itinerary Generation ✈️' : hasExistingItinerary ? 'Regenerate Itinerary ✈️' : 'Generate Itinerary ✈️'}
+        {generateLabel}
       </button>
 
       {hasExistingItinerary && (
         <button
           type="button"
           onClick={onViewItinerary}
-          className="mt-2 h-10 w-full rounded-2xl border border-[#1E40AF] text-sm font-semibold text-[#1E40AF] transition-colors hover:bg-blue-50"
+          className="btn btn-outline w-full rounded-xl border-[var(--color-primary)] px-4 text-[var(--color-primary)]"
         >
-          View Current Itinerary 🗺️
+          View Current Itinerary
         </button>
       )}
 
       <button
         type="button"
         onClick={onEdit}
-        className="mt-3 text-sm font-medium text-slate-500 transition-colors hover:text-[#1E40AF]"
+        className="btn btn-ghost w-full rounded-xl border-[var(--color-border)] text-[var(--color-foreground-muted)]"
       >
-        ← Edit
+        ← Edit details
       </button>
     </div>
   )
 }
 
-function SummaryRow({ icon, label, value }: { icon: string; label: string; value: string }) {
+function SummaryRow({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: LucideIcon
+  label: string
+  value: string
+}) {
   return (
-    <div className="flex items-start gap-2">
-      <span className="shrink-0">{icon}</span>
-      <p>
-        <span className="font-semibold text-slate-800">{label}:</span> {value}
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] p-4">
+      <div className="flex items-start gap-3">
+        <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)]">
+          <Icon className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-xs uppercase tracking-wide text-[var(--color-foreground-muted)]">{label}</p>
+          <p className="mt-1 text-sm font-medium text-[var(--color-foreground)]">{value}</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function GeneratingView({
+  message,
+  step,
+  total,
+}: {
+  message: string
+  step: number
+  total: number
+}) {
+  const steps = Array.from({ length: total }, (_, index) => index + 1)
+
+  return (
+    <div className="flex min-h-[420px] flex-col items-center justify-center text-center">
+      <span className="inline-flex h-20 w-20 items-center justify-center rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)]">
+        <Loader2 className="h-10 w-10 animate-spin" />
+      </span>
+      <h2 className="mt-6 text-2xl font-bold text-[var(--color-foreground)] [font-family:var(--font-space-grotesk)]">
+        Building your itinerary
+      </h2>
+      <p className="mt-3 max-w-sm text-sm text-[var(--color-foreground-muted)] [font-family:var(--font-dm-sans)]">
+        {message}
       </p>
+      <div className="mt-6 flex items-center gap-3">
+        {steps.map((current) => (
+          <span
+            key={current}
+            className={`h-2.5 w-8 rounded-full ${current <= Math.max(step, 1) ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-border)]'}`}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function DoneView({ onViewItinerary }: { onViewItinerary: () => void }) {
+  return (
+    <div className="flex min-h-[420px] flex-col items-center justify-center text-center">
+      <span className="inline-flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500">
+        <CheckCircle2 className="h-10 w-10" />
+      </span>
+      <h2 className="mt-6 text-2xl font-bold text-[var(--color-foreground)] [font-family:var(--font-space-grotesk)]">
+        Your itinerary is ready!
+      </h2>
+      <p className="mt-3 text-sm text-[var(--color-foreground-muted)] [font-family:var(--font-dm-sans)]">
+        Everything is set. Open your itinerary to start exploring.
+      </p>
+      <button
+        type="button"
+        onClick={onViewItinerary}
+        className="btn btn-accent mt-8 h-14 rounded-xl border-[var(--color-accent)] bg-[var(--color-accent)] px-6 text-base font-bold text-white"
+      >
+        View Itinerary →
+      </button>
     </div>
   )
 }

@@ -1,6 +1,6 @@
-# WanderPlan — System Design Document
-**Version:** 2.0 (Conversational Interface)  
-**Last Updated:** June 17, 2026  
+# Wanderplan — System Design Document
+**Version:** 3.0 (Full Redesign + Dark Mode)  
+**Last Updated:** June 23, 2026  
 **Audience:** Engineering team and technical stakeholders
 
 ---
@@ -14,8 +14,9 @@
 6. [Qdrant Collection Schema](#6-qdrant-collection-schema)
 7. [Gemini Prompt Design](#7-gemini-prompt-design)
 8. [Frontend State Architecture](#8-frontend-state-architecture)
-9. [Environment Variables Reference](#9-environment-variables-reference)
-10. [Performance & Cost Analysis](#10-performance--cost-analysis)
+9. [Design System](#9-design-system)
+10. [Environment Variables Reference](#10-environment-variables-reference)
+11. [Performance & Cost Analysis](#11-performance--cost-analysis)
 
 ---
 
@@ -27,12 +28,21 @@
 │                                                                        │
 │  ┌────────────────────────────────────────────────────────────────┐  │
 │  │  Next.js 16 (Turbopack) + TypeScript                          │  │
+│  │  Design System: Space Grotesk + DM Sans + JetBrains Mono      │  │
+│  │  Theme: Light / Dark (CSS custom properties, no-flash script) │  │
 │  │                                                                 │  │
 │  │  ┌──────────────────────────────────────────────────────────┐ │  │
-│  │  │  Anya - Conversational Wizard (Full-Screen Overlay)     │ │  │
+│  │  │  LandingHero (shown when no itinerary loaded)           │ │  │
+│  │  │  - Hero headline, feature grid, example trip chips      │ │  │
+│  │  │  - Blurs/dims when Anya wizard opens                    │ │  │
+│  │  └──────────────────────────────────────────────────────────┘ │  │
+│  │                                                                 │  │
+│  │  ┌──────────────────────────────────────────────────────────┐ │  │
+│  │  │  Anya — Conversational Wizard (Full-Screen Overlay)     │ │  │
 │  │  │  🎙️ Voice Mode: Speech Recognition + Synthesis         │ │  │
-│  │  │  💬 Chat Interface with Quick-Reply Chips               │ │  │
-│  │  │  📊 Progress Tracking (9 wizard fields)                 │ │  │
+│  │  │  📊 Step progress bar (sky-blue gradient fill, 11 steps)│ │  │
+│  │  │  🔄 Edit-entry screen: "Add instructions" | "New trip"  │ │  │
+│  │  │  ✏️ Refinement step: free-text custom instructions      │ │  │
 │  │  └──────────────────────────────────────────────────────────┘ │  │
 │  │                                                                 │  │
 │  │  ┌──────────┐  ┌──────────────────┐  ┌────────────────────┐  │  │
@@ -40,13 +50,14 @@
 │  │  │ (20%)    │  │    (55%)          │  │    (25%)           │  │  │
 │  │  │          │  │                   │  │                    │  │  │
 │  │  │ Metrics  │  │ Itinerary         │  │ Map (Leaflet)      │  │  │
-│  │  │ Booking  │  │ Timeline          │  │ Best Time Widget   │  │  │
-│  │  │ Expenses │  │ Comparison        │  │ Travel Tips        │  │  │
-│  │  └──────────┘  └──────────────────┘  └────────────────────┘  │  │
+│  │  │ Expenses │  │ Timeline          │  │ Best Time Widget   │  │  │
+│  │  │ Currency │  │ Comparison        │  │ BookingLinksSection│  │  │
+│  │  └──────────┘  └──────────────────┘  │ Travel Tips        │  │  │
+│  │                                       └────────────────────┘  │  │
 │  │                                                                 │  │
 │  │  State Management: Zustand (4 stores)                          │  │
 │  │  - tripConfigStore  - wizardChatStore                          │  │
-│  │  - itineraryStore   - appStore                                 │  │
+│  │  - itineraryStore   - appStore (wizardOpen: false by default)  │  │
 │  └─────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────┬────────────────────────────────────────┘
                               │ HTTPS / JSON / SSE
@@ -59,8 +70,9 @@
 │  POST /api/recommend-cities     → City suggestions (Gemini)          │
 │  GET  /api/travel-tips          → Gemini-generated tips (cached)     │
 │  GET  /api/best-time/{city}     → Weather data (Open-Meteo)          │
-│  GET  /api/geocode              → Nominatim wrapper                   │
+│  GET  /api/geocode              → Nominatim wrapper (en names)        │
 │  GET  /api/youtube-thumbnail    → YouTube scraper                     │
+│  POST /api/compare-destinations → AI 10-param qualitative comparison  │
 │  GET  /health                   → Readiness check                     │
 │                                                                        │
 │  Background Jobs (APScheduler):                                       │
@@ -72,10 +84,12 @@
 │   Qdrant    │ │   Gemini   │  │  Open-Meteo   │  │ External APIs  │
 │ (in-memory) │ │  2.0 Flash │  │  Weather API  │  │                │
 │             │ │            │  │               │  │ • Nominatim    │
-│ Collections:│ │ Model:     │  │ Historical +  │  │ • Reddit JSON  │
-│ - reddit    │ │ gemini-2.0 │  │ Forecast data │  │ • YouTube      │
-│ - wiki      │ │ -flash-exp │  │               │  │ • OSM Tiles    │
-└─────────────┘ └────────────┘  └───────────────┘  └────────────────┘
+│ Collections:│ │ Model:     │  │ Historical +  │  │   (Accept-Lang │
+│ - reddit    │ │ gemini-2.0 │  │ Forecast data │  │   :en header)  │
+│ - wiki      │ │ -flash     │  │               │  │ • Reddit JSON  │
+└─────────────┘ └────────────┘  └───────────────┘  │ • YouTube      │
+                                                    │ • OSM Tiles    │
+                                                    └────────────────┘
 
 Embedding Model: sentence-transformers/all-MiniLM-L6-v2 (local, 384 dims)
 ```
@@ -87,7 +101,11 @@ Embedding Model: sentence-transformers/all-MiniLM-L6-v2 (local, 384 dims)
 ### 2.1 Wizard Field Flow
 
 ```
-User opens wizard → Anya greets: "Hi! I'm Anya from WanderPlan..."
+User opens wizard → Anya greets: "Hi! I'm Anya, the Wanderplan concierge..."
+         │
+         ├─ If existing itinerary: showEditEntry screen
+         │    ├─ "Add custom instructions" → jump to refinement step
+         │    └─ "Plan a new trip from scratch" → start at step 1
          │
          ▼
 Field Sequence (in wizardChatStore):
@@ -112,7 +130,7 @@ Field Sequence (in wizardChatStore):
          │
          ▼
 6. group         → "Who's coming with you?"
-                   Sub-flow: adults → kids count → kid ages
+                   Sub-flow: adults (CounterCard) → kids count (CounterCard) → kid ages (text input)
          │
          ▼
 7. budget        → "What's your total budget?"
@@ -134,7 +152,7 @@ Field Sequence (in wizardChatStore):
          │
          ▼
 11. refinement   → "Anything else before I generate?"
-                   User input → POST /api/chat-refine → apply config_patch
+                   Textarea: free-text custom instructions
                    Chip: "Looks good, proceed ✓"
          │
          ▼
@@ -430,6 +448,21 @@ data: {"status": "complete"}
 
 **Cache**: In-memory per destination, persists until API restart
 
+### 5.5 Geocode
+
+**Endpoint**: `GET /api/geocode?q={city_name}`
+
+**Implementation note**: Nominatim returns place names in the local script by default (e.g. Japanese kanji, Devanagari). To ensure English names are returned consistently:
+
+```python
+headers = {"Accept-Language": "en"}
+params  = {"q": city_name, "format": "json", "limit": 1, "namedetails": 1}
+# Name resolution priority:
+# 1. namedetails["name:en"]
+# 2. address["city"] / address["town"]
+# 3. display_name.split(",")[0]
+```
+
 ---
 
 ## 6. Qdrant Collection Schema
@@ -570,7 +603,42 @@ Guardrails:
 - If non-travel question: "I'm Anya, WanderPlan's travel assistant — I can only help with travel questions! 🌍"
 ```
 
-### 7.3 City Recommendations Prompt
+### 7.3 AI Destination Comparison Prompt
+
+Used by `POST /api/compare-destinations` to generate qualitative side-by-side comparison.
+
+**Temperature**: 0.5  
+**Max Tokens**: 2048
+
+**Parameters returned** (10 qualitative dimensions):
+1. Food & Cuisine
+2. Culture & Heritage
+3. Adventure Activities
+4. Family Friendliness
+5. Nightlife
+6. English Proficiency
+7. Safety
+8. Best Season
+9. Cost of Living
+10. Crowd Level
+
+**Template**:
+```
+Compare {city_a} and {city_b} across 10 qualitative travel dimensions.
+Return a JSON array:
+[
+  {
+    "parameter": "Food & Cuisine",
+    "city_a_score": 8,
+    "city_b_score": 7,
+    "city_a_summary": "...",
+    "city_b_summary": "..."
+  },
+  ...
+]
+```
+
+### 7.4 City Recommendations Prompt
 
 **Temperature**: 0.7  
 **Max Tokens**: 512
@@ -647,43 +715,107 @@ Output JSON:
 RootLayout
   ├─ MobileWarningBanner
   └─ HomePage
-       ├─ ThreeColumnLayout
+       ├─ LandingHero (shown when days.length === 0)
+       │    ├─ WanderplanLogo
+       │    ├─ Hero headline + CTA
+       │    ├─ Example trip chips
+       │    ├─ Feature grid (4 features)
+       │    └─ CTA banner (dims/blurs when wizard opens)
+       │
+       ├─ ThreeColumnLayout (shown when itinerary loaded)
+       │    ├─ TopNav
+       │    │    ├─ WanderplanLogo (sm, inverted)
+       │    │    └─ ThemeToggle (Sun/Moon, persists to localStorage)
+       │    │
        │    ├─ Column1Metrics (left 20%)
-       │    │    ├─ Trip metrics
-       │    │    ├─ BookingLinksSection
+       │    │    ├─ Trip metrics (duration, destination, dates, group)
        │    │    ├─ ExpenseBreakupCard
        │    │    └─ CurrencyWidget
        │    │
        │    ├─ ItineraryTimeline | ComparisonPanel (center 55%)
        │    │    ├─ Day tabs
        │    │    ├─ Activity cards
-       │    │    └─ Transit warnings
+       │    │    └─ ComparisonGrid (AI 10-param qualitative)
        │    │
        │    └─ Column3Sidebar (right 25%)
        │         ├─ MapWrapper (Leaflet)
        │         ├─ BestTimeWidget
+       │         ├─ BookingLinksSection
        │         └─ TravelTips
        │
        └─ ConversationalWizard (overlay, conditional)
-            ├─ Header: "Anya - Your AI Travel Assistant"
-            ├─ Progress bar
-            ├─ Message history
-            ├─ Quick-reply chips
-            ├─ Input field + voice button
+            ├─ Header: "Wanderplan" / "Anya · Your travel concierge"
+            ├─ Progress bar (sky-blue gradient, 11 steps)
+            ├─ Step indicator ("Step N of 11")
+            ├─ Edit-entry screen (showEditEntry state)
+            ├─ Per-step card (question + input)
+            │    ├─ ChipGrid (single/multi select)
+            │    ├─ CounterCard (Adults/Kids — explicit contrast tokens)
+            │    ├─ DestinationSearchInput
+            │    └─ Refinement textarea
+            ├─ Back / Continue nav buttons
             └─ TripSummaryCard (when phase='summary')
 ```
 
 ---
 
-## 9. Environment Variables Reference
+## 9. Design System
 
-### 9.1 Backend (.env)
+Sourced from `ui-ux-pro-max` skill (Travel/Tourism Agency palette, Exaggerated Minimalism style).
+
+### 9.1 Colour Tokens
+
+| Token | Light | Dark | Usage |
+|-------|-------|------|-------|
+| `--_primary` | `#0EA5E9` | `#0EA5E9` | Sky blue — CTA, links, progress fill |
+| `--_accent` | `#EA580C` | `#EA580C` | Adventure orange — highlights, AI node |
+| `--_bg` | `#F0F9FF` | `#040D14` | Page background |
+| `--_fg` | `#0C4A6E` | `#E2F0FB` | Body text |
+| `--_card` | `#ffffff` | `#0A1628` | Card surfaces |
+| `--_border` | `#BAE6FD` | `#1E3A5F` | Borders, dividers |
+| `--_muted` | `#64748B` | `#64748B` | Hint / secondary text |
+
+### 9.2 Typography
+
+| Role | Font | Weight |
+|------|------|--------|
+| Headings | Space Grotesk | 700–800 |
+| Body | DM Sans | 400–500 |
+| Mono / code | JetBrains Mono | 400 |
+| Logo wordmark | Space Grotesk | 700 |
+
+### 9.3 Dark Mode Architecture
+
+- `@custom-variant dark (&:where(.dark, .dark *))` in `globals.css` enables `dark:` Tailwind variants
+- Semantic tokens `--_*` defined in `:root` (light) and overridden in `.dark`
+- Flash-prevention `<script>` in `<head>` reads `localStorage('wp-theme')` before first paint
+- Toggle key: `wp-theme` = `'dark'` | `'light'`
+- `ThemeToggle.tsx` — Sun/Moon icon, rendered in TopNav
+
+### 9.4 Brand Mark (WanderplanLogo.tsx)
+
+SVG icon anatomy (landscape, viewBox 0 0 64 44):
+
+```
+[AI neural node] ──── [W-shaped journey route] ──── [Location pin]
+ 4 orange dots          thick navy cubic bezier       navy teardrop
+ radiating from         path (2 valleys, 2 peaks)     white ring +
+ navy hub circle        connecting left to right       orange centre
+```
+
+Props: `size` (`sm`|`md`|`lg`), `inverted` (flips navy→white for coloured bg), `wordmark` (boolean)
+
+---
+
+## 10. Environment Variables Reference
+
+### 10.1 Backend (.env)
 
 ```bash
 # LLM Provider
 LLM_PROVIDER=gemini          # or 'mock' for testing
 GEMINI_API_KEY=your_key_here
-GEMINI_MODEL=gemini-2.0-flash-exp
+GEMINI_MODEL=gemini-2.0-flash
 
 # Vector Database
 QDRANT_URL=:memory:          # or http://localhost:6333 for persistent
@@ -696,7 +828,7 @@ INGESTION_REFRESH_HOURS=6    # Reddit refresh interval
 CONTENT_FILTER_LEVEL=strict  # or 'moderate'
 ```
 
-### 9.2 Frontend (.env.local)
+### 10.2 Frontend (.env.local)
 
 ```bash
 NEXT_PUBLIC_API_URL=http://localhost:8000
@@ -704,7 +836,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 
 ---
 
-## 10. Performance & Cost Analysis
+## 11. Performance & Cost Analysis
 
 ### 10.1 Response Times (P95)
 

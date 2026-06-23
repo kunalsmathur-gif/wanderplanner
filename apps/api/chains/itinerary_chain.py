@@ -228,11 +228,12 @@ def _parse_expense_breakdown(raw: dict, trip_config: TripConfig) -> "ExpenseBrea
 
 
 async def _gemini_itinerary(trip_config: TripConfig) -> dict:
-    """Call Google Gemini directly — no langchain, no sentence-transformers needed."""
+    """Call Google Gemini directly with automatic retry on 503 errors."""
     import asyncio
     try:
         from google import genai as google_genai
         from google.genai import types as genai_types
+        from google.api_core.exceptions import ServerError
     except ImportError:
         raise RuntimeError("google-genai not installed. Run: pip install google-genai")
 
@@ -258,20 +259,50 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
         )
         return response.text
 
-    # Run blocking SDK call in thread pool so the event loop stays free
+    # Retry logic: 3 attempts with exponential backoff (2s, 4s, 8s)
     loop = asyncio.get_event_loop()
-    text = await loop.run_in_executor(None, _call_sync)
-
-    try:
-        # Strip markdown fences if Gemini adds them despite response_mime_type
-        cleaned = text.strip()
-        if cleaned.startswith("```"):
-            cleaned = "\n".join(cleaned.split("\n")[1:])
-        if cleaned.endswith("```"):
-            cleaned = "\n".join(cleaned.split("\n")[:-1])
-        return json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Gemini returned invalid JSON: {e}") from e
+    max_attempts = 3
+    
+    for attempt in range(max_attempts):
+        try:
+            # Run blocking SDK call in thread pool so the event loop stays free
+            text = await loop.run_in_executor(None, _call_sync)
+            
+            # Strip markdown fences if Gemini adds them despite response_mime_type
+            cleaned = text.strip()
+            if cleaned.startswith("```"):
+                cleaned = "\n".join(cleaned.split("\n")[1:])
+            if cleaned.endswith("```"):
+                cleaned = "\n".join(cleaned.split("\n")[:-1])
+            return json.loads(cleaned)
+            
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"Gemini returned invalid JSON: {e}") from e
+            
+        except ServerError as e:
+            # Check if it's a 503 error
+            if "503" in str(e) or "UNAVAILABLE" in str(e):
+                if attempt < max_attempts - 1:
+                    # Exponential backoff: 2s, 4s, 8s
+                    wait_time = 2 ** (attempt + 1)
+                    print(f"⚠️ Gemini API 503 error (attempt {attempt + 1}/{max_attempts}). Retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    # All retries exhausted
+                    print(f"❌ Gemini API failed after {max_attempts} attempts")
+                    raise
+            else:
+                # Not a 503 error, re-raise immediately
+                raise
+        
+        except Exception as e:
+            # Unexpected error, re-raise immediately
+            print(f"❌ Unexpected error in Gemini API call: {type(e).__name__}: {e}")
+            raise
+    
+    # Should never reach here, but just in case
+    raise RuntimeError("Gemini itinerary generation failed after all retry attempts")
 
 
 async def generate_itinerary(trip_config: TripConfig) -> ItineraryResponse:

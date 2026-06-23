@@ -1,0 +1,2 @@
+No,Data Type,Keywords,Best Chart Type,Secondary Options,When to Use,When NOT to Use,Data Volume Threshold,Color Guidance,Accessibility Grade,Accessibility Notes,A11y Fallback,Library Recommendation,Interactive Level
+1,Trend Over Time,"trend, time-series, line",Line Chart,"Area Chart","Data has a time axis",Fewer than 4 data points,"<1000 SVG; >=1000 Canvas","Primary: #0080FF",AA,Differentiate by line style not color alone,Dashed lines per series,"Chart.js, Recharts",Hover + Zoom
