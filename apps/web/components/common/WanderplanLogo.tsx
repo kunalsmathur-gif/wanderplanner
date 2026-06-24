@@ -1,108 +1,127 @@
 interface Props {
   size?: 'sm' | 'md' | 'lg'
-  /** Render on dark/coloured background — navy becomes white */
+  /** On dark background: brighter gold + gold wordmark.
+   *  On light background (default): warmer gold + navy wordmark. */
   inverted?: boolean
   /** Show wordmark alongside the icon (default: true) */
   wordmark?: boolean
 }
 
-// Icon renders as a landscape rectangle (64 × 44 viewBox)
+// Icon viewBox is 72 × 58 (W mark aspect ratio ~1.24 : 1)
 const SIZES = {
-  sm: { h: 28,  w: 41,  text: 'text-base', gap: 'gap-2'   },
-  md: { h: 36,  w: 52,  text: 'text-xl',   gap: 'gap-2.5' },
-  lg: { h: 48,  w: 70,  text: 'text-2xl',  gap: 'gap-3'   },
+  sm: { h: 28,  w: 35,  text: 'text-sm',   tagText: 'text-[0.45rem]', gap: 'gap-2'   },
+  md: { h: 36,  w: 45,  text: 'text-base', tagText: 'text-[0.55rem]', gap: 'gap-2.5' },
+  lg: { h: 48,  w: 60,  text: 'text-lg',   tagText: 'text-[0.6rem]',  gap: 'gap-3'   },
 }
 
 /**
- * Wanderplan brand mark.
+ * Wanderplan brand mark — inspired by the geometric W logo.
  *
- * Icon anatomy:
- *  • Left  — AI neural node: navy circle hub with 4 orange radiating dots
- *  • Centre — Thick navy W-shaped route (road/journey path)
- *  • Right  — Location pin: navy teardrop, white ring, orange centre dot
+ * W construction (viewBox 0 0 72 58):
+ *  5-point W:  TL(6,6) → BL(18,50) → IT(34,8) → BR(50,50) → TR(62,6)
+ *  + cross-diagonal 1: TL(6,6)  → BR(50,50)  — creates left diamond node @ (27,27)
+ *  + cross-diagonal 2: BL(18,50) → TR(62,6)   — creates right diamond node @ (41,27)
+ *  + compass arrow at TR tip pointing NE
  *
- * Design system: Space Grotesk wordmark · #0C4A6E navy · #EA580C orange · #0EA5E9 sky
+ * Colours:
+ *  inverted (dark bg) : bright metallic gold mark + gold wordmark
+ *  normal  (light bg) : warm muted gold mark + dark-navy wordmark
  */
 export function WanderplanLogo({ size = 'md', inverted = false, wordmark = true }: Props) {
-  const { h, w, text, gap } = SIZES[size]
+  const { h, w, text, tagText, gap } = SIZES[size]
 
-  // Semantic colour aliases — flip for inverted (white-bg → dark-bg)
-  const navy   = inverted ? '#ffffff' : '#0C4A6E'
-  const orange = '#EA580C'
-  const sky    = inverted ? '#FB923C' : '#0EA5E9'  // pin centre accent
-  const hub    = inverted ? '#0EA5E9' : '#ffffff'   // hub inner dot
+  // Gold palette — brighter on dark, richer/warmer on light
+  const gA = inverted ? '#F5D060' : '#A8820A'   // gradient start
+  const gB = inverted ? '#D4AF37' : '#C9A227'   // gradient mid / node fill
+  const gC = inverted ? '#B89020' : '#DFB84A'   // gradient end
+  const wordmarkClr = inverted ? '#E8C060' : '#0C4A6E'
+  const taglineClr  = inverted ? '#D4AF3799' : '#64748B'
+
+  // Unique-per-size gradient ID (at most one of each size on any page)
+  const gId = `wp-gold-${size}`
+  const sw  = size === 'lg' ? 2 : 1.6   // stroke width
+
+  // Diamond node radius scales with stroke width
+  const nr = sw + 1.2
 
   return (
     <span className={`inline-flex select-none items-center ${gap}`}>
-      {/* ── Icon mark ────────────────────────────────────────────── */}
+
+      {/* ── W mark ───────────────────────────────────────────────── */}
       <svg
         width={w}
         height={h}
-        viewBox="0 0 64 44"
+        viewBox="0 0 72 58"
         fill="none"
         aria-hidden="true"
         xmlns="http://www.w3.org/2000/svg"
       >
-        {/* ── AI neural node (left) ────────────────────────────── */}
-        {/* Radiating lines → orange satellite dots */}
-        <line x1="10" y1="22" x2="3"  y2="13" stroke={orange} strokeWidth="1.3" strokeLinecap="round"/>
-        <line x1="10" y1="22" x2="1"  y2="22" stroke={orange} strokeWidth="1.3" strokeLinecap="round"/>
-        <line x1="10" y1="22" x2="3"  y2="31" stroke={orange} strokeWidth="1.3" strokeLinecap="round"/>
-        <line x1="10" y1="22" x2="6"  y2="12" stroke={orange} strokeWidth="1.3" strokeLinecap="round"/>
-        <circle cx="3"  cy="13" r="2"   fill={orange}/>
-        <circle cx="1"  cy="22" r="2"   fill={orange}/>
-        <circle cx="3"  cy="31" r="2"   fill={orange}/>
-        <circle cx="6"  cy="12" r="2"   fill={orange}/>
-        {/* Hub ring + inner dot */}
-        <circle cx="10" cy="22" r="4"   fill={navy}/>
-        <circle cx="10" cy="22" r="1.8" fill={hub}/>
+        <defs>
+          {/* Gradient spans the full W from TL to BR */}
+          <linearGradient id={gId} x1="6" y1="6" x2="62" y2="50" gradientUnits="userSpaceOnUse">
+            <stop offset="0%"   stopColor={gA}/>
+            <stop offset="50%"  stopColor={gB}/>
+            <stop offset="100%" stopColor={gC}/>
+          </linearGradient>
+        </defs>
 
-        {/* ── W journey route ──────────────────────────────────── */}
-        {/* Short connector from node to main path */}
-        <line x1="10" y1="22" x2="14" y2="22" stroke={navy} strokeWidth="3.5" strokeLinecap="round"/>
-        {/* Smooth W shape: down → up → down → up (road/route aesthetic) */}
+        {/* ── W outline (4 segments) ── */}
         <path
-          d="M 14 22
-             C 15 34  18 40  21 38
-             C 24 36  26 26  28 20
-             C 30 14  32 12  34 18
-             C 36 24  38 34  41 38
-             C 44 42  48 38  50 28
-             L 51 24"
-          stroke={navy}
-          strokeWidth="3.5"
-          fill="none"
+          d="M6 6 L18 50 L34 8 L50 50 L62 6"
+          stroke={`url(#${gId})`}
+          strokeWidth={sw}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
 
-        {/* ── Location pin (right) ─────────────────────────────── */}
-        {/* Teardrop body: smooth pin pointing down to meet W path */}
+        {/* ── Cross-diagonals — create the diamond intersections ── */}
+        {/* Diag 1: TL → BR (crosses left inner arm at ~27,27) */}
+        <line x1="6"  y1="6"  x2="50" y2="50" stroke={`url(#${gId})`} strokeWidth={sw} strokeLinecap="round"/>
+        {/* Diag 2: BL → TR (crosses right inner arm at ~41,27) */}
+        <line x1="18" y1="50" x2="62" y2="6"  stroke={`url(#${gId})`} strokeWidth={sw} strokeLinecap="round"/>
+
+        {/* ── Diamond node markers (filled circles at intersections) ── */}
+        <circle cx="27" cy="27" r={nr} fill={gB}/>
+        <circle cx="41" cy="27" r={nr} fill={gB}/>
+        {/* Inner-peak node at W top */}
+        <circle cx="34" cy="8"  r={nr - 0.8} fill={gB}/>
+
+        {/* ── Compass arrow at TR(62,6) — pointing NE ── */}
         <path
-          d="M 44.5 11
-             C 44.5 5.5  59.5 5.5  59.5 11
-             C 59.5 16.5  52 25  52 25
-             C 52 25  44.5 16.5  44.5 11 Z"
-          fill={navy}
+          d="M62 6 L69 0"
+          stroke={gB}
+          strokeWidth={sw - 0.2}
+          strokeLinecap="round"
         />
-        {/* White ring inside pin */}
-        <circle cx="52" cy="11" r="3.8" fill="white"/>
-        {/* Accent dot — sky/orange depending on bg */}
-        <circle cx="52" cy="11" r="2"   fill={sky}/>
+        {/* Arrowhead */}
+        <path
+          d="M69 0 L65 2 M69 0 L67 5"
+          stroke={gB}
+          strokeWidth={sw - 0.3}
+          strokeLinecap="round"
+        />
       </svg>
 
       {/* ── Wordmark ─────────────────────────────────────────────── */}
       {wordmark && (
-        <span
-          className={[
-            'font-display font-bold tracking-tight',
-            text,
-            inverted ? 'text-white' : 'text-[#0C4A6E]',
-          ].join(' ')}
-        >
-          Wanderplan
+        <span className="flex flex-col leading-none">
+          <span
+            className={`font-display font-bold tracking-[0.14em] ${text}`}
+            style={{ color: wordmarkClr, fontFamily: 'var(--font-space-grotesk)' }}
+          >
+            WANDERPLAN
+          </span>
+          {size !== 'sm' && (
+            <span
+              className={`mt-[3px] tracking-[0.18em] font-medium uppercase ${tagText}`}
+              style={{ color: taglineClr, fontFamily: 'var(--font-dm-sans)', letterSpacing: '0.18em' }}
+            >
+              Curated AI Travel Planning
+            </span>
+          )}
         </span>
       )}
     </span>
   )
 }
+

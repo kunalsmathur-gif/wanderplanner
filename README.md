@@ -4,7 +4,7 @@
 
 [![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688)](https://fastapi.tiangolo.com)
-[![Gemini](https://img.shields.io/badge/Gemini-2.0%20Flash-4285F4)](https://ai.google.dev)
+[![Gemini](https://img.shields.io/badge/Gemini-2.5%20Flash-4285F4)](https://ai.google.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
@@ -41,15 +41,15 @@ WanderPlan uses conversational AI to help you plan trips through a natural chat 
 |---|---|
 | **🎙️ Anya Voice Assistant** | Conversational AI with voice input/output. Talk naturally to plan your trip. Young Indian female voice (20-25 yrs). Now with persistent floating orb for always-on access. |
 | **💬 Chat Interface** | Full conversational wizard with quick-reply chips, city suggestions, multi-city support, and context-aware responses. |
-| **🤖 AI Itinerary Engine** | Gemini 2.0 Flash generates day-by-day schedules with timestamped activities, routing, and budget allocation. Supports flexible trip durations. |
+| **🤖 AI Itinerary Engine** | Gemini 2.5 Flash generates day-by-day schedules with timestamped activities, routing, and budget allocation. Supports flexible trip durations. |
 | **🗺️ Interactive Maps** | OpenStreetMap with itinerary pins, click-to-navigate, and route visualization. |
 | **🌐 Travel Tips** | Gemini-powered community-style tips + Reddit highlights, with YouTube video thumbnails. Fallback curated tips ensure content is always available. |
-| **📊 Destination Comparison** | Side-by-side grid comparing budget, weather, visa, and suitability. |
+| **📊 Destination Comparison** | Side-by-side grid comparing 10 qualitative parameters including budget, weather, visa friction, family fit, food scene, and overall suitability. |
 | **🌤️ Best Time Widget** | Historical weather data, tourist seasons, and local events. |
 | **✈️ Booking Integration** | Deep-links to Skyscanner, Booking.com, and Viator. |
 | **💰 Budget Tracking** | Expense breakdown by category with currency conversion. |
 | **📄 PDF Export** | Download your full itinerary — no account needed. |
-| **🎨 Distinctive Design** | Travel-inspired visual identity with passport navy, horizon amber, and vintage stamp aesthetics. Fraunces display font with personality. |
+| **🎨 Distinctive Design** | Geometric gold W brand mark with diamond nodes + compass arrow. Space Grotesk + DM Sans. Sky blue + adventure orange + ocean navy palette. Full dark/light mode. |
 
 ---
 
@@ -64,14 +64,14 @@ WanderPlan uses conversational AI to help you plan trips through a natural chat 
 | react-leaflet + OpenStreetMap | Interactive maps with activity pins |
 | Web Speech API | Voice input (speech-to-text) |
 | Speech Synthesis API | Voice output (text-to-speech) |
-| Fraunces, Inter, JetBrains Mono | Custom font trio: display (wonky axis), body (tight tracking), data |
+| Space Grotesk, DM Sans, JetBrains Mono | Custom font trio: display (wonky axis), body (tight tracking), data |
 | Axios | HTTP client |
 
 ### Backend (`/apps/api`)
 | Technology | Purpose |
 |---|---|
 | Python 3.9+ + FastAPI | Async REST API, Pydantic validation |
-| Google Gemini 2.0 Flash | LLM for itinerary generation, chat, city recommendations |
+| Google Gemini 2.5 Flash | LLM for itinerary generation, chat, city recommendations |
 | Qdrant (in-memory) | Vector database for semantic search |
 | sentence-transformers | Local text embeddings (all-MiniLM-L6-v2) |
 | httpx + BeautifulSoup4 | Web scraping (Wikivoyage, Reddit, YouTube) |
@@ -107,12 +107,12 @@ WanderPlan uses conversational AI to help you plan trips through a natural chat 
 │              FastAPI (Python 3.9+)                           │
 │  /api/generate-itinerary  /api/chat-refine                  │
 │  /api/recommend-cities    /api/travel-tips                  │
-│  Gemini 2.0 Flash | Qdrant | APScheduler                   │
+│  Gemini 2.5 Flash | Qdrant | APScheduler                   │
 └───────┬───────────┬──────────────┬──────────────┬───────────┘
         │           │              │              │
    ┌────▼────┐ ┌────▼────┐  ┌─────▼─────┐  ┌────▼────────┐
    │ Qdrant  │ │ Gemini  │  │ Open-Meteo│  │ Reddit JSON │
-   │ (vector │ │ 2.0     │  │ Nominatim │  │ YouTube     │
+   │ (vector │ │ 2.5     │  │ Nominatim │  │ YouTube     │
    │   DB)   │ │ Flash   │  │    OSM    │  │ Wikivoyage  │
    └─────────┘ └─────────┘  └───────────┘  └─────────────┘
 ```
@@ -195,7 +195,7 @@ Open `http://localhost:3000` in your browser.
 |---|---|---|
 | `GEMINI_API_KEY` | Google Gemini API key | ✅ |
 | `LLM_PROVIDER` | `gemini` (default) or `mock` | ❌ |
-| `GEMINI_MODEL` | Model ID (default: `gemini-2.0-flash-exp`) | ❌ |
+| `GEMINI_MODEL` | Model ID (default: `gemini-2.5-flash`) | ❌ |
 | `QDRANT_URL` | Qdrant instance (default: `:memory:`) | ❌ |
 | `ALLOWED_ORIGINS` | CORS origins (e.g., `http://localhost:3000`) | ✅ |
 
@@ -206,7 +206,7 @@ Open `http://localhost:3000` in your browser.
 **Monthly cost for 100 active users**: ~₹20-40 (~₹0.20-0.40 per user)
 
 All external APIs are free except Gemini:
-- **Gemini 2.0 Flash**: ~₹0.10-0.15 per session (itinerary + chat + tips)
+- **Gemini 2.5 Flash**: ~₹0.10-0.15 per session (itinerary + chat + tips)
 - **Nominatim, Open-Meteo, Reddit, OSM**: Free
 - **Vercel/Railway**: Free tiers sufficient for MVP
 
@@ -220,7 +220,7 @@ See [Technical Documentation](TECHNICAL_DOCUMENTATION.md#cost-analysis) for deta
 - ✅ Conversational wizard with Anya
 - ✅ Voice input/output (Indian English, young female)
 - ✅ Single-screen interface with chat overlay
-- ✅ Gemini 2.0 Flash for all LLM tasks
+- ✅ Gemini 2.5 Flash for all LLM tasks
 - ✅ Real-time travel tips with caching
 - ✅ **NEW: Distinctive travel-inspired design system** (passport navy, horizon amber, vintage stamps)
 - ✅ **NEW: Persistent floating Anya button** for always-on voice access

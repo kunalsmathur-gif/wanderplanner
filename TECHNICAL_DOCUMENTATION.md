@@ -1,9 +1,8 @@
 # WanderPlan — Technical Documentation
 
-**Version:** 2.0 (Conversational Interface Update)  
-**Last Updated:** June 17, 2026  
-**Status:** Production-ready with AI voice assistant  
-**Version:** 2.1 — Design Revamp & Enhanced UX
+**Version:** 3.0 (Logo · SEO · Gemini 2.5 · Dark Mode Fixes)  
+**Last Updated:** June 24, 2026  
+**Status:** Production-ready with AI voice assistant
 
 ---
 
@@ -76,73 +75,48 @@ WanderPlan is an AI-powered travel planning platform that uses conversational AI
 
 ## Design System
 
-### Visual Identity (v2.1 Design Revamp)
+### Visual Identity (v3.0 Brand & SEO Refresh)
 
-WanderPlan's design system draws inspiration from physical travel artifacts: vintage luggage tags, aged maps, passport stamps, and travel journals. This creates a distinctive, warm aesthetic that differentiates from generic SaaS interfaces.
+WanderPlan now uses a cleaner luxury-travel visual system centered on a geometric gold W brand mark, high-contrast typography, and fully synchronized light/dark mode behavior.
+
+#### Brand Mark
+
+Brand mark: Geometric gold W with cross-diagonal diamond intersection nodes and compass arrow. Dual-tone gold (warm muted in light mode, bright metallic in dark mode). Wordmark in dark navy (light) / gold (dark). Tagline "Curated AI Travel Planning" at md/lg sizes.
+
+- **SVG viewBox**: `0 0 72 58`
+- **Key nodes**: diamond intersections at `(27,27)` and `(41,27)`, inner peak at `(34,8)`, compass arrow at top-right `(62,6)`
+- **Sizes**: `sm {h:28, w:35}`, `md {h:36, w:45}`, `lg {h:48, w:60}`
 
 #### Color Palette
 
 **Core Colors:**
-- **Passport Navy** `#1A3A52` — Primary brand color, header backgrounds
-- **Horizon Amber** `#E88D3A` — Accent color, CTAs, highlights
-- **Map Ivory** `#F7F4EF` — Main background, soft warmth
-- **Sky Periwinkle** `#A8C5DA` — Secondary accent, gradient blends
-- **Luggage Tan** `#D4B59E` — Tertiary warm tone
-
-**Utility Colors:**
-- **Ink Charcoal** `#2C2C2E` — Primary text
-- **Slate Mist** `#6B7280` — Secondary text
-- **Paper White** `#FFFFFF` — Cards, overlays
+- **Sky Blue** `#0EA5E9` — primary CTA, links, progress fills
+- **Adventure Orange** `#EA580C` — accent highlights
+- **Ocean Navy** `#0C4A6E` — headings, wordmark on light mode
+- **Soft Gold** `#A8820A → #C9A227 → #DFB84A` — brand gradient in light mode
+- **Metallic Gold** `#F5D060 → #D4AF37 → #B89020` — brand gradient in dark mode
 
 #### Typography
 
 **Three-font System:**
 
-1. **Fraunces** (Display)
-   - Variable font with "wonky" axis for personality
-   - Used in headers, Anya's name, key CTAs
-   - Adds character without sacrificing readability
+1. **Space Grotesk** (Display / wordmark)
+   - Used for headers, logo wordmark, strong CTAs
+   - Crisp geometric feel aligned with the new brand mark
 
-2. **Inter** (Body)
-   - Tight letter-spacing (`-0.01em`) for confident tone
-   - Used for all body text, labels, descriptions
-   - Excellent readability at all sizes
+2. **DM Sans** (Body)
+   - Used for interface copy, labels, helper text, FAQs
+   - Balanced for dense trip-planning UI
 
 3. **JetBrains Mono** (Data)
-   - Monospace font for timestamps, IDs, technical data
-   - Clear distinction between content and metadata
+   - Used for technical or structured values where alignment matters
 
-#### Components
+#### Theme System
 
-**Signature Element: ListeningOrb**
-- Circular breathing animation (72x72 SVG)
-- Gradient: Amber → Periwinkle
-- Pulse rings when active
-- Embodies Anya's organic, always-listening presence
-
-**StampChip**
-- Vintage travel stamp aesthetic
-- Dashed borders, slight rotation
-- Striped texture background
-- Used for quick-reply options
-
-**PolaroidCard** *(future integration)*
-- Scrapbook-style card for timeline photos
-- White border, shadow depth
-- Handwritten-style captions
-
-**FloatingAnyaButton**
-- Persistent voice access point
-- Bottom-right positioning
-- Circular ListeningOrb with hover effects
-
-#### Layout
-
-**ThreeColumnLayout:**
-- 25% | 50% | 25% (balanced asymmetry)
-- Map Ivory background
-- Inset shadows on sidebars for depth
-- Avoids generic 20-60-20 dashboard proportions
+- `ThemeToggle.tsx` uses a `MutationObserver` on `document.documentElement` to track `class` changes
+- Toggle reads live DOM state on click, avoiding stale React closure bugs
+- Theme persistence key: `wp-theme` (`dark` / `light`)
+- Blocking head script applies theme before first paint to prevent flash
 
 ---
 
@@ -182,12 +156,12 @@ WanderPlan's design system draws inspiration from physical travel artifacts: vin
 │              FastAPI Backend (Port 8000)                     │
 │                                                              │
 │  Routers:                                                    │
-│  • /api/generate-itinerary   → Gemini 2.0 Flash            │
+│  • /api/generate-itinerary   → Gemini 2.5 Flash (5x retry) │
 │  • /api/chat-refine          → Anya conversational AI       │
 │  • /api/recommend-cities     → City suggestions              │
 │  • /api/travel-tips          → Gemini-generated tips        │
 │  • /api/best-time/{city}     → Historical weather data      │
-│  • /api/geocode              → Nominatim wrapper            │
+│  • /api/geocode              → Nominatim wrapper (en names) │
 │  • /api/youtube-thumbnail    → YouTube search scraper       │
 │                                                              │
 │  Background Jobs:                                            │
@@ -197,20 +171,20 @@ WanderPlan's design system draws inspiration from physical travel artifacts: vin
        │              │                 │
 ┌──────▼──────┐ ┌─────▼──────┐ ┌───────▼──────┐
 │   Qdrant    │ │   Gemini   │ │  External    │
-│ (in-memory) │ │  2.0 Flash │ │  APIs        │
-│             │ │            │ │              │
-│ Collections:│ │ Model ID:  │ │ • Nominatim  │
-│ • reddit    │ │ gemini-2.0 │ │ • Open-Meteo │
-│ • wiki      │ │ -flash-exp │ │ • YouTube    │
+│ (in-memory) │ │  2.5 Flash │ │  APIs        │
+│             │ │  (primary) │ │              │
+│ Collections:│ │  lite/1.5  │ │ • Nominatim  │
+│ • reddit    │ │  fallback  │ │ • Open-Meteo │
+│ • wiki      │ │            │ │ • YouTube    │
 │             │ │            │ │ • Reddit JSON│
 └─────────────┘ └────────────┘ └──────────────┘
 ```
 
 ### Three-Column Layout
 
-**Left Column (20%)**: Trip Metrics, Booking Links, Expense Breakdown  
+**Left Column (20%)**: Trip Metrics, Expense Breakdown, Currency  
 **Center Column (55%)**: Itinerary Timeline, Comparison Panel  
-**Right Column (25%)**: Map, Best Time Widget, Travel Tips
+**Right Column (25%)**: Map, Best Time Widget, Booking Links, Travel Tips
 
 ---
 
@@ -233,21 +207,21 @@ WanderPlan's design system draws inspiration from physical travel artifacts: vin
 - `POST /api/generate-itinerary`
   - **Input**: `TripConfig` (purpose, dates, destination, budget, group, etc.)
   - **Output**: Streaming JSON with day-by-day itinerary
-  - **Model**: Gemini 2.0 Flash
+  - **Model**: Gemini 2.5 Flash
   - **Processing**: ~30-60 seconds for 5-7 day trip
 
 #### Conversational Chat
 - `POST /api/chat-refine`
   - **Input**: Chat messages + current `TripConfig`
   - **Output**: `{reply, action_type, config_patch, major_change}`
-  - **Model**: Gemini 2.0 Flash
+  - **Model**: Gemini 2.5 Flash
   - **Purpose**: Anya's conversational responses and config updates
 
 #### City Recommendations
 - `POST /api/recommend-cities`
   - **Input**: Country name or travel preferences
   - **Output**: List of recommended cities with descriptions
-  - **Model**: Gemini 2.0 Flash
+  - **Model**: Gemini 2.5 Flash
 
 #### Travel Tips
 - `GET /api/travel-tips?destination=X&limit=N`
@@ -263,6 +237,9 @@ WanderPlan's design system draws inspiration from physical travel artifacts: vin
 #### Geocoding
 - `GET /api/geocode?q=city_name`
   - **Proxy**: Nominatim (OpenStreetMap)
+  - **Headers**: `Accept-Language: en`
+  - **Params**: `namedetails=1`
+  - **Name priority**: `name:en` → address city/town/village → `display_name`
   - **Returns**: `{city, country, lat, lon}`
 
 #### Weather Data
@@ -279,9 +256,20 @@ WanderPlan's design system draws inspiration from physical travel artifacts: vin
 
 ## AI Models & LLMs
 
-### Primary Model: Google Gemini 2.0 Flash
+### Primary Model: Google Gemini 2.5 Flash
 
-**Model ID**: `gemini-2.0-flash-exp`
+**Model ID**: `gemini-2.5-flash`
+
+**Fallback chain:**
+1. `gemini-2.5-flash`
+2. `gemini-2.5-flash-lite-preview-06-17`
+3. `gemini-1.5-flash`
+
+**Retry strategy:**
+- Up to **5 attempts** per model
+- Exponential backoff: **5 / 10 / 20 / 40 / 60 seconds**
+- Broader exception matching for transient quota / availability failures: `503`, `UNAVAILABLE`, `429`, `RESOURCE_EXHAUSTED`
+- Same retry/fallback pattern used in both `chains/itinerary_chain.py` and `services/comparison.py`
 
 **Use Cases:**
 1. **Itinerary Generation** (`generate_itinerary.py`)
@@ -332,6 +320,10 @@ WanderPlan's design system draws inspiration from physical travel artifacts: vin
 - Multi-select themes
 - Trip summary card with generate button
 - Stays open after itinerary generation
+- Sky-blue progress bar track (`bg-[var(--color-primary)]/20`)
+- Gradient fill from `var(--color-primary)` to `#38bdf8` with glow shadow
+- CounterCard contrast fix with explicit Tailwind light/dark classes
+- Comparison view expanded from 3 to 10 qualitative parameters
 
 **Wizard Fields:**
 1. `purpose` → Purpose of trip (chips: Leisure, Adventure, Honeymoon, etc.)
@@ -354,15 +346,42 @@ WanderPlan's design system draws inspiration from physical travel artifacts: vin
 - Auto-restarts listening after each response
 - Female Indian voice (age 20-25), pitch 1.15, rate 1.05
 
-#### 2. ThreeColumnLayout (`apps/web/components/layout/ThreeColumnLayout.tsx`)
+#### 2. WanderplanLogo (`apps/web/components/common/WanderplanLogo.tsx`)
+**Purpose**: Shared brand mark across landing page and app chrome
+
+**Features:**
+- Geometric gold W mark with 5-point spine path, two cross-diagonals, diamond nodes, and compass arrow
+- SVG viewBox `0 0 72 58`
+- Dual-mode gold gradients optimized separately for light and dark surfaces
+- Optional uppercase wordmark and tagline
+
+#### 3. ThemeToggle (`apps/web/components/common/ThemeToggle.tsx`)
+**Purpose**: Global theme switch for landing and itinerary views
+
+**Architecture:**
+- `MutationObserver` watches `document.documentElement.className`
+- Toggle reads live DOM state with `!html.classList.contains('dark')`
+- React state updates only from observer callback to prevent double-writes
+- Adaptive border/text colors work on mixed backgrounds
+
+#### 4. LandingHero (`apps/web/components/common/LandingHero.tsx`)
+**Purpose**: Landing page hero, SEO surface, and entry point to the wizard
+
+**Features:**
+- Sticky top nav with `WanderplanLogo size="md"`, `ThemeToggle`, and primary CTA
+- Card-style example trip chips with emoji, two-line labels, hover lift, and “Plan this →” reveal
+- Crawlable eyebrow text: `Wanderplan · Free AI Travel Planner`
+- Full FAQ section aligned with JSON-LD schema for rich results
+
+#### 5. ThreeColumnLayout (`apps/web/components/layout/ThreeColumnLayout.tsx`)
 **Purpose**: Main itinerary view layout
 
 **Columns:**
-- **Left (20%)**: `Column1Metrics` - Metrics, Booking, Expenses
+- **Left (20%)**: `Column1Metrics` - Metrics, Expenses, Currency (Visa / eSIM / Activities removed)
 - **Center (55%)**: `ItineraryTimeline` or `ComparisonPanel`
-- **Right (25%)**: `Column3Sidebar` - Map, Best Time, Travel Tips
+- **Right (25%)**: `Column3Sidebar` - Map, Best Time, Booking Links, Travel Tips
 
-#### 3. ItineraryTimeline (`apps/web/components/itinerary/ItineraryTimeline.tsx`)
+#### 6. ItineraryTimeline (`apps/web/components/itinerary/ItineraryTimeline.tsx`)
 **Purpose**: Day-by-day itinerary display
 
 **Features:**
@@ -372,7 +391,7 @@ WanderPlan's design system draws inspiration from physical travel artifacts: vin
 - YouTube video embeds (when available)
 - Location pins synced with map
 
-#### 4. MapWrapper (`apps/web/components/map/MapWrapper.tsx`)
+#### 7. MapWrapper (`apps/web/components/map/MapWrapper.tsx`)
 **Purpose**: Interactive Leaflet map
 
 **Features:**
@@ -381,7 +400,7 @@ WanderPlan's design system draws inspiration from physical travel artifacts: vin
 - Click to select day
 - Zoom to bounds on load
 
-#### 5. BookingLinksSection (`apps/web/components/itinerary/BookingLinksSection.tsx`)
+#### 8. BookingLinksSection (`apps/web/components/itinerary/BookingLinksSection.tsx`)
 **Purpose**: Flight, hotel, activity booking links
 
 **Providers:**
@@ -390,6 +409,7 @@ WanderPlan's design system draws inspiration from physical travel artifacts: vin
 - Viator (activities)
 
 ### State Management (Zustand)
+
 
 #### 1. `tripConfigStore.ts`
 ```typescript
@@ -444,7 +464,7 @@ interface AppStore {
 ### Core Services
 
 #### 1. Itinerary Generation (`chains/generate_itinerary.py`)
-**Model**: Gemini 2.0 Flash  
+**Model**: Gemini 2.5 Flash  
 **Input**: `TripConfig` (validated Pydantic model)  
 **Output**: Streaming JSON chunks  
 **Process**:
@@ -493,7 +513,7 @@ Output JSON format:
 ```
 
 #### 2. Chat Refinement (`chains/chat_refine_chain.py`)
-**Model**: Gemini 2.0 Flash  
+**Model**: Gemini 2.5 Flash  
 **Persona**: Anya - friendly AI travel assistant  
 **Temperature**: 0.5  
 
@@ -614,7 +634,7 @@ TripConfig assembled in Zustand
 POST /api/generate-itinerary
          │
          ├→ Qdrant semantic search (Reddit + Wikivoyage)
-         ├→ Gemini 2.0 Flash prompt construction
+         ├→ Gemini 2.5 Flash prompt construction
          ├→ Streaming JSON generation (30-60s)
          └→ YouTube search query generation
          │
@@ -669,7 +689,7 @@ GET /api/travel-tips?destination=X
          │   └→ If found: return cached tips
          │
          ├→ If not cached:
-         │   ├→ Call Gemini 2.0 Flash (~₹0.01)
+         │   ├→ Call Gemini 2.5 Flash (~₹0.01)
          │   ├→ Generate 6 community-style tips
          │   ├→ Cache result in memory
          │   └→ Return tips
@@ -693,7 +713,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 # LLM Provider
 LLM_PROVIDER=gemini  # or 'mock' for testing
 GEMINI_API_KEY=your_gemini_api_key_here
-GEMINI_MODEL=gemini-2.0-flash-exp
+GEMINI_MODEL=gemini-2.5-flash
 
 # Qdrant
 QDRANT_URL=:memory:  # or http://localhost:6333 for persistent
@@ -749,7 +769,7 @@ npm run dev  # Port 3000
 
 ### Gemini API Breakdown
 
-**Model**: `gemini-2.0-flash-exp` (free tier during preview)
+**Model**: `gemini-2.5-flash` (free tier during preview)
 
 Per-user session:
 - Itinerary generation: 1-2 calls (~₹0.01-0.02)
@@ -825,11 +845,23 @@ Per-user session:
 
 ## Recent Updates
 
+### v3.0 — June 24, 2026 (Logo · SEO · Gemini 2.5 · UX Fixes)
+- **Logo redesign**: Geometric gold W with diamond intersection nodes and compass arrow. Luxury brand aesthetic. Dual-tone gold for light/dark modes.
+- **Gemini 2.5 Flash**: Upgraded from deprecated 2.0 Flash. 5-attempt retry with exponential backoff and 3-model fallback chain.
+- **ThemeToggle fix**: MutationObserver-based toggle; eliminated stale-closure bug.
+- **SEO/SEM**: Comprehensive JSON-LD structured data (Organization, WebSite, WebApplication, FAQPage). 20-keyword metadata. Open Graph + Twitter Card. Crawlable FAQ section.
+- **Landing page redesign**: Sticky branded nav, card-style example trip chips, hero above fold.
+- **Progress bar**: Sky-blue gradient fill (`#0EA5E9 → #38bdf8`) with glow.
+- **CounterCard contrast**: Explicit Tailwind tokens replace CSS vars that resolved incorrectly in dark mode.
+- **City names in English**: Nominatim `Accept-Language: en` + namedetails priority logic.
+- **Comparison view**: Expanded from 3 to 10 qualitative parameters.
+- **Column layout**: Left column cleaned (removed Visa/eSIM/Activities); "Book this trip" moved to right column.
+
 ### v2.1 — Design Revamp & Enhanced UX (June 2026)
 
 **Design System Overhaul:**
 - ✅ Travel-inspired color palette (Passport Navy, Horizon Amber, Map Ivory)
-- ✅ Custom typography trio: Fraunces (display with wonky axis), Inter (body), JetBrains Mono (data)
+- ✅ Custom typography trio: Space Grotesk (display with wonky axis), DM Sans (body), JetBrains Mono (data)
 - ✅ Signature ListeningOrb component with breathing animation
 - ✅ StampChip component with vintage travel stamp aesthetic
 - ✅ Updated layout proportions: 25% | 50% | 25%
@@ -857,5 +889,5 @@ Per-user session:
 
 ---
 
-**Last Updated**: June 17, 2026  
+**Last Updated**: June 24, 2026  
 **Maintained By**: WanderPlan Engineering

@@ -248,61 +248,61 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
         trip_config=trip_json,
     )
 
-    def _call_sync() -> str:
-        response = client.models.generate_content(
-            model=settings.gemini_model,
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(
-                temperature=0.4,
-                response_mime_type="application/json",
-            ),
-        )
-        return response.text
-
-    # Retry logic: 3 attempts with exponential backoff (2s, 4s, 8s)
+    # Retry logic: up to 5 attempts, broader exception matching, fallback model
     loop = asyncio.get_event_loop()
-    max_attempts = 3
-    
-    for attempt in range(max_attempts):
-        try:
-            # Run blocking SDK call in thread pool so the event loop stays free
-            text = await loop.run_in_executor(None, _call_sync)
-            
-            # Strip markdown fences if Gemini adds them despite response_mime_type
-            cleaned = text.strip()
-            if cleaned.startswith("```"):
-                cleaned = "\n".join(cleaned.split("\n")[1:])
-            if cleaned.endswith("```"):
-                cleaned = "\n".join(cleaned.split("\n")[:-1])
-            return json.loads(cleaned)
-            
-        except json.JSONDecodeError as e:
-            raise RuntimeError(f"Gemini returned invalid JSON: {e}") from e
-            
-        except ServerError as e:
-            # Check if it's a 503 error
-            if "503" in str(e) or "UNAVAILABLE" in str(e):
-                if attempt < max_attempts - 1:
-                    # Exponential backoff: 2s, 4s, 8s
-                    wait_time = 2 ** (attempt + 1)
-                    print(f"⚠️ Gemini API 503 error (attempt {attempt + 1}/{max_attempts}). Retrying in {wait_time}s...")
+    # Models to try in order: primary → lighter fallback
+    models_to_try = [settings.gemini_model, "gemini-2.5-flash-lite-preview-06-17", "gemini-1.5-flash"]
+    max_attempts = 5
+
+    last_error: Exception | None = None
+    for model_name in models_to_try:
+        for attempt in range(max_attempts):
+            try:
+                def _call_sync(m: str = model_name) -> str:  # noqa: E731
+                    response = client.models.generate_content(
+                        model=m,
+                        contents=prompt,
+                        config=genai_types.GenerateContentConfig(
+                            temperature=0.4,
+                            response_mime_type="application/json",
+                        ),
+                    )
+                    return response.text
+
+                text = await loop.run_in_executor(None, _call_sync)
+
+                # Strip markdown fences if Gemini adds them despite response_mime_type
+                cleaned = text.strip()
+                if cleaned.startswith("```"):
+                    cleaned = "\n".join(cleaned.split("\n")[1:])
+                if cleaned.endswith("```"):
+                    cleaned = "\n".join(cleaned.split("\n")[:-1])
+                return json.loads(cleaned)
+
+            except json.JSONDecodeError as e:
+                raise RuntimeError(f"Gemini returned invalid JSON: {e}") from e
+
+            except Exception as e:
+                err_str = str(e)
+                is_transient = any(kw in err_str for kw in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "quota"))
+                if is_transient and attempt < max_attempts - 1:
+                    wait_time = min(5 * (2 ** attempt), 60)  # 5s, 10s, 20s, 40s, 60s cap
+                    print(f"⚠️ Gemini transient error on {model_name} (attempt {attempt + 1}/{max_attempts}). Retrying in {wait_time}s…")
                     await asyncio.sleep(wait_time)
+                    last_error = e
                     continue
+                elif is_transient:
+                    # exhausted retries on this model → try next model
+                    print(f"❌ Gemini model {model_name} failed after {max_attempts} attempts, trying fallback…")
+                    last_error = e
+                    break
                 else:
-                    # All retries exhausted
-                    print(f"❌ Gemini API failed after {max_attempts} attempts")
-                    raise
-            else:
-                # Not a 503 error, re-raise immediately
-                raise
-        
-        except Exception as e:
-            # Unexpected error, re-raise immediately
-            print(f"❌ Unexpected error in Gemini API call: {type(e).__name__}: {e}")
-            raise
-    
-    # Should never reach here, but just in case
-    raise RuntimeError("Gemini itinerary generation failed after all retry attempts")
+                    raise  # non-transient error: propagate immediately
+        else:
+            continue  # inner loop completed without break → success already returned
+        continue   # model failed, try next model
+
+    raise RuntimeError(f"Gemini itinerary generation failed on all models: {last_error}")
 
 
 async def generate_itinerary(trip_config: TripConfig) -> ItineraryResponse:

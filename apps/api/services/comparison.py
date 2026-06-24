@@ -132,15 +132,32 @@ async def _compare_qualitative(
 
     try:
         client = google_genai.Client(api_key=settings.gemini_api_key)
+        models_to_try = [settings.gemini_model, "gemini-2.5-flash-lite-preview-06-17", "gemini-1.5-flash"]
+        max_attempts = 4
+        raw = ""
 
-        def _call_sync() -> str:
-            resp = client.models.generate_content(
-                model=settings.gemini_model,
-                contents=prompt,
-            )
-            return resp.text or ""
+        for model_name in models_to_try:
+            for attempt in range(max_attempts):
+                try:
+                    def _call_sync(m: str = model_name) -> str:  # noqa: E731
+                        resp = client.models.generate_content(model=m, contents=prompt)
+                        return resp.text or ""
 
-        raw = await asyncio.get_event_loop().run_in_executor(None, _call_sync)
+                    raw = await asyncio.get_event_loop().run_in_executor(None, _call_sync)
+                    break  # success
+                except Exception as exc:
+                    is_transient = any(kw in str(exc) for kw in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED"))
+                    if is_transient and attempt < max_attempts - 1:
+                        await asyncio.sleep(5 * (2 ** attempt))
+                        continue
+                    elif is_transient:
+                        break  # try next model
+                    raise
+            else:
+                continue  # inner loop didn't break → raw set, exit model loop
+            if raw:
+                break
+
         rows = json.loads(raw.strip())
 
         return [

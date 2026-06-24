@@ -1,6 +1,6 @@
 # Wanderplan — System Design Document
-**Version:** 3.0 (Full Redesign + Dark Mode)  
-**Last Updated:** June 23, 2026  
+**Version:** 4.0 (Logo Redesign + SEO + Gemini 2.5 Retry)  
+**Last Updated:** June 24, 2026  
 **Audience:** Engineering team and technical stakeholders
 
 ---
@@ -17,6 +17,7 @@
 9. [Design System](#9-design-system)
 10. [Environment Variables Reference](#10-environment-variables-reference)
 11. [Performance & Cost Analysis](#11-performance--cost-analysis)
+12. [Resilience & Retry Architecture](#12-resilience--retry-architecture)
 
 ---
 
@@ -65,7 +66,7 @@
 │              FastAPI (Python 3.9+) on Port 8000                       │
 │                                                                        │
 │  Routers:                                                              │
-│  POST /api/generate-itinerary   → Gemini 2.0 Flash (streaming)       │
+│  POST /api/generate-itinerary   → Gemini 2.5 Flash (5-attempt retry) │
 │  POST /api/chat-refine          → Anya conversation handler          │
 │  POST /api/recommend-cities     → City suggestions (Gemini)          │
 │  GET  /api/travel-tips          → Gemini-generated tips (cached)     │
@@ -82,11 +83,11 @@
        │              │                 │                  │
 ┌──────▼──────┐ ┌─────▼──────┐  ┌──────▼────────┐  ┌─────▼──────────┐
 │   Qdrant    │ │   Gemini   │  │  Open-Meteo   │  │ External APIs  │
-│ (in-memory) │ │  2.0 Flash │  │  Weather API  │  │                │
-│             │ │            │  │               │  │ • Nominatim    │
-│ Collections:│ │ Model:     │  │ Historical +  │  │   (Accept-Lang │
-│ - reddit    │ │ gemini-2.0 │  │ Forecast data │  │   :en header)  │
-│ - wiki      │ │ -flash     │  │               │  │ • Reddit JSON  │
+│ (in-memory) │ │  2.5 Flash │  │  Weather API  │  │                │
+│             │ │  (primary) │  │               │  │ • Nominatim    │
+│ Collections:│ │  fallback: │  │ Historical +  │  │   (Accept-Lang │
+│ - reddit    │ │  lite/1.5  │  │ Forecast data │  │   :en header)  │
+│ - wiki      │ │            │  │               │  │ • Reddit JSON  │
 └─────────────┘ └────────────┘  └───────────────┘  │ • YouTube      │
                                                     │ • OSM Tiles    │
                                                     └────────────────┘
@@ -249,7 +250,7 @@ Backend: chains/generate_itinerary.py
          │       }"
          │
          ├─→ [3] Gemini API Call
-         │      Model: gemini-2.0-flash-exp
+         │      Model: gemini-2.5-flash
          │      Temperature: 0.7
          │      Max tokens: 4096
          │      Streaming: True (SSE chunks)
@@ -790,20 +791,62 @@ Sourced from `ui-ux-pro-max` skill (Travel/Tourism Agency palette, Exaggerated M
 - Semantic tokens `--_*` defined in `:root` (light) and overridden in `.dark`
 - Flash-prevention `<script>` in `<head>` reads `localStorage('wp-theme')` before first paint
 - Toggle key: `wp-theme` = `'dark'` | `'light'`
-- `ThemeToggle.tsx` — Sun/Moon icon, rendered in TopNav
+- `ThemeToggle.tsx` — Sun/Moon icon, rendered in TopNav and LandingHero nav
+- **MutationObserver pattern**: toggle reads live DOM (`!html.classList.contains('dark')`) — avoids stale-closure bug
+- React state (`isDark`) updated only in MutationObserver callback; two instances (LandingHero + TopNav) stay in sync via shared DOM class
 
 ### 9.4 Brand Mark (WanderplanLogo.tsx)
 
-SVG icon anatomy (landscape, viewBox 0 0 64 44):
+Geometric gold W mark — luxury travel brand aesthetic. SVG viewBox `0 0 72 58`.
 
+**W construction:**
 ```
-[AI neural node] ──── [W-shaped journey route] ──── [Location pin]
- 4 orange dots          thick navy cubic bezier       navy teardrop
- radiating from         path (2 valleys, 2 peaks)     white ring +
- navy hub circle        connecting left to right       orange centre
+TL(6,6) ─── BL(18,50) ─── peak(34,8) ─── BR(50,50) ─── TR(62,6)
+ + cross-diagonal 1: TL(6,6)  → BR(50,50)   → diamond node @ (27,27)
+ + cross-diagonal 2: BL(18,50) → TR(62,6)    → diamond node @ (41,27)
+ + inner-peak node @ (34,8)
+ + compass arrow at TR(62,6) pointing NE
 ```
 
-Props: `size` (`sm`|`md`|`lg`), `inverted` (flips navy→white for coloured bg), `wordmark` (boolean)
+**Gold gradient** (`gradientUnits="userSpaceOnUse"` x1=6 y1=6 x2=62 y2=50):
+| Mode | Stop A | Stop B | Stop C |
+|------|--------|--------|--------|
+| Light | `#A8820A` | `#C9A227` | `#DFB84A` |
+| Dark (inverted) | `#F5D060` | `#D4AF37` | `#B89020` |
+
+**Wordmark:** "WANDERPLAN" uppercase, `tracking-[0.14em]`, Space Grotesk 700
+- Light bg: navy `#0C4A6E`; Dark bg: gold `#E8C060`
+
+**Tagline:** "Curated AI Travel Planning" — shown at `md` and `lg` sizes
+
+**Props:** `size` (`sm`|`md`|`lg`), `inverted` (gold tones shift brighter for dark bg), `wordmark` (boolean)
+
+**Sizes:** `sm: {h:28, w:35}`, `md: {h:36, w:45}`, `lg: {h:48, w:60}`
+
+### 9.5 SEO & Structured Data
+
+`apps/web/app/layout.tsx` — Next.js App Router metadata:
+- **Title template:** `Wanderplan – %s`
+- **20 keywords** covering: AI travel planner, trip itinerary generator, travel planning AI, Anya travel assistant, etc.
+- **Open Graph** + **Twitter Card** tags
+- **JSON-LD `@graph`** (4 schema types):
+  1. `Organization` — Wanderplan brand entity
+  2. `WebSite` — with `SearchAction` for Google Sitelinks
+  3. `WebApplication` (type: `TravelApplication`) — free offer, feature list
+  4. `FAQPage` — 5 questions matching the crawlable FAQ section in `LandingHero.tsx`
+- **`metadataBase`**: `new URL('https://wanderplan.app')` for relative og:image resolution
+
+### 9.6 ThemeToggle Architecture
+
+`apps/web/components/common/ThemeToggle.tsx`
+
+**Pattern:** MutationObserver on `document.documentElement` watching `class` attribute changes.
+
+- `toggle()` reads live DOM state (`!html.classList.contains('dark')`) — avoids stale React closure bug
+- React state (`isDark`) updated only in MutationObserver callback — prevents double-update
+- Flash-prevention: blocking `<script>` in `<head>` reads `localStorage('wp-theme')` before first paint
+- Theme key: `wp-theme` = `'dark'` | `'light'`
+- Two instances stay in sync: LandingHero nav + itinerary TopNav
 
 ---
 
@@ -815,7 +858,7 @@ Props: `size` (`sm`|`md`|`lg`), `inverted` (flips navy→white for coloured bg),
 # LLM Provider
 LLM_PROVIDER=gemini          # or 'mock' for testing
 GEMINI_API_KEY=your_key_here
-GEMINI_MODEL=gemini-2.0-flash
+GEMINI_MODEL=gemini-2.5-flash
 
 # Vector Database
 QDRANT_URL=:memory:          # or http://localhost:6333 for persistent
@@ -843,8 +886,8 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | Endpoint | Time | Notes |
 |----------|------|-------|
 | `/api/generate-itinerary` | 30-60s | Streaming, 5-7 day trip |
-| `/api/chat-refine` | 2-5s | Gemini 2.0 Flash |
-| `/api/recommend-cities` | 3-6s | Gemini 2.0 Flash |
+| `/api/chat-refine` | 2-5s | Gemini 2.5 Flash |
+| `/api/recommend-cities` | 3-6s | Gemini 2.5 Flash |
 | `/api/travel-tips` (cached) | <200ms | In-memory cache |
 | `/api/travel-tips` (uncached) | 2-4s | Gemini + cache write |
 | `/api/geocode` | 500-1000ms | Nominatim rate-limited |
@@ -880,6 +923,44 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 - Implement Redis caching for geocode results
 - Add CDN for static assets
 - Consider Gemini paid tier for higher rate limits
+
+---
+
+## 12. Resilience & Retry Architecture
+
+### 12.1 Gemini API Retry (itinerary_chain.py, comparison.py)
+
+```python
+MODELS = [
+    settings.gemini_model,                       # gemini-2.5-flash (primary)
+    'gemini-2.5-flash-lite-preview-06-17',       # lighter fallback
+    'gemini-1.5-flash',                           # stable fallback
+]
+MAX_ATTEMPTS = 5
+BACKOFF_SECONDS = [5, 10, 20, 40, 60]            # capped exponential
+```
+
+**Error matching** (broader than SDK exception type):
+```python
+if any(kw in str(e).upper() for kw in ['503', 'UNAVAILABLE', '429', 'RESOURCE_EXHAUSTED']):
+    # retry with next model / backoff
+```
+
+**Flow:**
+1. Try primary model up to 5 times with exponential backoff
+2. On persistent failure, rotate to next model in fallback chain
+3. Each fallback model also gets up to 5 attempts
+4. If all models exhausted → raise last exception
+
+### 12.2 Geocode English Names (geocode.py)
+
+```
+Nominatim request headers: { "Accept-Language": "en" }
+Params: { "namedetails": 1 }
+Priority: namedetails["name:en"] → address["city"/"town"/"village"] → display_name.split(",")[0]
+```
+
+Ensures city names always return in English regardless of regional locale.
 
 ---
 

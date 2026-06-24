@@ -22,8 +22,15 @@ export default function Home() {
         className={wizardOpen
           ? 'pointer-events-none flex-1 select-none overflow-hidden opacity-40 blur-sm transition-all'
           : 'flex-1 overflow-hidden'}
+        aria-hidden={wizardOpen}
       >
-        {content}
+        {hasItinerary
+          ? (
+            <main id="main-content" aria-label="Wanderplan itinerary dashboard">
+              <ThreeColumnLayout />
+            </main>
+          )
+          : content}
       </div>
 
       {/* Anya orb — only shown when itinerary exists and wizard is closed */}

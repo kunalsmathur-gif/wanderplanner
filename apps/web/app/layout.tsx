@@ -3,19 +3,16 @@ import { Space_Grotesk, DM_Sans, JetBrains_Mono } from 'next/font/google'
 import { MobileWarningBanner } from '@/components/common/MobileWarningBanner'
 import './globals.css'
 
-// Skill: Space Grotesk for display/headings — tech-forward, bold, editorial
 const spaceGrotesk = Space_Grotesk({
   subsets: ['latin'],
   variable: '--font-space-grotesk',
 })
 
-// Skill: DM Sans for body — premium, modern, clean
 const dmSans = DM_Sans({
   subsets: ['latin'],
   variable: '--font-dm-sans',
 })
 
-// Monospace for timestamps and data labels
 const jetbrainsMono = JetBrains_Mono({
   subsets: ['latin'],
   variable: '--font-jetbrains',
@@ -23,9 +20,158 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const viewport: Viewport = { themeColor: '#0EA5E9' }
 
+const SITE_URL = 'https://wanderplan.app'
+const SITE_TITLE = 'Wanderplan — Free AI Travel Planner & Itinerary Generator'
+const SITE_DESCRIPTION =
+  'Wanderplan is a free AI travel planner. Tell Anya — our AI concierge — your destination, budget, and group. Get a personalised day-by-day itinerary for Bali, Europe, Rajasthan, Dubai, and 190+ countries. No sign-up required.'
+
 export const metadata: Metadata = {
-  title: 'Wanderplan',
-  description: 'Plan group trips with AI-powered, personalised itineraries. No sign-up required.',
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: SITE_TITLE,
+    template: '%s | Wanderplan AI Travel Planner',
+  },
+  description: SITE_DESCRIPTION,
+  keywords: [
+    'AI travel planner',
+    'free trip planner',
+    'AI itinerary generator',
+    'travel itinerary',
+    'trip planning India',
+    'Bali trip planner',
+    'Europe trip itinerary',
+    'Rajasthan travel guide',
+    'Dubai trip planner',
+    'group travel planner',
+    'day by day itinerary',
+    'free travel planner',
+    'AI vacation planner',
+    'Wanderplan',
+    'Gemini travel AI',
+    'personalized travel itinerary',
+    'budget travel planner',
+    'family trip planner',
+    'honeymoon itinerary planner',
+    'solo trip planner',
+  ],
+  authors: [{ name: 'Wanderplan', url: SITE_URL }],
+  creator: 'Wanderplan',
+  publisher: 'Wanderplan',
+  category: 'travel',
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: { index: true, follow: true, 'max-snippet': -1, 'max-image-preview': 'large' },
+  },
+  alternates: { canonical: SITE_URL },
+  openGraph: {
+    type: 'website',
+    locale: 'en_IN',
+    url: SITE_URL,
+    siteName: 'Wanderplan',
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'Wanderplan — AI Travel Planner',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    images: ['/og-image.png'],
+    creator: '@wanderplanapp',
+  },
+  verification: {
+    google: 'YOUR_GOOGLE_SEARCH_CONSOLE_TOKEN',
+  },
+}
+
+// JSON-LD structured data for Google rich results
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'Organization',
+      '@id': `${SITE_URL}/#organization`,
+      name: 'Wanderplan',
+      url: SITE_URL,
+      description: 'Free AI-powered travel planning and itinerary generation',
+    },
+    {
+      '@type': 'WebSite',
+      '@id': `${SITE_URL}/#website`,
+      url: SITE_URL,
+      name: 'Wanderplan',
+      description: SITE_DESCRIPTION,
+      publisher: { '@id': `${SITE_URL}/#organization` },
+      potentialAction: {
+        '@type': 'SearchAction',
+        target: { '@type': 'EntryPoint', urlTemplate: `${SITE_URL}/?q={search_term_string}` },
+        'query-input': 'required name=search_term_string',
+      },
+    },
+    {
+      '@type': 'WebApplication',
+      '@id': `${SITE_URL}/#app`,
+      name: 'Wanderplan AI Travel Planner',
+      url: SITE_URL,
+      applicationCategory: 'TravelApplication',
+      operatingSystem: 'Web browser',
+      description:
+        'Free AI travel planner that generates personalized day-by-day itineraries for any destination worldwide. Covers budgeting, group planning, activities, and local tips.',
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+      featureList: [
+        'AI-generated day-by-day itineraries',
+        'Budget-aware travel planning',
+        'Group and family trip planning',
+        'Real-time weather and travel tips',
+        'Destination comparison tool',
+      ],
+    },
+    {
+      '@type': 'FAQPage',
+      mainEntity: [
+        {
+          '@type': 'Question',
+          name: 'Is Wanderplan free to use?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'Yes. Wanderplan is completely free. No sign-up, no credit card required.',
+          },
+        },
+        {
+          '@type': 'Question',
+          name: 'How does Wanderplan generate itineraries?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'Wanderplan uses Google Gemini AI along with real traveller data from Reddit, Wikivoyage, and live weather to build personalised day-by-day travel plans.',
+          },
+        },
+        {
+          '@type': 'Question',
+          name: 'Which destinations does Wanderplan support?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'Wanderplan supports 190+ countries and thousands of cities including Bali, Paris, Dubai, Tokyo, Rajasthan, New York, and more.',
+          },
+        },
+        {
+          '@type': 'Question',
+          name: 'Can Wanderplan plan group or family trips?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'Yes. Wanderplan handles solo trips, couples, families with children, and large groups. Just tell Anya who is travelling and she tailors the itinerary accordingly.',
+          },
+        },
+      ],
+    },
+  ],
 }
 
 // Blocking script: reads localStorage before first paint to prevent dark-mode flash
@@ -54,6 +200,11 @@ export default function RootLayout({
       <head>
         {/* biome-ignore lint/security/noDangerouslySetInnerHtml: theme script must run synchronously before paint */}
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        <script
+          type="application/ld+json"
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: structured data JSON-LD
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
       </head>
       <body className="h-full min-w-[320px] antialiased">
         <MobileWarningBanner />
