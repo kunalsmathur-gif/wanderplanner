@@ -337,7 +337,8 @@ export function LLMWizard() {
 
   const filledCount = REQUIRED_LABELS.filter(({ key }) => _isFieldFilled(key, partialConfig)).length
   const progressPct = Math.round((filledCount / REQUIRED_LABELS.length) * 100)
-  const readyToGenerate = filledCount === REQUIRED_LABELS.length
+  // Show generate button when server confirms ready OR all fields locally filled
+  const readyToGenerate = filledCount === REQUIRED_LABELS.length || summary !== null
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -430,7 +431,9 @@ export function LLMWizard() {
                     {/* Chips */}
                     {msg.chips && msg.chips.length > 0 && (
                       <div className="flex flex-wrap gap-1.5">
-                        {msg.chips.map((chip) => (
+                        {msg.chips
+                          .filter((chip) => !/generate/i.test(chip))
+                          .map((chip) => (
                           <button
                             key={chip}
                             type="button"
@@ -499,10 +502,10 @@ export function LLMWizard() {
         </div>
 
         {/* ── Ready-to-generate summary card ──────────────────────────── */}
-        {readyToGenerate && summary && phase === 'chatting' && (
+        {readyToGenerate && phase === 'chatting' && (
           <div className="shrink-0 border-t border-[var(--_border)] bg-[var(--_card)] px-4 py-3">
             <p className="mb-2 text-xs font-semibold text-[var(--_muted-fg)]">Trip summary</p>
-            <p className="mb-3 text-sm font-medium text-[var(--_fg)]">{summary}</p>
+            {summary && <p className="mb-3 text-sm font-medium text-[var(--_fg)]">{summary}</p>}
             <button
               type="button"
               onClick={handleGenerate}
