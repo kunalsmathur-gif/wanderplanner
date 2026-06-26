@@ -101,7 +101,7 @@ export function Column3Sidebar() {
                   <img
                     src={tip.thumbnailUrl}
                     alt={tip.title}
-                    className="h-32 w-full object-cover"
+                    className="h-24 w-full object-cover"
                     loading="lazy"
                   />
                 )}

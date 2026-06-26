@@ -169,6 +169,94 @@ function findSuggestedCity(value: string, cities: RecommendedCity[]) {
   })
 }
 
+// Deterministic gradient per city name (fallback while image loads)
+const DEST_GRADIENTS = [
+  'linear-gradient(135deg,#0EA5E9 0%,#0C4A6E 100%)',
+  'linear-gradient(135deg,#EA580C 0%,#9A3412 100%)',
+  'linear-gradient(135deg,#059669 0%,#065F46 100%)',
+  'linear-gradient(135deg,#7C3AED 0%,#4C1D95 100%)',
+  'linear-gradient(135deg,#D4AF37 0%,#A8820A 100%)',
+  'linear-gradient(135deg,#DB2777 0%,#831843 100%)',
+]
+function destGradient(name: string) {
+  let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
+  return DEST_GRADIENTS[h % DEST_GRADIENTS.length]
+}
+
+import { useWikiImage } from '@/hooks/useWikiImage'
+
+function DestinationCard({ city, disabled, onSelect }: {
+  city: RecommendedCity
+  disabled: boolean
+  onSelect: (chip: string) => void
+}) {
+  const label   = recommendedCityChip(city)
+  const imgUrl  = useWikiImage(city.name, city.country)
+  const gradient = destGradient(city.name)
+
+  return (
+    <button
+      disabled={disabled}
+      onClick={() => onSelect(label)}
+      className="group relative overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--color-primary)] hover:shadow-md disabled:opacity-50"
+    >
+      {/* Hero image / gradient */}
+      <div className="relative h-28 w-full overflow-hidden" style={{ background: gradient }}>
+        {imgUrl && (
+          <img
+            src={imgUrl}
+            alt={city.name}
+            className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+            loading="lazy"
+          />
+        )}
+        {/* scrim for text readability */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
+        {/* City initial — shown only while image is loading */}
+        {!imgUrl && (
+          <div className="flex h-full items-center justify-center">
+            <span className="select-none text-4xl font-black text-white/30">{city.name.charAt(0)}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Card body */}
+      <div className="p-3">
+        <p className="text-sm font-semibold leading-tight text-[var(--color-foreground)]">{city.name}</p>
+        <p className="mt-0.5 text-xs text-[var(--color-foreground-muted)]">{city.country}</p>
+        {city.reason && (
+          <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-[var(--color-foreground-muted)]">
+            {city.reason}
+          </p>
+        )}
+        <span className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-[var(--color-primary)] opacity-0 transition-opacity group-hover:opacity-100">
+          Plan this trip →
+        </span>
+      </div>
+    </button>
+  )
+}
+
+function DestinationCardGrid({ cities, disabled, onSelect }: {
+  cities: RecommendedCity[]
+  disabled: boolean
+  onSelect: (chip: string) => void
+}) {
+  if (!cities.length) return null
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {cities.map((city) => (
+        <DestinationCard
+          key={recommendedCityChip(city)}
+          city={city}
+          disabled={disabled}
+          onSelect={onSelect}
+        />
+      ))}
+    </div>
+  )
+}
+
 function formatDestinationLabel(config: TripConfig) {
   if (config.destination) {
     return [config.destination.city, config.destination.country].filter(Boolean).join(', ')
@@ -232,7 +320,7 @@ function promptForField(field: WizardField, config: TripConfig): Omit<WizardMess
   }
 }
 
-async function resolvePlace(query: string): Promise<{ city: string; country: string; lat: number; lon: number } | null> {
+async function resolvePlace(query: string): Promise<{ city: string; country: string; lat: number; lon: number; isCountry: boolean } | null> {
   try {
     const result = await geocode(query)
     const parts = result.display_name.split(',').map((part) => part.trim()).filter(Boolean)
@@ -242,6 +330,7 @@ async function resolvePlace(query: string): Promise<{ city: string; country: str
       country: parts[parts.length - 1] ?? result.country_code.toUpperCase(),
       lat: result.lat,
       lon: result.lon,
+      isCountry: result.is_country,
     }
   } catch (error) {
     // Geocoding failed - return null to signal failure
@@ -263,6 +352,8 @@ function themeFromChip(chip: string) {
 export function ConversationalWizard() {
   const wizardOpen = useAppStore((state) => state.wizardOpen)
   const closeWizard = useAppStore((state) => state.closeWizard)
+  const wizardPreload = useAppStore((state) => state.wizardPreload)
+  const clearWizardPreload = useAppStore((state) => state.clearWizardPreload)
 
   const tripConfig = useTripConfigStore((state) => state.config)
   const updateConfig = useTripConfigStore((state) => state.updateConfig)
@@ -352,7 +443,21 @@ export function ConversationalWizard() {
       addMessage(botMessage('Welcome back! Your trip details are below. You can refine them or regenerate the itinerary.'))
     }
     if (messages.length === 0) {
-      addMessage(botMessage("Hi! I'm Anya, your Wanderplan travel concierge 👋\n\nI'll help you build a personalised trip plan in just a few steps. Let's start!\n\nWhat's the main purpose of your trip?", { chips: PURPOSE_CHIPS }))
+      if (wizardPreload) {
+        // Pre-fill destination + days from inspiration card
+        setDestination({ city: wizardPreload.city, country: wizardPreload.country, lat: 0, lon: 0 })
+        updateConfig({ destination_mode: 'fixed', destination_country: null })
+        updateDates({ duration_days: wizardPreload.days })
+        addLabel('destination', wizardPreload.label)
+        addLabel('duration', `${wizardPreload.days} days`)
+        clearWizardPreload()
+        addMessage(botMessage(
+          `Hi! I'm Anya 👋 I see you're interested in **${wizardPreload.label}** for **${wizardPreload.days} days** — great choice!\n\nYou can adjust these details anytime. Let's start with the trip purpose:`,
+          { chips: PURPOSE_CHIPS }
+        ))
+      } else {
+        addMessage(botMessage("Hi! I'm Anya, your Wanderplan travel concierge 👋\n\nI'll help you build a personalised trip plan in just a few steps. Let's start!\n\nWhat's the main purpose of your trip?", { chips: PURPOSE_CHIPS }))
+      }
     }
   }, [addMessage, messages.length, phase, setPhase, tripConfig, wizardOpen])
 
@@ -777,11 +882,39 @@ export function ConversationalWizard() {
           const place = await resolvePlace(value)
           
           if (!place) {
-            // Geocoding failed - invalid location
             addMessage(botMessage(
               `I couldn't find "${value}". Please enter a valid city or destination (e.g., "Paris, France", "Tokyo, Japan")`,
               { inputType: 'text' }
             ))
+            return
+          }
+
+          // If the input resolved to a whole country, switch to multi-city mode
+          if (place.isCountry) {
+            updateConfig({ destination_mode: 'country', destination_country: place.country })
+            setDestination(null)
+            setDestinationSubStage('city-select')
+            try {
+              const { cities } = await recommendCities(place.country, useTripConfigStore.getState().config)
+              const nextCities = cities.slice(0, 5)
+              setSuggestedCities(nextCities)
+              if (nextCities.length > 0) {
+                addMessage(botMessage(
+                  `${place.country} is a country — I can help you plan a multi-city trip! Here are popular destinations:`,
+                  { chips: nextCities.map(recommendedCityChip) }
+                ))
+              } else {
+                addMessage(botMessage(
+                  `${place.country} is a country — which city would you like to visit first?`,
+                  { inputType: 'text' }
+                ))
+              }
+            } catch {
+              addMessage(botMessage(
+                `${place.country} is a country — which city would you like to visit first?`,
+                { inputType: 'text' }
+              ))
+            }
             return
           }
           
@@ -1812,9 +1945,8 @@ export function ConversationalWizard() {
                       )}
 
                       {tripConfig.destination_mode === 'exploring' && destinationSubStage === 'suggest-select' && (
-                        <ChipGrid
-                          chips={suggestedCities.map(recommendedCityChip)}
-                          columns={1}
+                        <DestinationCardGrid
+                          cities={suggestedCities}
                           disabled={isProcessing}
                           onSelect={handleChipSelect}
                         />
@@ -1918,7 +2050,8 @@ export function ConversationalWizard() {
                             type="text"
                             placeholder="150000"
                             disabled={isProcessing}
-                            className="input min-h-[52px] rounded-xl border-[var(--color-border)] bg-[var(--color-card)] pl-14 pr-4 text-[var(--color-foreground)]"
+                            className="input min-h-[52px] rounded-xl border-[var(--color-border)] bg-[var(--color-card)] pr-4 text-[var(--color-foreground)]"
+                            style={{ paddingLeft: '3.5rem' }}
                           />
                         </div>
                       </form>

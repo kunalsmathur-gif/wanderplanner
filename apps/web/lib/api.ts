@@ -11,7 +11,7 @@ export async function geocode(query: string, countrycodes?: string) {
   const { data } = await api.get('/api/geocode', {
     params: { q: query, ...(countrycodes ? { countrycodes } : {}) },
   })
-  return data as { display_name: string; lat: number; lon: number; country_code: string }
+  return data as { display_name: string; lat: number; lon: number; country_code: string; is_country: boolean }
 }
 
 // ── Search ────────────────────────────────────────────────────────────────
@@ -80,6 +80,42 @@ export async function recommendCities(
 export async function checkFeasibility(tripConfig: TripConfig) {
   const { data } = await api.post('/api/feasibility-check', { trip_config: tripConfig })
   return data as FeasibilityResponse
+}
+
+// ── Extract trip from URL / text (Start Anywhere) ────────────────────────
+export interface ExtractedTrip {
+  destination: string | null
+  destination_country: string | null
+  duration_days: number | null
+  themes: string[]
+  budget_inr: number | null
+  summary: string
+}
+
+export async function extractTrip(input: string): Promise<ExtractedTrip> {
+  const { data } = await api.post('/api/extract-trip', { input })
+  return data as ExtractedTrip
+}
+
+// ── Share trip ───────────────────────────────────────────────────────────
+export async function shareTrip(payload: {
+  itinerary: object
+  trip_config: object
+  labels: object
+  destination_label: string
+}): Promise<{ slug: string; url: string }> {
+  const { data } = await api.post('/api/share', payload)
+  return data as { slug: string; url: string }
+}
+
+export async function getSharedTrip(slug: string): Promise<{
+  itinerary: object
+  trip_config: object
+  labels: object
+  destination_label: string
+}> {
+  const { data } = await api.get(`/api/share/${slug}`)
+  return data
 }
 
 // ── Itinerary (streaming SSE) ─────────────────────────────────────────────

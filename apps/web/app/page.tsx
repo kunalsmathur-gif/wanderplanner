@@ -4,6 +4,7 @@ import { ThreeColumnLayout } from '@/components/layout/ThreeColumnLayout'
 import { ConversationalWizard } from '@/components/wizard/ConversationalWizard'
 import { FloatingAnyaButton } from '@/components/common/FloatingAnyaButton'
 import { LandingHero } from '@/components/common/LandingHero'
+import { ChatPanel } from '@/components/chat/ChatPanel'
 import { useAppStore } from '@/store/appStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 
@@ -26,7 +27,7 @@ export default function Home() {
       >
         {hasItinerary
           ? (
-            <main id="main-content" aria-label="Wanderplan itinerary dashboard">
+          <main id="main-content" aria-label="Wanderplan itinerary dashboard" className="h-full">
               <ThreeColumnLayout />
             </main>
           )
@@ -35,6 +36,9 @@ export default function Home() {
 
       {/* Anya orb — only shown when itinerary exists and wizard is closed */}
       {hasItinerary && <FloatingAnyaButton />}
+
+      {/* Anya persistent chat panel */}
+      {hasItinerary && <ChatPanel />}
 
       {/* Wizard modal */}
       {wizardOpen && (
