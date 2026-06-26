@@ -104,6 +104,10 @@ export function LLMWizard() {
   const [voiceActive, setVoiceActive] = useState(false)
   const [isSpeaking, setIsSpeaking]   = useState(false)
 
+  // Always-current ref so sendMessage never reads stale partialConfig
+  const partialConfigRef = useRef<Partial<TripConfig>>({})
+  partialConfigRef.current = partialConfig
+
   const messagesEndRef  = useRef<HTMLDivElement>(null)
   const inputRef        = useRef<HTMLInputElement>(null)
   const recognitionRef  = useRef<RecognitionInstance | null>(null)
@@ -227,14 +231,15 @@ export function LLMWizard() {
     try {
       const res = await wizardChat(
         history,
-        isBootstrap ? partialConfig : partialConfig,
+        partialConfigRef.current,   // always-current, avoids stale closure
         preloadLabel ?? (wizardPreload ? `${wizardPreload.city}, ${wizardPreload.country}` : undefined),
       )
 
       // Merge config_patch into partialConfig
-      if (res.config_patch && Object.keys(res.config_patch).length > 0) {
-        setPartialConfig((prev) => {
-          const merged = { ...prev }
+      setPartialConfig((prev) => {
+        const merged = { ...prev }
+        // Apply any LLM-extracted patches
+        if (res.config_patch && Object.keys(res.config_patch).length > 0) {
           for (const [k, v] of Object.entries(res.config_patch)) {
             if (typeof v === 'object' && v !== null && !Array.isArray(v) && typeof merged[k as keyof TripConfig] === 'object') {
               merged[k as keyof TripConfig] = { ...(merged[k as keyof TripConfig] as object), ...v } as never
@@ -242,9 +247,20 @@ export function LLMWizard() {
               merged[k as keyof TripConfig] = v as never
             }
           }
-          return merged
-        })
-      }
+        }
+        // Track that the "anything else?" checkpoint has been shown
+        // once all 6 fields are filled, so the LLM doesn't re-ask next turn
+        const allFilled = Boolean(merged.purpose) &&
+          Boolean(merged.pace) &&
+          ((merged.budget?.amount ?? 0) > 0) &&
+          ((merged.group?.adults ?? 0) >= 1) &&
+          (merged.dates?.duration_days || (merged.dates?.start && merged.dates?.end)) &&
+          (merged.destination_mode !== 'fixed' || merged.destination?.city)
+        if (allFilled && !(merged as Record<string, unknown>)._checkpoint_asked) {
+          (merged as Record<string, unknown>)._checkpoint_asked = true
+        }
+        return merged
+      })
 
       const assistantMsg: Message = {
         id: nextId(),
