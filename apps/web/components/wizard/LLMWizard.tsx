@@ -265,7 +265,8 @@ export function LLMWizard() {
       const assistantMsg: Message = {
         id: nextId(),
         role: 'assistant',
-        content: res.reply,
+        // Strip thought_process prefix if it leaked through (backend safety net may miss edge cases)
+        content: res.reply.replace(/^thought_process\b[\s\S]*?(?=\n[A-Z]|\n\n|(?<=[.!?])\s+[A-Z])/i, '').trim() || res.reply,
         chips: res.chips.length > 0 ? res.chips : undefined,
       }
       setMessages([...nextMessages, assistantMsg])

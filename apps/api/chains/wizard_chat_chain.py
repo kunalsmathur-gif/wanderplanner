@@ -457,6 +457,20 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             or []
         )
 
+        # Extract thought_process — internal reasoning, never shown to user
+        thought = data.get("thought_process") or ""
+        if thought:
+            import logging
+            logging.getLogger(__name__).debug("Anya thought: %s", thought)
+
+        # Safety: if thought_process text bled into reply_text (LLM format slip),
+        # strip it so the user never sees internal reasoning
+        import re as _re2
+        reply_text = _re2.sub(
+            r'^(?:thought_process\s*:?\s*).*?(?=\n|[A-Z][a-z]|Hi|Hey|Oh|Wow|Great|Sure|Perfect|Fantastic|Wonderful)',
+            '', reply_text, flags=_re2.DOTALL
+        ).strip() or reply_text
+
         # Merge config_patch into partial_config to check completeness
         merged = {**request.partial_config}
         patch = data.get("config_patch", {})
@@ -471,13 +485,6 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # Server-side override: only allow ready=true if all required fields present
         ready = data.get("ready_to_generate", False) and _has_all_required(merged)
 
-        # Log thought_process for debugging (not sent to frontend in response body
-        # but included in WizardChatResponse for optional surfacing)
-        thought = data.get("thought_process")
-        if thought:
-            import logging
-            logging.getLogger(__name__).debug("Anya thought: %s", thought)
-
         return WizardChatResponse(
             reply=reply_text,
             chips=chips_list,
@@ -487,7 +494,10 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             thought_process=thought,
         )
     except Exception:
-        return WizardChatResponse(reply=raw, chips=[], config_patch={}, ready_to_generate=False)
+        # Even in fallback, strip any thought_process prefix from raw text
+        import re as _re_fb
+        clean_raw = _re_fb.sub(r'^thought_process\b.*?\n', '', raw, flags=_re_fb.DOTALL).strip()
+        return WizardChatResponse(reply=clean_raw or raw, chips=[], config_patch={}, ready_to_generate=False)
 
 
 # ── Mock fallback ─────────────────────────────────────────────────────────────
