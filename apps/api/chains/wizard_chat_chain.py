@@ -371,6 +371,30 @@ def _summarise_state(config: dict[str, Any]) -> str:
     return "\n".join(lines) if lines else "Nothing collected yet — this is the first message."
 
 
+def _clean_reply(text: str) -> str:
+    """Strip internal reasoning from a reply string the LLM accidentally embedded."""
+    import re as _re_clean
+    # Remove 'thought_process' header/label line
+    text = _re_clean.sub(r'^thought_process\b[^\n]*\n?', '', text, flags=_re_clean.IGNORECASE).strip()
+    # Find where the warm conversational reply starts and discard everything before it
+    warm = _re_clean.search(
+        r'(?<![a-z])(?:Wonderful|Great|Sure|Perfect|Fantastic|Hi\b|Hey\b|Namaste|Awesome|Lovely|'
+        r'Brilliant|Sounds|Of course|Absolutely|Certainly|Happy to|I\'d love|Let\'s|Alright|'
+        r'Right,|No worries|Not a problem|That sounds|A [a-z]+ trip|Your |You |For your)',
+        text
+    )
+    if warm:
+        return text[warm.start():]
+    # Fallback: strip monologue sentence patterns
+    stripped = _re_clean.sub(
+        r'^(?:(?:The user|The next|I need to|I will|I should|I have|I must|I can|I see|'
+        r'I notice|I think|Now I|Let me|Looking at|Based on|Since|As|Given|User|They)'
+        r'[^.!?]*[.!?]\s*)+',
+        '', text
+    ).strip()
+    return stripped or text
+
+
 # ── Main chain function ───────────────────────────────────────────────────────
 
 async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
@@ -468,31 +492,20 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             import logging
             logging.getLogger(__name__).debug("Anya thought: %s", thought)
 
-        # Safety: LLM sometimes prepends the thought_process text inside assistant_reply.
-        # Strip it using two strategies:
-        # 1. Exact prefix match — if reply starts with the thought content, remove it.
-        # 2. Pattern match — strip any leading internal-monologue sentence(s) that look
-        #    like chain-of-thought (e.g. "The user has provided X. I need to Y.") before
-        #    the warm greeting that begins the real reply.
-        if thought and reply_text:
-            thought_stripped = thought.strip()
-            if reply_text.startswith(thought_stripped):
-                reply_text = reply_text[len(thought_stripped):].strip()
-            elif thought_stripped and reply_text.startswith(thought_stripped[:60]):
-                # Partial prefix match — find where thought ends and real reply begins
-                idx = reply_text.find(thought_stripped[-30:])
-                if idx != -1:
-                    reply_text = reply_text[idx + len(thought_stripped[-30:]):].strip()
+        # Strip "Chips: [...]" from reply_text if LLM embedded it inline, and recover chips
+        import re as _re3
+        chips_inline = _re3.search(r'\s*(?:Chips?|Options?|chip\s*options?):\s*(\[[\s\S]*?\])', reply_text, flags=_re3.IGNORECASE)
+        if chips_inline:
+            try:
+                extra_chips = json.loads(chips_inline.group(1))
+                if isinstance(extra_chips, list):
+                    chips_list = chips_list or extra_chips
+            except Exception:
+                pass
+            reply_text = reply_text[:chips_inline.start()].strip()
 
-        # Fallback regex: strip any internal-monologue preamble that starts with
-        # third-person reasoning sentences ("The user has provided ...", "I need to ...")
-        # and continues until a warm opening word typical of Anya's replies.
-        import re as _re2
-        _stripped = _re2.sub(
-            r'^(?:(?:The user|I need to|I will|I should|I have|I must|I can|I see|I notice|I think|Now I|Let me|Looking at|Based on|Since|As|Given|User|They)[^.!?]*[.!?]\s*)+',
-            '', reply_text
-        ).strip()
-        reply_text = _stripped or reply_text
+        # Strip any internal-reasoning prefix the LLM accidentally embedded in reply_text
+        reply_text = _clean_reply(reply_text)
 
         # Merge config_patch into partial_config to check completeness
         merged = {**request.partial_config}
@@ -518,26 +531,22 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         )
     except Exception:
         # JSON parse failed — LLM returned plain text (no JSON).
-        # Strategy: strip everything before the warm conversational reply starts.
         import re as _re_fb
         clean_raw = raw or ""
-        # Step 1: Remove "thought_process" header line
-        clean_raw = _re_fb.sub(r'^thought_process\b[^\n]*\n?', '', clean_raw, flags=_re_fb.IGNORECASE).strip()
-        # Step 2: Find where the warm Anya reply starts (warm opener words)
-        # Everything before this is internal reasoning — discard it.
-        warm_match = _re_fb.search(
-            r'(?<![a-z])(?:Wonderful|Great|Sure|Perfect|Fantastic|Hi|Hey|Namaste|Awesome|Lovely|Brilliant|Sounds|Of course|Absolutely|Certainly|Happy to|I\'d love|Let\'s|Alright|Right,|No worries|Not a problem|That sounds|A [a-z]+ trip)',
-            clean_raw
-        )
-        if warm_match:
-            clean_raw = clean_raw[warm_match.start():]
-        else:
-            # Fallback: strip known monologue sentence patterns
-            clean_raw = _re_fb.sub(
-                r'^(?:(?:The user|The next|I need to|I will|I should|I have|I must|I can|I see|I notice|I think|Now I|Let me|Looking at|Based on|Since|As|Given|User|They)[^.!?]*[.!?]\s*)+',
-                '', clean_raw
-            ).strip()
-        return WizardChatResponse(reply=clean_raw or raw, chips=[], config_patch={}, ready_to_generate=False)
+        # Extract chips embedded in plain text (e.g. 'Chips: ["A", "B"]')
+        extracted_chips: list[str] = []
+        chips_match = _re_fb.search(r'\s*(?:Chips?|Options?|chip\s*options?):\s*(\[[\s\S]*?\])', clean_raw, flags=_re_fb.IGNORECASE)
+        if chips_match:
+            try:
+                parsed = json.loads(chips_match.group(1))
+                if isinstance(parsed, list):
+                    extracted_chips = [str(c) for c in parsed]
+            except Exception:
+                pass
+            clean_raw = clean_raw[:chips_match.start()].strip()
+        # Strip reasoning prefix and find start of warm reply
+        clean_raw = _clean_reply(clean_raw)
+        return WizardChatResponse(reply=clean_raw or raw, chips=extracted_chips, config_patch={}, ready_to_generate=False)
 
 
 # ── Mock fallback ─────────────────────────────────────────────────────────────
