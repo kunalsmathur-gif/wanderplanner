@@ -23,6 +23,7 @@ class WizardChatResponse(BaseModel):
     config_patch: dict[str, Any] = {}
     ready_to_generate: bool = False
     summary: str | None = None
+    thought_process: str | None = None
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────
@@ -242,9 +243,13 @@ Respond ONLY with a valid JSON object on every turn.
 No text before or after. No markdown fences. No triple backticks.
 No trailing commas. No comments inside the JSON.
 
+CRITICAL: The `thought_process` field is for YOUR internal reasoning only.
+It must NEVER appear in, or be prepended to, the `reply` field.
+The `reply` field must contain ONLY what the user will hear/read — nothing else.
+
 {{
-  "thought_process": "1-2 sentence internal reasoning: which fields are missing, what was just extracted, what to ask next.",
-  "reply": "Warm 2-3 sentence conversational response. Markdown allowed: **bold**, _italic_. No lists.",
+  "thought_process": "1-2 sentence internal reasoning: which fields are missing, what was just extracted, what to ask next. THIS IS NEVER SHOWN TO THE USER.",
+  "reply": "Warm 2-3 sentence conversational response shown directly to the user. Markdown allowed: **bold**, _italic_. No lists. Do NOT include any reasoning here.",
   "chips": ["Chip 1", "Chip 2", "Chip 3"],
   "config_patch": {{}},
   "ready_to_generate": false,
@@ -463,13 +468,31 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             import logging
             logging.getLogger(__name__).debug("Anya thought: %s", thought)
 
-        # Safety: if thought_process text bled into reply_text (LLM format slip),
-        # strip it so the user never sees internal reasoning
+        # Safety: LLM sometimes prepends the thought_process text inside assistant_reply.
+        # Strip it using two strategies:
+        # 1. Exact prefix match — if reply starts with the thought content, remove it.
+        # 2. Pattern match — strip any leading internal-monologue sentence(s) that look
+        #    like chain-of-thought (e.g. "The user has provided X. I need to Y.") before
+        #    the warm greeting that begins the real reply.
+        if thought and reply_text:
+            thought_stripped = thought.strip()
+            if reply_text.startswith(thought_stripped):
+                reply_text = reply_text[len(thought_stripped):].strip()
+            elif thought_stripped and reply_text.startswith(thought_stripped[:60]):
+                # Partial prefix match — find where thought ends and real reply begins
+                idx = reply_text.find(thought_stripped[-30:])
+                if idx != -1:
+                    reply_text = reply_text[idx + len(thought_stripped[-30:]):].strip()
+
+        # Fallback regex: strip any internal-monologue preamble that starts with
+        # third-person reasoning sentences ("The user has provided ...", "I need to ...")
+        # and continues until a warm opening word typical of Anya's replies.
         import re as _re2
-        reply_text = _re2.sub(
-            r'^(?:thought_process\s*:?\s*).*?(?=\n|[A-Z][a-z]|Hi|Hey|Oh|Wow|Great|Sure|Perfect|Fantastic|Wonderful)',
-            '', reply_text, flags=_re2.DOTALL
-        ).strip() or reply_text
+        _stripped = _re2.sub(
+            r'^(?:(?:The user|I need to|I will|I should|I have|I must|I can|I see|I notice|I think|Now I|Let me|Looking at|Based on|Since|As|Given|User|They)[^.!?]*[.!?]\s*)+',
+            '', reply_text
+        ).strip()
+        reply_text = _stripped or reply_text
 
         # Merge config_patch into partial_config to check completeness
         merged = {**request.partial_config}
@@ -494,9 +517,26 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             thought_process=thought,
         )
     except Exception:
-        # Even in fallback, strip any thought_process prefix from raw text
+        # JSON parse failed — LLM returned plain text (no JSON).
+        # Strategy: strip everything before the warm conversational reply starts.
         import re as _re_fb
-        clean_raw = _re_fb.sub(r'^thought_process\b.*?\n', '', raw, flags=_re_fb.DOTALL).strip()
+        clean_raw = raw or ""
+        # Step 1: Remove "thought_process" header line
+        clean_raw = _re_fb.sub(r'^thought_process\b[^\n]*\n?', '', clean_raw, flags=_re_fb.IGNORECASE).strip()
+        # Step 2: Find where the warm Anya reply starts (warm opener words)
+        # Everything before this is internal reasoning — discard it.
+        warm_match = _re_fb.search(
+            r'(?<![a-z])(?:Wonderful|Great|Sure|Perfect|Fantastic|Hi|Hey|Namaste|Awesome|Lovely|Brilliant|Sounds|Of course|Absolutely|Certainly|Happy to|I\'d love|Let\'s|Alright|Right,|No worries|Not a problem|That sounds|A [a-z]+ trip)',
+            clean_raw
+        )
+        if warm_match:
+            clean_raw = clean_raw[warm_match.start():]
+        else:
+            # Fallback: strip known monologue sentence patterns
+            clean_raw = _re_fb.sub(
+                r'^(?:(?:The user|The next|I need to|I will|I should|I have|I must|I can|I see|I notice|I think|Now I|Let me|Looking at|Based on|Since|As|Given|User|They)[^.!?]*[.!?]\s*)+',
+                '', clean_raw
+            ).strip()
         return WizardChatResponse(reply=clean_raw or raw, chips=[], config_patch={}, ready_to_generate=False)
 
 
