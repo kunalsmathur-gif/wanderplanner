@@ -8,6 +8,7 @@ import { useItineraryStore } from '@/store/itineraryStore'
 import { useAppStore } from '@/store/appStore'
 import { CurrencyWidget } from '@/components/dashboard/CurrencyWidget'
 import { ExpenseBreakupCard } from '@/components/dashboard/ExpenseBreakupCard'
+import { BookingHub } from '@/components/dashboard/BookingHub'
 
 const PdfDownloadButton = dynamic(
   () => import('@/components/pdf/PdfDownloadButton').then((m) => ({ default: m.PdfDownloadButton })),
@@ -77,6 +78,7 @@ export function Column1Metrics() {
           </div>
         </>
       )}
+      <BookingHub />
     </div>
   )
 }

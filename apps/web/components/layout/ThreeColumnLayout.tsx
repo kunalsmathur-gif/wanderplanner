@@ -2,11 +2,13 @@
 
 import { useAppStore } from '@/store/appStore'
 import { useItineraryStore } from '@/store/itineraryStore'
+import { useTripConfigStore } from '@/store/tripConfigStore'
 import { Column1Metrics } from '@/components/dashboard/Column1Metrics'
 import { ItineraryTimeline } from '@/components/itinerary/ItineraryTimeline'
 import { Column3Sidebar } from '@/components/itinerary/Column3Sidebar'
 import { ComparisonPanel } from '@/components/comparison/ComparisonPanel'
 import { MapWrapper } from '@/components/map/MapWrapper'
+import { ShareButton } from '@/components/common/ShareButton'
 
 export function ThreeColumnLayout() {
   const step3View = useAppStore((state) => state.step3View)
@@ -14,6 +16,7 @@ export function ThreeColumnLayout() {
   const days = useItineraryStore((state) => state.days)
   const activeDay = useItineraryStore((state) => state.activeDay)
   const day = days[activeDay]
+  const destination = useTripConfigStore((s) => s.config.destination)
 
   // ── Full-screen map mode ──────────────────────────────────────────
   if (step3View === 'map-full') {
@@ -74,12 +77,21 @@ export function ThreeColumnLayout() {
       </aside>
 
       {/* Center — itinerary / comparison */}
-      <section className="flex flex-1 flex-col overflow-hidden bg-[var(--_bg)] px-8 py-6">
-        {step3View === 'comparison' ? (
-          <ComparisonPanel onClose={() => setStep3View('itinerary')} />
-        ) : (
-          <ItineraryTimeline />
-        )}
+      <section className="flex flex-1 flex-col overflow-hidden bg-[var(--_bg)]">
+        {/* Center top-bar: title + share */}
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--_border)] px-6 py-2">
+          <p className="text-xs font-semibold text-[var(--_muted-fg)]">
+            {destination ? `${destination.city}, ${destination.country}` : 'Your Itinerary'} · {days.length} days
+          </p>
+          <ShareButton />
+        </div>
+        <div className="flex-1 overflow-hidden px-8 py-4">
+          {step3View === 'comparison' ? (
+            <ComparisonPanel onClose={() => setStep3View('itinerary')} />
+          ) : (
+            <ItineraryTimeline />
+          )}
+        </div>
       </section>
 
       {/* Right sidebar — map + tips */}

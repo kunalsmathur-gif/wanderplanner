@@ -51,3 +51,4 @@ class GeocodeResponse(BaseModel):
     lat: float
     lon: float
     country_code: str
+    is_country: bool = False

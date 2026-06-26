@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { X, Send } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useItineraryStore } from '@/store/itineraryStore'
@@ -8,8 +9,8 @@ import { chatRefine } from '@/lib/api'
 import { ChatMessage } from './ChatMessage'
 import type { ChatRefineResponse } from '@/types'
 
-const WELCOME: string =
-  "Hi! I'm WanderPlan Assistant ✈️\n\nAsk me anything about your trip — or ask me to change your destination, dates, budget, or preferences and I'll update your plan!"
+const WELCOME =
+  "Hi! I'm Anya ✈️\n\nAsk me anything about your trip, or tell me to change your destination, dates, budget, or preferences and I'll update your plan!"
 
 export function ChatPanel() {
   const { isOpen, close, messages, status, errorMsg, addMessage, setStatus } = useChatStore()
@@ -44,16 +45,13 @@ export function ChatPanel() {
         role: m.role,
         content: m.content,
       }))
-
       const result = await chatRefine(history, tripConfig)
       useChatStore.getState().updateLastAssistant(result.reply)
       setStatus('idle')
 
       if (result.action_type === 'patch_config' && result.config_patch) {
         updateConfig(result.config_patch as Parameters<typeof updateConfig>[0])
-        // No confirmation needed — minor change already done
       } else if (result.action_type === 'regenerate' && result.major_change) {
-        // Surface confirmation dialog
         setPendingAction(result)
       }
     } catch {
@@ -70,7 +68,7 @@ export function ChatPanel() {
     resetItinerary()
     addMessage({
       role: 'assistant',
-      content: '✅ Got it! I\'ve updated your trip settings. Head back to the wizard to regenerate your itinerary.',
+      content: "✅ Got it! I've updated your trip settings. Your itinerary has been reset — open the wizard to regenerate.",
     })
     setPendingAction(null)
   }
@@ -84,39 +82,39 @@ export function ChatPanel() {
 
   if (!isOpen) return null
 
-  const showWelcome = messages.length === 0
-
   return (
     <div
-      className="fixed bottom-24 right-6 z-[9998] w-[360px] flex flex-col rounded-2xl shadow-2xl border border-slate-200 bg-white overflow-hidden"
+      className="fixed bottom-24 right-6 z-[9998] flex w-[360px] flex-col overflow-hidden rounded-2xl border border-[var(--_border)] bg-[var(--_card)] shadow-2xl"
       style={{ maxHeight: '540px' }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-[#1E40AF] shrink-0">
+      <div className="flex shrink-0 items-center justify-between border-b border-[var(--_border)] bg-[var(--_primary)] px-4 py-3">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center">
-            <span className="text-white text-sm">✈️</span>
+          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20">
+            <span className="text-sm">✈️</span>
           </div>
           <div>
-            <p className="text-white text-sm font-semibold">WanderPlan Assistant</p>
-            <p className="text-blue-200 text-xs">Travel questions · Itinerary refinement</p>
+            <p className="text-sm font-semibold text-white">Anya</p>
+            <p className="text-xs text-white/70">Your AI travel concierge</p>
           </div>
         </div>
         <button
           onClick={close}
-          className="text-white/70 hover:text-white transition-colors text-lg leading-none"
-          aria-label="Close chat"
-        >✕</button>
+          className="text-white/70 transition-colors hover:text-white"
+          aria-label="Close Anya chat"
+        >
+          <X size={18} />
+        </button>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 min-h-0">
-        {showWelcome && (
-          <div className="flex justify-start gap-2">
-            <div className="w-6 h-6 rounded-full bg-[#1E40AF] flex items-center justify-center shrink-0 mt-0.5">
-              <span className="text-white text-xs">✈</span>
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
+        {messages.length === 0 && (
+          <div className="flex gap-2">
+            <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--_primary)]">
+              <span className="text-xs text-white">✈</span>
             </div>
-            <div className="max-w-[80%] rounded-2xl rounded-bl-sm bg-slate-100 text-slate-800 px-3 py-2 text-sm leading-relaxed">
+            <div className="max-w-[80%] rounded-2xl rounded-bl-sm bg-[var(--_card-elevated)] px-3 py-2 text-sm leading-relaxed text-[var(--_fg)]">
               {WELCOME.split('\n').map((line, i) => (
                 <span key={i}>{line}{i < WELCOME.split('\n').length - 1 && <br />}</span>
               ))}
@@ -126,47 +124,51 @@ export function ChatPanel() {
         {messages.map((msg) => (
           <ChatMessage key={msg.id} message={msg} />
         ))}
-        {status === 'sending' && messages[messages.length - 1]?.content === '…' && (
+        {status === 'sending' && messages.at(-1)?.content === '…' && (
           <div className="flex items-center gap-1 pl-8">
-            <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:-0.3s]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:-0.15s]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" />
+            {['-0.3s', '-0.15s', '0s'].map((d) => (
+              <span
+                key={d}
+                className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--_muted-fg)]"
+                style={{ animationDelay: d }}
+              />
+            ))}
           </div>
         )}
 
-        {/* Regeneration confirmation card */}
         {pendingAction && (
-          <div className="mx-1 p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2">
-            <p className="text-xs font-semibold text-amber-800">⚠️ This change will regenerate your itinerary</p>
+          <div className="mx-1 space-y-2 rounded-xl border border-[var(--_warning,#F59E0B)]/40 bg-amber-50 p-3 dark:bg-amber-950/30">
+            <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">
+              ⚠️ This change will regenerate your itinerary
+            </p>
             <div className="flex gap-2">
               <button
                 onClick={handleConfirmRegenerate}
-                className="flex-1 py-1.5 rounded-lg bg-[#1E40AF] text-white text-xs font-semibold hover:bg-blue-800"
+                className="flex-1 rounded-lg bg-[var(--_primary)] py-1.5 text-xs font-semibold text-white hover:opacity-90"
               >
                 Yes, apply & reset
               </button>
               <button
                 onClick={() => setPendingAction(null)}
-                className="flex-1 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-50"
+                className="flex-1 rounded-lg border border-[var(--_border)] py-1.5 text-xs font-semibold text-[var(--_fg)] hover:bg-[var(--_card-elevated)]"
               >
-                No, just noting it
+                Just noting it
               </button>
             </div>
           </div>
         )}
-
         <div ref={bottomRef} />
       </div>
 
       {errorMsg && (
-        <div className="px-3 py-1.5 bg-red-50 border-t border-red-100 text-xs text-red-600 shrink-0">
+        <div className="shrink-0 border-t border-red-100 bg-red-50 px-3 py-1.5 text-xs text-red-600 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400">
           ⚠️ {errorMsg}
         </div>
       )}
 
       {/* Input */}
-      <div className="px-3 py-2.5 border-t border-slate-200 bg-white shrink-0">
-        <div className="flex gap-2 items-end">
+      <div className="shrink-0 border-t border-[var(--_border)] bg-[var(--_card)] px-3 py-2.5">
+        <div className="flex items-end gap-2">
           <textarea
             ref={inputRef}
             value={input}
@@ -175,27 +177,19 @@ export function ChatPanel() {
             placeholder="Ask about your trip or request changes…"
             rows={1}
             disabled={status === 'sending'}
-            className="flex-1 resize-none border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-[#1E40AF] disabled:bg-slate-50 leading-snug max-h-24 overflow-y-auto"
+            className="max-h-24 flex-1 resize-none overflow-y-auto rounded-xl border border-[var(--_border)] bg-[var(--_bg)] px-3 py-2 text-sm leading-snug text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none disabled:opacity-50"
             style={{ scrollbarWidth: 'none' }}
           />
           <button
             onClick={handleSend}
             disabled={!input.trim() || status === 'sending'}
-            className={[
-              'w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-all',
-              input.trim() && status !== 'sending'
-                ? 'bg-[#1E40AF] hover:bg-blue-800 text-white'
-                : 'bg-slate-100 text-slate-400 cursor-not-allowed',
-            ].join(' ')}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--_primary)] text-white transition-all hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
             aria-label="Send message"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13" />
-              <polygon points="22 2 15 22 11 13 2 9 22 2" />
-            </svg>
+            <Send size={15} />
           </button>
         </div>
-        <p className="text-xs text-slate-400 mt-1.5 text-center">
+        <p className="mt-1.5 text-center text-xs text-[var(--_muted-fg)]">
           Enter to send · Shift+Enter for new line
         </p>
       </div>

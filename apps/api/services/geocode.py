@@ -74,4 +74,11 @@ async def geocode_city(city: str, countrycodes: str = "") -> GeocodeResponse:
         lat=float(hit.get("lat", 0)),
         lon=float(hit.get("lon", 0)),
         country_code=address.get("country_code", ""),
+        is_country=(
+            not address.get("city")
+            and not address.get("town")
+            and not address.get("village")
+            and not address.get("municipality")
+            and bool(address.get("country"))
+        ),
     )
