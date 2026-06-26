@@ -1,0 +1,589 @@
+# **WanderPlan (Desktop-First AI Travel Advisor) — Complete Product Requirements Document (PRD)**
+
+## **1\. Document Control**
+
+* **Author:** Product Manager  
+* **Status:** Rev 4 — Finalized ✅ (All clarifications resolved — Engineering handoff ready)
+* **Target Release:** Q4 2026  
+* **Platform:** Desktop-First Web Application (Optimized for 1440x900 and 1920x1080 viewports; explicitly excludes standalone mobile PWA or mobile app scopes)
+* **Language:** English only (no i18n or RTL support in Phase 1)
+* **Monetization:** Free product — no paywalls, no feature gating
+* **Collaboration:** Single-user planning only — co-travelers cannot edit itineraries
+* **API Strategy:** No third-party API key dependencies in Phase 1 (see Section 6.1 for full stack)
+
+  ## **2\. Executive Summary & Objective**
+
+WanderPlan is an all-in-one desktop web application designed to solve the friction of fragmented, multi-tab travel coordination. By consolidating maps, booking aggregators, spreadsheets, and travel blogs into a single interface, WanderPlan functions as a unified engine for destination discovery, side-by-side location comparisons, hyper-personalized itinerary building, and post-selection logistics planning.
+
+The application pairs traditional third-party travel APIs with an AI data layer to deliver granular, timestamped travel schedules tailored to complex group dynamics, pet constraints, accessibility limits, corporate/remote work needs, and budget boundaries. Recommendations are dynamically enhanced by real-time social signals (Reddit, YouTube, Instagram) to capture authentic, trending, on-the-ground user insights rather than static commercial itineraries.
+
+## **3\. User Personas & Core Traits**
+
+### **3.1 The Group Coordinator**
+
+* **Traits:** Demands micro-logistical precision. Handles mixed age brackets (toddlers to seniors) simultaneously.  
+* **Pain Points:** Balancing contrasting paces, managing group finances, and keeping transit stress-free.
+
+  ### **3.2 The Aesthetic Explorer**
+
+* **Traits:** High emphasis on photogenic/Instaworthy landmarks, custom neighborhood designs, and scenic dining.  
+* **Pain Points:** Low-quality photography references and generic, uninspired travel recommendations.
+
+  ### **3.3 The Pet Parent**
+
+* **Traits:** Treats pets as immediate family; refuses to travel unless accommodations and local spaces are explicitly pet-welcoming.  
+* **Pain Points:** Hidden airline or accommodation pet fees, unexpected restaurant exclusions, and lack of nearby green space.
+
+  ### **3.4 The Retired Traveler / Long-Stay Senior**
+
+* **Traits:** Values physical comfort, low-intensity routing, robust safety protocols, and long-duration cultural exposure (2–3 months).  
+* **Pain Points:** Multi-tier walking paths without elevator access, heavy stairs, and complex, rapid transit transfers.
+
+  ### **3.5 The Sports & Fitness Enthusiast**
+
+* **Traits:** Structures vacations around physical routines, outdoor training windows, trail networks, or viewing live sports matches.  
+* **Pain Points:** Inadequately equipped hotel fitness rooms and unverified or unsafe running paths.
+
+  ### **3.6 The Digital Nomad**
+
+* **Traits:** Synchronizes travel exploration with structured remote work schedules; relies heavily on high-speed internet infrastructure.  
+* **Pain Points:** Mid-day Wi-Fi drops, unergonomic workspaces, and lack of power accessibility in public environments.
+
+  ## **4\. Functional Requirements & Product Epics**
+
+  ### **Epic 1: The Smart Requirement Wizard (Onboarding Interface)**
+
+Captures granular trip criteria through a **3-step linear flow** with a horizontal progress indicator at the top.
+
+#### **Step Flow Overview**
+
+| Step | Label | Description |
+|---|---|---|
+| **Step 1** | Plan Your Trip | All input fields on a single scrollable screen. "Generate Itinerary" CTA activates once all required fields are filled. |
+| **Step 2** | Itinerary Overview | AI-generated destination overview and day-by-day schedule summary. User reviews and confirms or adjusts destination and dates. |
+| **Step 3** | Detailed Itinerary | Full timestamped itinerary rendered after the user clicks "Finalize" on Step 2. This is the primary working view (3-column layout). |
+
+**Back navigation:** Moving from Step 2 or Step 3 back to Step 1 fully restores all previously entered input values. Session-only — state does not survive a full tab close or browser refresh.
+
+---
+
+#### **Step 1 — All Inputs (Single Screen)**
+
+All fields below are presented on one scrollable page, grouped into logical visual sections with section headers. The "Generate Itinerary" CTA at the bottom is disabled until all required fields pass inline validation.
+
+* 1\. **Trip Purpose:** Choice chips — Chill Out, Explore, Family Reunion, Friends Get-Together, Special Occasion (Special Occasion reveals a conditional text input for occasion name and date).  
+* 2\. **Timing:** Fixed Dates (dual calendar date picker) vs. Flexible (month/season selector toggle).  
+* 3\. **Trip Scope & Origin:** Scope selector (Local, Domestic, International) + origin city/airport auto-complete powered by Nominatim / OpenStreetMap — no API key required.  
+* 4\. **Destination:** "Fixed Destination" free-text input vs. "Exploring Options" toggle (activates thematic choice chips: Beaches, Sights, Mountains, Nightlife, Wildlife, Work-Friendly).  
+* 5\. **Traveler Personas:** Multi-select dropdown. Options: Group Coordinator, Aesthetic Explorer, Pet Parent, Retired Traveler / Long-Stay Senior, Sports & Fitness Enthusiast, Digital Nomad. Selected personas gate downstream itinerary modules (e.g., Digital Nomad → Work Blocks; Pet Parent → pet-friendly venue filter).  
+* 6\. **Group Composition:** Counters for each age tier:  
+  * **Infants:** ages 0–2 years  
+  * **Kids:** ages 2–8 years (individual age input per child — drives safety filtering and auto-pace logic)  
+  * **Adults:** ages 8+ years  
+  * **Seniors:** ages 60+ years  
+  * **Pets:** count input  
+  > *Auto-pace rule:* If any kid is under 5 years old, the Pace slider automatically defaults to **Relaxed** and a tooltip informs the user why.  
+* 7\. **Accommodations & Properties:** Style filters (Hotel, BnB, Service Apartment, Resort) + property toggles (Minimum Bedrooms, Bathrooms, Private Pool, Kitchen, Wheelchair Accessibility, Pet Friendly).  
+* 8\. **Pace & Budget:** Pace slider (Relaxed, Moderate, Packed) + currency selector and **maximum total group budget** input (all-inclusive: accommodation, activities, local transport — international flights handled separately in Epic 5).
+
+  ### **Epic 2: Dynamic Curated Itinerary Engine & Social Media Layer**
+
+Translates wizard inputs and semantic vector trends into a day-by-day, interactive schedule complete with timestamped routing.
+
+* **Logistics Mapping:** Automatically tracks route timelines from the user's starting location to recommended local points of interest.  
+* **Work & Fitness Blocks:** Embeds dedicated windows for remote work or training based on active persona selections from the wizard (Digital Nomad persona → Work Blocks; Sports & Fitness persona → Training Windows).  
+* **Visual Highlights & Video Integration:** Flags highly photogenic spots with a prominent 📸 Instaworthy Photo Op badge and integrates high-resolution regional image galleries sourced from Unsplash (free tier, no API key required for non-commercial use) and Wikivoyage image assets.  
+* **Native YouTube Embeds:** Itinerary detail cards support inline video embedding via the YouTube oEmbed endpoint (no API key required). Users can watch neighborhood walk-throughs, food vlogs, or travel guides directly inside the itinerary timeline without breaking their planning flow.  
+* **Social Trend Factors:** Real-time recommendations ingest hot discussion topics from Reddit public JSON feeds (no OAuth required for read-only access) and contextual travel video embeds from YouTube. Instagram integration is **excluded from Phase 1** due to API restrictions on public hashtag access.  
+* **Session Persistence & PDF Export:** Itineraries are session-specific and are not persisted to a user account (no login required). Users are provided a prominent **"Download Itinerary as PDF"** CTA to save their plan locally. PDF is a styled branded document containing the full itinerary, visa advisory, packing checklist, currency rates, and booking deep-links — single continuous document with active hyperlinks and destination photos (no maps).
+
+  ### **Epic 3: Dual-Location Comparison Engine**
+
+Renders a side-by-side comparative grid pitting alternative destinations against each other based on user priorities.
+
+* **Parameters Evaluated:** Total Estimated Budget, Visa Processing Friction, Net Travel Times, Kid/Pet Suitability Indexes, Weather Adaptability, and Accommodation Specs.
+
+  ### **Epic 4: "Best Time to Travel" Insights Engine**
+
+Provides a visual analytics module displaying destination trend graphs.
+
+* **Data Models:** Historical weather patterns sourced from **Open-Meteo** (free, no API key), **busy and common tourist period signals** derived from:
+  * *Wikivoyage "Go" sections* — editorially maintained seasonal travel advice per destination, scraped and cached at ingestion time.
+  * *OpenStreetMap event data* — local festivals and recurring public events tagged in OSM.
+  * *Wikipedia "Events" and "Tourism" sections* — peak season narratives and major annual events per destination.
+  Seasonal cost metrics, and notifications regarding regional holidays or events.
+
+  ### **Epic 5: Post-Selection Travel Readiness & Ancillary Dashboard**
+
+The control hub for actionable logistics and booking pipelines once a destination is locked.
+
+* **Features Embedded:** Visa advisory notes (sourced from static Wikivoyage visa data with a mandatory disclaimer that information is advisory-only and users must verify with official government sources), **flight and hotel booking deep-links** to external platforms (Skyscanner, Booking.com) via URL redirect — no live API integration in Phase 1, local safety and cultural warnings (sourced from GeoSure API where available, Wikivoyage safety sections as fallback), weather-adjusted packing checklists, live currency converters (powered by **Frankfurter.app** — no API key required), and local eSIM connectivity guidance.
+
+> **Phase 1 Note:** Flight prices and hotel inventory are **not fetched live**. Instead, users are directed to external booking platforms via pre-formed deep-link URLs. Live booking API integration (Skyscanner, Amadeus, Booking.com) is deferred to Phase 2.
+
+  ### **Epic 6: Smart Calendar Integration — ⚠️ DEFERRED TO PHASE 2**
+
+> This Epic is explicitly excluded from Phase 1 scope. All calendar-related functionality described below is documented for future reference only and must not be included in Phase 1 engineering estimates or sprint planning.
+
+A bidirectional calendar engine serving as the operational backbone for trip timing.
+
+* **Intelligent Time-Blocking:** Automatically detects and highlights schedule overlaps, impossible routing sequences, or tight transit windows.  
+* **Multi-Timezone Syncing:** Keeps departure time zones and localized destination time zones clearly synchronized across flight blocks and landing activities.  
+* **External Ecosystem Export:** Provides one-click native calendar sync capabilities (Google Calendar, Apple Calendar, Outlook) via standardized .ics payloads and OAuth webhooks.
+
+  ## **5\. Detailed UX & UI Architecture Guidelines**
+
+  ### **5.1 Design System Tokens & Global Styles**
+
+* **Color Palette:** \* *Primary (Brand):* Horizon Blue (\#1E40AF) — conveys structural security, trust, and clear open skies.  
+  * *Secondary (Accents):* Emerald Green (\#047857) — flags pet-friendly spaces, budget savings, and verified open routes.  
+  * *Warning/Highlight:* Amber Gold (\#D97706) — denotes historical landmarks, structural access warnings, and 📸 Instaworthy callouts.  
+  * *Neutral Grounds:* Pure White (\#FFFFFF), Slate Gray (\#F1F5F9 for containers, \#0F172A for typography).  
+* **Typography:** \* System Font Stack: Inter, sans-serif for clean legibility across small digital elements.  
+  * Hierarchy: Headers (H1: 32px, Bold), Section Titles (H2: 24px, Semi-Bold), Interface Labels (14px, Medium), Body Text (14px, Regular). Maximize contrast ratios to easily meet WCAG 2.1 AA accessibility guidelines.  
+* **Elevation & Borders:** \* Interactive cards use soft outer shadows (box-shadow: 0 4px 6px \-1px rgba(0,0,0,0.05)).  
+  * Global component borders: 8px corner radius for an inviting, professional look.
+
+  ### **5.2 Layout Grids & Viewport Configurations**
+
+The application follows a **Three-Column Split Architecture** for its main dashboards, maximizing widescreen utility. Column 3 natively houses streaming social media reference elements, video loops, and live maps.
+
+```
++---------------------------------------------------------------------------------------------------------+
+| [W] WanderPlan  |  Trip: BLR to KUL + LGK (Nov 13-19, 2026)  |  12 Pax (4 Kids, 0 Pets)  |  Budget: Active |
++---------------------------------------------------------------------------------------------------------+
+| COLUMN 1: TRACKING & UTILITIES    | COLUMN 2: TIMELINE & SELECTION     | COLUMN 3: CONTEXTUAL SIDEBAR   |
+| (Width: 20%)                      | (Width: 55%)                       | (Width: 25%)                   |
+|                                   |                                    |                                |
+| 🛄 TRIP METRICS SUMMARY           | 🗓️ DAY 2: THEME PARKS & SPORTS       | 📺 SOCIAL MEDIA & EMBEDS       |
+| +-------------------------------+ | +--------------------------------+ | +----------------------------+ |
+| | 🛂 Visa: Action Required      | | | 09:00 AM - Sunway Lagoon       | | | [▶️ YouTube Player Embed]   | |
+| | 💶 Exchange: 100 INR = 5.3 MYR | | |   * Tag: Kid Friendly         | | | "Sunway Lagoon Ultimate   | |
+| | 📶 eSIM: Active - Maxis LTE   | | |   * 📸 Insta: Nick Lagoon      | | |  Vlog Guide (2026)"      | |
+| +-------------------------------+ | +--------------------------------+ | +----------------------------+ |
+|                                   | | 05:30 PM - Sports Screening    | | | 📑 REDDIT / INSTA TRENDS    | |
+| 📅 SMART CALENDAR STATUS          | | |   * Venue: The Sticky Wicket   | | | r/travel: "Avoid line X" | |
+| [!] 2hr overlap warning Day 4     | | |   * Match: Live Cricket      | | | IG: #StickyWicketCafe    | |
+| [🔀] Export to Google Calendar   | | +--------------------------------+ | +----------------------------+ |
++---------------------------------------------------------------------------------------------------------+
+```
+
+### **5.3 Interface Component Behavior & States**
+
+#### **A. The Onboarding Wizard — 3-Step Flow**
+
+* **Step Structure:**
+  * **Step 1 — Plan Your Trip:** All input fields on a single scrollable screen. No per-category step splits. A horizontal 3-step progress indicator sits at the top. The "Generate Itinerary" CTA at the bottom activates only once all required fields pass inline validation.
+  * **Step 2 — Itinerary Overview:** Destination overview cards and day-summary blocks are presented. User confirms or adjusts destination and dates before proceeding.
+  * **Step 3 — Detailed Itinerary:** Full 3-column layout with the complete timestamped schedule.
+* **Interactive Transitions:** Selected choice chips transition from a light grey border to Horizon Blue fill with a checkmark animation. Persona dropdown shows colored tags for each selected persona.
+* **Back Navigation:** Navigating back from Step 2 or 3 to Step 1 fully restores all previously entered values. State is session-scoped — does not survive a tab close or hard refresh.
+* **Auto-Pace Rule:** If the group includes any child under 5 years old, the Pace slider automatically sets to Relaxed and displays: *"Pace set to Relaxed — recommended for groups with young children."*
+* **Validation:** "Generate Itinerary" CTA remains disabled (semi-transparent grey) until: Trip Purpose, Origin, at least one date or season, and Budget are all filled.
+
+  #### **B. The Live Comparison Matrix Screen**
+
+* **Interaction Model:** Sticky headers on the top row and leftmost column lock into position, ensuring parameter alignment as users scroll vertically or horizontally through destinations.  
+* **Visual Enhancements:** The system highlights winning cell parameters automatically by shifting background hues to a light green tint, while areas containing logistical bottlenecks or strict visa requirements display a light gold background note.
+
+  #### **C. The Scroll-Synced Itinerary & Map View**
+
+* **Interaction Model:** Left-hand schedule lists feature independent scrolling mechanisms. Hovering over a specific timestamp block highlights the matching route pin on the right-hand map view in real time.  
+* **Dynamic Pace Adjustments:** Clicking a schedule slider changes the time allocations visible in the calendar overview instantly, showing clear warning icons if travel windows overlap or present time conflicts.
+
+  ## **6\. Data & AI Architecture Strategy**
+
+To support semantic searches, deep personalization, and the orchestration of real-time social metrics, WanderPlan implements an AI infrastructure layer on top of traditional transactional APIs.
+
+```
+                  +------------------------------------------------------+
+                  |            WanderPlan Core Application               |
+                  +------------------------------------------------------+
+                                             |
+                  +------------------------------------------------------+
+                  |       AI Orchestration Layer (LangChain Core)        |
+                  +------------------------------------------------------+
+                    /                        |                         \
++-------------------------+     +-------------------------+     +-------------------------+
+|  Vector Database Hub   |     |    LLM Engine Layer     |     | Machine Learning Model  |
+|  (Pinecone / Milvus)    |     |  (GPT-4o / Claude 3.5)  |     | (Alignment Scoring Engine)
++-------------------------+     +-------------------------+     +-------------------------+
+            |                                |                               |
+    [Semantic Index of]             [Generative Synthesis]           [Heuristic Computation]
+ * Reddit Travel Threads          * Dynamic Itinerary Flow         * Fit Match Percentage
+ * YouTube Transcript Captions    * Contextual Safety Tips         * Persona Constraints Validate
+ * Instagram Metadata Tags        * Natural Language Prompting     * Dynamic Penalty Adjustments
+```
+
+### **6.1 AI Component Specifications & Phase 1 No-API-Key Data Stack**
+
+> **Phase 1 Principle:** All data integrations must function without paid API keys or third-party API contracts. The stack below reflects this constraint.
+
+#### Phase 1 Approved Data Sources
+
+| Layer | Service | Key Required | Notes |
+|---|---|---|---|
+| Maps & Geocoding | OpenStreetMap + Nominatim | ❌ None | Full maps, routing, POI search |
+| Venue / POI Data | Overpass API (OSM) | ❌ None | Restaurants, parks, trails, accessibility tags |
+| Weather | Open-Meteo | ❌ None | Historical + 16-day forecast |
+| Currency | Frankfurter.app | ❌ None | Live FX rates |
+| Destination Content | Wikipedia API + Wikivoyage API | ❌ None | City guides, visa info, seasonal advice |
+| Country Info | RestCountries API | ❌ None | Country metadata |
+| Tourist Periods | Wikivoyage "Go" sections + OSM Events + Wikipedia Events | ❌ None | Scraped and cached at ingestion |
+| Reddit Content | Reddit public JSON feeds | ❌ None | Read-only, rate-limited; no OAuth |
+| YouTube Embeds | YouTube oEmbed endpoint | ❌ None | Embed public videos; no search quota |
+| Images | Unsplash (free tier) + Wikivoyage images | ❌ None | Destination photography |
+| LLM Engine | Groq free tier (primary) / Ollama self-hosted (fallback) | ❌ None | Itinerary generation |
+| Vector Database | Qdrant (self-hosted) or Chroma (in-process) | ❌ None | Semantic search |
+| Flights | Skyscanner deep-link redirect | ❌ None | No live pricing; external redirect only |
+| Hotels | Booking.com deep-link redirect | ❌ None | No live inventory; external redirect only |
+| Visa Data | Wikivoyage visa sections (static, cached) | ❌ None | Advisory only; disclaimer required |
+| Safety Data | Wikivoyage safety sections (fallback) | ❌ None | GeoSure API deferred to Phase 2 |
+
+#### Deferred to Phase 2 (Requires API Agreements)
+* Skyscanner Flights API / Amadeus Travel API — live flight pricing
+* Booking.com / TripAdvisor Content API — live hotel inventory
+* Sherpa API — verified visa requirements
+* GeoSure API — structured local safety scores
+* Airalo Partners API — eSIM purchasing
+* Instagram Graph API — **permanently excluded** (public hashtag search deprecated; no viable replacement)
+
+* **LLM Orchestration:** Managed via LangChain core. Primary LLM: **Groq free tier** (fast inference, no upfront cost). Fallback: **Ollama** (self-hosted, zero API cost). Translates user wizard inputs into structured JSON payloads for itinerary generation.  
+* **Vector Database for Semantic Search:** **Qdrant** (self-hosted, open source) stores high-dimensional text embeddings of Wikivoyage destination guides, Wikipedia travel content, and Reddit post summaries from public JSON feeds. Enables semantic queries (e.g., *"remote work spots with good coffee near downtown"*).  
+* **Social Ingestion:** Reddit public subreddit JSON endpoints (e.g., `reddit.com/r/travel.json`) ingested and indexed into the vector database on a scheduled basis. Content is filtered to safe, travel-relevant posts before indexing. YouTube video IDs are matched contextually using destination name + keyword heuristics against public oEmbed lookups — no YouTube Data API quota consumed.
+
+  ### **6.2 Itinerary Alignment Score (Machine Learning Optimization Framework)**
+
+The application calculates the predictive alignment accuracy of generated options against user profiles using a weighted algorithmic heuristic.
+
+#### **Alignment Calculation Framework**
+
+The final score is derived as follows:
+
+$$Score\_{Final} \= (W\_p \\cdot P\_{match}) \+ (W\_b \\cdot B\_{match}) \+ (W\_a \\cdot A\_{match}) \- \\sum Penalties$$
+
+##### **Variable Definitions**
+
+  * $W\_p = 0.5$, $W\_b = 0.3$, $W\_a = 0.2$ — **Fixed weights in Phase 1.** $\sum W = 1.0$. Dynamic per-persona weight adjustment is deferred to Phase 2.
+* $P\_{match}$: Persona Compatibility Index, computed via embedding proximity within the Vector DB.  
+* $B\_{match}$: Financial Budget Compliance Value ($1.0$ if within target thresholds; scaling down linearly if costs exceed max budget limits).  
+* $A\_{match}$: Structural Accessibility Score ($1.0$ if matching explicitly required access tokens, $0.0$ if a validation error occurs).  
+  * $\\sum Penalties$: Fixed deduction of $0.05$ per negative social signal keyword (e.g., "avoid") found in Reddit/social data for the venue. Value is fixed in Phase 1 and does not scale with signal volume.
+
+  > **Visibility:** The alignment score is an **internal ranking signal only** — it is never displayed to the user in the UI.
+
+  Python
+
+```
+def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, budget_limit, proposed_item):
+    """
+    Computes a simplified heuristic score for initial itinerary item validation.
+    """
+    # Baseline compatibility simulation
+    persona_match_score = 0.85  # Mock vector similarity value
+    
+    # Structural rule evaluation
+    accessibility_pass = 1.0 if accommodation_booleans.get('wheelchairAccessible', True) else 0.0
+    
+    # Budget evaluation 
+    if proposed_item['cost'] <= budget_limit:
+        budget_score = 1.0
+    else:
+        budget_score = max(0.0, 1.0 - ((proposed_item['cost'] - budget_limit) / budget_limit))
+        
+    # Social media penalty modifier if negative reviews bubble up on Reddit
+    social_penalty = 0.05 if "avoid" in proposed_item.get('social_sentiment_keywords', []) else 0.0
+    
+    # Weighted consolidation
+    final_score = (0.5 * persona_match_score) + (0.3 * budget_score) + (0.2 * accessibility_pass) - social_penalty
+    return round(final_score * 100, 2)
+```
+
+  ## **7\. Non-Functional Requirements (NFRs)**
+
+* **Performance & Computation Speed Metrics:** Onboarding skeleton UI blocks must render within 1.5 seconds. Because compiling highly customized schedules relies on concurrent social data scraping, vector database index matches, and generative LLM orchestration calls, **the total backend compilation routine must complete within a 15.0 to 20.0-second window.** A stylized, multi-step progress animation must display to keep user attention engaged during this processing state.  
+* **Error & Failure States:**
+  * *LLM timeout or failure (>20s):* Display a full-page error state with a "Try Again" retry CTA. Do not show partial results.
+  * *Empty results (no venues match filters):* Display an inline empty state per panel: *"No results found for your filters — try adjusting your budget, pace, or destination."* Each empty panel shows the message independently; other panels are unaffected.
+  * *Data source unavailable (Wikivoyage/Wikipedia/OSM unreachable):* Generation proceeds with affected sections blank. Affected cards display a stock destination image and a *"Limited information available for this destination"* badge. Generation is never fully blocked by a single data source failure.
+  * *Comparison engine partial failure (one destination returns no data):* Display the grid with available data populated; affected cells show *"Data unavailable"* overlay. A warning banner above the grid reads: *"Some data could not be loaded for [Destination]. Results may be incomplete."*
+* **State Retention:** Itineraries are **session-specific**. No user account or login is required. The application does not persist itinerary data beyond the active browser session. Users retain their plan by using the **"Download Itinerary as PDF"** export function. Browser localStorage may be used only as a short-term within-session buffer against accidental tab refreshes, not as a long-term persistence mechanism.  
+* **Cross-Browser Support:** Full layout rendering parity across all Chromium-based engines, Safari Desktop, and Mozilla Firefox releases.  
+* **Viewport:** Desktop-only in Phase 1. Minimum supported viewport: 1440x900. Optimized for 1920x1080. No mobile or tablet breakpoints are required.  
+* **Notifications:** No push notifications, email confirmations, or SMS alerts of any kind in Phase 1.  
+* **Content Safety:** All social content ingested from Reddit and other sources must pass a safe-content filter before being indexed or surfaced to users. No adult, violent, or otherwise harmful content should be displayed.
+
+  ## **8\. Success Metrics & Key Performance Indicators (KPIs)**
+
+* **Wizard Completion Depth:** The total percentage of onboarding initiations that successfully complete the configuration funnel to generate an initial itinerary view (Target: Greater than 70%).  
+* **Ancillary Conversion Rate:** The percentage of platform users who click through to complete external visa filings, flight bookings, or eSIM cellular purchases via dashboard affiliate nodes.  
+* **Itinerary Alignment Score Accuracy:** The ratio of automated itinerary recommendations kept by the user without manual schedule swaps, shifts, or deletions.  
+* **Smart Calendar Export Depth:** The percentage of finalized users who sync their itineraries externally via .ics downloads or native OAuth calendar syncs.  
+* 
+
+---
+
+## **9\. Resolved Clarifications — Engineering Reference**
+
+> **Status:** All items resolved. This section is the authoritative record of decisions made during engineering review. No open blockers remain.
+
+---
+
+### **Clarification #1 — Onboarding Wizard: Step Structure & Navigation ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| How many steps? | **3 steps:** (1) All inputs, (2) Itinerary overview, (3) Detailed itinerary |
+| Field groupings? | **All inputs on Step 1** — single scrollable screen, no per-category splits |
+| Back navigation? | **Full state retained** across all steps for the duration of the session |
+| Single session or persist? | **Single session only** — state does not survive tab close or hard refresh |
+
+---
+
+### **Clarification #2 — Group Composition: Age Brackets ✅ RESOLVED**
+
+| Tier | Age Range | Notes |
+|---|---|---|
+| Infants | 0–2 years | Separate counter; no individual age input required |
+| Kids | 2–8 years | Individual age input per child (drives safety + pace logic) |
+| Adults | 8+ years | Includes all ages 8 and above |
+| Seniors | 60+ years | Counter-based; self-declared |
+| Pets | Count | No age input |
+
+---
+
+### **Clarification #3 — Kid Safety Logic ✅ RESOLVED**
+
+| Rule | Decision |
+|---|---|
+| Excluded venue categories | Extreme sports, bars, nightlife venues |
+| Additional constraints for ages 1–3 | None |
+| Auto-pace adjustment | If any kid < 5 years old → Pace auto-set to Relaxed |
+| Kid-friendly venue classification | Engineering judgement using OSM tags (`amenity=bar`, `amenity=nightclub`, `sport=climbing`, `leisure=adult_gaming_centre`, etc.) |
+
+---
+
+### **Clarification #4 — Alignment Score ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Weights fixed or dynamic? | **Fixed in Phase 1:** $W_p = 0.5$, $W_b = 0.3$, $W_a = 0.2$ |
+| Dynamic weight rules? | Deferred to Phase 2 |
+| Social penalty value | **Fixed at 0.05** per negative signal keyword — does not scale with volume |
+| Visible to user? | **No** — internal ranking signal only |
+
+---
+
+### **Clarification #5 — Error States & Timeout Behavior ✅ RESOLVED**
+
+| Scenario | Behavior |
+|---|---|
+| LLM timeout / failure (>20s) | Full-page error state with "Try Again" retry CTA. No partial results shown. |
+| Empty results (no venue matches) | Inline empty state per panel: *"No results found — try adjusting your budget, pace, or destination."* Other panels unaffected. |
+| Data source unavailable (Wikivoyage/Wikipedia/OSM) | Generation proceeds. Affected cards show stock destination image + *"Limited information available"* badge. |
+| Comparison engine partial failure | Show partial grid. Warning banner: *"Some data could not be loaded for [Destination]. Results may be incomplete."* |
+
+---
+
+### **Clarification #6 — PDF Download Specification ✅ RESOLVED**
+
+| Parameter | Decision |
+|---|---|
+| Content scope | Full: day-by-day schedule + visa advisory + packing checklist + currency rates + booking deep-links |
+| Visual fidelity | **Styled, branded document** (react-pdf with WanderPlan design tokens) |
+| Map inclusion | **No maps** — text, lists, and destination photos only |
+| Pagination | **Single continuous document** (no page-per-day breaks) |
+| Clickable links | **Yes** — venue names and booking URLs are active hyperlinks |
+
+
+---
+
+## **Rev 5 — Phase 1B Requirements** *(Updated: 2026-06-15)*
+
+---
+
+### **R1 — Origin Restricted to India**
+- The origin/departure city input must only accept Indian cities.
+- Nominatim geocode calls are filtered with `countrycodes=in`.
+- The UI labels the field "Departure City (India only)" with an 🇮🇳 flag.
+- If a non-Indian city is typed, the suggestion chip shows a friendly error: *"Origin must be an Indian city."*
+
+---
+
+### **R2 — Trip Scope: International Only**
+- Remove "Local" and "Domestic" scope options entirely.
+- All trips are assumed to be international.
+- The scope selector UI is removed; `scope` field defaults to `"international"` and is no longer user-editable.
+
+---
+
+### **R3 — Bilingual Help Text for International Destinations**
+- For any destination where the primary language is not English, all venue names and descriptions in the itinerary must show:
+  - **Local language name** (e.g. 浅草寺)
+  - **English name + description** (e.g. Senso-ji Temple)
+- The Gemini prompt is updated to always output both `local_name` and `english_name` fields per activity item.
+- The UI shows local name in muted text below the English title.
+
+---
+
+### **R4 — Budget in INR + Live Currency Conversion**
+- The budget input is fixed in **INR (₹)** — currency selector removed.
+- A "Destination currency equivalent" is computed live using Frankfurter.app (already integrated).
+- Shown in the Trip Metrics panel: *"₹2,50,000 ≈ USD 3,000"*
+- The Gemini prompt receives budget in both INR and destination currency so it can make accurate activity cost decisions.
+
+---
+
+### **R5 — Budget Feasibility Check**
+- **Before generating the itinerary**, the backend estimates:
+  1. **Return flights**: Average INR cost for origin city → destination (Gemini-estimated, grounded in current year)
+  2. **Visa processing fee**: Per-person visa cost for the destination (Gemini-estimated + Wikivoyage)
+  3. **Accommodation**: Estimated per-night cost in destination × number of days × chosen tier
+  4. **Minimum daily spend**: Food + local transport per person × days
+- If `estimated_minimum_cost > budget`, the app:
+  - **Blocks itinerary generation**
+  - Shows a **Feasibility Warning Card** (red) explaining the shortfall (e.g. *"Estimated minimum: ₹3,20,000 — your budget is ₹2,00,000"*)
+  - **Recommends 2–3 alternative destinations** offering similar experiences at a lower price point
+- If `budget ≥ estimated_minimum_cost`, show a **Feasibility Green Badge**: *"Budget looks sufficient ✓"*
+- All estimates are clearly labelled as approximations.
+
+---
+
+### **R6 — Persistent Back Navigation**
+- A **"← Back"** button is present on all steps (Step 2 and Step 3).
+- Back navigation fully preserves all user inputs and generated itinerary state (session-scoped Zustand store — no reset).
+- Step 2 back → Step 1 (edit inputs, then re-generate)
+- Step 3 back → Step 2 (overview)
+
+---
+
+### **R7/R8 — Travel Chatbot with Floating Bubble**
+
+#### UI
+- A **floating action bubble** (🗺️ or ✈️ icon, 52px, fixed bottom-right, z-index: 9999) is visible on all screens.
+- Clicking the bubble opens a **chat panel** (360px wide, slides up from bottom-right, max-height 500px).
+- The panel has a header ("WanderPlan Assistant"), message list, and a text input with Send button.
+- Panel can be closed via ✕ or by clicking the bubble again.
+
+#### Functionality
+- The chatbot processes **free-text travel queries** — e.g. *"Plan a budget trip to Bali for 5 days"* or *"What's the visa requirement for Japan?"*
+- It can optionally **pre-fill wizard fields** from parsed intent (e.g. detect destination, dates, budget from message).
+- Backend endpoint: `POST /api/chat` — stateless per message, with conversation history passed in request body (last 10 turns).
+- Uses Gemini with a dedicated system prompt (see R9).
+
+---
+
+### **R9 — Chatbot Guardrails**
+The chatbot system prompt enforces:
+1. **Travel-only scope**: Only answer questions related to travel, destinations, itineraries, visa, accommodation, budgets, packing, safety. Politely decline all other topics.
+2. **Factual only**: Do not speculate beyond knowledge. For prices/visa requirements, state information is approximate and subject to change.
+3. **No booking**: Do not make bookings or collect payment information.
+4. **No PII**: Do not store or reference any personal information beyond what's in the current message.
+5. **Safe content**: No content that promotes unsafe travel practices.
+- If user asks an out-of-scope question, respond: *"I'm WanderPlan's travel assistant — I can only help with travel-related questions! Try asking me about destinations, visas, packing lists, or trip planning."*
+
+---
+
+---
+
+### **R10 — YouTube Videos per Attraction**
+- For each activity item in the generated itinerary, the Gemini prompt returns a `youtube_search_query` field (e.g. *"Senso-ji Temple Tokyo travel guide"*).
+- The UI renders a **"▶ Watch on YouTube"** link per item, pointing to `youtube.com/results?search_query=...&sp=CAMSAhAB` (sorted by rating).
+- No YouTube API key required — pure search URL pattern.
+
+---
+
+### **R11 — Pre-filled Booking Deep-Links**
+- After the itinerary is generated, a **"Book This Trip"** section is shown with platform deep-links pre-filled from the trip config (destination, dates, group size).
+- **Flights**: Google Flights, Skyscanner, MakeMyTrip
+- **Stays**: Airbnb, Booking.com
+- **Activities**: Klook, GetYourGuide
+- All links open in a new tab. No API keys required — URL template generation only.
+
+---
+
+### **R12 — Expense Breakup in Final Itinerary**
+- The final itinerary (Step 3) must include an **Expense Breakup** panel showing estimated costs for the entire trip.
+- **Display modes**: Toggle between *Per Person* and *Full Group* views.
+- **Cost categories** (generated by Gemini, denominated in INR + destination currency equivalent):
+
+  | Category | Description |
+  |---|---|
+  | ✈️ Flights | Return flight cost per person × group size |
+  | 🛂 Visa & Entry | Visa processing fee per person × group size |
+  | 🏨 Accommodation | Nightly rate × nights × rooms (based on accommodation style) |
+  | 🎟️ Activities & Passes | Estimated entry fees for itinerary activities |
+  | 🍜 Food & Dining | Estimated food cost per day × days × group size |
+  | 🚌 Local Transport | Estimated in-destination transport (metro, taxis, buses) |
+  | 🛍️ Shopping & Souvenirs | Estimated shopping budget based on destination |
+  | 🆘 Emergency Buffer | 10% of total as recommended buffer |
+
+- **Grand total** shown at bottom with both INR and destination-currency equivalent.
+- If the actual budget entered by the user is lower than the estimated total, a **"Budget may be tight"** warning is shown inline.
+- Data source: Gemini estimates (returned as part of `ItineraryResponse`), clearly labelled as approximate.
+- The panel is shown as a collapsible card in **Column 1** of the 3-column layout, below Trip Metrics.
+- On PDF export, the expense breakup is included as a dedicated section.
+
+---
+
+### **R13 — Chatbot-Driven Itinerary Refinement**
+The chatbot must not just answer questions in isolation — it must be able to **refine the active itinerary** based on user input.
+
+#### Behaviour
+- **Minor changes** (activity swap, hotel style, food preference, packing tip acted on): Applied silently to the trip config store; user sees an inline confirmation in the chat (e.g. *"Done! I've updated your accommodation preference to boutique hotels."*).
+- **Major changes** (destination change, date change, traveller count change, persona change, budget change): Bot detects these as significant and surfaces a **confirmation dialog**: *"This will regenerate your itinerary. Continue?"* — with "Yes, regenerate" / "No, just noting it" options.
+- If the user confirms, the wizard is reset to the relevant step and the itinerary is regenerated.
+
+#### Backend
+- New endpoint: `POST /api/chat-refine`
+- Request: same as `/api/chat` + current `trip_config` snapshot
+- Response: `{ reply: string, action_type: "none" | "patch_config" | "regenerate", config_patch: Partial<TripConfig> | null, major_change: boolean }`
+- The Gemini prompt is extended to parse intent and return structured JSON action alongside the text reply.
+
+#### Guardrails
+- All existing R9 guardrails apply.
+- The bot will only patch config fields it explicitly recognises — it will never silently overwrite the full config.
+
+---
+
+### **R14 — Multi-Hop Journey (Up to 5 Stops)**
+Users can plan trips with multiple destinations in a single journey (e.g. Delhi → Paris → Amsterdam → Rome → Delhi).
+
+#### Input
+- In the Destination section, after selecting a primary destination, an **"+ Add Stop"** button appears (up to 5 total stops).
+- Each hop is a `DestinationInput` (same GeoInput autocomplete as primary destination).
+- Stops can be reordered via drag-handle or removed individually.
+- The origin → stop1 → stop2 → ... → origin flow is displayed as a visual breadcrumb.
+
+#### Itinerary Generation
+- The Gemini prompt is updated to handle multi-city trips — each city gets proportional days based on total trip duration.
+- The itinerary timeline groups days by city with a city-change header.
+- Expense breakup aggregates costs across all stops.
+- Booking links section generates flight legs between each stop.
+
+#### Constraints
+- Maximum 5 stops.
+- Minimum 1 night per stop (enforced in validation).
+- Multi-hop is only supported for international trips (domestic multi-city not in scope for Phase 1).
+
+---
+
+### **R15 — Country-Level Destination with LLM City Recommendations**
+Instead of typing a specific city, users can enter an **entire country** and let the AI recommend ideal cities based on their trip profile.
+
+#### Input Mode
+- A third destination mode added alongside "Fixed Destination" and "Exploring Options": **"Recommend Cities"**.
+- User types a country name (autocomplete to a valid country).
+- On confirmation, the frontend calls `POST /api/recommend-cities` with the country name + current trip config.
+
+#### LLM Response
+- Gemini returns 4–6 recommended cities with a short reason each (e.g. *"Kyoto — best for culture lovers, less crowded than Tokyo, budget-friendly"*).
+- Cities are shown as **selectable chips**. User can:
+  - Pick one → sets as Fixed Destination (standard R2 flow).
+  - Pick multiple (2–5) → automatically populates Multi-Hop stops (R14 flow).
+
+#### Backend
+- New endpoint: `POST /api/recommend-cities`
+- Request: `{ country: string, trip_config: TripConfig }`
+- Response: `{ cities: [{ name: string, country: string, reason: string, lat: number, lon: number }] }`
+
