@@ -40,7 +40,7 @@ WanderPlan uses conversational AI to help you plan trips through a natural chat 
 
 | Feature | Description |
 |---|---|
-| **🤖 LLM-Powered Anya Wizard** | Gemini 2.5 Flash drives the wizard — natural conversation collects all trip fields. One message fills multiple fields. Smart extraction: "just me and wife for 7 days ₹1L" sets group + dates + budget at once. |
+| **🤖 LLM-Powered Anya Wizard** | Gemini 2.5 Flash drives the wizard — natural freeform conversation in English or Hinglish. One message fills multiple fields. Smart extraction: "yaar Bali trip 7 days, budget 1.5 lakh types" sets destination + dates + budget at once. Indian cultural context: currency (25k/1L), travel seasons, family/veg preferences. |
 | **🎙️ Anya Voice Assistant** | Conversational AI with voice input/output. Talk naturally to plan your trip. Young Indian female voice (20-25 yrs). |
 | **💬 Persistent Anya Chat** | After itinerary generation, the floating Anya orb opens a slide-in chat panel. Ask questions, request changes — Anya patches config or offers to regenerate. |
 | **📱 Mobile-Responsive** | Bottom tab navigation on mobile (Itinerary · Overview · Map & Tips). Full desktop 3-column layout on larger screens. |
@@ -246,6 +246,16 @@ Open `http://localhost:3000`.
 - ✅ **NEW: Mobile-responsive layout** — bottom tab bar (Itinerary · Overview · Map) on mobile; 3-column layout on desktop `lg+`
 - ✅ **NEW: `/api/wizard-chat` endpoint** — new backend chain with Anya wizard system prompt, `config_patch` extraction, and server-side `ready_to_generate` validation
 - ✅ **NEW: RAG context injection** — Reddit + Wikivoyage chunks retrieved via Qdrant and injected into every itinerary generation prompt
+
+### v5.1 — Anya Prompt v3 + Bug Fixes (June 2026)
+- Anya system prompt completely rewritten (v3): 9 structured sections, Indian cultural context, Hinglish/STT handling, currency parsing (25k/1L/lakh), travel season awareness, veg/Jain food sensitivity
+- 3-stage conversation flow: collect fields → "anything else?" checkpoint → generate
+- `thought_process` chain-of-thought field added to wizard responses (debug/logging)
+- Fixed: bootstrap empty messages → Gemini "contents required" error
+- Fixed: JSON fence parsing (regex-based, handles all code fence variants)
+- Fixed: stale closure bug — partialConfigRef ensures latest config sent to backend
+- Fixed: generate loop — "Generate itinerary" chip filtered; button shows on server ready signal
+- Fixed: Gemini API errors fall back to mock instead of returning 500
 
 ### v3.0 — Competitor Parity Update (June 2026)
 - ✅ **NEW: Persistent Anya chat panel** — floating orb opens slide-in chat after itinerary generation

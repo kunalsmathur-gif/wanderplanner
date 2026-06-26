@@ -1,6 +1,6 @@
 # WanderPlan — System Design Document
 
-**Version:** 6.0 (LLM Anya Wizard · Mobile-Responsive · RAG Architecture Documented)  
+**Version:** 7.0 (LLM Anya Wizard · Anya Prompt v3 · STT/Hinglish · 3-Stage Flow)  
 **Last Updated:** June 26, 2026  
 **Audience:** Engineering team and technical stakeholders
 
@@ -115,48 +115,39 @@ Embedding Model: sentence-transformers/all-MiniLM-L6-v2 (local, 384 dims)
 
 ### 2.1 Overview
 
-The wizard is now fully LLM-powered. Each user message is sent to `POST /api/wizard-chat` (Gemini 2.5 Flash, temp 0.6). Anya returns a conversational reply, optional chip suggestions, and a `config_patch` of newly extracted fields. The frontend merges patches into a local `partialConfig` state and shows progress pills for the 6 required fields.
+The wizard is now fully LLM-powered. Each user message is sent to `POST /api/wizard-chat` (Gemini 2.5 Flash, temp 0.6). Anya returns a conversational reply, optional chip suggestions, a `config_patch` of newly extracted fields, and `thought_process` for DEBUG-level reasoning visibility. The frontend merges patches into a local `partialConfig` state, tracks `_checkpoint_asked`, and shows progress pills for the 6 required fields.
 
 ```
 openWizard() or openWizardWithPreload(preload)
          │
-         ├─ If wizardPreload set (inspiration card or Start Anywhere):
-         │    → pre-populate partialConfig with destination + duration_days
-         │    → send bootstrap message: "I want to plan a trip to [dest] for [N] days."
-         │    → clearWizardPreload()
+         ├─ If wizardPreload set → pre-populate partialConfig, send bootstrap message
          │
          ▼
+STAGE 1 — Collect 6 required fields
 LLMWizard.tsx → POST /api/wizard-chat
 {
-  messages: [{role, content}, ...],     ← full conversation history (last 20)
-  partial_config: { ...merged config }, ← all fields collected so far
+  messages: [{role, content}, ...],
+  partial_config: { ...merged config + _checkpoint_asked flag },
   preloaded_destination: "Bali, Indonesia | null"
 }
          │
          ▼
 wizard_chat_chain.py
-  │
-  ├─ Build system prompt with:
-  │    - Anya personality + collection rules
-  │    - collected_state summary (human-readable current partial_config)
-  │    - preloaded_destination
-  │
+  ├─ System prompt v3: personality, Indian context, STT/Hinglish rules,
+  │    6 required fields, 3-stage flow, config_patch rules
+  ├─ CURRENT_STATE summary injected (shows status: all-6-collected or checkpoint-asked)
   ├─ Call Gemini 2.5 Flash (temp 0.6, max_tokens 1024)
-  │
-  └─ Response: { reply, chips, config_patch, ready_to_generate, summary }
+  └─ Parse JSON: { thought_process, reply, chips, config_patch, ready_to_generate, summary }
          │
-         ├─ Merge config_patch into partialConfig (frontend)
+         ├─ Stage 1: ready_to_generate=false, missing fields → ask next question
          │
-         ├─ Update field progress pills (6 required fields)
+         ├─ Stage 2: all 6 fields present → Anya asks "anything else?" checkpoint
+         │    → Frontend sets _checkpoint_asked=true in partialConfig
+         │    → Chips: "Just generate it!", "Add themes", "Add departure city"
          │
-         ├─ ready_to_generate=false → show reply + chips → wait for next user message
-         │
-         └─ ready_to_generate=true (server-validated: all 6 fields present)
-              → show TripSummary card with summary line
-              → show "Generate my itinerary 🚀" button
-              → User clicks generate:
-                   → merge partialConfig into tripConfigStore
-                   → streamItinerary(fullConfig, ...) → SSE → ThreeColumnLayout
+         └─ Stage 3: checkpoint done + user confirms → ready_to_generate=true
+              → show "Generate my itinerary" button
+              → User clicks → merge partialConfig → streamItinerary → SSE
 ```
 
 ### 2.2 Required Fields
@@ -179,6 +170,9 @@ wizard_chat_chain.py
 | `"7 nights in September"` | `{dates: {start: "2026-09-01", end: "2026-09-07", flexible: false}}` |
 | `"suggest me a destination"` | `{destination_mode: "exploring"}` |
 | `"exploring Rajasthan"` | `{destination_mode: "country", destination_country: "India"}` |
+| `"yaar Bali trip 7 days mein karo, budget 1.5L types"` | `{destination: {city:"Bali",...}, dates: {flexible:true, duration_days:7}, budget: {amount:150000,...}}` |
+| `"araam se travel karna hai"` | `{pace: "relaxed"}` |
+| `"family ke saath 4 log"` | `{group: {adults: 4,...}}` |
 
 ---
 
@@ -423,7 +417,8 @@ Response: {
   chips: string[],
   config_patch: Partial<TripConfig>,
   ready_to_generate: bool,
-  summary: string | null
+  summary: string | null,
+  thought_process: string | null
 }
 ```
 
@@ -572,30 +567,20 @@ Temperature rationale:
 
 ### System Prompt 1 — Anya Wizard (`wizard_chat_chain.py`)
 
-```
-You are Anya, WanderPlan's AI travel concierge — warm, enthusiastic, and concise.
+**Version:** v3 (June 2026) — 9-section structured prompt
 
-REQUIRED FIELDS (collect all 6 before ready_to_generate=true):
-1. purpose       2. destination   3. dates
-4. budget.amount 5. group.adults  6. pace
+**Key sections:**
+- **Persona & Tone** — warm Indian travel expert friend; 2-3 sentences max; TTS-optimised
+- **Indian Cultural Context** — currency parsing (25k→25000, 1L→100000), travel seasons (Oct-Nov Diwali, Apr-May school holidays), joint family norms, veg/Jain food sensitivity
+- **Audio/STT Handling** — Hinglish glossary (araam se→relaxed, family ke saath→family, bas karo→generate), filler word stripping (yaar, um, uh), incomplete sentence extraction, number speech (seven days→7)
+- **6 Required Fields** — each with JSON key, valid values, and explicit phrase mappings
+- **Optional Fields** — auto-inferred themes (honeymoon→wellness, adventure purpose→adventure)
+- **Slot Filling** — never re-ask collected fields; defaults for "surprise me" (leisure, 6 days, 1L, moderate)
+- **3-Stage Flow** — Stage 1: collect 6 fields → Stage 2: "anything else?" checkpoint → Stage 3: generate signal
+- **config_patch Rules** — "include every extracted field even if you think it is already known"
+- **Output Schema** — JSON only, includes `thought_process` for chain-of-thought reasoning
 
-SMART EXTRACTION:
-- "just me and my wife"  → group: {adults: 2, ...}
-- "₹1.5 lakh"           → budget: {amount: 150000, currency: "INR"}
-- "a week"              → dates: {flexible: true, duration_days: 7}
-- "suggest me"          → destination_mode: "exploring"
-
-RESPONSE FORMAT (JSON every turn):
-{
-  "reply": "...", "chips": [...],
-  "config_patch": { ...new fields only... },
-  "ready_to_generate": false,
-  "summary": null
-}
-
-CURRENT COLLECTED STATE: {collected_state}
-PRELOADED DESTINATION: {preloaded_destination}
-```
+The backend `_has_all_required()` server-validates `ready_to_generate`. Stage 2 checkpoint is tracked via `_checkpoint_asked` flag in `partialConfig` and surfaced to the LLM via `CURRENT_STATE`.
 
 ---
 
@@ -855,3 +840,12 @@ POST /api/chat-refine fails →
   setStatus('error', 'Connection failed')
   Error banner shown in ChatPanel header
 ```
+
+---
+
+## 16. Change Log
+
+### v7.0 (June 2026)
+- Updated Anya wizard design to document prompt v3, Hinglish/STT extraction, Indian cultural context, and the 3-stage collection → checkpoint → generate flow
+- Added `_checkpoint_asked` state handling and `thought_process` to the `POST /api/wizard-chat` API contract
+- Documented smarter extraction examples plus resilience fixes around bootstrap seeding, JSON fence parsing, stale closure protection, generate-loop handling, Gemini fallback behavior, and improved frontend error UX
