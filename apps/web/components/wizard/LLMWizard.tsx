@@ -259,8 +259,18 @@ export function LLMWizard() {
       if (res.ready_to_generate) {
         setSummary(res.summary)
       }
-    } catch {
-      setError('Connection error — please try again.')
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string }; status?: number } }
+      const detail = axiosErr?.response?.data?.detail
+      const status = axiosErr?.response?.status
+      if (status === 429) {
+        setError('Too many requests — please wait a moment and try again.')
+      } else if (detail) {
+        setError(`Error: ${detail}`)
+      } else {
+        setError('Connection error — please try again.')
+      }
+      console.error('[LLMWizard] sendMessage error:', err)
     } finally {
       setIsSending(false)
     }
@@ -493,9 +503,25 @@ export function LLMWizard() {
           )}
 
           {error && (
-            <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-950/40 dark:text-red-400">
-              {error}
-            </p>
+            <div className="flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2 dark:bg-red-950/40">
+              <p className="flex-1 text-xs text-red-600 dark:text-red-400">{error}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  const lastUser = [...messages].reverse().find((m) => m.role === 'user')
+                  if (lastUser) {
+                    setMessages((prev) => prev.slice(0, -1)) // remove last user msg to re-send
+                    setError('')
+                    sendMessage(lastUser.content, messages.slice(0, -1))
+                  } else {
+                    setError('')
+                  }
+                }}
+                className="shrink-0 rounded-lg bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200 dark:bg-red-900/40 dark:text-red-300"
+              >
+                Retry
+              </button>
+            </div>
           )}
 
           <div ref={messagesEndRef} />

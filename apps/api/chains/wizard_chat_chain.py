@@ -258,10 +258,16 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                 max_output_tokens=1024,
             ),
         )
-        return response.text
+        return response.text or ""
 
-    loop = asyncio.get_event_loop()
-    raw = await loop.run_in_executor(None, _call_sync)
+    try:
+        loop = asyncio.get_event_loop()
+        raw = await loop.run_in_executor(None, _call_sync)
+    except Exception as exc:
+        # Gemini API error (quota, safety, network) — fall back to mock
+        import logging
+        logging.getLogger(__name__).warning("Gemini API error in wizard_chat: %s", exc)
+        return _mock_wizard(request)
 
     try:
         # Strip markdown code fences
