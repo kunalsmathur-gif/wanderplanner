@@ -169,6 +169,71 @@ function findSuggestedCity(value: string, cities: RecommendedCity[]) {
   })
 }
 
+// Deterministic gradient per city name
+const DEST_GRADIENTS = [
+  'linear-gradient(135deg,#0EA5E9 0%,#0C4A6E 100%)',
+  'linear-gradient(135deg,#EA580C 0%,#9A3412 100%)',
+  'linear-gradient(135deg,#059669 0%,#065F46 100%)',
+  'linear-gradient(135deg,#7C3AED 0%,#4C1D95 100%)',
+  'linear-gradient(135deg,#D4AF37 0%,#A8820A 100%)',
+  'linear-gradient(135deg,#DB2777 0%,#831843 100%)',
+]
+function destGradient(name: string) {
+  let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
+  return DEST_GRADIENTS[h % DEST_GRADIENTS.length]
+}
+
+function DestinationCardGrid({ cities, disabled, onSelect }: {
+  cities: RecommendedCity[]
+  disabled: boolean
+  onSelect: (chip: string) => void
+}) {
+  if (!cities.length) return null
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {cities.map((city) => {
+        const label = recommendedCityChip(city)
+        return (
+          <button
+            key={label}
+            disabled={disabled}
+            onClick={() => onSelect(label)}
+            className="group relative overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--color-primary)] hover:shadow-md disabled:opacity-50"
+          >
+            {/* Gradient image area */}
+            <div
+              className="h-24 w-full"
+              style={{ background: destGradient(city.name) }}
+            >
+              {/* City initial overlay */}
+              <div className="flex h-full items-center justify-center">
+                <span className="text-4xl font-black text-white/30 select-none">
+                  {city.name.charAt(0)}
+                </span>
+              </div>
+            </div>
+            {/* Card body */}
+            <div className="p-3">
+              <p className="font-semibold text-sm text-[var(--color-foreground)] leading-tight">
+                {city.name}
+              </p>
+              <p className="text-xs text-[var(--color-foreground-muted)] mt-0.5">{city.country}</p>
+              {city.reason && (
+                <p className="mt-1.5 text-xs leading-relaxed text-[var(--color-foreground-muted)] line-clamp-2">
+                  {city.reason}
+                </p>
+              )}
+              <span className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-[var(--color-primary)] opacity-0 transition-opacity group-hover:opacity-100">
+                Plan this trip →
+              </span>
+            </div>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 function formatDestinationLabel(config: TripConfig) {
   if (config.destination) {
     return [config.destination.city, config.destination.country].filter(Boolean).join(', ')
@@ -1812,9 +1877,8 @@ export function ConversationalWizard() {
                       )}
 
                       {tripConfig.destination_mode === 'exploring' && destinationSubStage === 'suggest-select' && (
-                        <ChipGrid
-                          chips={suggestedCities.map(recommendedCityChip)}
-                          columns={1}
+                        <DestinationCardGrid
+                          cities={suggestedCities}
                           disabled={isProcessing}
                           onSelect={handleChipSelect}
                         />
@@ -1918,7 +1982,8 @@ export function ConversationalWizard() {
                             type="text"
                             placeholder="150000"
                             disabled={isProcessing}
-                            className="input min-h-[52px] rounded-xl border-[var(--color-border)] bg-[var(--color-card)] pl-14 pr-4 text-[var(--color-foreground)]"
+                            className="input min-h-[52px] rounded-xl border-[var(--color-border)] bg-[var(--color-card)] pr-4 text-[var(--color-foreground)]"
+                            style={{ paddingLeft: '3.5rem' }}
                           />
                         </div>
                       </form>

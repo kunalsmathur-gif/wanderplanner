@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type Step3View = 'itinerary' | 'comparison'
+export type Step3View = 'itinerary' | 'comparison' | 'map-full'
 
 export type AppStep = 1 | 2 | 3
 type LegacyStep = AppStep

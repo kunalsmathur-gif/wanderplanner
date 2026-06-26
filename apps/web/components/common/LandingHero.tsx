@@ -12,6 +12,21 @@ const EXAMPLE_TRIPS = [
   { emoji: '🏰', label: 'Rajasthan heritage tour', sub: '10 days · Couple trip' },
 ]
 
+const FEATURED_TRIPS = [
+  { emoji: '🏖️', dest: 'Bali, Indonesia',    days: 7,  budget: '₹80,000',   theme: 'Beach & Temples',      gradient: 'linear-gradient(135deg,#0EA5E9 0%,#0C4A6E 100%)' },
+  { emoji: '🗼', dest: 'Paris, France',       days: 5,  budget: '₹1,80,000', theme: 'Romance & Culture',    gradient: 'linear-gradient(135deg,#DB2777 0%,#831843 100%)' },
+  { emoji: '🏰', dest: 'Rajasthan, India',    days: 10, budget: '₹60,000',   theme: 'Heritage & Forts',     gradient: 'linear-gradient(135deg,#D4AF37 0%,#9A3412 100%)' },
+  { emoji: '🌃', dest: 'Dubai, UAE',          days: 4,  budget: '₹1,20,000', theme: 'Luxury City Break',    gradient: 'linear-gradient(135deg,#EA580C 0%,#9A3412 100%)' },
+  { emoji: '⛩️', dest: 'Kyoto, Japan',        days: 7,  budget: '₹2,00,000', theme: 'Culture & Zen',        gradient: 'linear-gradient(135deg,#DC2626 0%,#7F1D1D 100%)' },
+  { emoji: '🦁', dest: 'Kenya Safari',        days: 8,  budget: '₹3,50,000', theme: 'Wildlife & Nature',    gradient: 'linear-gradient(135deg,#059669 0%,#065F46 100%)' },
+  { emoji: '🏔️', dest: 'Himachal Pradesh',   days: 6,  budget: '₹45,000',   theme: 'Mountains & Treks',    gradient: 'linear-gradient(135deg,#7C3AED 0%,#1E3A5F 100%)' },
+  { emoji: '🌊', dest: 'Maldives',            days: 5,  budget: '₹2,50,000', theme: 'Overwater & Snorkel',  gradient: 'linear-gradient(135deg,#06B6D4 0%,#0C4A6E 100%)' },
+  { emoji: '🌆', dest: 'Singapore',           days: 4,  budget: '₹1,00,000', theme: 'Food & Skyline',       gradient: 'linear-gradient(135deg,#0EA5E9 0%,#7C3AED 100%)' },
+  { emoji: '🏝️', dest: 'Andaman Islands',    days: 6,  budget: '₹70,000',   theme: 'Beaches & Diving',     gradient: 'linear-gradient(135deg,#10B981 0%,#0C4A6E 100%)' },
+  { emoji: '🗽', dest: 'New York, USA',       days: 7,  budget: '₹2,80,000', theme: 'Iconic City Life',     gradient: 'linear-gradient(135deg,#1E40AF 0%,#0F172A 100%)' },
+  { emoji: '🌸', dest: 'Bangkok, Thailand',  days: 5,  budget: '₹55,000',   theme: 'Street Food & Temples',gradient: 'linear-gradient(135deg,#F59E0B 0%,#DC2626 100%)' },
+]
+
 const FEATURES = [
   {
     icon: Sparkles,
@@ -154,6 +169,68 @@ export function LandingHero() {
                 </p>
               </div>
             ))}
+          </div>
+        </section>
+
+        {/* ── Inspiration gallery ──────────────────────────────────── */}
+        <section
+          aria-labelledby="inspiration-heading"
+          className="border-t border-[var(--_border)] bg-[var(--_bg)] px-6 py-14"
+        >
+          <div className="mx-auto max-w-6xl">
+            <div className="mb-6 flex items-end justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-[var(--_primary)]">
+                  Inspiration
+                </p>
+                <h2
+                  id="inspiration-heading"
+                  className="font-display mt-1 text-2xl font-bold text-[var(--_fg)]"
+                >
+                  Popular trip ideas
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={openWizard}
+                className="hidden text-sm font-medium text-[var(--_primary)] hover:underline sm:block"
+              >
+                Plan a custom trip →
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+              {FEATURED_TRIPS.map((t) => (
+                <button
+                  key={t.dest}
+                  type="button"
+                  onClick={openWizard}
+                  className="group cursor-pointer overflow-hidden rounded-2xl border border-[var(--_border)] bg-[var(--_card)] text-left shadow-sm transition-all hover:-translate-y-1 hover:border-[var(--_primary)] hover:shadow-lg"
+                  aria-label={`Start planning: ${t.dest}, ${t.days} days, ${t.budget}`}
+                >
+                  {/* Gradient hero */}
+                  <div
+                    className="relative flex h-28 w-full items-end p-3"
+                    style={{ background: t.gradient }}
+                  >
+                    <span className="absolute right-3 top-3 text-2xl">{t.emoji}</span>
+                    <span className="rounded-full bg-black/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/90 backdrop-blur-sm">
+                      {t.theme}
+                    </span>
+                  </div>
+                  {/* Caption */}
+                  <div className="px-3 pb-3 pt-2">
+                    <p className="text-sm font-bold text-[var(--_fg)] leading-tight">{t.dest}</p>
+                    <p className="mt-0.5 text-xs text-[var(--_muted-fg)]">
+                      {t.days} days · {t.budget}
+                    </p>
+                    <span className="mt-2 inline-flex items-center gap-0.5 text-xs font-semibold text-[var(--_primary)] opacity-0 transition-opacity group-hover:opacity-100">
+                      Plan this <ArrowRight size={11} />
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
         </section>
 
