@@ -77,7 +77,7 @@ CHIPS GUIDANCE — suggest 2–4 context-appropriate chips:
 - budget chips: "₹50,000", "₹1,00,000", "₹2,50,000", "₹5,00,000"
 - duration chips: "3 days", "5 days", "7 days", "10 days", "2 weeks"
 
-RESPONSE FORMAT — respond ONLY with this JSON, every single turn:
+RESPONSE FORMAT — respond ONLY with raw JSON (no prose, no markdown fences, no explanation before or after), every single turn:
 {{
   "reply": "Your message (markdown ok: **bold**, _italic_, emoji)",
   "chips": ["Chip A", "Chip B"],
@@ -89,6 +89,8 @@ RESPONSE FORMAT — respond ONLY with this JSON, every single turn:
   "ready_to_generate": false,
   "summary": null
 }}
+
+CRITICAL: Output ONLY the JSON object. Do not write anything before or after the JSON. Do not use ```json fences.
 
 FIELD SHAPES (use exactly these structures):
 - purpose: "leisure" | "adventure" | "honeymoon" | "family_vacation" | "business_leisure" | "solo_backpacking" | "group_holiday"
@@ -229,6 +231,16 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
 
     # Last 20 messages as conversation history
     history = request.messages[-20:]
+
+    # Bootstrap: Gemini requires at least one user message
+    if not history:
+        seed = (
+            f"I want to plan a trip to {request.preloaded_destination}."
+            if request.preloaded_destination
+            else "Hi, I'd like to plan a trip."
+        )
+        history = [type("M", (), {"role": "user", "content": seed})()]
+
     contents = []
     for msg in history:
         role = "user" if msg.role == "user" else "model"
@@ -252,7 +264,18 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
     raw = await loop.run_in_executor(None, _call_sync)
 
     try:
-        cleaned = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        # Strip markdown code fences
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("```", 2)[-1] if cleaned.count("```") >= 2 else cleaned
+            cleaned = cleaned.lstrip("json").strip().rstrip("`").strip()
+
+        # If Gemini prepended prose, find the first { ... } JSON block
+        import re as _re
+        json_match = _re.search(r'\{[\s\S]*\}', cleaned)
+        if json_match:
+            cleaned = json_match.group(0)
+
         data = json.loads(cleaned)
 
         # Merge config_patch into partial_config to check completeness
