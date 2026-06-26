@@ -1,6 +1,6 @@
 # WanderPlan — System Design Document
 
-**Version:** 5.0 (Competitor Parity: Persistent Chat · Share · Start Anywhere · Booking Hub)  
+**Version:** 6.0 (LLM Anya Wizard · Mobile-Responsive · RAG Architecture Documented)  
 **Last Updated:** June 26, 2026  
 **Audience:** Engineering team and technical stakeholders
 
@@ -9,15 +9,15 @@
 ## Table of Contents
 
 1. [High-Level Architecture](#1-high-level-architecture)
-2. [Data Flow: Conversational Wizard](#2-data-flow-conversational-wizard)
+2. [Data Flow: LLM Anya Wizard](#2-data-flow-llm-anya-wizard)
 3. [Data Flow: Start Anywhere](#3-data-flow-start-anywhere)
-4. [Data Flow: Itinerary Generation](#4-data-flow-itinerary-generation)
+4. [Data Flow: Itinerary Generation with RAG](#4-data-flow-itinerary-generation-with-rag)
 5. [Data Flow: Persistent Anya Chat](#5-data-flow-persistent-anya-chat)
 6. [Data Flow: Share Trip Link](#6-data-flow-share-trip-link)
 7. [Data Flow: Voice Interaction](#7-data-flow-voice-interaction)
 8. [API Contract](#8-api-contract)
 9. [Qdrant Collection Schema](#9-qdrant-collection-schema)
-10. [Gemini Prompt Design](#10-gemini-prompt-design)
+10. [Gemini Prompt Design & Temperature Settings](#10-gemini-prompt-design--temperature-settings)
 11. [Frontend State Architecture](#11-frontend-state-architecture)
 12. [Design System](#12-design-system)
 13. [Environment Variables Reference](#13-environment-variables-reference)
@@ -48,11 +48,11 @@
 │  │  └───────────────────────────────────────────────────────────┘  │   │
 │  │                                                                   │   │
 │  │  ┌───────────────────────────────────────────────────────────┐  │   │
-│  │  │  ConversationalWizard — Full-screen Overlay               │  │   │
-│  │  │  🎙️ Voice Mode: SpeechRecognition + SpeechSynthesis      │  │   │
-│  │  │  💬 11-field chat flow (purpose → refinement)             │  │   │
-│  │  │  🌍 Country auto-detection → multi-city selection         │  │   │
-│  │  │  🎯 WizardPreload: inspiration/URL click pre-fills        │  │   │
+│  │  │  LLMWizard — Full-screen Overlay (LLM-powered)       │  │   │
+│  │  │  🎙️ Voice Mode: SpeechRecognition + SpeechSynthesis  │  │   │
+│  │  │  💬 Natural conversation with Gemini 2.5 Flash        │  │   │
+│  │  │  🏷️ 6-field progress pills + chip quick-replies       │  │   │
+│  │  │  🎯 WizardPreload: inspiration/URL click pre-fills    │  │   │
 │  │  └───────────────────────────────────────────────────────────┘  │   │
 │  │                                                                   │   │
 │  │  ┌──────────┐  ┌──────────────────────────┐  ┌───────────────┐  │   │
@@ -77,6 +77,7 @@
 ┌────────────────────────────▼────────────────────────────────────────────┐
 │                    FastAPI (Python 3.9+) Port 8000                        │
 │                                                                            │
+│  POST /api/wizard-chat         → Anya LLM wizard (Gemini 2.5 Flash)  ⭐NEW  │
 │  POST /api/generate-itinerary  → Gemini 2.5 Flash (5× retry + fallback) │
 │  POST /api/chat-refine         → Anya post-gen chat handler              │
 │  POST /api/recommend-cities    → City suggestions (Gemini)               │
@@ -110,73 +111,74 @@ Embedding Model: sentence-transformers/all-MiniLM-L6-v2 (local, 384 dims)
 
 ---
 
-## 2. Data Flow: Conversational Wizard
+## 2. Data Flow: LLM Anya Wizard
 
-### 2.1 Wizard Field Flow
+### 2.1 Overview
+
+The wizard is now fully LLM-powered. Each user message is sent to `POST /api/wizard-chat` (Gemini 2.5 Flash, temp 0.6). Anya returns a conversational reply, optional chip suggestions, and a `config_patch` of newly extracted fields. The frontend merges patches into a local `partialConfig` state and shows progress pills for the 6 required fields.
 
 ```
 openWizard() or openWizardWithPreload(preload)
          │
-         ├─ If wizardPreload set (from inspiration card or Start Anywhere):
-         │    → pre-set destination + duration_days in tripConfigStore
-         │    → add collectedLabels for destination + duration
-         │    → Anya greets: "I see you're interested in [dest] for [N] days!"
+         ├─ If wizardPreload set (inspiration card or Start Anywhere):
+         │    → pre-populate partialConfig with destination + duration_days
+         │    → send bootstrap message: "I want to plan a trip to [dest] for [N] days."
          │    → clearWizardPreload()
-         │    → start from 'purpose' (destination already set)
-         │
-         ├─ If existing itinerary: showEditEntry screen
-         │    ├─ "Add custom instructions" → jump to refinement step
-         │    └─ "Plan a new trip from scratch" → reset + start at step 1
          │
          ▼
-Field Sequence (in wizardChatStore):
- 1. purpose       → "What's the main purpose of your trip?"
-                    Chips: Leisure, Adventure, Honeymoon, Family, Business, Solo, Group
- 2. origin        → "Where are you starting from?"
-                    Input: City name → GET /api/geocode → {city, lat, lon}
- 3. destination_mode → "Do you have a specific destination in mind?"
-                       Chips: "Yes, I have one" | "Suggest me!" | "Exploring a country"
+LLMWizard.tsx → POST /api/wizard-chat
+{
+  messages: [{role, content}, ...],     ← full conversation history (last 20)
+  partial_config: { ...merged config }, ← all fields collected so far
+  preloaded_destination: "Bali, Indonesia | null"
+}
          │
-         ├─→ [Fixed] → user types city
-         │    └─ GET /api/geocode → resolvePlace()
-         │         ├─ is_country=true? → auto-switch to 'country' mode → multi-city flow
-         │         └─ is_country=false? → setDestination, pushNextField('duration')
+         ▼
+wizard_chat_chain.py
+  │
+  ├─ Build system prompt with:
+  │    - Anya personality + collection rules
+  │    - collected_state summary (human-readable current partial_config)
+  │    - preloaded_destination
+  │
+  ├─ Call Gemini 2.5 Flash (temp 0.6, max_tokens 1024)
+  │
+  └─ Response: { reply, chips, config_patch, ready_to_generate, summary }
          │
-         ├─→ [Exploring] → POST /api/recommend-cities (vibe text → cities)
-         │    └─ DestinationCardGrid (Wikipedia photos) → user picks → next
+         ├─ Merge config_patch into partialConfig (frontend)
          │
-         └─→ [Country] → user types country → POST /api/recommend-cities
-              └─ city chips → user picks 1+ cities (multi-city-confirm loop)
+         ├─ Update field progress pills (6 required fields)
          │
- 4. duration      → "How many days?" → updateDates({ duration_days })
- 5. dates         → "When are you planning to travel?"
-                    Chips: presets + Custom + Flexible
- 6. group         → adults (counter) → kids count → kid ages (text input)
- 7. budget        → amount input + currency selector
- 8. accommodation → style chips (Hotel, Airbnb, Hostel, Resort...)
- 9. pace          → Relaxed / Moderate / Packed
-10. themes        → multi-select chips (Culture, Food, Adventure, Nature...)
-11. refinement    → free-text textarea for custom instructions
-12. summary       → TripSummaryCard → "Generate Itinerary 🚀"
+         ├─ ready_to_generate=false → show reply + chips → wait for next user message
+         │
+         └─ ready_to_generate=true (server-validated: all 6 fields present)
+              → show TripSummary card with summary line
+              → show "Generate my itinerary 🚀" button
+              → User clicks generate:
+                   → merge partialConfig into tripConfigStore
+                   → streamItinerary(fullConfig, ...) → SSE → ThreeColumnLayout
 ```
 
-### 2.2 State Updated Per Field
+### 2.2 Required Fields
 
-| Field | Store | Method |
+| # | Field | Example value |
 |---|---|---|
-| purpose | tripConfigStore | `updateConfig({ purpose })` |
-| origin | tripConfigStore | `setOrigin({ city, lat, lon })` |
-| destination_mode | tripConfigStore | `updateConfig({ destination_mode })` |
-| destination | tripConfigStore | `setDestination({ city, country, lat, lon })` |
-| hops (multi-city) | tripConfigStore | `addHop(hop)` |
-| duration | tripConfigStore | `updateDates({ duration_days })` |
-| dates | tripConfigStore | `updateDates({ start, end, flexible })` |
-| group | tripConfigStore | `updateGroup({ adults, kids, seniors })` |
-| budget | tripConfigStore | `updateBudget({ amount, currency })` |
-| accommodation | tripConfigStore | `updateAccommodation({ style, ... })` |
-| pace | tripConfigStore | `updateConfig({ pace })` |
-| themes | tripConfigStore | `updateConfig({ themes })` |
-| all labels | wizardChatStore | `addLabel(key, value)` |
+| 1 | `purpose` | `"honeymoon"` |
+| 2 | `destination` or `destination_mode` | `{city:"Bali", country:"Indonesia"}` or `"exploring"` |
+| 3 | `dates` | `{start:"2026-09-01", end:"2026-09-08"}` or `{flexible:true, duration_days:7}` |
+| 4 | `budget.amount` | `80000` (INR) |
+| 5 | `group.adults` | `2` |
+| 6 | `pace` | `"moderate"` |
+
+### 2.3 Smart Extraction Examples
+
+| User says | config_patch emitted |
+|---|---|
+| `"just me and my wife"` | `{group: {adults: 2, kids: [], seniors: 0, infants: 0, pets: 0}}` |
+| `"₹1.5 lakh total"` | `{budget: {amount: 150000, currency: "INR"}}` |
+| `"7 nights in September"` | `{dates: {start: "2026-09-01", end: "2026-09-07", flexible: false}}` |
+| `"suggest me a destination"` | `{destination_mode: "exploring"}` |
+| `"exploring Rajasthan"` | `{destination_mode: "country", destination_country: "India"}` |
 
 ---
 
@@ -224,13 +226,16 @@ handleStartAnywhere()
 
 ---
 
-## 4. Data Flow: Itinerary Generation
+## 4. Data Flow: Itinerary Generation with RAG
 
 ```
-User clicks "Generate Itinerary 🚀"
+User clicks "Generate my itinerary 🚀" (LLMWizard)
          │
          ▼
-ConversationalWizard → setPhase('generating')
+LLMWizard → merge partialConfig → tripConfigStore.updateConfig()
+         │
+         ▼
+streamItinerary(fullConfig, ...)
          │
          ▼
 POST /api/generate-itinerary { trip_config: TripConfig }
@@ -238,25 +243,39 @@ POST /api/generate-itinerary { trip_config: TripConfig }
          ▼
 itinerary_chain.py
          │
-         ├─ Build context: Qdrant semantic search (reddit + wiki docs)
-         │    query: "{destination} {themes} travel tips"
-         │    top-k: 5 reddit + 5 wiki docs
+         ├─ RAG RETRIEVAL ─────────────────────────────────────────────
+         │    services/search.py → retrieve_context(trip_config)
+         │    │
+         │    ├─ Build query: "{city} {themes} travel tips highlights"
+         │    │    e.g. "Bali beach culture travel tips highlights food"
+         │    │
+         │    ├─ embed(query) → 384-dim vector (all-MiniLM-L6-v2)
+         │    │
+         │    ├─ Qdrant cosine search (filtered by destination):
+         │    │    reddit collection → top 10
+         │    │    wiki   collection → top 10
+         │    │
+         │    └─ Return top-20 chunks sorted by cosine score
+         │         e.g. "Ubud rice terraces: go at 7am to beat tourists"
+         │              "Tanah Lot best at sunset, accessible at low tide"
          │
          ├─ Assemble Gemini prompt:
-         │    system: itinerary generation rules
-         │    user: trip_config JSON + retrieved context
+         │    SYSTEM_PROMPT.format(
+         │      context = top-20 RAG chunks (Reddit + Wikivoyage),
+         │      trip_config = TripConfig JSON
+         │    )
          │
          └─ Retry loop (5 attempts):
-              Attempt 1–3: gemini-2.5-flash (temp 0.7)
-              Attempt 4:   gemini-2.5-flash-lite
-              Attempt 5:   gemini-1.5-flash
+              Model 1-3: gemini-2.5-flash (temp 0.4)
+              Model 4:   gemini-2.5-flash-lite
+              Model 5:   gemini-1.5-flash
               Each: validate JSON schema → ItineraryResponse
          │
          ◄─ SSE stream: status events → final ItineraryResponse
          │
          ▼
 itineraryStore.setDays(days, score, breakdown)
-setPhase('done') → render ThreeColumnLayout
+closeWizard() → render ThreeColumnLayout
 ```
 
 ---
@@ -392,6 +411,22 @@ Latest bot reply → SpeechSynthesis.speak(utterance)
 
 ### Request / Response Schemas
 
+#### `POST /api/wizard-chat` ⭐ NEW
+```
+Request:  {
+  messages: [{role:'user'|'assistant', content:string}],
+  partial_config: Partial<TripConfig>,
+  preloaded_destination: string | null
+}
+Response: {
+  reply: string,
+  chips: string[],
+  config_patch: Partial<TripConfig>,
+  ready_to_generate: bool,
+  summary: string | null
+}
+```
+
 #### `POST /api/generate-itinerary`
 ```
 Request:  { trip_config: TripConfig }
@@ -513,53 +548,113 @@ Two collections, both using `all-MiniLM-L6-v2` (384 dims, cosine distance):
 
 ---
 
-## 10. Gemini Prompt Design
+## 10. Gemini Prompt Design & Temperature Settings
 
-### Itinerary Generation (System Prompt excerpt)
+### Model & Temperature Reference
+
+| Endpoint | Chain file | Model | Temperature | Max tokens |
+|---|---|---|---|---|
+| `POST /api/wizard-chat` | `wizard_chat_chain.py` | `gemini-2.5-flash` | **0.6** | 1024 |
+| `POST /api/chat-refine` | `chat_refine_chain.py` | `gemini-2.5-flash` | **0.5** | 1024 |
+| `POST /api/generate-itinerary` (attempts 1-3) | `itinerary_chain.py` | `gemini-2.5-flash` | **0.4** | 16384 |
+| `POST /api/generate-itinerary` (attempt 4) | `itinerary_chain.py` | `gemini-2.5-flash-lite` | **0.4** | — |
+| `POST /api/generate-itinerary` (attempt 5) | `itinerary_chain.py` | `gemini-1.5-flash` | **0.4** | — |
+| `POST /api/extract-trip` | `extract_trip_chain.py` | `gemini-2.5-flash` | **0.1** | 512 |
+| `POST /api/recommend-cities` | `recommend_cities_chain.py` | `gemini-2.5-flash` | **0.4** | 1024 |
+
+Temperature rationale:
+- **0.6** — Wizard: conversational warmth without hallucinating field values
+- **0.5** — Chat refine: friendly but semi-deterministic for config patches
+- **0.4** — Itinerary/cities: structured JSON; lower = fewer schema violations
+- **0.1** — Extraction: near-deterministic; wrong extraction = wrong wizard preload
+
+---
+
+### System Prompt 1 — Anya Wizard (`wizard_chat_chain.py`)
+
 ```
-You are WanderPlan's expert travel planner. Generate a detailed day-by-day
-itinerary in valid JSON matching the ItineraryResponse schema.
+You are Anya, WanderPlan's AI travel concierge — warm, enthusiastic, and concise.
 
-Rules:
-- Activities must have realistic time_start/time_end (24h format)
-- Budget allocation: activities ~40%, accommodation ~35%, food ~15%, transport ~10%
-- Include local_name for Asian/Arabic destinations
-- youtube_video_id: search term only (not a real video ID)
-- alignment_score 0-100: how well this activity matches user's themes
-- Add transit_warnings for same-day city changes > 2h apart
+REQUIRED FIELDS (collect all 6 before ready_to_generate=true):
+1. purpose       2. destination   3. dates
+4. budget.amount 5. group.adults  6. pace
+
+SMART EXTRACTION:
+- "just me and my wife"  → group: {adults: 2, ...}
+- "₹1.5 lakh"           → budget: {amount: 150000, currency: "INR"}
+- "a week"              → dates: {flexible: true, duration_days: 7}
+- "suggest me"          → destination_mode: "exploring"
+
+RESPONSE FORMAT (JSON every turn):
+{
+  "reply": "...", "chips": [...],
+  "config_patch": { ...new fields only... },
+  "ready_to_generate": false,
+  "summary": null
+}
+
+CURRENT COLLECTED STATE: {collected_state}
+PRELOADED DESTINATION: {preloaded_destination}
 ```
 
-### Chat Refine (System Prompt excerpt)
+---
+
+### System Prompt 2 — Anya Post-Gen Chat (`chat_refine_chain.py`)
+
 ```
 You are Anya, WanderPlan's friendly AI travel assistant.
+
 CURRENT TRIP CONFIG: {trip_config_json}
 
-Return ONLY this JSON:
+RESPONSE FORMAT:
 {
-  "reply": "markdown response",
-  "action_type": "none | patch_config | regenerate",
-  "config_patch": { ... } | null,
-  "major_change": boolean
+  "reply": "...",
+  "action_type": "none" | "patch_config" | "regenerate",
+  "config_patch": null or { ...changed fields... },
+  "major_change": false
 }
 
-Use patch_config for minor changes (budget, dates, pace).
-Use regenerate for major changes (new destination, complete rethink).
+- patch_config: small changes (pace, themes, accommodation)
+- regenerate: destination/dates/group/budget >20% → ask user to confirm
 ```
 
-### Extract Trip (System Prompt)
+---
+
+### System Prompt 3 — Itinerary Generation (`itinerary_chain.py`)
+
 ```
-You are a travel data extraction assistant. Given text from any source,
-extract structured trip info. Return ONLY valid JSON:
+You are WanderPlan, an expert AI travel advisor.
+Output ONLY valid JSON matching the schema.
+
+RULES:
+- 3-6 items/day  •  relaxed=3-4  •  moderate=4-5  •  packed=5-6
+- If kids: exclude bars, nightclubs, extreme sports
+- If digital_nomad: add 2h Work Block per day
+- If sports_fitness: add Training Window per day
+- Tag photogenic spots with "instaworthy"
+- MULTI-HOP: distribute days across all stops proportionally
+
+DESTINATION RESEARCH: {context}    ← RAG-retrieved Qdrant chunks
+TRIP CONFIGURATION:   {trip_config}
+```
+
+---
+
+### System Prompt 4 — Extract Trip (`extract_trip_chain.py`)
+
+```
+You are a travel data extraction assistant. Extract structured trip info.
+Return ONLY valid JSON:
 {
-  "destination": "City name or null",
+  "destination": "City or null",
   "destination_country": "Country or null",
-  "duration_days": integer or null,
-  "themes": ["list of themes"],
-  "budget_inr": integer or null,
-  "summary": "One sentence description."
+  "duration_days": int or null,
+  "themes": ["list"],
+  "budget_inr": int or null,
+  "summary": "One sentence."
 }
-Temperature: 0.1 (deterministic extraction)
 ```
+Temperature: 0.1 (deterministic) · Max tokens: 512
 
 ---
 
@@ -569,15 +664,15 @@ Temperature: 0.1 (deterministic extraction)
 
 ```
 appStore
-  └── wizardPreload → consumed by ConversationalWizard on open
+  └── wizardPreload → consumed by LLMWizard on open
 
 tripConfigStore
-  └── config → consumed by: wizard, itinerary chain, chat-refine, shareTrip, ShareButton
+  └── config → consumed by: LLMWizard (on generate), itinerary chain, chat-refine, shareTrip, ShareButton
 
 wizardChatStore
-  ├── messages → rendered by ConversationalWizard
-  ├── currentField → drives wizard field flow
-  └── collectedLabels → shown in TripSummaryCard, passed to shareTrip
+  ├── messages → rendered by LLMWizard (legacy: ConversationalWizard)
+  ├── currentField → legacy field tracking
+  └── collectedLabels → passed to shareTrip
 
 itineraryStore
   ├── days → consumed by: ThreeColumnLayout, ItineraryTimeline, MapWrapper, ShareButton
@@ -602,7 +697,7 @@ Landing page (no itinerary):
 
 Wizard open (no itinerary):
   LandingHero blurred/dimmed
-  ConversationalWizard overlay shown
+  LLMWizard overlay shown (LLM-powered Anya)
   FloatingAnyaButton: hidden
 
 Itinerary exists, wizard closed:
@@ -612,7 +707,7 @@ Itinerary exists, wizard closed:
 
 Itinerary exists, wizard open (edit flow):
   ThreeColumnLayout blurred/dimmed
-  ConversationalWizard overlay shown
+  LLMWizard overlay shown
   ChatPanel: hidden (wizard takes precedence)
 
 Full-screen map (step3View = 'map-full'):
@@ -688,6 +783,7 @@ Breaking any link in this chain prevents scrolling. `<main className="h-full">` 
 
 | Operation | Target | Actual (p95) |
 |---|---|---|
+| Wizard chat turn (LLM Anya) | < 4s | ~2–3s |
 | Geocode (Nominatim, cached) | < 200ms | ~50ms (cache hit) |
 | City recommendations | < 3s | ~2s |
 | Trip extraction (Start Anywhere) | < 5s | ~3s |

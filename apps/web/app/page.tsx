@@ -1,7 +1,7 @@
 'use client'
 
 import { ThreeColumnLayout } from '@/components/layout/ThreeColumnLayout'
-import { ConversationalWizard } from '@/components/wizard/ConversationalWizard'
+import { LLMWizard } from '@/components/wizard/LLMWizard'
 import { FloatingAnyaButton } from '@/components/common/FloatingAnyaButton'
 import { LandingHero } from '@/components/common/LandingHero'
 import { ChatPanel } from '@/components/chat/ChatPanel'
@@ -41,11 +41,7 @@ export default function Home() {
       {hasItinerary && <ChatPanel />}
 
       {/* Wizard modal */}
-      {wizardOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <ConversationalWizard />
-        </div>
-      )}
+      {wizardOpen && <LLMWizard />}
     </div>
   )
 }

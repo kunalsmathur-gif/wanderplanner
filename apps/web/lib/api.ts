@@ -64,6 +64,28 @@ export async function chatRefine(
   return data as ChatRefineResponse
 }
 
+// ── Wizard chat (LLM Anya wizard) ────────────────────────────────────────
+export interface WizardChatResponse {
+  reply: string
+  chips: string[]
+  config_patch: Partial<TripConfig>
+  ready_to_generate: boolean
+  summary: string | null
+}
+
+export async function wizardChat(
+  messages: Array<{ role: string; content: string }>,
+  partialConfig: Partial<TripConfig>,
+  preloadedDestination?: string,
+): Promise<WizardChatResponse> {
+  const { data } = await api.post('/api/wizard-chat', {
+    messages,
+    partial_config: partialConfig,
+    preloaded_destination: preloadedDestination ?? null,
+  })
+  return data as WizardChatResponse
+}
+
 // ── Recommend cities (R15) ───────────────────────────────────────────────
 export async function recommendCities(
   country: string,

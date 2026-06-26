@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import settings
 from core.scheduler import start_scheduler, stop_scheduler
-from routers import itinerary, comparison, best_time, search, geocode, feasibility, chat, recommend_cities, chat_refine, reddit_highlights, travel_tips, extract_trip, share
+from routers import itinerary, comparison, best_time, search, geocode, feasibility, chat, recommend_cities, chat_refine, reddit_highlights, travel_tips, extract_trip, share, wizard_chat
 
 
 @asynccontextmanager
@@ -52,6 +52,7 @@ app.include_router(reddit_highlights.router, prefix="/api")
 app.include_router(travel_tips.router, prefix="/api")
 app.include_router(extract_trip.router, prefix="/api")
 app.include_router(share.router, prefix="/api")
+app.include_router(wizard_chat.router, prefix="/api")
 
 
 @app.get("/health")
