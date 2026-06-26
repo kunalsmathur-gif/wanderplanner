@@ -275,6 +275,10 @@ export function LLMWizard() {
 
       if (res.ready_to_generate) {
         setSummary(res.summary)
+        // Auto-trigger generation after a short delay so the user sees Anya's final message
+        setTimeout(() => {
+          handleGenerate()
+        }, 1200)
       }
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string }; status?: number } }
@@ -305,8 +309,8 @@ export function LLMWizard() {
   // ── Generate itinerary ─────────────────────────────────────────────────────
 
   function handleGenerate() {
-    // Merge partial config into the global tripConfigStore
-    updateConfig(partialConfig as Partial<TripConfig>)
+    // Use ref to avoid stale closure (called from setTimeout or button click)
+    updateConfig(partialConfigRef.current as Partial<TripConfig>)
 
     // Build a full TripConfig from the partialConfig + store defaults
     const fullConfig = useTripConfigStore.getState().config

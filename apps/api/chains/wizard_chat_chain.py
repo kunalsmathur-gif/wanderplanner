@@ -129,7 +129,7 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
   Field 3 -- dates (JSON key: "dates")
     When and how long they want to travel.
     Fixed window: {{"start": "2026-12-20", "end": "2026-12-27", "flexible": false}}
-    Flexible:     {{"start": null, "end": null, "flexible": true, "duration_days": 7}}
+    Flexible:     {{"start": "2026-12-01", "end": "2026-12-31", "flexible": true, "duration_days": 7}}
     Mappings:
       "a week" -> duration_days: 7
       "10 days" -> duration_days: 10
@@ -139,6 +139,14 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       "long weekend" -> duration_days: 3
       "summer holidays" -> start: approx May 1, end: approx May 31, flexible: true
     When only a month is given with no duration, default duration_days to 7.
+
+    IMPORTANT: Duration alone ("5 days", "a week") is NOT enough to fill this field.
+    You MUST also know WHEN they want to travel (month or rough period).
+    If the user gives only duration without a time period, ask:
+      "Got it! And roughly when are you planning to travel -- any particular month or season?"
+    Do not mark dates as filled until you have BOTH a duration AND a travel month/period.
+    Set start/end to approximate month boundaries for flexible travel (e.g., month="December"
+    -> start: "2026-12-01", end: "2026-12-31", flexible: true).
 
   Field 4 -- budget (JSON key: "budget")
     Total trip budget in INR.
@@ -295,11 +303,10 @@ def _has_all_required(config: dict[str, Any]) -> bool:
     if mode == "country" and not config.get("destination_country"):
         return False
 
-    # Dates: either start+end or flexible with duration
+    # Dates: must have start+end (even approximate month boundaries) — flexible+duration alone
+    # is insufficient because we need to know WHEN, not just HOW LONG.
     dates = config.get("dates", {})
-    has_dates = bool(dates.get("start") and dates.get("end")) or bool(
-        dates.get("flexible") and dates.get("duration_days")
-    )
+    has_dates = bool(dates.get("start") and dates.get("end"))
     if not has_dates:
         return False
 
