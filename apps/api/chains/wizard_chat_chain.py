@@ -379,27 +379,50 @@ def _summarise_state(config: dict[str, Any]) -> str:
 
 
 def _clean_reply(text: str) -> str:
-    """Strip internal reasoning from a reply string the LLM accidentally embedded."""
+    """Strip internal reasoning the LLM accidentally embedded in the reply field."""
     import re as _re_clean
-    # Remove 'thought_process' header/label line
+
+    # Step 1: Remove 'thought_process' header/label line
     text = _re_clean.sub(r'^thought_process\b[^\n]*\n?', '', text, flags=_re_clean.IGNORECASE).strip()
-    # Find where the warm conversational reply starts and discard everything before it
-    warm = _re_clean.search(
-        r'(?<![a-z])(?:Wonderful|Great|Sure|Perfect|Fantastic|Hi\b|Hey\b|Namaste|Awesome|Lovely|'
-        r'Brilliant|Sounds|Of course|Absolutely|Certainly|Happy to|I\'d love|Let\'s|Alright|'
-        r'Right,|No worries|Not a problem|That sounds|A [a-z]+ trip|Your |You |For your)',
-        text
+
+    # Step 2: Iteratively strip leading sentences that look like internal analysis.
+    # We keep stripping as long as the first sentence matches a monologue pattern.
+    # This handles multi-sentence reasoning blocks regardless of wording.
+    monologue_pat = _re_clean.compile(
+        r'^(?:'
+        r'The\s+[`"\']?\w+[`"\']?\s+field\b'   # "The `dates` field ..."
+        r'|The user\b'                            # "The user ..."
+        r'|The next\b'                            # "The next missing ..."
+        r'|I need to\b'                           # "I need to ..."
+        r'|I will\b'                              # "I will ..."
+        r'|I should\b'                            # "I should ..."
+        r'|I have\b'                              # "I have ..."
+        r'|I must\b'                              # "I must ..."
+        r'|I can\b'                               # "I can ..."
+        r'|I see\b'                               # "I see ..."
+        r'|I notice\b'                            # "I notice ..."
+        r'|I think\b'                             # "I think ..."
+        r'|Now I\b'                               # "Now I ..."
+        r'|Let me\b'                              # "Let me ..."
+        r'|Looking at\b'                          # "Looking at ..."
+        r'|Based on\b'                            # "Based on ..."
+        r'|Since\b'                               # "Since only ..."
+        r'|As the\b'                              # "As the user ..."
+        r'|Given that\b'                          # "Given that ..."
+        r'|Only\b'                                # "Only the month ..."
+        r'|User\b'                                # "User said ..."
+        r'|They\b'                                # "They want ..."
+        r')'
+        r'[^.!?]*[.!?]\s*'
     )
-    if warm:
-        return text[warm.start():]
-    # Fallback: strip monologue sentence patterns
-    stripped = _re_clean.sub(
-        r'^(?:(?:The user|The next|I need to|I will|I should|I have|I must|I can|I see|'
-        r'I notice|I think|Now I|Let me|Looking at|Based on|Since|As|Given|User|They)'
-        r'[^.!?]*[.!?]\s*)+',
-        '', text
-    ).strip()
-    return stripped or text
+    # Strip up to 10 reasoning sentences to avoid infinite loops
+    for _ in range(10):
+        m = monologue_pat.match(text)
+        if not m:
+            break
+        text = text[m.end():].strip()
+
+    return text or text
 
 
 # ── Main chain function ───────────────────────────────────────────────────────
