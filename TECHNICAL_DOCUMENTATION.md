@@ -1,7 +1,7 @@
 # WanderPlan — Technical Documentation
 
-**Version:** 6.0 (LLM Anya Wizard · Anya Prompt v3 · STT/Hinglish · 3-Stage Flow)  
-**Last Updated:** June 26, 2026  
+**Version:** 7.0 (LLM Anya Wizard · Anya Prompt v5 · JSON history replay · Wizard end-to-end fix)  
+**Last Updated:** June 28, 2026  
 **Status:** Production-ready MVP
 
 ---
@@ -21,7 +21,7 @@
 11. [Voice Features](#11-voice-features)
 12. [Data Flows](#12-data-flows)
 13. [Environment Setup](#13-environment-setup)
-14. [Recent Changes (v5.0 & v6.0)](#14-recent-changes-v50--v60)
+14. [Recent Changes (v7.0, v6.0 & v5.0)](#14-recent-changes-v70-v60--v50)
 
 ---
 
@@ -341,7 +341,7 @@ LLM-powered Anya wizard. Collects TripConfig fields through natural conversation
 **Request:**
 ```json
 {
-  "messages": [{ "role": "user|assistant", "content": "..." }],
+  "messages": [{ "role": "user|assistant", "content": "...", "config_patch": {} }],
   "partial_config": { ...current TripConfig fields collected so far... },
   "preloaded_destination": "Bali, Indonesia | null"
 }
@@ -353,8 +353,7 @@ LLM-powered Anya wizard. Collects TripConfig fields through natural conversation
   "chips": ["Leisure", "Adventure"],
   "config_patch": { "purpose": "leisure" },
   "ready_to_generate": false,
-  "summary": "7 days in Bali - Rs 80,000 - 2 adults - Moderate pace",
-  "thought_process": "User just gave purpose. Still need destination, dates, budget, group, pace."
+  "summary": "7 days in Bali - Rs 80,000 - 2 adults - Moderate pace"
 }
 ```
 
@@ -466,7 +465,7 @@ All LLM tasks use Gemini 2.5 Flash with task-specific temperature settings:
 | Itinerary generation (attempt 3) | 0.4 | 16384 | Retry — same settings |
 | Itinerary generation (attempt 4) | 0.4 | — | Fallback: `gemini-2.5-flash-lite` |
 | Itinerary generation (attempt 5) | 0.4 | — | Fallback: `gemini-1.5-flash` |
-| **Anya wizard chat** (`/api/wizard-chat`) | **0.6** | **1024** | Conversational, friendly tone |
+| **Anya wizard chat** (`/api/wizard-chat`) | **0.4** | **800** | Conversational, friendlier but more deterministic extraction |
 | **Anya post-gen chat** (`/api/chat-refine`) | **0.5** | **1024** | Semi-deterministic refinements |
 | City recommendations | 0.4 | 1024 | Structured JSON output |
 | Destination comparison | — | — | 10-param scoring |
@@ -551,21 +550,27 @@ context = "No pre-fetched research available — use your own knowledge of the d
 ### System Prompt 1: Anya Wizard (`/api/wizard-chat`)
 
 **File:** `apps/api/chains/wizard_chat_chain.py`  
-**Temperature:** 0.6 · **Max tokens:** 1024  
-**Version:** v3 (June 2026) — 9-section structured prompt
+**Temperature:** 0.4 · **Max tokens:** 800  
+**Version:** v5 (June 2026) — JSON history replay, stricter extraction, smart fallback
 
 **Key sections:**
+- **System Purpose** — Anya is a human travel professional speaking to a customer, not a slot-filling agent. Explicitly prohibits narrating internal logic.
 - **Persona & Tone** — warm Indian travel expert friend; 2-3 sentences max; TTS-optimised
+- **Absolute Speaking Rules (§1a)** — hard prohibition on field names, system terms (`config_patch`, `destination_mode`, `missing field`), and internal reasoning in `reply`. Three verbatim WRONG/RIGHT examples from real failure cases.
 - **Indian Cultural Context** — currency parsing (25k→25000, 1L→100000), travel seasons (Oct-Nov Diwali, Apr-May school holidays), joint family norms, veg/Jain food sensitivity
-- **Audio/STT Handling** — Hinglish glossary (araam se→relaxed, family ke saath→family, bas karo→generate), filler word stripping (yaar, um, uh), incomplete sentence extraction, number speech (seven days→7)
+- **Audio/STT Handling** — Hinglish glossary (araam se→relaxed, family ke saath→family, bas karo→generate), filler word stripping, number speech (seven days→7)
 - **6 Required Fields** — each with JSON key, valid values, and explicit phrase mappings
 - **Optional Fields** — auto-inferred themes (honeymoon→wellness, adventure purpose→adventure)
 - **Slot Filling** — never re-ask collected fields; defaults for "surprise me" (leisure, 6 days, 1L, moderate)
 - **3-Stage Flow** — Stage 1: collect 6 fields → Stage 2: "anything else?" checkpoint → Stage 3: generate signal
-- **config_patch Rules** — "include every extracted field even if you think it is already known"
-- **Output Schema** — JSON only, includes `thought_process` for chain-of-thought reasoning
+- **config_patch Rules** — "include every extracted field even if you think it is already known" and never return an empty patch when the user just supplied usable trip details
+- **JSON-Wrapped History** — assistant messages are replayed to Gemini as JSON containing the actual `reply` and `config_patch` from that turn, improving extraction consistency
+- **Retry Logic** — 3 attempts with exponential backoff on 503/429/UNAVAILABLE before fallback
+- **Smart Mock Fallback** — reads `partial_config` and asks the next missing required-field question
+- **Filled-State Consistency** — frontend `allFilled` now uses the same `_isFieldFilled` logic as the progress pills
+- **Output Schema** — JSON only; `reply` is "what Anya says on a phone call — no field names, no system terms, no reasoning"
 
-The backend `_has_all_required()` server-validates `ready_to_generate`. Stage 2 checkpoint is tracked via `_checkpoint_asked` flag in `partialConfig` and surfaced to the LLM via `CURRENT_STATE`.
+The backend `_has_all_required()` server-validates `ready_to_generate`. Stage 2 checkpoint is tracked via `_checkpoint_asked` flag in `partialConfig` and surfaced to the LLM via `CURRENT_STATE`. Assistant history replay now uses raw-JSON leak guards and double-wrapped JSON detection before the final `_strip_leaked_reasoning()` safety net.
 
 ---
 
@@ -677,6 +682,7 @@ LLM-powered Anya wizard — replaces the scripted `ConversationalWizard`. Featur
 - "Generate my itinerary" button appears once `ready_to_generate=true`
 - Mobile-first: bottom-sheet on mobile, centered modal on desktop
 - Calls `POST /api/wizard-chat` on each message; merges `config_patch` into local state
+- Replays assistant turns to Gemini as JSON-wrapped history with the real `config_patch` from each turn
 - On generate: merges partial config into `tripConfigStore` → calls `streamItinerary`
 
 ### `ConversationalWizard.tsx` (legacy, kept for reference)
@@ -865,15 +871,26 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v5.0 & v6.0)
+## 14. Recent Changes (v7.0, v6.0 & v5.0)
+
+### v7.0 Changes (June 2026)
+
+#### Wizard End-to-End Fixes
+| Change | Detail |
+|---|---|
+| **UPDATED** `chains/wizard_chat_chain.py` | Prompt v5, temperature 0.4, max tokens 800, 3-attempt exponential-backoff retry on 503/429/UNAVAILABLE, smart mock fallback that reads `partial_config`, and JSON-wrapped assistant history with real `config_patch` |
+| **UPDATED** `models/chat.py` | `ChatMessage` now includes `config_patch: dict = {}` so assistant history can carry real extraction state |
+| **UPDATED** `components/wizard/LLMWizard.tsx` | Frontend message objects now store `config_patch`; assistant history includes it; `allFilled` now uses the same `_isFieldFilled` logic as the tab indicators |
+| **UPDATED** `lib/api.ts` | Wizard message request typing includes `config_patch`; `streamItinerary` docs aligned with `res.ok` / `NO_DATA` guard fixes |
+| **UPDATED** wizard history guards | Raw JSON leak prevention tightened (`or raw` → `or ""`) and double-wrapped JSON detection added before replaying assistant history |
 
 ### v6.0 Changes (June 2026)
 
 #### Anya Prompt v3 + Wizard Flow
 | Change | Detail |
 |---|---|
-| **UPDATED** `chains/wizard_chat_chain.py` | System prompt fully rewritten into 9 structured sections covering persona, Indian context, Hinglish/STT handling, slot filling, 3-stage flow, and output schema |
-| **NEW** `thought_process` field | `WizardChatResponse` now includes `thought_process: str | None`; logged at DEBUG level and returned in the API response |
+| **UPDATED** `chains/wizard_chat_chain.py` | System prompt rewritten to v4: persona-first (Anya is a travel professional, not a slot-filling agent), new §1a Absolute Speaking Rules with WRONG/RIGHT examples, `thought_process` field removed, output schema reframed as "phone call speech" |
+| **REMOVED** `thought_process` field | Eliminated from `WizardChatResponse`, system prompt, and API contract. Added `_strip_leaked_reasoning()` as last-resort safety net. |
 | **UPDATED** 3-stage flow | Stage 1 collects 6 required fields, Stage 2 triggers a one-time "anything else?" checkpoint, Stage 3 enables generation only after confirmation |
 | **UPDATED** frontend/backend state | `_checkpoint_asked` is stored in `partialConfig`, surfaced to the LLM via `CURRENT_STATE`, and used to gate `ready_to_generate` |
 | **FIXED** wizard resilience | Empty-message bootstrap seeding, regex-based JSON fence parsing, stale closure via `partialConfigRef`, generate-loop chip filtering, Gemini error fallback to mock, and better frontend 429/retry UX |

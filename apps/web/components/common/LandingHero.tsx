@@ -254,30 +254,6 @@ export function LandingHero() {
           </div>
         </section>
 
-        {/* ── Feature grid ─────────────────────────────────────────── */}
-        <section
-          aria-label="Wanderplan features"
-          className="border-t border-[var(--_border)] bg-[var(--_card)] px-6 py-14"
-        >
-          <h2 className="sr-only">Why use Wanderplan</h2>
-          <div className="mx-auto grid max-w-4xl grid-cols-2 gap-8 lg:grid-cols-4">
-            {FEATURES.map(({ icon: Icon, title, desc }) => (
-              <div key={title} className="flex flex-col gap-3">
-                <span
-                  className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--_primary)]/10 text-[var(--_primary)]"
-                  aria-hidden="true"
-                >
-                  <Icon size={20} />
-                </span>
-                <h3 className="font-display text-sm font-bold text-[var(--_fg)]">{title}</h3>
-                <p className="text-sm leading-relaxed text-[var(--_muted-fg)] [font-family:var(--font-dm-sans)]">
-                  {desc}
-                </p>
-              </div>
-            ))}
-          </div>
-        </section>
-
         {/* ── Inspiration gallery ──────────────────────────────────── */}
         <section
           id="inspiration"

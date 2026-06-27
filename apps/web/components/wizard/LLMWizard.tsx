@@ -18,6 +18,7 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   chips?: string[]
+  config_patch?: Record<string, unknown>  // stored so backend can replay real patches in history
 }
 
 type Phase = 'chatting' | 'generating' | 'done'
@@ -219,9 +220,14 @@ export function LLMWizard() {
     setError('')
 
     // Build history for the API (exclude bootstrap marker)
+    // Include config_patch on assistant turns so backend can reconstruct real extraction history
     const history = nextMessages
       .filter((m) => m.content !== '__START__')
-      .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))
+      .map((m) => ({
+        role: m.role === 'user' ? 'user' : 'assistant',
+        content: m.content,
+        ...(m.role === 'assistant' && m.config_patch ? { config_patch: m.config_patch } : {}),
+      }))
 
     // Include the seed text for preload context even on bootstrap
     if (isBootstrap && preloadLabel) {
@@ -250,12 +256,9 @@ export function LLMWizard() {
         }
         // Track that the "anything else?" checkpoint has been shown
         // once all 6 fields are filled, so the LLM doesn't re-ask next turn
-        const allFilled = Boolean(merged.purpose) &&
-          Boolean(merged.pace) &&
-          ((merged.budget?.amount ?? 0) > 0) &&
-          ((merged.group?.adults ?? 0) >= 1) &&
-          (merged.dates?.duration_days || (merged.dates?.start && merged.dates?.end)) &&
-          (merged.destination_mode !== 'fixed' || merged.destination?.city)
+        // Use the same logic as the tab indicators so _checkpoint_asked is only set
+        // when all 6 fields pass the exact same checks shown in the UI
+        const allFilled = REQUIRED_LABELS.every(({ key }) => _isFieldFilled(key, merged))
         if (allFilled && !(merged as Record<string, unknown>)._checkpoint_asked) {
           (merged as Record<string, unknown>)._checkpoint_asked = true
         }
@@ -265,9 +268,9 @@ export function LLMWizard() {
       const assistantMsg: Message = {
         id: nextId(),
         role: 'assistant',
-        // Strip thought_process prefix if it leaked through (backend safety net may miss edge cases)
-        content: res.reply.replace(/^thought_process\b[\s\S]*?(?=\n[A-Z]|\n\n|(?<=[.!?])\s+[A-Z])/i, '').trim() || res.reply,
+        content: res.reply,
         chips: res.chips.length > 0 ? res.chips : undefined,
+        config_patch: Object.keys(res.config_patch ?? {}).length > 0 ? res.config_patch : undefined,
       }
       setMessages([...nextMessages, assistantMsg])
 

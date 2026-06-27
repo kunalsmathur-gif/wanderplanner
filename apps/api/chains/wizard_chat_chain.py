@@ -23,17 +23,19 @@ class WizardChatResponse(BaseModel):
     config_patch: dict[str, Any] = {}
     ready_to_generate: bool = False
     summary: str | None = None
-    thought_process: str | None = None
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
 WIZARD_SYSTEM_PROMPT = """\
 # SYSTEM PURPOSE
-You are Anya, an intelligent, culturally aware AI Travel Itinerary Planner tailored specifically
-for Indian consumers. Your primary goal is to collect 6 core travel fields through natural
-conversation (text or voice), manage slot-filling state, and flag when the system is ready to
-generate a personalised itinerary.
+You are Anya — a warm, experienced Indian travel planner speaking directly with a customer
+over chat or voice. Your job is to understand what kind of trip they want and, once you have
+enough information, hand off to the itinerary system.
+
+You are NOT a chatbot describing its own logic. You are a travel professional.
+A real travel planner never says "I need to update your budget field" or "the next missing
+field is group" — they just ask the next natural question.
 
 ---
 
@@ -47,6 +49,48 @@ generate a personalised itinerary.
 - Keep spoken responses concise (2-3 sentences max) so they sound natural when read aloud
   by text-to-speech. Never use bullet points or numbered lists in your reply text.
 - Never say "I am an AI" or "as a language model".
+
+---
+
+## 1a. ABSOLUTE SPEAKING RULES — READ THIS BEFORE EVERY REPLY
+
+You are on a call with a customer. Everything in `reply` is spoken out loud to them.
+
+NEVER mention — even once — any of the following in `reply`:
+  • Field names or system terms: purpose, destination_mode, config_patch, CURRENT_STATE,
+    group_adults, pace, slot, missing field, required field, schema, JSON, parameter,
+    checkpoint, Stage 2, Stage 3, status.
+  • Internal reasoning: "I need to parse...", "The next field is...", "I will now ask...",
+    "I need to collect...", "I'll update...", "This means the destination_mode...",
+    "All 6 required fields are now filled...", "The next step is to trigger...",
+    "The user has just confirmed..."
+  • Any sentence that describes what YOU are doing internally.
+
+A real travel planner never narrates their own notepad. They just ask the next question.
+
+  ✗ WRONG: "4,00,000. I need to parse this and update the `budget` field in `config_patch`.
+            The next missing field is `group`. Got it, that's 4 lakh!"
+  ✓ RIGHT: "Got it, a budget of 4 lakh — lovely! And who will be joining you on this trip?"
+
+  ✗ WRONG: "All 6 required fields are now filled. The next step is to trigger the checkpoint.
+            Wonderful, a relaxed pace it is!"
+  ✓ RIGHT: "Wonderful, a relaxed pace it is! Anything special you'd like to add?"
+
+  ✗ WRONG: "The 6 core fields are purpose, destination, dates, budget, group, and pace.
+            I need to start collecting these. Hello! What's the purpose of your trip?"
+  ✓ RIGHT: "Hello! I'm Anya, your travel planner. What kind of trip are you dreaming of?"
+
+NEVER embed chip options inside the `reply` text. Chips go ONLY in the `chips` JSON array.
+
+  ✗ WRONG reply: "...would you prefer relaxed, moderate, or packed? {{"Relaxed 🧘", "Moderate 🚶", "Packed 🏃"}}"
+  ✓ RIGHT reply: "...would you prefer a relaxed pace, moderate, or packed?"
+    RIGHT chips:  ["Relaxed 🧘", "Moderate 🚶", "Packed 🏃"]
+
+  ✗ WRONG reply: "What kind of trip — Leisure 🌴, Adventure 🏔️, Honeymoon 💑, or Family Vacation 👨‍👩‍👧?"
+  ✓ RIGHT reply: "What kind of trip are you dreaming of?"
+    RIGHT chips:  ["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧"]
+
+If you notice yourself writing internal reasoning, STOP and DELETE it before continuing.
 
 ---
 
@@ -113,6 +157,7 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       friends trip / group -> group_holiday
       work + travel -> business_leisure
       solo -> solo_backpacking
+    ALWAYS include chips when asking about purpose: ["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"]
 
   Field 2 -- destination (JSON keys: "destination" OR "destination_mode" + "destination_country")
     Where they want to go.
@@ -125,6 +170,15 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
     Case C -- open to AI suggestions:
       destination_mode: "exploring"
     Map: "suggest me" / "not sure" / "anywhere" / "kuch bhi" / "you decide" -> Case C
+
+    COUNTRY DESTINATIONS: If the user names a country (not a specific city), warmly name
+    the key cities/regions you plan to explore and ask if they have a preference or are happy
+    to visit all. For example:
+      User: "Sri Lanka" -> "Sri Lanka is stunning! I'm thinking we cover Colombo, Kandy,
+        and Galle — a beautiful mix of coast, culture, and hill country. Does that work,
+        or would you prefer to focus on one region?"
+      User: "Japan" -> "Japan has so much to offer! Are you thinking Tokyo and Kyoto,
+        or would you like to explore further — Osaka, Hiroshima, maybe Kyushu?"
 
   Field 3 -- dates (JSON key: "dates")
     When and how long they want to travel.
@@ -170,7 +224,8 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       "chill" / "araam se" / "no rush" / "slow" / "easy" -> relaxed
       "normal" / "balanced" -> moderate
       "hectic" / "see everything" / "lots of sightseeing" / "fast-paced" -> packed
-    Chip mappings: "Relaxed" -> "relaxed" | "Moderate" -> "moderate" | "Packed" -> "packed"
+    Chip mappings: "Relaxed 🧘" -> "relaxed" | "Moderate 🚶" -> "moderate" | "Packed 🏃" -> "packed"
+    ALWAYS include chips when asking about pace: ["Relaxed 🧘", "Moderate 🚶", "Packed 🏃"]
 
 ---
 
@@ -238,11 +293,32 @@ fields are missing, ask for them in one combined question. Set ready_to_generate
 
 ## 8. EXTRACTION AND CONFIG_PATCH RULES
 config_patch is the ONLY mechanism by which the application records values.
-  - Include every field extracted in this turn in config_patch, even if you think it is
-    already known. Redundancy is safe; omission loses data.
+  - EVERY field you extract from the user's message MUST appear in config_patch.
+  - If the user provides a value, it goes in config_patch. No exceptions.
   - Extract ALL fields mentioned in a single message simultaneously.
-  - Never put a value in your reply without also putting it in config_patch.
-  - Do not include unchanged fields that are already in CURRENT_STATE.
+  - config_patch must never be empty {{}} when the user just gave you new information.
+  - Do not re-include fields already in CURRENT_STATE if the user did NOT change them.
+
+NOTE: Conversation history shows previous model responses with their config_patch values.
+Use these as context. Always populate config_patch with every new value the user provides
+in the CURRENT message. Do not re-include fields already in CURRENT_STATE.
+
+EXAMPLES — follow this exact pattern:
+
+  User: "November 2026, 5 days"
+  → config_patch MUST be: {{"dates": {{"start": "2026-11-01", "end": "2026-11-30", "flexible": true, "duration_days": 5}}}}
+
+  User: "INR 3 lakhs"
+  → config_patch MUST be: {{"budget": {{"amount": 300000, "currency": "INR"}}}}
+
+  User: "two adults and a 3 year old toddler"
+  → config_patch MUST be: {{"group": {{"adults": 2, "kids": [3], "seniors": 0, "infants": 0, "pets": 0}}}}
+
+  User: "relaxed pace"
+  → config_patch MUST be: {{"pace": "relaxed"}}
+
+  User: "leisure trip"
+  → config_patch MUST be: {{"purpose": "leisure"}}
 
 ---
 
@@ -251,15 +327,25 @@ Respond ONLY with a valid JSON object on every turn.
 No text before or after. No markdown fences. No triple backticks.
 No trailing commas. No comments inside the JSON.
 
-CRITICAL: The `thought_process` field is for YOUR internal reasoning only.
-It must NEVER appear in, or be prepended to, the `reply` field.
-The `reply` field must contain ONLY what the user will hear/read — nothing else.
+CRITICAL: The entire JSON response must fit in ONE short message.
+  - `reply` must be 1-3 short sentences MAXIMUM. No lists, no headers, no elaboration.
+  - Never write a travel guide or long description. You are on a phone call — be brief.
+  - Total JSON output must be under 200 words.
 
+Example response when user says "November 2026, 5 days":
 {{
-  "thought_process": "1-2 sentence internal reasoning: which fields are missing, what was just extracted, what to ask next. THIS IS NEVER SHOWN TO THE USER.",
-  "reply": "Warm 2-3 sentence conversational response shown directly to the user. Markdown allowed: **bold**, _italic_. No lists. Do NOT include any reasoning here.",
-  "chips": ["Chip 1", "Chip 2", "Chip 3"],
-  "config_patch": {{}},
+  "reply": "Got it, November 2026 for 5 days! And what kind of budget are you working with?",
+  "chips": [],
+  "config_patch": {{"dates": {{"start": "2026-11-01", "end": "2026-11-30", "flexible": true, "duration_days": 5}}}},
+  "ready_to_generate": false,
+  "summary": null
+}}
+
+Example response when user says "INR 3 lakhs":
+{{
+  "reply": "Understood, 3 lakh budget — great! And who will be joining you on this trip?",
+  "chips": [],
+  "config_patch": {{"budget": {{"amount": 300000, "currency": "INR"}}}},
   "ready_to_generate": false,
   "summary": null
 }}
@@ -378,51 +464,70 @@ def _summarise_state(config: dict[str, Any]) -> str:
     return "\n".join(lines) if lines else "Nothing collected yet — this is the first message."
 
 
-def _clean_reply(text: str) -> str:
-    """Strip internal reasoning the LLM accidentally embedded in the reply field."""
-    import re as _re_clean
+def _strip_leaked_reasoning(text: str) -> str:
+    """Strip any reasoning the LLM prepended to the reply field.
 
-    # Step 1: Remove 'thought_process' header/label line
-    text = _re_clean.sub(r'^thought_process\b[^\n]*\n?', '', text, flags=_re_clean.IGNORECASE).strip()
+    Strategy: reasoning always ends at a sentence boundary; the real reply
+    always starts with a warm/conversational opener. We scan the whole text
+    for that boundary — no guard based on what the reasoning looks like,
+    because reasoning can take any form.
 
-    # Step 2: Iteratively strip leading sentences that look like internal analysis.
-    # We keep stripping as long as the first sentence matches a monologue pattern.
-    # This handles multi-sentence reasoning blocks regardless of wording.
-    monologue_pat = _re_clean.compile(
-        r'^(?:'
-        r'The\s+[`"\']?\w+[`"\']?\s+field\b'   # "The `dates` field ..."
-        r'|The user\b'                            # "The user ..."
-        r'|The next\b'                            # "The next missing ..."
-        r'|I need to\b'                           # "I need to ..."
-        r'|I will\b'                              # "I will ..."
-        r'|I should\b'                            # "I should ..."
-        r'|I have\b'                              # "I have ..."
-        r'|I must\b'                              # "I must ..."
-        r'|I can\b'                               # "I can ..."
-        r'|I see\b'                               # "I see ..."
-        r'|I notice\b'                            # "I notice ..."
-        r'|I think\b'                             # "I think ..."
-        r'|Now I\b'                               # "Now I ..."
-        r'|Let me\b'                              # "Let me ..."
-        r'|Looking at\b'                          # "Looking at ..."
-        r'|Based on\b'                            # "Based on ..."
-        r'|Since\b'                               # "Since only ..."
-        r'|As the\b'                              # "As the user ..."
-        r'|Given that\b'                          # "Given that ..."
-        r'|Only\b'                                # "Only the month ..."
-        r'|User\b'                                # "User said ..."
-        r'|They\b'                                # "They want ..."
-        r')'
-        r'[^.!?]*[.!?]\s*'
+    Two passes:
+      1. Find the earliest warm opener that follows a sentence boundary and is
+         preceded by content — that prefix is the leaked reasoning, discard it.
+      2. If no warm opener exists, strip leading sentences that contain
+         technical reasoning markers (field names, internal-state references).
+    """
+    import re as _re
+
+    # Warm openers Anya uses to begin her user-facing sentences.
+    # Lookbehind requires a sentence-end char; \s* allows zero-space joins like "trip.Got it".
+    _WARM = (
+        r'Perfect|Wonderful|Great|Got it|Sure|Absolutely|Awesome|Lovely|'
+        r'Noted|Sounds good|Alright|Of course|Happy to|Hello|Hi\b|Namaste|'
+        r'Welcome|Fantastic|Certainly|Excellent|Beautiful|Amazing|Superb|'
+        r'Splendid|Brilliant|Delightful|Yes\b'
     )
-    # Strip up to 10 reasoning sentences to avoid infinite loops
-    for _ in range(10):
-        m = monologue_pat.match(text)
-        if not m:
-            break
-        text = text[m.end():].strip()
+    warm_re = _re.compile(r'(?<=[.!?])\s*(?:' + _WARM + r')', _re.IGNORECASE)
 
-    return text or text
+    m = warm_re.search(text)
+    if m and m.start() > 0:
+        # There is content before the warm opener — that content is reasoning.
+        return text[m.start():].strip()
+
+    # Pass 2: strip leading sentences that contain internal reasoning markers.
+    # A sentence is reasoning if it references field names, state objects, or
+    # uses internal analysis phrases — regardless of how it starts.
+    _REASONING_BODY = _re.compile(
+        r'config_patch|destination_mode|CURRENT_STATE|missing field|required fields?\b'
+        r'|all \d+ (?:required|fields)\b'        # "All 6 required fields are now filled"
+        r'|The next step\b'                       # "The next step is to trigger..."
+        r'|\bcheckpoint\b'                        # "ask the checkpoint question"
+        r'|The user has\b'                        # "The user has just confirmed..."
+        r'|The system\b'                          # "The system has already marked..."
+        r'|The prompt\b'                          # "The prompt states that..."
+        r'|Since I\b'                             # "Since I cannot literally..."
+        r'|I should\b'                            # "I should confirm..." / "I should not ask..."
+        r'|I need to (?:parse|ask|collect|update|check|set|trigger)'
+        r'|I will (?:ask|now|set|update|extract|trigger)'
+        r'|I\'ll (?:ask|now|set|update|extract|begin|trigger)'
+        r'|The next (?:missing )?field'
+        r'|`[a-z_: -]+`'                         # any backtick-quoted identifier/value
+        r'|\bslot.fill',
+        _re.IGNORECASE,
+    )
+    _SENTENCE = _re.compile(r'^[^.!?]*[.!?]\s*')
+    for _ in range(20):
+        sm = _SENTENCE.match(text)
+        if not sm:
+            break
+        sentence = sm.group(0)
+        if _REASONING_BODY.search(sentence):
+            text = text[sm.end():].strip()
+        else:
+            break  # First non-reasoning sentence — stop here
+
+    return text.strip() or text
 
 
 # ── Main chain function ───────────────────────────────────────────────────────
@@ -461,10 +566,34 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
 
     contents = []
     for msg in history:
-        role = "user" if msg.role == "user" else "model"
-        contents.append(
-            genai_types.Content(role=role, parts=[genai_types.Part(text=msg.content)])
-        )
+        if msg.role == "user":
+            contents.append(
+                genai_types.Content(role="user", parts=[genai_types.Part(text=msg.content)])
+            )
+        else:
+            # Wrap assistant messages as JSON so Gemini sees the expected output format.
+            # Guard: if msg.content is itself raw JSON (from a previous leak), unwrap it.
+            reply_content = msg.content
+            if reply_content and reply_content.strip().startswith("{"):
+                try:
+                    leaked = json.loads(reply_content)
+                    if isinstance(leaked, dict) and leaked.get("reply"):
+                        reply_content = leaked["reply"]
+                except Exception:
+                    pass
+            # Use the real config_patch from this turn if available — this is critical:
+            # showing real patches in history teaches the LLM to populate config_patch.
+            real_patch = msg.config_patch if msg.config_patch else {}
+            model_json = json.dumps({
+                "reply": reply_content,
+                "chips": [],
+                "config_patch": real_patch,
+                "ready_to_generate": False,
+                "summary": None,
+            })
+            contents.append(
+                genai_types.Content(role="model", parts=[genai_types.Part(text=model_json)])
+            )
 
     def _call_sync() -> str:
         response = client.models.generate_content(
@@ -472,19 +601,37 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             contents=contents,
             config=genai_types.GenerateContentConfig(
                 system_instruction=system_prompt,
-                temperature=0.6,
-                max_output_tokens=1024,
+                temperature=0.4,
+                max_output_tokens=800,
             ),
         )
         return response.text or ""
 
-    try:
-        loop = asyncio.get_event_loop()
-        raw = await loop.run_in_executor(None, _call_sync)
-    except Exception as exc:
-        # Gemini API error (quota, safety, network) — fall back to mock
-        import logging
-        logging.getLogger(__name__).warning("Gemini API error in wizard_chat: %s", exc)
+    import logging, time
+    _log = logging.getLogger(__name__)
+
+    # Retry up to 3 times on transient errors (503, rate limit, timeout)
+    raw = ""
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            loop = asyncio.get_event_loop()
+            raw = await loop.run_in_executor(None, _call_sync)
+            last_exc = None
+            break  # success
+        except Exception as exc:
+            last_exc = exc
+            err_str = str(exc)
+            # Only retry on transient errors
+            if any(code in err_str for code in ("503", "429", "UNAVAILABLE", "quota", "timeout")):
+                wait = 1.5 * (attempt + 1)
+                _log.warning("Gemini transient error (attempt %d/3): %s — retrying in %.1fs", attempt + 1, exc, wait)
+                await asyncio.sleep(wait)
+            else:
+                break  # Non-retryable error — give up immediately
+
+    if last_exc is not None:
+        _log.warning("Gemini API failed after retries: %s", last_exc)
         return _mock_wizard(request)
 
     try:
@@ -508,34 +655,55 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         reply_text = (
             data.get("reply")
             or data.get("assistant_reply")
-            or raw
+            or ""  # Never fall back to raw JSON — use empty string and let strip handle it
         )
+        # If reply_text itself looks like JSON (double-wrapped), try to unwrap it
+        if reply_text and reply_text.strip().startswith("{"):
+            try:
+                inner = json.loads(reply_text)
+                if isinstance(inner, dict) and inner.get("reply"):
+                    reply_text = inner["reply"]
+            except Exception:
+                pass
         chips_list = (
             data.get("chips")
             or data.get("suggested_chips")
             or []
         )
 
-        # Extract thought_process — internal reasoning, never shown to user
-        thought = data.get("thought_process") or ""
-        if thought:
-            import logging
-            logging.getLogger(__name__).debug("Anya thought: %s", thought)
-
-        # Strip "Chips: [...]" from reply_text if LLM embedded it inline, and recover chips
+        # Strip chips embedded inline in reply_text and recover them into chips_list
         import re as _re3
-        chips_inline = _re3.search(r'\s*(?:Chips?|Options?|chip\s*options?):\s*(\[[\s\S]*?\])', reply_text, flags=_re3.IGNORECASE)
-        if chips_inline:
-            try:
-                extra_chips = json.loads(chips_inline.group(1))
-                if isinstance(extra_chips, list):
-                    chips_list = chips_list or extra_chips
-            except Exception:
-                pass
-            reply_text = reply_text[:chips_inline.start()].strip()
 
-        # Strip any internal-reasoning prefix the LLM accidentally embedded in reply_text
-        reply_text = _clean_reply(reply_text)
+        def _extract_inline_chips(text: str, existing: list) -> tuple[str, list]:
+            """Remove chip lists embedded in text; return (cleaned_text, chips)."""
+            # Pattern 1: Chips: ["A", "B"] or Options: ["A", "B"]
+            m = _re3.search(r'\s*(?:Chips?|Options?|chip\s*options?):\s*(\[[\s\S]*?\])', text, flags=_re3.IGNORECASE)
+            if m:
+                try:
+                    parsed = json.loads(m.group(1))
+                    if isinstance(parsed, list):
+                        existing = existing or [str(c) for c in parsed]
+                except Exception:
+                    pass
+                text = text[:m.start()].strip()
+
+            # Pattern 2: {"Relaxed 🧘", "Moderate 🚶", ...} — Python-set-like inline chips
+            m2 = _re3.search(r'\s*\{("[\s\S]+?"(?:\s*,\s*"[\s\S]+?")+)\}\s*$', text)
+            if m2:
+                try:
+                    parsed2 = json.loads('[' + m2.group(1) + ']')
+                    if isinstance(parsed2, list):
+                        existing = existing or [str(c) for c in parsed2]
+                except Exception:
+                    pass
+                text = text[:m2.start()].strip()
+
+            return text, existing
+
+        reply_text, chips_list = _extract_inline_chips(reply_text, chips_list)
+
+        # Safety net: strip any reasoning the LLM leaked into the reply field
+        reply_text = _strip_leaked_reasoning(reply_text)
 
         # Merge config_patch into partial_config to check completeness
         merged = {**request.partial_config}
@@ -557,14 +725,14 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             config_patch=patch,
             ready_to_generate=ready,
             summary=data.get("summary") if ready else None,
-            thought_process=thought,
         )
     except Exception:
         # JSON parse failed — LLM returned plain text (no JSON).
         import re as _re_fb
         clean_raw = raw or ""
-        # Extract chips embedded in plain text (e.g. 'Chips: ["A", "B"]')
         extracted_chips: list[str] = []
+
+        # Pattern 1: Chips: ["A", "B"]
         chips_match = _re_fb.search(r'\s*(?:Chips?|Options?|chip\s*options?):\s*(\[[\s\S]*?\])', clean_raw, flags=_re_fb.IGNORECASE)
         if chips_match:
             try:
@@ -574,22 +742,70 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             except Exception:
                 pass
             clean_raw = clean_raw[:chips_match.start()].strip()
-        # Strip reasoning prefix and find start of warm reply
-        clean_raw = _clean_reply(clean_raw)
-        return WizardChatResponse(reply=clean_raw or raw, chips=extracted_chips, config_patch={}, ready_to_generate=False)
+
+        # Pattern 2: {"Relaxed 🧘", "Moderate 🚶", ...} curly-brace set notation
+        chips_match2 = _re_fb.search(r'\s*\{("[\s\S]+?"(?:\s*,\s*"[\s\S]+?")+)\}\s*$', clean_raw)
+        if chips_match2 and not extracted_chips:
+            try:
+                parsed2 = json.loads('[' + chips_match2.group(1) + ']')
+                if isinstance(parsed2, list):
+                    extracted_chips = [str(c) for c in parsed2]
+            except Exception:
+                pass
+            clean_raw = clean_raw[:chips_match2.start()].strip()
+
+        clean_raw = _strip_leaked_reasoning(clean_raw)
+        # Guard: if clean_raw still looks like raw JSON, try to extract reply from it
+        if clean_raw and clean_raw.strip().startswith("{"):
+            try:
+                inner = json.loads(clean_raw)
+                if isinstance(inner, dict) and inner.get("reply"):
+                    clean_raw = inner["reply"]
+                elif isinstance(inner, dict):
+                    clean_raw = ""
+            except Exception:
+                clean_raw = ""  # Do not display raw JSON to user
+        return WizardChatResponse(reply=clean_raw or "I'm on it! Just a moment…", chips=extracted_chips, config_patch={}, ready_to_generate=False)
 
 
 # ── Mock fallback ─────────────────────────────────────────────────────────────
 
 def _mock_wizard(request: WizardChatRequest) -> WizardChatResponse:
+    """Context-aware fallback when Gemini is unavailable. Uses partial_config to ask the next missing field."""
+    config = request.partial_config
+
     if not request.messages or request.messages[-1].role != "user":
         return WizardChatResponse(
             reply="Hi! I'm Anya ✈️ I'll help you plan your perfect trip. What's the main purpose of this trip?",
             chips=["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧"],
         )
+
+    # Ask for next missing field in order
+    if not config.get("purpose"):
+        return WizardChatResponse(
+            reply="What kind of trip are you dreaming of?",
+            chips=["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"],
+            config_patch={}, ready_to_generate=False,
+        )
+    mode = config.get("destination_mode", "fixed")
+    has_dest = (mode == "exploring") or (mode == "country" and config.get("destination_country")) or (mode == "fixed" and (config.get("destination") or {}).get("city"))
+    if not has_dest:
+        return WizardChatResponse(
+            reply="Where are you thinking of going?",
+            chips=["Suggest me! 🌍", "I have a destination in mind"],
+            config_patch={}, ready_to_generate=False,
+        )
+    dates = config.get("dates", {})
+    if not (dates.get("start") and dates.get("end")):
+        return WizardChatResponse(reply="When are you planning to travel, and for how many days?", chips=[], config_patch={}, ready_to_generate=False)
+    if not (config.get("budget", {}).get("amount", 0) > 0):
+        return WizardChatResponse(reply="What's your approximate budget for this trip?", chips=[], config_patch={}, ready_to_generate=False)
+    if not (config.get("group", {}).get("adults", 0) >= 1):
+        return WizardChatResponse(reply="Who will be joining you — travelling solo, as a couple, or with family?", chips=["Solo 🧳", "Couple ❤️", "Family 👨‍👩‍👧", "Friends 🎉"], config_patch={}, ready_to_generate=False)
+    if not config.get("pace"):
+        return WizardChatResponse(reply="What pace works for you?", chips=["Relaxed 🧘", "Moderate 🚶", "Packed 🏃"], config_patch={}, ready_to_generate=False)
+
     return WizardChatResponse(
-        reply="Got it! Tell me more — where are you thinking of going?",
-        chips=["Suggest me!", "I have a destination in mind"],
-        config_patch={},
-        ready_to_generate=False,
+        reply="I'm having a little trouble right now — please try again in a moment.",
+        chips=[], config_patch={}, ready_to_generate=False,
     )

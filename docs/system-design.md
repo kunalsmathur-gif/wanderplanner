@@ -1,7 +1,7 @@
 # WanderPlan — System Design Document
 
-**Version:** 7.0 (LLM Anya Wizard · Anya Prompt v3 · STT/Hinglish · 3-Stage Flow)  
-**Last Updated:** June 26, 2026  
+**Version:** 8.0 (LLM Anya Wizard · Anya Prompt v5 · End-to-End Fixes · 3-Stage Flow)  
+**Last Updated:** June 28, 2026  
 **Audience:** Engineering team and technical stakeholders
 
 ---
@@ -115,7 +115,7 @@ Embedding Model: sentence-transformers/all-MiniLM-L6-v2 (local, 384 dims)
 
 ### 2.1 Overview
 
-The wizard is now fully LLM-powered. Each user message is sent to `POST /api/wizard-chat` (Gemini 2.5 Flash, temp 0.6). Anya returns a conversational reply, optional chip suggestions, a `config_patch` of newly extracted fields, and `thought_process` for DEBUG-level reasoning visibility. The frontend merges patches into a local `partialConfig` state, tracks `_checkpoint_asked`, and shows progress pills for the 6 required fields.
+The wizard is fully LLM-powered. Each user message is sent to `POST /api/wizard-chat` (Gemini 2.5 Flash, temp 0.4). Anya returns a conversational reply, optional chip suggestions, and a `config_patch` of newly extracted fields. The frontend merges patches into a local `partialConfig` state, tracks `_checkpoint_asked`, and shows progress pills for the 6 required fields. Assistant turns are JSON-wrapped with the real `config_patch` when replayed to Gemini so the model learns from the actual extraction history, not plain-text replies alone.
 
 ```
 openWizard() or openWizardWithPreload(preload)
@@ -126,18 +126,21 @@ openWizard() or openWizardWithPreload(preload)
 STAGE 1 — Collect 6 required fields
 LLMWizard.tsx → POST /api/wizard-chat
 {
-  messages: [{role, content}, ...],
+  messages: [{role, content, config_patch?}, ...],
   partial_config: { ...merged config + _checkpoint_asked flag },
   preloaded_destination: "Bali, Indonesia | null"
 }
          │
          ▼
 wizard_chat_chain.py
-  ├─ System prompt v3: personality, Indian context, STT/Hinglish rules,
-  │    6 required fields, 3-stage flow, config_patch rules
+  ├─ System prompt v5: personality, Indian context, STT/Hinglish rules,
+  │    6 required fields, 3-stage flow, config_patch rules, concrete MUST examples
   ├─ CURRENT_STATE summary injected (shows status: all-6-collected or checkpoint-asked)
-  ├─ Call Gemini 2.5 Flash (temp 0.6, max_tokens 1024)
-  └─ Parse JSON: { thought_process, reply, chips, config_patch, ready_to_generate, summary }
+  ├─ Assistant history replayed as JSON with real config_patch per turn
+  ├─ Call Gemini 2.5 Flash (temp 0.4, max_tokens 800)
+  ├─ Retry: 3 attempts with exponential backoff on 503/429/UNAVAILABLE
+  ├─ Smart mock fallback reads partial_config and asks next missing field
+  └─ Parse JSON: { reply, chips, config_patch, ready_to_generate, summary }
          │
          ├─ Stage 1: ready_to_generate=false, missing fields → ask next question
          │
@@ -408,7 +411,7 @@ Latest bot reply → SpeechSynthesis.speak(utterance)
 #### `POST /api/wizard-chat` ⭐ NEW
 ```
 Request:  {
-  messages: [{role:'user'|'assistant', content:string}],
+  messages: [{role:'user'|'assistant', content:string, config_patch?: object}],
   partial_config: Partial<TripConfig>,
   preloaded_destination: string | null
 }
@@ -417,8 +420,7 @@ Response: {
   chips: string[],
   config_patch: Partial<TripConfig>,
   ready_to_generate: bool,
-  summary: string | null,
-  thought_process: string | null
+  summary: string | null
 }
 ```
 
@@ -549,7 +551,7 @@ Two collections, both using `all-MiniLM-L6-v2` (384 dims, cosine distance):
 
 | Endpoint | Chain file | Model | Temperature | Max tokens |
 |---|---|---|---|---|
-| `POST /api/wizard-chat` | `wizard_chat_chain.py` | `gemini-2.5-flash` | **0.6** | 1024 |
+| `POST /api/wizard-chat` | `wizard_chat_chain.py` | `gemini-2.5-flash` | **0.4** | 800 |
 | `POST /api/chat-refine` | `chat_refine_chain.py` | `gemini-2.5-flash` | **0.5** | 1024 |
 | `POST /api/generate-itinerary` (attempts 1-3) | `itinerary_chain.py` | `gemini-2.5-flash` | **0.4** | 16384 |
 | `POST /api/generate-itinerary` (attempt 4) | `itinerary_chain.py` | `gemini-2.5-flash-lite` | **0.4** | — |
@@ -558,7 +560,7 @@ Two collections, both using `all-MiniLM-L6-v2` (384 dims, cosine distance):
 | `POST /api/recommend-cities` | `recommend_cities_chain.py` | `gemini-2.5-flash` | **0.4** | 1024 |
 
 Temperature rationale:
-- **0.6** — Wizard: conversational warmth without hallucinating field values
+- **0.4** — Wizard: more deterministic extraction while keeping Anya conversational
 - **0.5** — Chat refine: friendly but semi-deterministic for config patches
 - **0.4** — Itinerary/cities: structured JSON; lower = fewer schema violations
 - **0.1** — Extraction: near-deterministic; wrong extraction = wrong wizard preload
@@ -567,20 +569,26 @@ Temperature rationale:
 
 ### System Prompt 1 — Anya Wizard (`wizard_chat_chain.py`)
 
-**Version:** v3 (June 2026) — 9-section structured prompt
+**Version:** v5 (June 2026) — end-to-end extraction fix, JSON history replay, stricter patch behavior
 
 **Key sections:**
+- **System Purpose** — Anya is defined as a human travel professional speaking to a customer, not a slot-filling agent. Explicitly states she never narrates internal logic.
 - **Persona & Tone** — warm Indian travel expert friend; 2-3 sentences max; TTS-optimised
+- **Absolute Speaking Rules (§1a)** — hard prohibition on field names, system terms (`config_patch`, `destination_mode`, `missing field`), and internal reasoning in `reply`. Includes three verbatim WRONG/RIGHT examples from real failure cases.
 - **Indian Cultural Context** — currency parsing (25k→25000, 1L→100000), travel seasons (Oct-Nov Diwali, Apr-May school holidays), joint family norms, veg/Jain food sensitivity
-- **Audio/STT Handling** — Hinglish glossary (araam se→relaxed, family ke saath→family, bas karo→generate), filler word stripping (yaar, um, uh), incomplete sentence extraction, number speech (seven days→7)
+- **Audio/STT Handling** — Hinglish glossary (araam se→relaxed, family ke saath→family, bas karo→generate), filler word stripping, number speech (seven days→7)
 - **6 Required Fields** — each with JSON key, valid values, and explicit phrase mappings
 - **Optional Fields** — auto-inferred themes (honeymoon→wellness, adventure purpose→adventure)
 - **Slot Filling** — never re-ask collected fields; defaults for "surprise me" (leisure, 6 days, 1L, moderate)
 - **3-Stage Flow** — Stage 1: collect 6 fields → Stage 2: "anything else?" checkpoint → Stage 3: generate signal
-- **config_patch Rules** — "include every extracted field even if you think it is already known"
-- **Output Schema** — JSON only, includes `thought_process` for chain-of-thought reasoning
+- **config_patch Rules** — "include every extracted field even if you think it is already known" and `config_patch` must never be empty when the user just supplied usable trip info
+- **JSON-Wrapped History** — assistant turns are replayed as JSON objects like `{"reply":"...","config_patch":{...}}` so Gemini learns from the real extraction history
+- **Retry Logic** — 3 attempts with exponential backoff on 503/429/UNAVAILABLE before fallback
+- **Smart Mock Fallback** — reads `partial_config` and asks the next missing required field instead of returning a generic fallback
+- **Filled-State Consistency** — frontend `allFilled` is unified with `_isFieldFilled`, matching the progress pill logic
+- **Output Schema** — JSON only; `reply` is described as "what Anya says on a phone call — no field names, no system terms, no internal reasoning"
 
-The backend `_has_all_required()` server-validates `ready_to_generate`. Stage 2 checkpoint is tracked via `_checkpoint_asked` flag in `partialConfig` and surfaced to the LLM via `CURRENT_STATE`.
+The backend `_has_all_required()` server-validates `ready_to_generate`. Stage 2 checkpoint is tracked via `_checkpoint_asked` flag in `partialConfig` and surfaced to the LLM via `CURRENT_STATE`. Assistant history also includes raw-JSON leak guards (`or raw` → `or ""`) plus double-wrapped JSON detection before replay. A `_strip_leaked_reasoning()` function remains the last-resort safety net.
 
 ---
 
@@ -845,7 +853,10 @@ POST /api/chat-refine fails →
 
 ## 16. Change Log
 
+### v8.0 (June 2026)
+- Wizard end-to-end fix: JSON history wrapping, retry logic, config_patch on ChatMessage, allFilled/isFieldFilled unification, smart mock fallback, prompt v5
+
 ### v7.0 (June 2026)
-- Updated Anya wizard design to document prompt v3, Hinglish/STT extraction, Indian cultural context, and the 3-stage collection → checkpoint → generate flow
-- Added `_checkpoint_asked` state handling and `thought_process` to the `POST /api/wizard-chat` API contract
+- Updated Anya wizard design to document prompt v4, persona-first approach, absolute speaking rules (§1a), and removal of `thought_process`
+- Removed `thought_process` from `POST /api/wizard-chat` API contract; response is now `{ reply, chips, config_patch, ready_to_generate, summary }`
 - Documented smarter extraction examples plus resilience fixes around bootstrap seeding, JSON fence parsing, stale closure protection, generate-loop handling, Gemini fallback behavior, and improved frontend error UX
