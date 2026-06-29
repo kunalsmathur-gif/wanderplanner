@@ -103,7 +103,108 @@ def _summarise_context(docs: list[dict], max_tokens: int = 600) -> str:
 ```
 **Token savings:** Context injection drops from ~7,500 tokens to ~600 tokens — a ~12× reduction in context cost.
 
-### 3D — Query Augmentation (HyDE)
+### 3D — Hybrid Search: BM25 + Semantic (New)
+
+Pure vector search struggles with **specific nouns** — "Tokyo" vs "Kyoto" may have similar embeddings but must be treated as hard filters. The fix is layering keyword matching on top of semantic search:
+
+```python
+# Hybrid retrieval: BM25 handles specific terms, semantic handles "vibe"
+from rank_bm25 import BM25Okapi
+
+async def hybrid_search(query: str, destination: str, corpus: list[dict], limit: int = 10) -> list[dict]:
+    # Step 1: Hard metadata filter — only this destination (prevents Lyon appearing in Paris results)
+    dest_docs = [d for d in corpus if d["destination"].lower() == destination.lower()]
+
+    # Step 2: BM25 keyword pass (handles "anime", "sushi", specific place names)
+    tokenized = [d["text"].lower().split() for d in dest_docs]
+    bm25 = BM25Okapi(tokenized)
+    bm25_scores = bm25.get_scores(query.lower().split())
+
+    # Step 3: Semantic pass (handles "vibe" — "relaxed coffee culture", "instagrammable spots")
+    semantic_hits = client.search("wiki", embed([query])[0],
+        query_filter=Filter(must=[FieldCondition("destination", MatchValue(destination))]),
+        limit=limit * 3)
+    semantic_scores = {h.id: h.score for h in semantic_hits}
+
+    # Step 4: Reciprocal Rank Fusion (RRF) — merge both rankings
+    combined = _rrf_merge(bm25_scores, semantic_scores, dest_docs)
+    return combined[:limit]
+```
+
+Use hybrid search for **all retrieval calls** (wiki, reddit, itinerary_corpus). Pure semantic search is kept only for the persona fingerprint lookup in `generated_itineraries`.
+
+### 3E — Time-Decay Scoring (New)
+
+Travel data expires. A 2021 blog post recommending a now-closed restaurant is worse than useless — it actively degrades output quality.
+
+```python
+from datetime import datetime, timezone
+
+def _time_decay_score(base_score: float, published_date: str | None) -> float:
+    """
+    Apply exponential decay based on content age.
+    Half-life: 18 months (travel info stays reasonably current for ~18 months)
+    """
+    if not published_date:
+        return base_score * 0.85  # unknown date → moderate penalty
+
+    try:
+        pub = datetime.fromisoformat(published_date).replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - pub).days
+        half_life_days = 548  # 18 months
+        decay = 0.5 ** (age_days / half_life_days)
+        return base_score * (0.4 + 0.6 * decay)  # floor at 40% of base score
+    except Exception:
+        return base_score * 0.85
+
+# Applied in reranking step after retrieval
+ranked = sorted(hits, key=lambda h: _time_decay_score(h.score, h.payload.get("published_date")), reverse=True)
+```
+
+Impact: A top-scoring chunk from 2019 drops to ~50% weight; one from last month retains ~95%.
+
+### 3F — Semantic Chunking (New)
+
+Splitting at arbitrary character counts cuts sentences mid-thought and loses section context. Split by **logical boundaries** instead:
+
+```python
+def semantic_chunk(text: str, source_type: str) -> list[dict]:
+    """Split by logical section boundaries, not character count."""
+    if source_type == "blog":
+        # Split on markdown/HTML headers: ## Where to Eat, ### Day 1
+        sections = re.split(r'\n#{1,3} ', text)
+    elif source_type == "reddit":
+        # Each top-level comment is its own chunk (natural opinion unit)
+        sections = text.split("\n\n---\n\n")
+    elif source_type == "wikivoyage":
+        # Already section-based from scraper — pass through
+        sections = [text]
+    elif source_type == "youtube":
+        # Concatenate every 5 timestamped segments into one chunk
+        lines = text.strip().split("\n")
+        sections = [" ".join(lines[i:i+5]) for i in range(0, len(lines), 5)]
+    else:
+        # Fallback: sentence-boundary split at ~500 chars
+        sections = _sentence_boundary_split(text, max_chars=500)
+
+    return [s.strip() for s in sections if len(s.strip()) > 80]  # min viable chunk length
+
+
+def _sentence_boundary_split(text: str, max_chars: int = 500) -> list[str]:
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    chunks, current = [], ""
+    for s in sentences:
+        if len(current) + len(s) > max_chars and current:
+            chunks.append(current.strip())
+            current = s
+        else:
+            current += " " + s
+    if current:
+        chunks.append(current.strip())
+    return chunks
+```
+
+### 3G — Query Augmentation (HyDE)
 
 Instead of one query, generate a hypothetical answer and embed that:
 ```python
@@ -113,7 +214,7 @@ hypothetical = f"Top things to do in {dest} for a {purpose} trip: [ideal paragra
 ```
 This significantly improves recall for specific personas (digital nomad, family, etc.).
 
-### 3E — Fix Reddit Destination Tagging
+### 3H — Fix Reddit Destination Tagging
 
 ```python
 # scrapers/reddit.py — replace naive _extract_destination
@@ -127,7 +228,7 @@ def _extract_destination(title: str, selftext: str) -> str:
 ```
 This makes the destination filter in `semantic_search()` reliable — currently every Reddit post is tagged `"general"` and the filter matches nothing.
 
-### 3F — Ingest OSM POIs
+### 3I — Ingest OSM POIs
 
 The `osm_pois` collection exists but is empty. Ingesting POI data (lat/lon, name, type, tags) would let the RAG system provide real coordinates to the itinerary LLM — eliminating hallucinated or wrong lat/lon values.
 
@@ -291,14 +392,26 @@ This is fundamentally different from the existing wiki/reddit collections:
 
 ### Data Sources & Scraping Strategy
 
-| Source | Content type | Scrape method | Volume | Refresh |
+**Phase v0 — Free, friction-free sources (build the pipeline first):**
+
+| Source | Content type | Scrape method | Cost | Refresh |
 |---|---|---|---|---|
-| **Nomadic Matt** (nomadicmatt.com) | Detailed destination guides with day breakdowns | `httpx` + BeautifulSoup on `/destinations/*` | ~2,000 guides | Monthly |
-| **The Planet D** (theplanetd.com) | Country/city itineraries by duration | `httpx` + BeautifulSoup | ~1,500 guides | Monthly |
-| **Lonely Planet** (lonelyplanet.com/itineraries) | Structured `n-day` itinerary pages | Public HTML; itinerary pages structured with `<section>` | ~5,000 pages | Monthly |
-| **TripAdvisor Forums** (tripadvisor.com/ShowForum-*) | "Just got back — here's my itinerary" threads | Forum thread scraper, filter for "itinerary", "day 1", "day 2" | High volume | Weekly |
-| **Reddit trip reports** (r/travel, r/solotravel, r/indiatravel) | "My X-day trip to Y" self-posts | Reddit JSON API (no key needed); filter `flair:trip-report` or title match regex | High volume | Daily |
-| **YouTube descriptions** | Travel vlog day-by-day descriptions | YouTube Data API v3 (`search.list` → `videos.list` for description); free 10k units/day | ~500/day | Daily |
+| **Nomadic Matt / The Planet D** | Blog itineraries with day breakdowns | `feedparser` (RSS) + `BeautifulSoup` for full page | Free | Monthly |
+| **Lonely Planet** (lonelyplanet.com/itineraries) | Structured `n-day` itinerary pages | `httpx` + BeautifulSoup; `<section>` tags are clean | Free | Monthly |
+| **Wikivoyage** | Authoritative destination guides | Official **Wikimedia API** (`action=parse`) — structured, stable, no scraping | Free | Quarterly |
+| **Reddit trip reports** (r/travel, r/solotravel, r/indiatravel) | "My X-day trip to Y" self-posts | **PRAW** (`praw` library, OAuth, 100 req/min free) — filter `flair:trip-report`; grab post + top 5 parent comments | Free | Daily |
+| **YouTube captions** | Travel vlog day-by-day descriptions | **`youtube-transcript-api`** — extracts manual/auto-generated captions by video ID; **no API key needed** | Free | Weekly |
+
+**Phase v1 — Premium, high-fidelity sources (add after v0 pipeline is stable):**
+
+| Source | Content type | Scrape method | Cost | Refresh |
+|---|---|---|---|---|
+| **TripAdvisor** (reviews, ratings) | Current ratings, user reviews, recent tips | **Apify** / **Bright Data** / ScrapeLabs with residential proxies (bypasses Cloudflare) | Paid per 1k results | Weekly |
+| **YouTube (no captions)** | Niche travel vlogger content | **`yt-dlp`** to download audio → **OpenAI Whisper** or **Deepgram** STT transcription | Paid per minute of audio | Weekly |
+| **Instagram & TikTok** | Trending visual travel reels, captions, geotags | Aggregator platforms: **Octolens**, **Prowlo**, or unofficial Graph API scrapers | Paid subscription | Weekly |
+| **X / Twitter** | Real-time disruptions (strikes, delays, closures, weather) | Official **X Basic/Pro API** | $100+/month | Real-time |
+
+> **Transition milestone (v0 → v1):** Do not move to v1 until the v0 pipeline can consistently take a multi-day query (e.g., "4-day budget food tour of Hanoi"), filter out data from irrelevant cities, and output a logically sequenced itinerary without chronological errors. Once that logic is reliable, add the paid data layers.
 
 ### Extraction Mini-LLM Chain
 
@@ -604,7 +717,76 @@ Over time the system **automatically learns** which itinerary structures work fo
 
 ---
 
-## 11. Full Updated RAG Architecture (v2)
+## 11. Unified Metadata Schema for All Ingested Content
+
+Every document from every source (wiki, reddit, blog, YouTube, TripAdvisor, etc.) is normalised to a **single JSON schema** before embedding. This makes retrieval filters consistent across collections:
+
+```json
+{
+  "source":          "reddit",
+  "source_name":     "r/solotravel",
+  "url":             "https://reddit.com/r/solotravel/...",
+  "destination":     "Kyoto",
+  "country":         "Japan",
+  "content":         "The bamboo forest is crowded, go to Gio-ji Temple instead...",
+  "published_date":  "2026-03-15",
+  "content_type":    "review",
+  "attraction_type": "nature",
+  "language":        "en",
+  "quality_score":   0.72,
+  "ingested_at":     "2026-06-29"
+}
+```
+
+**`content_type`** options: `"review"`, `"itinerary"`, `"tip"`, `"guide"`, `"news"`, `"vlog_transcript"`  
+**`attraction_type`** options: `"restaurant"`, `"museum"`, `"nature"`, `"transport"`, `"accommodation"`, `"activity"`, `"festival"`
+
+The `attraction_type` field enables **precision filtering** in the LLM prompt — e.g. for a food-focused trip, filter `attraction_type IN ("restaurant", "food_market")` before retrieval, cutting irrelevant museum content entirely.
+
+---
+
+## 12. Agentic Router (v1 Feature)
+
+For queries that require **real-time data** (not static blog posts), a router agent decides whether to hit the vector database or bypass it entirely:
+
+```
+User question: "Is the Louvre open right now?"
+        │
+        ▼
+    Agentic Router (lightweight classifier)
+        │
+        ├── Static knowledge query → vector DB retrieval → LLM generation
+        │   (e.g., "What are the best temples in Kyoto?")
+        │
+        └── Real-time query → bypass vector DB → live API call
+            (e.g., "Is the Louvre open?", "Are there flight delays to Tokyo today?")
+                    │
+                    ├── Opening hours  → Google Places API / OSM
+                    ├── Travel alerts  → X (Twitter) API / government advisories
+                    └── Flight status  → Aviation APIs
+```
+
+```python
+# Router implementation using Gemini Flash as classifier (< 50ms)
+ROUTER_PROMPT = """
+Classify this travel question as one of:
+- "static": answered from travel guides, blogs, or general knowledge
+- "realtime": requires current/live data (opening hours, delays, closures, prices today)
+
+Question: {question}
+Respond with ONLY the word "static" or "realtime".
+"""
+
+async def route_query(question: str) -> str:
+    resp = await gemini_flash(ROUTER_PROMPT.format(question=question))
+    return resp.strip().lower()  # "static" or "realtime"
+```
+
+**When to implement:** After v0 pipeline is stable and X/Twitter API is integrated (v1).
+
+---
+
+## 13. Full Updated RAG Architecture (v2)
 
 ```
 ═══════════════════════════════════════════════════════════════════
@@ -669,7 +851,7 @@ Over time the system **automatically learns** which itinerary structures work fo
 
 ---
 
-## 12. Updated Token Cost Comparison
+## 14. Updated Token Cost Comparison
 
 | Context component | Today | v2 (optimised RAG) |
 |---|---|---|
@@ -685,7 +867,7 @@ More context signal, fewer tokens, better output.
 
 ---
 
-## 13. Updated Implementation Roadmap
+## 15. Updated Implementation Roadmap
 
 | Priority | Task | Effort | Impact |
 |---|---|---|---|
@@ -695,15 +877,25 @@ More context signal, fewer tokens, better output.
 | P1 | Better chunking (500-char sentence boundaries) | 2 hrs | Higher retrieval precision |
 | P1 | OSM POI ingestor (Overpass API) | 4 hrs | Real coordinates; no hallucinated lat/lon |
 | P1 | `generated_itineraries` collection + store on generate | 4 hrs | Learning flywheel starts accumulating data immediately |
-| P2 | Travel blog scraper (Nomadic Matt, Planet D, Lonely Planet) | 1 day | itinerary_corpus seeded with authoritative content |
-| P2 | Reddit trip report scraper + extraction LLM chain | 1 day | High-volume community itineraries ingested daily |
+| P2 | Travel blog scraper — `feedparser` + BeautifulSoup (Nomadic Matt, Planet D, Lonely Planet) | 1 day | itinerary_corpus seeded with authoritative content |
+| P2 | Reddit PRAW ingester (replace direct JSON feed) — flair:trip-report filter, top 5 comments per post | 4 hrs | High-volume, properly tagged community itineraries |
+| P2 | YouTube `youtube-transcript-api` scraper (no API key) | 4 hrs | Video-native itinerary patterns, free |
+| P2 | Unified metadata schema normalisation across all scrapers | 3 hrs | Consistent filters; `attraction_type` precision retrieval |
 | P2 | Quality score background task (session signals) | 4 hrs | Enables persona-based re-ranking |
 | P2 | `itinerary_cache` + fallback retrieval logic | 4 hrs | API-down resilience using real cached itineraries |
 | P2 | Visa info collection | 3 hrs | Entry requirements surfaced in wizard |
-| P3 | YouTube description scraper (YouTube Data API v3) | 1 day | Video-native itinerary patterns |
+| P2 | Time-decay scoring in reranker | 2 hrs | Filters out stale 2019 content automatically |
+| P2 | Semantic chunking (by section headers / Reddit comments) | 3 hrs | Higher chunk precision, removes mid-sentence splits |
+| P2 | Hybrid BM25 + semantic search (`rank_bm25` library) | 4 hrs | Specific nouns (Tokyo vs Kyoto) handled correctly |
+| P3 | Wikimedia API ingestion (replace Wikivoyage scraper) | 2 hrs | More stable than HTML scraping |
+| P3 | TripAdvisor via Apify/Bright Data (v1 premium) | 2 days | Current ratings and reviews |
+| P3 | `yt-dlp` + Whisper STT for non-captioned YouTube videos (v1) | 1 day | Niche travel vlogger content |
+| P3 | Instagram/TikTok via Octolens or Prowlo (v1) | 2 days | Trending visual content, geotag-based retrieval |
+| P3 | X/Twitter real-time API for disruptions (v1) | 1 day | Immediate travel alerts, strikes, closures |
+| P3 | Agentic router (static vs real-time query classifier) | 1 day | Routes live queries to fresh APIs, static to vector DB |
 | P3 | HyDE query augmentation | 2 hrs | Better recall for niche personas |
 | P3 | Dual embedding per corpus doc (config + content) | 3 hrs | More precise retrieval |
-| P3 | Cross-encoder reranker | 1 day | Highest precision; Phase 2 feature |
+| P3 | Cohere Rerank / BGE-Reranker cross-encoder | 1 day | Highest precision; score top-50, return top-10 |
 
 ---
 
