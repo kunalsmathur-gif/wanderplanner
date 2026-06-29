@@ -254,6 +254,13 @@ export function LLMWizard() {
             }
           }
         }
+        // Coerce group.kids from plain integers to KidAge objects (LLM may emit [3, 6])
+        const g = merged.group as Record<string, unknown> | undefined
+        if (g && Array.isArray(g.kids)) {
+          g.kids = (g.kids as unknown[]).map((k) =>
+            typeof k === 'number' ? { age: k } : k
+          )
+        }
         // Track that the "anything else?" checkpoint has been shown
         // once all 6 fields are filled, so the LLM doesn't re-ask next turn
         // Use the same logic as the tab indicators so _checkpoint_asked is only set

@@ -1,14 +1,22 @@
 from __future__ import annotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class KidAge(BaseModel):
-    age: int = Field(ge=2, le=8)
+    age: int = Field(ge=2, le=17)
 
 
 class GroupComposition(BaseModel):
     infants: int = Field(default=0, ge=0)       # 0-2 years
-    kids: list[KidAge] = Field(default_factory=list)  # 2-8 years
+    kids: list[KidAge] = Field(default_factory=list)  # 2-17 years
+
+    @field_validator('kids', mode='before')
+    @classmethod
+    def coerce_kids(cls, v: object) -> object:
+        """Accept plain integers from LLM: [3, 6] → [{"age": 3}, {"age": 6}]."""
+        if isinstance(v, list):
+            return [{'age': k} if isinstance(k, int) else k for k in v]
+        return v
     adults: int = Field(default=1, ge=0)        # 8+ years
     seniors: int = Field(default=0, ge=0)       # 60+ years
     pets: int = Field(default=0, ge=0)

@@ -216,7 +216,7 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       "family of 4" -> adults: 2, kids: [8, 6] (estimate ages if not stated)
       "with parents" -> add seniors: 2 to current adults count
       "with kids" -> ask age(s) once if not given; estimate if implied
-    kids array = list of integer ages.
+    kids array = list of integer ages (plain integers, e.g. [3, 6]).
 
   Field 6 -- pace (JSON key: "pace")
     Travel intensity. Valid values: "relaxed" | "moderate" | "packed"

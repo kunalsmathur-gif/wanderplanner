@@ -163,7 +163,17 @@ export function streamItinerary(
         let detail = `HTTP ${res.status}`
         try {
           const body = await res.json()
-          detail = body?.detail ?? body?.message ?? detail
+          const raw = body?.detail ?? body?.message
+          if (raw !== undefined) {
+            if (typeof raw === 'string') {
+              detail = raw
+            } else if (Array.isArray(raw)) {
+              // FastAPI validation errors: [{loc, msg, type}, ...]
+              detail = raw.map((e: { msg?: string }) => e.msg ?? JSON.stringify(e)).join('; ')
+            } else {
+              detail = JSON.stringify(raw)
+            }
+          }
         } catch { /* ignore parse errors */ }
         onError('HTTP_ERROR', detail, res.status >= 500)
         return
