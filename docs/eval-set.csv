@@ -1,0 +1,157 @@
+How to Use This Document,,Input,Exact input to send,,,,
+How to Use This Document,,Expected output,What a correct response looks like,,,,
+How to Use This Document,,Pass criteria,Measurable / binary assertion,,,,
+How to Use This Document,,Failure signal,What a bad response looks like,,,,
+How to Use This Document,,Priority,P0 = ship-blocker · P1 = high · P2 = nice-to-have,,,,
+Section,Subsection,ID,Input message,partial_config sent,Expected config_patch,Pass criteria,Priority
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1A — Field Extraction,ANYA-W-001,"""I want to go to Bali for 7 days""",{},"{destination: {city:""Bali"",...}, dates: {duration_days: 7}}",Both fields extracted in one turn,P0
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1A — Field Extraction,ANYA-W-002,"""yaar 5 din ki Bali trip, budget 1 lakh types""",{},"{destination: {city:""Bali"",...}, dates:{duration_days:5}, budget:{amount:100000, currency:""INR""}}","Hinglish parsed; budget parsed from ""1 lakh"" correctly",P0
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1A — Field Extraction,ANYA-W-003,"""honeymoon trip""",{},"{purpose: ""honeymoon""}",Purpose extracted,P0
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1A — Field Extraction,ANYA-W-004,"""2 adults, 1 kid aged 4 and my parents""",{},"{group: {adults:2, kids:[4], seniors:2}}","All 4 group sub-fields extracted; kids is [4] not [{""age"":4}] (LLM format)",P0
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1A — Field Extraction,ANYA-W-005,"""budget trip, around 25-30k""",{},"{budget: {amount: ~27500, currency:""INR""}}",Amount in reasonable range (25000–30000),P1
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1A — Field Extraction,ANYA-W-006,"""4 lakh budget""",{},"{budget: {amount: 400000, currency:""INR""}}","""4 lakh"" → 400000, not 4000 or 40000",P0
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1A — Field Extraction,ANYA-W-007,"""I want a relaxed trip""","{purpose:""leisure""}","{pace: ""relaxed""}",Pace extracted; existing purpose not overwritten,P1
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1A — Field Extraction,ANYA-W-008,"""packed itinerary, lots to do""",{},"{pace: ""packed""}",Pace = packed,P1
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1A — Field Extraction,ANYA-W-009,"""Sri Lanka""",{},"{destination_mode: ""country"", destination_country: ""Sri Lanka""} or cities follow-up",Either extracts country mode OR asks which cities,P0
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1A — Field Extraction,ANYA-W-010,"""exploring Southeast Asia""",{},"{destination_mode: ""exploring""}","Mode = exploring, NOT fixed destination",P1
+Section,Subsection,ID,Test,Expected,Pass criteria,Priority,
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1B — Field Validation & JSON Schema,ANYA-W-011,Response JSON must parse,Call /api/wizard-chat with any valid input,json.loads(response.text) succeeds,"reply, chips, config_patch, ready_to_generate, summary all present",P0
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1B — Field Validation & JSON Schema,ANYA-W-012,config_patch never empty when user gave info,"Send ""Japan 10 days""",config_patch is non-empty {},len(config_patch) > 0,P0
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1B — Field Validation & JSON Schema,ANYA-W-013,ready_to_generate only true when all 6 fields present,Send with partial_config missing budget,ready_to_generate: false,Must be false,P0
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1B — Field Validation & JSON Schema,ANYA-W-014,ready_to_generate true when all 6 fields present,"Send partial_config with purpose, destination (fixed city), dates, budget, group, pace",ready_to_generate: true,Must be true,P0
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1B — Field Validation & JSON Schema,ANYA-W-015,Response under 200 words,Any single-turn message,reply word count ≤ 200,len(reply.split()) <= 200,P1
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1B — Field Validation & JSON Schema,ANYA-W-016,"chips is a JSON array, never {...} inline text",Any pace/purpose question,"chips is list, not embedded in reply","isinstance(chips, list)",P0
+Section,Subsection,ID,Input,Forbidden in reply,Pass criteria,Priority,
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1C — Thought-Process & Tone Safety,ANYA-W-017,Any input,"config_patch, destination_mode, missing field, partial_config, required field, slot",None of these strings appear in reply,P0,
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1C — Thought-Process & Tone Safety,ANYA-W-018,Any input,"Internal JSON fragments ({""reply"":, ""config_patch"":)",No raw JSON visible in reply,P0,
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1C — Thought-Process & Tone Safety,ANYA-W-019,Any input,thought_process key,"""thought_process"" not present in response object",P0,
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1C — Thought-Process & Tone Safety,ANYA-W-020,"""What is the capital of France?""",Off-topic answer,Anya politely redirects to travel planning,Reply mentions travel or redirects,P1
+Section,Subsection,ID,Scenario,Expected chips,Pass criteria,Priority,
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1D — Chips,ANYA-W-021,"First turn, purpose unknown","[""Leisure 🏖️"", ""Adventure 🏔️"", ""Honeymoon 💑"", ""Family 👨‍👩‍👧"", ""Business 💼"", ""Solo 🎒""] (any subset)","chips array non-empty, human-readable labels",P0,
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1D — Chips,ANYA-W-022,Pace question asked,"[""Relaxed 🧘"", ""Moderate 🚶"", ""Packed 🏃""] (or similar)",chips array has 3 pace options,P0,
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1D — Chips,ANYA-W-023,"Stage 2 checkpoint (""anything else?"")","Contextual optional add-ons (themes, dietary, etc.)","chips present, not purpose/pace chips again",P1,
+Section,Subsection,ID,Scenario,partial_config,Expected,Priority,
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1E — Stage 2 → Stage 3 Flow,ANYA-W-024,All 6 fields filled → checkpoint message,"All 6 required fields present, _checkpoint_asked absent","Anya sends a trip summary and asks ""Shall I generate?""",P0,
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1E — Stage 2 → Stage 3 Flow,ANYA-W-025,User confirms after checkpoint,"All 6 fields + _checkpoint_asked: true, user says ""yes, go ahead""",ready_to_generate: true in response,P0,
+Section 1 — Anya Wizard Chatbot (`POST /api/wizard-chat`),1E — Stage 2 → Stage 3 Flow,ANYA-W-026,summary field populated at ready state,"All 6 filled, _checkpoint_asked: true, user confirms",summary is a human-readable trip description,P0,
+Section,Subsection,ID,Test scenario,Steps,Expected,Pass criteria,Priority
+Section 2 — Anya Voicebot (Browser Web Speech API),2A — Speech-to-Text (Input),ANYA-V-001,Basic STT trigger,Click mic button in wizard,"Mic icon turns active; input placeholder changes to ""Listening…""; text input is disabled",UI feedback updates immediately,P0
+Section 2 — Anya Voicebot (Browser Web Speech API),2A — Speech-to-Text (Input),ANYA-V-002,Spoken message captured,"Say ""I want to go to Tokyo for 10 days"" clearly",Transcript appears in chat as user message,"Transcript contains ""Tokyo"" and ""10 days"" (or close)",P0
+Section 2 — Anya Voicebot (Browser Web Speech API),2A — Speech-to-Text (Input),ANYA-V-003,Auto-submit on silence,"Speak naturally, then pause 2–3 seconds",Message auto-sent after silence (no manual Enter needed),Chat shows user message and Anya responds,P0
+Section 2 — Anya Voicebot (Browser Web Speech API),2A — Speech-to-Text (Input),ANYA-V-004,Hinglish STT,"Say ""yaar Bali trip chahiye 7 din ka""",Transcript in chat approximately matches spoken words,"Key words (Bali, 7, din) captured",P1
+Section 2 — Anya Voicebot (Browser Web Speech API),2A — Speech-to-Text (Input),ANYA-V-005,STT stop on X click,"Activate voice, then click X (close)",speechSynthesis.cancel() called; mic stops; no orphan recognition,No crash; wizard closes cleanly,P1
+Section 2 — Anya Voicebot (Browser Web Speech API),2A — Speech-to-Text (Input),ANYA-V-006,Mic unavailable (deny permission),"Block microphone in browser, click mic button",Graceful error message displayed,No silent failure; UI shows feedback,P1
+Section 2 — Anya Voicebot (Browser Web Speech API),2A — Speech-to-Text (Input),ANYA-V-007,STT in non-Chrome browser (Firefox),"Open in Firefox, click mic",webkitSpeechRecognition fallback used or feature disabled gracefully,No JS crash in console,P2
+Section,Subsection,ID,Test scenario,Steps,Expected,Pass criteria,Priority
+Section 2 — Anya Voicebot (Browser Web Speech API),2B — Text-to-Speech (Output),ANYA-V-008,TTS on Anya response,"Enable voice mode, send any message",Anya's reply is read aloud after appearing in chat,Speech starts within 1s of reply appearing,P0
+Section 2 — Anya Voicebot (Browser Web Speech API),2B — Text-to-Speech (Output),ANYA-V-009,en-IN female voice preferred,"Enable voice, send message on a device with en-IN voices",Voice used is Indian-English female if available,"Voice name contains ""female"" or lang is en-IN",P1
+Section 2 — Anya Voicebot (Browser Web Speech API),2B — Text-to-Speech (Output),ANYA-V-010,Long reply truncation,Trigger a verbose Anya reply (>100 words),TTS speaks the reply fully (or at minimum the first sentence),No speech synthesis crash; text still visible,P1
+Section 2 — Anya Voicebot (Browser Web Speech API),2B — Text-to-Speech (Output),ANYA-V-011,TTS cancelled on X close,"While Anya is speaking, click close (X) button",Speech stops immediately,speechSynthesis.cancel() invoked; silence,P0
+Section 2 — Anya Voicebot (Browser Web Speech API),2B — Text-to-Speech (Output),ANYA-V-012,No double-speak,Send a second message while Anya is still speaking,Previous speech cancelled before new speech starts,Only one voice plays at a time,P1
+Section 2 — Anya Voicebot (Browser Web Speech API),2B — Text-to-Speech (Output),ANYA-V-013,TTS disabled in text mode,Voice mode off; send a message,No speech synthesis occurs,Silent operation when voice mode is off,P0
+Section,Subsection,ID,Input config,Expected output,Pass criteria,Priority,
+Section 3 — Itinerary Generator & Mini LLMs,3A — Itinerary Generator (`POST /api/generate-itinerary`),ITN-001,"5 days Phuket, 2 adults, ₹3L budget, relaxed, leisure",5 days × 3–4 items each,len(days) == 5; each day has 3–4 items,P0,
+Section 3 — Itinerary Generator & Mini LLMs,3A — Itinerary Generator (`POST /api/generate-itinerary`),ITN-002,"3 days Tokyo, 1 adult, packed pace",3 days × 5–6 items each,len(days) == 3; each day has 5–6 items,P0,
+Section 3 — Itinerary Generator & Mini LLMs,3A — Itinerary Generator (`POST /api/generate-itinerary`),ITN-003,Group with kid aged 3 (has_young_kids),"No bars, nightclubs, extreme sports","No item tags contain nightclub, bar, extreme",P0,
+Section 3 — Itinerary Generator & Mini LLMs,3A — Itinerary Generator (`POST /api/generate-itinerary`),ITN-004,digital_nomad persona,At least 1 Work Block per day,Each day has an item with work_block tag,P1,
+Section 3 — Itinerary Generator & Mini LLMs,3A — Itinerary Generator (`POST /api/generate-itinerary`),ITN-005,sports_fitness persona,At least 1 Training Window per day,Each day has an item with training_window tag,P1,
+Section 3 — Itinerary Generator & Mini LLMs,3A — Itinerary Generator (`POST /api/generate-itinerary`),ITN-006,pet_parent persona,All venues dog-friendly,All items have pet_friendly or dog_friendly tag,P1,
+Section 3 — Itinerary Generator & Mini LLMs,3A — Itinerary Generator (`POST /api/generate-itinerary`),ITN-007,"Budget ₹80,000, 2 adults, 5 days Bali","expense_breakdown.total_inr ≤ ₹80,000 or LLM flags over-budget",Total does not wildly exceed stated budget (max 20% over),P0,
+Section 3 — Itinerary Generator & Mini LLMs,3A — Itinerary Generator (`POST /api/generate-itinerary`),ITN-008,"Multi-hop: destination=Paris, hops=[Amsterdam]",Days distributed across both cities,Day themes mention both Paris and Amsterdam,P1,
+Section 3 — Itinerary Generator & Mini LLMs,3A — Itinerary Generator (`POST /api/generate-itinerary`),ITN-009,"flexible: true, duration_days: 7",7 days generated,len(days) == 7,P0,
+Section 3 — Itinerary Generator & Mini LLMs,3A — Itinerary Generator (`POST /api/generate-itinerary`),ITN-010,Response JSON schema,Any valid config,All required fields present per ItineraryResponse model,ItineraryResponse(**response) parses without error,P0
+Section 3 — Itinerary Generator & Mini LLMs,3A — Itinerary Generator (`POST /api/generate-itinerary`),ITN-011,time_start / time_end format,Any config,All times are HH:MM format,"re.match(r'^\d{2}:\d{2}$', time) for all items",P1
+Section 3 — Itinerary Generator & Mini LLMs,3A — Itinerary Generator (`POST /api/generate-itinerary`),ITN-012,location.lat / location.lon plausible,Tokyo trip,"Lat ≈ 35.x, Lon ≈ 139.x",Coordinates within country bounding box,P1
+Section 3 — Itinerary Generator & Mini LLMs,3A — Itinerary Generator (`POST /api/generate-itinerary`),ITN-013,expense_breakdown all 8 fields present,Any config,"All keys present: flights, visa, accommodation, activities, food, local_transport, shopping, emergency_buffer",No missing keys,P0
+Section 3 — Itinerary Generator & Mini LLMs,3A — Itinerary Generator (`POST /api/generate-itinerary`),ITN-014,alignment_score range,Any item,Each item's alignment_score between 0 and 100,0 <= score <= 100,P1
+Section 3 — Itinerary Generator & Mini LLMs,3A — Itinerary Generator (`POST /api/generate-itinerary`),ITN-015,No raw JSON or markdown in item descriptions,Any config,description field is plain prose,"No {, }, ** or # in descriptions",P0
+Section,Subsection,ID,Input,Expected,Pass criteria,Priority,
+Section 3 — Itinerary Generator & Mini LLMs,3B — City Recommender Mini-LLM (`POST /api/recommend-cities`),CITIES-001,"country=Japan, budget ₹1.5L, 5 days, leisure","4–6 cities including Tokyo, Kyoto, Osaka",len(cities) between 4 and 6; at least 2 major Japanese cities present,P0,
+Section 3 — Itinerary Generator & Mini LLMs,3B — City Recommender Mini-LLM (`POST /api/recommend-cities`),CITIES-002,"country=Sri Lanka, group with kids, relaxed","Family-friendly cities (Colombo, Galle, Kandy)",All city reason fields mention family or kids-friendly,P1,
+Section 3 — Itinerary Generator & Mini LLMs,3B — City Recommender Mini-LLM (`POST /api/recommend-cities`),CITIES-003,"country=Thailand, budget ₹50,000 total (budget tier)","More affordable cities (Chiang Mai, Pai) over expensive ones",reason mentions budget or affordable,P1,
+Section 3 — Itinerary Generator & Mini LLMs,3B — City Recommender Mini-LLM (`POST /api/recommend-cities`),CITIES-004,Response schema,Any valid input,RecommendCitiesResponse(**response) parses,"All cities have name, country, reason, lat, lon",P0
+Section 3 — Itinerary Generator & Mini LLMs,3B — City Recommender Mini-LLM (`POST /api/recommend-cities`),CITIES-005,lat/lon plausibility,Japan,"All city coordinates within Japan bounding box (24–46°N, 123–148°E)","No (0,0) or out-of-range coordinates",P1
+Section,Subsection,ID,Scenario,Input,Expected score range,Pass criteria,Priority
+Section 3 — Itinerary Generator & Mini LLMs,3C — Alignment Scoring (`scoring.py`),SCORE-001,Perfect persona match,"Item tags = [""work_block"",""wifi""], persona = [""digital_nomad""]",≥ 85,score >= 85,P1
+Section 3 — Itinerary Generator & Mini LLMs,3C — Alignment Scoring (`scoring.py`),SCORE-002,No persona set,"No personas, neutral item",~85 (neutral default),75 <= score <= 95,P1
+Section 3 — Itinerary Generator & Mini LLMs,3C — Alignment Scoring (`scoring.py`),SCORE-003,Negative keyword penalty,"Description contains ""avoid scam""",Lower score than same item without negative keywords,score_with_penalty < score_without,P1
+Section 3 — Itinerary Generator & Mini LLMs,3C — Alignment Scoring (`scoring.py`),SCORE-004,Score bounds,Any item,0 ≤ score ≤ 100,0 <= score <= 100,P0
+Section,Subsection,ID,Test,Expected,Pass criteria,Priority,
+Section 4 — RAG System: Embeddings & Vectorised Search,4A — Embedding Service (`core/embeddings.py`),RAG-001,Single text embed,"embed([""Bali beach""])","Returns list of 1 vector, dim = 384",len(result) == 1 and len(result[0]) == 384,P0
+Section 4 — RAG System: Embeddings & Vectorised Search,4A — Embedding Service (`core/embeddings.py`),RAG-002,Batch embed,"embed([""Tokyo temples"", ""Kyoto food"", ""Osaka nightlife""])","Returns 3 vectors, all dim 384",len(result) == 3,P0
+Section 4 — RAG System: Embeddings & Vectorised Search,4A — Embedding Service (`core/embeddings.py`),RAG-003,Empty input,embed([]),Returns [],No error; empty list,P1
+Section 4 — RAG System: Embeddings & Vectorised Search,4A — Embedding Service (`core/embeddings.py`),RAG-004,Semantic similarity,"embed([""beach holiday""]) vs embed([""seaside vacation""])",Cosine similarity > 0.7,cosine_sim > 0.7,P1
+Section 4 — RAG System: Embeddings & Vectorised Search,4A — Embedding Service (`core/embeddings.py`),RAG-005,Semantic dissimilarity,"embed([""beach holiday""]) vs embed([""business conference""])",Cosine similarity < 0.4,cosine_sim < 0.4,P1
+Section 4 — RAG System: Embeddings & Vectorised Search,4A — Embedding Service (`core/embeddings.py`),RAG-006,Deterministic output,"embed([""Tokyo""]) called twice",Both calls return identical vectors,result_a == result_b,P1
+Section,Subsection,ID,Test,Expected,Pass criteria,Priority,
+Section 4 — RAG System: Embeddings & Vectorised Search,4B — Qdrant Collections (`core/qdrant.py`),RAG-007,Collections created on startup,Call get_qdrant() on fresh in-memory instance,"Collections wiki, reddit, osm_pois all exist",All 3 collection names present,P0
+Section 4 — RAG System: Embeddings & Vectorised Search,4B — Qdrant Collections (`core/qdrant.py`),RAG-008,Collection vector dimension,Inspect created collections,Each has vectors_config.size == 384,Correct dim — avoids insert errors,P0
+Section 4 — RAG System: Embeddings & Vectorised Search,4B — Qdrant Collections (`core/qdrant.py`),RAG-009,Insert + search round-trip,"Insert a test document with embed([""Bali sunset""]) vector; search for ""Bali evening views""",Top result is the inserted document,hits[0].id == inserted_id,P0
+Section 4 — RAG System: Embeddings & Vectorised Search,4B — Qdrant Collections (`core/qdrant.py`),RAG-010,Score threshold respected,Search with score_threshold=0.7 against unrelated content,Returns 0 results,len(hits) == 0,P1
+Section,Subsection,ID,Input,Expected,Pass criteria,Priority,
+Section 4 — RAG System: Embeddings & Vectorised Search,4C — Reddit Highlights Search (`GET /api/reddit-highlights`),RAG-011,destination=Bali&limit=5 (empty Qdrant),Returns 0 posts or mock posts,No crash; posts is a list,"isinstance(posts, list)",P0
+Section 4 — RAG System: Embeddings & Vectorised Search,4C — Reddit Highlights Search (`GET /api/reddit-highlights`),RAG-012,destination=Bali&limit=5 (seeded Qdrant),Top 5 posts about Bali travel,"All posts have title, text_preview, post_url, subreddit, score",Schema validates,P0
+Section 4 — RAG System: Embeddings & Vectorised Search,4C — Reddit Highlights Search (`GET /api/reddit-highlights`),RAG-013,limit=1,Exactly 1 post,len(posts) == 1,Limit respected,P1
+Section 4 — RAG System: Embeddings & Vectorised Search,4C — Reddit Highlights Search (`GET /api/reddit-highlights`),RAG-014,Deduplication,Seed same post twice; query,Only 1 copy returned,len({p.post_url for p in posts}) == len(posts),P1
+Section,Subsection,ID,Test,Expected,Pass criteria,Priority,
+Section 4 — RAG System: Embeddings & Vectorised Search,4D — Context Retrieval for Itinerary (`services/search.py`),RAG-015,"retrieve_context(""Phuket"", ...) with empty Qdrant",Returns empty string or default context stub,No crash; itinerary still generates,Itinerary endpoint returns 200,P0
+Section 4 — RAG System: Embeddings & Vectorised Search,4D — Context Retrieval for Itinerary (`services/search.py`),RAG-016,Retrieved context is injected into itinerary prompt,"Seed wiki content for ""Bali""; generate itinerary for Bali",Itinerary mentions at least 1 seeded landmark,Manual spot check,P2
+Section,Subsection,ID,Query,Expected,Pass criteria,Priority,
+Section 5 — External API Calls,5A — Nominatim Geocoding (`GET /api/geocode`),EXT-001,q=Tokyo,"{lat: ~35.68, lon: ~139.69, country_code: ""jp""}",Lat/lon within Japan bounding box,P0,
+Section 5 — External API Calls,5A — Nominatim Geocoding (`GET /api/geocode`),EXT-002,q=Sri Lanka,"{is_country: true, country_code: ""lk""}",is_country == true,P0,
+Section 5 — External API Calls,5A — Nominatim Geocoding (`GET /api/geocode`),EXT-003,q=Colombo&countrycodes=lk,City in Sri Lanka,"country_code == ""lk""",P1,
+Section 5 — External API Calls,5A — Nominatim Geocoding (`GET /api/geocode`),EXT-004,q=xyzzy_nonexistent_place,404 or empty result,No crash; graceful error response,P1,
+Section 5 — External API Calls,5A — Nominatim Geocoding (`GET /api/geocode`),EXT-005,Rate limiting (1 req/sec),Two rapid sequential calls,Both succeed; no 429 error,Nominatim ToS compliant,P0
+Section 5 — External API Calls,5A — Nominatim Geocoding (`GET /api/geocode`),EXT-006,display_name populated,q=Paris,display_name is non-empty string,len(display_name) > 0,P1
+Section,Subsection,ID,Input,Expected,Pass criteria,Priority,
+Section 5 — External API Calls,5B — Travel Tips (`GET /api/travel-tips`),EXT-007,destination=Kyoto&limit=5,5 tips about Kyoto,"len(tips) == 5; each has title, text_preview, source, post_url",P0,
+Section 5 — External API Calls,5B — Travel Tips (`GET /api/travel-tips`),EXT-008,source field values,Any destination,"Each tip's source is one of: r/travel, r/solotravel, TripAdvisor, Travel Blog, Lonely Planet, Nomadic Matt",source in ALLOWED_SOURCES,P1
+Section 5 — External API Calls,5B — Travel Tips (`GET /api/travel-tips`),EXT-009,Cache hit on second call,Call same destination twice,Second call faster (< 50ms) and returns same results,Response is cached,P1
+Section 5 — External API Calls,5B — Travel Tips (`GET /api/travel-tips`),EXT-010,text_preview length,Any tip,≤ 250 characters,len(text_preview) <= 250,P1
+Section,Subsection,ID,Test,Expected,Pass criteria,Priority,
+Section 5 — External API Calls,5C — Gemini API (wizard + itinerary + refine),EXT-011,API key missing,Start API with blank GEMINI_API_KEY; call /api/wizard-chat,Mock fallback returns valid response; no 500 crash,HTTP 200; mock reply served,P0
+Section 5 — External API Calls,5C — Gemini API (wizard + itinerary + refine),EXT-012,Gemini 503 transient error,Simulate 503 response (mock or block key temporarily),3 retries attempted with backoff; falls back to smart mock,No 500 to frontend; valid mock reply,P0
+Section 5 — External API Calls,5C — Gemini API (wizard + itinerary + refine),EXT-013,Response within timeout,Any wizard message,Response within llm_timeout_seconds (default 30s),Latency ≤ 30s,P0
+Section 5 — External API Calls,5C — Gemini API (wizard + itinerary + refine),EXT-014,Token limit respected,Send wizard message designed to trigger verbose response,reply field ≤ 200 words; JSON not truncated,json.loads() succeeds; reply under limit,P0
+Section 5 — External API Calls,5C — Gemini API (wizard + itinerary + refine),EXT-015,No raw JSON leak in reply,Any wizard message,"reply does not start with { or contain ""config_patch"":",Leak detection regex fails,P0
+Section,Subsection,ID,Test,Expected,Pass criteria,Priority,
+Section 5 — External API Calls,"5D — Deep-Link Integrity (Frontend, Manual)",EXT-016,Skyscanner link opens,Click any flight deep-link in itinerary,Skyscanner opens with origin + destination pre-filled,URL contains origin and destination params,P1
+Section 5 — External API Calls,"5D — Deep-Link Integrity (Frontend, Manual)",EXT-017,Booking.com link opens,Click accommodation link,Booking.com opens with destination + dates,URL contains city slug and checkin/checkout,P1
+Section 5 — External API Calls,"5D — Deep-Link Integrity (Frontend, Manual)",EXT-018,Viator link opens,Click activity booking link,Viator opens on correct destination page,No 404 on link destination,P1
+Section 5 — External API Calls,"5D — Deep-Link Integrity (Frontend, Manual)",EXT-019,YouTube search link,Click YouTube icon on activity,YouTube search opens with youtube_search_query,URL contains encoded search query,P1
+Section,Subsection,Model,Input (per 1M tokens),Output (per 1M tokens),Threshold,,
+Section 6 — Price Metering for Paid APIs,6A — Gemini API Cost Tracking,Gemini 2.0 Flash,$0.075,$0.30,—,,
+Section 6 — Price Metering for Paid APIs,6A — Gemini API Cost Tracking,Gemini 2.5 Flash,$0.15,$0.60,≤200k context,,
+Section 6 — Price Metering for Paid APIs,6A — Gemini API Cost Tracking,Gemini 2.5 Flash (thinking),$3.50,$10.50,—,,
+Section,Subsection,ID,Scenario,Tokens to measure,Budget threshold,Priority,
+Section 6 — Price Metering for Paid APIs,Cost Benchmarks — Measure & Alert,COST-001,Single wizard turn (one user message),Input: system prompt (~4500 chars) + history + message; Output: reply JSON,Input ≤ 1800 tokens; Output ≤ 800 tokens,P0,
+Section 6 — Price Metering for Paid APIs,Cost Benchmarks — Measure & Alert,COST-002,Full wizard conversation (6 turns to ready_to_generate),Sum of all 6 turns,"Total input ≤ 15,000 tokens; Total output ≤ 4,800 tokens",P0,
+Section 6 — Price Metering for Paid APIs,Cost Benchmarks — Measure & Alert,COST-003,Itinerary generation (5-day trip),Full prompt + output,"Input ≤ 3,000 tokens; Output ≤ 8,000 tokens",P0,
+Section 6 — Price Metering for Paid APIs,Cost Benchmarks — Measure & Alert,COST-004,Itinerary generation (10-day multi-hop),Full prompt + output,"Input ≤ 4,000 tokens; Output ≤ 14,000 tokens",P1,
+Section 6 — Price Metering for Paid APIs,Cost Benchmarks — Measure & Alert,COST-005,City recommender,Prompt + output,Input ≤ 800 tokens; Output ≤ 600 tokens,P1,
+Section 6 — Price Metering for Paid APIs,Cost Benchmarks — Measure & Alert,COST-006,Post-gen chat refine (single turn),System + history + message,"Input ≤ 2,000 tokens; Output ≤ 500 tokens",P1,
+Section 6 — Price Metering for Paid APIs,Cost Benchmarks — Measure & Alert,COST-007,Travel tips (LLM path),Prompt + output,"Input ≤ 600 tokens; Output ≤ 1,000 tokens",P2,
+Section,Subsection,Flow,Gemini 2.0 Flash est.,Gemini 2.5 Flash est.,,,
+Section 6 — Price Metering for Paid APIs,Cost Per Session Estimate,Full wizard (6 turns),~$0.003,~$0.007,,,
+Section 6 — Price Metering for Paid APIs,Cost Per Session Estimate,Itinerary generation (5 days),~$0.003,~$0.006,,,
+Section 6 — Price Metering for Paid APIs,Cost Per Session Estimate,5 post-gen chat turns,~$0.001,~$0.002,,,
+Section 6 — Price Metering for Paid APIs,Cost Per Session Estimate,Total per user session,~$0.007,~$0.015,,,
+Section,Subsection,ID,Test,Method,Expected,Pass criteria,Priority
+Section 6 — Price Metering for Paid APIs,Metering Tests,COST-008,Log token usage per API call,Add usage_metadata logging to wizard chain,"Each Gemini call logs prompt_token_count, candidates_token_count",Log line emitted on every call,P0
+Section 6 — Price Metering for Paid APIs,Metering Tests,COST-009,Verbose response regression,Send a message that previously caused >1500 token output,Output stays ≤ 800 tokens,candidates_token_count <= 800,P0
+Section 6 — Price Metering for Paid APIs,Metering Tests,COST-010,System prompt size stable,Print len(WIZARD_SYSTEM_PROMPT) before f-string substitution,"≤ 6,000 characters",Regression alert if prompt grows >10%,P1
+Section 6 — Price Metering for Paid APIs,Metering Tests,COST-011,"No ""thinking"" model accidentally used",Check gemini_model setting in production env,Value is gemini-2.0-flash or gemini-2.5-flash (not -thinking variant),"""thinking"" not in settings.gemini_model",P0
+Section 6 — Price Metering for Paid APIs,Metering Tests,COST-012,Retry cost multiplication,Simulate 2 retries before success,Total tokens ≤ 3× single call,Retries don't multiply unboundedly,P1
+Section,Subsection,Model,Input,Output,,,
+Section 6 — Price Metering for Paid APIs,6B — Groq API (fallback LLM provider),Llama 3.1 70B Versatile,$0.59/1M tokens,$0.79/1M tokens,,,
+Section,Subsection,ID,Test,Expected,Priority,,
+Section 6 — Price Metering for Paid APIs,6B — Groq API (fallback LLM provider),COST-013,Groq used for itinerary (llm_provider=groq),Response from Llama 3.1 70B,Itinerary JSON valid; json.loads() succeeds,P1,
+Section 6 — Price Metering for Paid APIs,6B — Groq API (fallback LLM provider),COST-014,Groq token usage logging,Add usage logging to itinerary chain,Logs prompt + completion token counts,P1,
+Section 6 — Price Metering for Paid APIs,6B — Groq API (fallback LLM provider),COST-015,Groq rate limit handling,Exceed free tier (30 req/min),429 handled gracefully; mock fallback or retry,P1,
+Section,Subsection,ID,Test,Expected,Pass criteria,Priority,
+Section 6 — Price Metering for Paid APIs,"6C — Nominatim (Free, Fair-Use Policy)",COST-016,User-Agent set,Inspect outgoing Nominatim request headers,User-Agent: wanderplan/1.0,"user_agent == ""wanderplan/1.0""",P0
+Section 6 — Price Metering for Paid APIs,"6C — Nominatim (Free, Fair-Use Policy)",COST-017,Rate limiter active,3 rapid geocode calls,Min 1s between each outgoing HTTP call,No 403/429 from Nominatim,P0
+Section 6 — Price Metering for Paid APIs,"6C — Nominatim (Free, Fair-Use Policy)",COST-018,No excessive calls,User types in wizard destination input,"Geocode only on submit/confirm, NOT on every keystroke",≤ 1 geocode call per user action,P1
+Section,Subsection,ID,Test,Expected,Pass criteria,Priority,
+Section 6 — Price Metering for Paid APIs,"6D — OpenStreetMap / Wikivoyage (Free, Attribution Required)",COST-019,Attribution shown on map,Open full-screen map in itinerary,"""© OpenStreetMap contributors"" visible",Attribution text visible in map UI,P0
+Section 6 — Price Metering for Paid APIs,"6D — OpenStreetMap / Wikivoyage (Free, Attribution Required)",COST-020,Wikivoyage attribution,Travel tips sourced from Wikivoyage,Source credited in tip UI,Source label shown,P1
