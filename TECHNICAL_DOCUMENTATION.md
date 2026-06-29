@@ -1,7 +1,7 @@
 # WanderPlan — Technical Documentation
 
-**Version:** 7.0 (LLM Anya Wizard · Anya Prompt v5 · JSON history replay · Wizard end-to-end fix)  
-**Last Updated:** June 28, 2026  
+**Version:** 7.1 (RAG v5.2 — Multi-query RRF · Time-decay · Paragraph chunking · Gemini RAG wired)  
+**Last Updated:** June 29, 2026  
 **Status:** Production-ready MVP
 
 ---
@@ -308,7 +308,8 @@ apps/api/
 │   ├── best_time.py          — GET /api/best-time/{city}
 │   └── ...
 ├── services/
-│   ├── search.py             — semantic_search() + retrieve_context() (Qdrant RAG)
+│   ├── search.py             — semantic_search() + retrieve_context() (3-query RRF) + summarise_context()
+│   │                           _rrf_merge() · _time_decay_score() · Jaccard dedup · 600-token budget
 │   └── geocode.py            — Nominatim proxy (1 req/s rate limit, LRU cache, is_country)
 ├── scrapers/
 │   ├── reddit.py             — Reddit JSON scraper → Qdrant ingestion
@@ -475,64 +476,86 @@ All LLM tasks use Gemini 2.5 Flash with task-specific temperature settings:
 
 ### RAG Architecture (Retrieval-Augmented Generation)
 
-WanderPlan uses RAG to inject real traveller knowledge from Reddit and Wikivoyage into Gemini's itinerary generation prompt.
+WanderPlan uses RAG to inject real traveller knowledge from Reddit and Wikivoyage into Gemini's itinerary generation prompt. As of v5.2, RAG is fully wired into all providers including the primary Gemini path.
 
 #### How It Works
 
 ```
 1. INGESTION (startup + every 6h)
-   ┌─────────────────────────────────────────────────┐
-   │ scrapers/reddit.py                              │
-   │   → Reddit JSON API (r/solotravel, r/travel...) │
-   │   → chunk posts/comments by destination         │
-   │   → embed via all-MiniLM-L6-v2 (384 dims)      │
-   │   → upsert into Qdrant 'reddit' collection      │
-   └─────────────────────────────────────────────────┘
-   ┌─────────────────────────────────────────────────┐
-   │ scrapers/wikivoyage.py                          │
-   │   → scrape Wikivoyage sections (See, Eat, etc.) │
-   │   → embed chunks                               │
-   │   → upsert into Qdrant 'wiki' collection        │
-   └─────────────────────────────────────────────────┘
+   ┌──────────────────────────────────────────────────────┐
+   │ scrapers/wikivoyage.py                               │
+   │   → Scrape sections (See, Eat, Do, Drink, Sleep...)  │
+   │   → _sentence_boundary_chunks(): ~500 chars/chunk    │
+   │      (splits at sentence boundaries, not char count) │
+   │   → Unique ID: md5(url + section + text[:50])        │
+   │   → embed via all-MiniLM-L6-v2 (384 dims)           │
+   │   → upsert into Qdrant 'wiki' collection             │
+   └──────────────────────────────────────────────────────┘
+   ┌──────────────────────────────────────────────────────┐
+   │ scrapers/reddit.py                                   │
+   │   → Reddit JSON API (r/travel, r/solotravel, ...)    │
+   │   → _extract_destination(): regex against 200+ dests │
+   │   → _chunk_reddit_post(): paragraph-level chunks     │
+   │      each chunk = title prefix + paragraph (≥80 chars)│
+   │   → stores published_date from created_utc           │
+   │   → upsert into Qdrant 'reddit' collection           │
+   └──────────────────────────────────────────────────────┘
 
 2. RETRIEVAL (at itinerary generation time)
    services/search.py → retrieve_context(trip_config)
    │
-   ├─ Build query: "{destination} {themes} travel tips"
-   │    e.g. "Bali beach culture travel tips highlights activities food"
+   ├─ Build 3 query variants:
+   │    Q1: "{dest} travel {personas} highlights activities food"
+   │    Q2: "things to do in {dest} {purpose} {pace} hidden gems"
+   │    Q3: "{dest} best restaurants sightseeing transport safety"
    │
-   ├─ embed(query) → 384-dim vector
+   ├─ asyncio.gather() — run all 3 in parallel (limit=15 each)
    │
-   ├─ Qdrant cosine search (filtered by destination):
-   │    reddit collection: top 10 hits
-   │    wiki   collection: top 10 hits
+   ├─ _rrf_merge(): Reciprocal Rank Fusion (k=60)
+   │    Score = Σ 1/(60 + rank_i) across all query lists
    │
-   └─ Return top-20 chunks sorted by score
+   └─ Return top-20 merged chunks
 
-3. AUGMENTATION (itinerary_chain.py)
-   context_docs = await retrieve_context(trip_config)
+3. COMPRESSION (summarise_context)
+   │
+   ├─ _time_decay_score(): half-life 18 months, floor 40%
+   │    1 month ago → 0.978×, 1 year → 0.778×, 3 years → 0.550×
+   │
+   ├─ Score filter: drop decayed score < 0.35
+   │
+   ├─ Jaccard dedup: >0.60 word overlap → keep highest scored
+   │
+   ├─ Sort by decayed score DESC
+   │
+   └─ Truncate at 2400 chars (~600 tokens, 12× reduction vs old 7500)
+
+4. AUGMENTATION (itinerary_chain.py)
+   context_text = summarise_context(context_docs, max_chars=2400)
    prompt = SYSTEM_PROMPT.format(
-       context=format_docs(context_docs),
-       trip_config=trip_config.model_dump_json()
+       context=context_text,          # ← real traveller data
+       trip_config=trip_config_json
    )
    → Gemini generates itinerary grounded in real traveller data
 ```
 
 #### Example RAG Context Injection
 
-**User trip:** Bali, 7 days, Beach + Culture themes
+**User trip:** Bali, 7 days, Beach + Culture themes, moderate pace
 
-**Query sent to Qdrant:** `"Bali beach culture travel tips highlights activities food"`
+**Queries sent to Qdrant (parallel):**
+1. `"Bali travel beach culture highlights activities food"`
+2. `"things to do in Bali leisure moderate trip hidden gems local tips"`
+3. `"Bali best restaurants sightseeing transport safety advice"`
 
-**Retrieved chunks (sample):**
+**Retrieved & compressed context (sample, after RRF + time-decay + dedup):**
 
-> *[reddit/solotravel]* "Ubud is the cultural heart — skip the rice terraces at 9am (tourist rush), go at 7am instead. Best warung meal I had was at Warung Babi Guling Ibu Oka near the palace." *(score: 0.91)*
+> *[reddit/solotravel]* "Ubud rice terraces: go at 7am to beat tourists. Best warung meal near the palace — Warung Babi Guling Ibu Oka." *(decayed score: 0.87)*
 
-> *[wikivoyage/Bali/See]* "Tanah Lot temple is best visited at sunset. Located on a rocky outcropping offshore, it is one of Bali's most photographed sites. The temple is accessible at low tide." *(score: 0.87)*
+> *[wikivoyage/Bali/See]* "Tanah Lot temple is best visited at sunset. Accessible at low tide only. One of Bali's most photographed sites." *(decayed score: 0.82)*
 
-> *[reddit/travel]* "Hire a driver for the day (~$40 USD) rather than renting a scooter if you want to see Uluwatu + Kuta. Much safer and they know the timing for the Kecak fire dance." *(score: 0.84)*
+> *[reddit/travel]* "Hire a driver for the day (~$40 USD) for Uluwatu + Kuta. Safer than scooter and they know Kecak fire dance timing." *(decayed score: 0.79)*
 
-**These chunks are injected into the Gemini prompt** under `DESTINATION RESEARCH:`, allowing the model to recommend Warung Babi Guling by name, suggest 7am rice terrace visits, and include Kecak fire dance as an evening activity.
+These chunks are injected under `DESTINATION RESEARCH:` in the prompt.
 
 If Qdrant is empty (cold start), the chain falls back to:
 ```

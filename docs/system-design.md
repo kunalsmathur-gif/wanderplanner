@@ -1,7 +1,7 @@
 # WanderPlan — System Design Document
 
-**Version:** 8.0 (LLM Anya Wizard · Anya Prompt v5 · End-to-End Fixes · 3-Stage Flow)  
-**Last Updated:** June 28, 2026  
+**Version:** 8.1 (RAG v5.2 — Multi-query RRF · Time-decay · Paragraph chunking · Gemini RAG wired)  
+**Last Updated:** June 29, 2026  
 **Audience:** Engineering team and technical stakeholders
 
 ---
@@ -240,25 +240,41 @@ POST /api/generate-itinerary { trip_config: TripConfig }
          ▼
 itinerary_chain.py
          │
-         ├─ RAG RETRIEVAL ─────────────────────────────────────────────
+         ├─ RAG RETRIEVAL ──────────────────────────────────────────────
          │    services/search.py → retrieve_context(trip_config)
          │    │
-         │    ├─ Build query: "{city} {themes} travel tips highlights"
-         │    │    e.g. "Bali beach culture travel tips highlights food"
+         │    ├─ Build 3 query variants in parallel:
+         │    │    Q1: "{city} travel {personas} highlights activities food"
+         │    │    Q2: "things to do in {city} {purpose} {pace} hidden gems"
+         │    │    Q3: "{city} best restaurants sightseeing transport safety"
          │    │
-         │    ├─ embed(query) → 384-dim vector (all-MiniLM-L6-v2)
+         │    ├─ asyncio.gather() → 3 × semantic_search(limit=15)
+         │    │    Each: embed(query) → 384-dim → Qdrant cosine search
+         │    │    Filter: destination == trip_config.destination.city
+         │    │    Collections: wiki + reddit (split 50/50 per query)
          │    │
-         │    ├─ Qdrant cosine search (filtered by destination):
-         │    │    reddit collection → top 10
-         │    │    wiki   collection → top 10
+         │    └─ _rrf_merge(): Reciprocal Rank Fusion (k=60)
+         │         Score = Σ 1/(60 + rank_i) across 3 query lists
+         │         Top-20 unique chunks returned with published_date
+         │
+         ├─ RAG COMPRESSION ────────────────────────────────────────────
+         │    summarise_context(context_docs, max_chars=2400)
          │    │
-         │    └─ Return top-20 chunks sorted by cosine score
-         │         e.g. "Ubud rice terraces: go at 7am to beat tourists"
-         │              "Tanah Lot best at sunset, accessible at low tide"
+         │    ├─ Time-decay: score × (0.4 + 0.6 × 0.5^(age/548))
+         │    │    e.g. 3yr-old post: 0.91 → 0.50, 1-month post: 0.91 → 0.89
+         │    │
+         │    ├─ Score filter: drop decayed < 0.35
+         │    │
+         │    ├─ Jaccard dedup: >60% word overlap → keep highest scored
+         │    │
+         │    ├─ Sort by decayed score DESC
+         │    │
+         │    └─ Truncate at 2400 chars (~600 tokens)
+         │         was: ~30,000 chars (7,500 tokens) — 12× reduction
          │
          ├─ Assemble Gemini prompt:
          │    SYSTEM_PROMPT.format(
-         │      context = top-20 RAG chunks (Reddit + Wikivoyage),
+         │      context = summarised RAG context (≤600 tokens),
          │      trip_config = TripConfig JSON
          │    )
          │
@@ -510,38 +526,46 @@ Response: { best_months: string[], weather_summary: string, avoid_months: string
 
 ## 9. Qdrant Collection Schema
 
-Two collections, both using `all-MiniLM-L6-v2` (384 dims, cosine distance):
+Two active collections, both using `all-MiniLM-L6-v2` (384 dims, cosine distance):
 
 ### `reddit` collection
 ```json
 {
   "vector": [384 floats],
   "payload": {
-    "text": "Reddit post / comment text",
+    "text": "Title prefix + paragraph chunk (≥80 chars)",
+    "title": "Original Reddit post title",
     "destination": "Bali",
     "subreddit": "solotravel",
-    "score": 142,
-    "url": "https://reddit.com/r/..."
+    "reddit_score": 142,
+    "published_date": "2026-05-12",
+    "post_url": "https://reddit.com/r/...",
+    "text_preview": "First 300 chars of chunk"
   }
 }
 ```
+**Chunking:** Each post → N paragraph chunks (`\n\n` split, ≥80 chars). Each chunk is prefixed with the post title for standalone retrieval context. Point ID: `md5(post_url + text[:50])`.
 
 ### `wiki` collection
 ```json
 {
   "vector": [384 floats],
   "payload": {
-    "text": "Wikivoyage section text",
+    "text": "Sentence-boundary chunk (~500 chars)",
     "destination": "Bali",
-    "section": "Get around",
-    "url": "https://en.wikivoyage.org/..."
+    "section": "see",
+    "source_url": "https://en.wikivoyage.org/..."
   }
 }
 ```
+**Chunking:** Each Wikivoyage section → N sentence-boundary chunks (~500 chars, ≥80 chars min). Point ID: `md5(url + section + text[:50])`.
 
-### Ingestion
-- **Reddit**: Scraped via JSON API every 6h (APScheduler). Subreddits: `solotravel`, `travel`, `backpacking`, destination-specific.
-- **Wiki**: Scraped from Wikivoyage on startup. Sections: Overview, Get in, Get around, See, Eat, Sleep, Stay safe.
+### `osm_pois` collection ⚠️ Empty — ingestor not yet built
+Planned schema: `{ name, type, lat, lon, destination, tags[] }` from Overpass API.
+
+### Ingestion Schedule
+- **Reddit**: APScheduler, every 6h. Subreddits: `travel`, `solotravel`, `digitalnomad`, `backpacking`.
+- **Wiki**: On-demand, triggered at itinerary generation time for the destination if not cached.
 
 ---
 

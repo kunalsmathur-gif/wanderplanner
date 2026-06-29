@@ -44,7 +44,7 @@ WanderPlan uses conversational AI to help you plan trips through a natural chat 
 | **🎙️ Anya Voice Assistant** | Conversational AI with voice input/output. Talk naturally to plan your trip. Young Indian female voice (20-25 yrs). |
 | **💬 Persistent Anya Chat** | After itinerary generation, the floating Anya orb opens a slide-in chat panel. Ask questions, request changes — Anya patches config or offers to regenerate. |
 | **📱 Mobile-Responsive** | Bottom tab navigation on mobile (Itinerary · Overview · Map & Tips). Full desktop 3-column layout on larger screens. |
-| **🤖 AI Itinerary Engine** | Gemini 2.5 Flash generates day-by-day schedules with timestamped activities, routing, and budget allocation. 5-attempt retry + fallback chain. |
+| **🤖 AI Itinerary Engine** | Gemini 2.5 Flash generates day-by-day schedules with timestamped activities, routing, and budget allocation. 5-attempt retry + fallback chain. RAG-grounded: multi-query Qdrant retrieval (3 variants, RRF merge) + time-decay + Jaccard dedup compressed to ~600 tokens. |
 | **🗺️ Interactive Maps** | OpenStreetMap with activity pins. Full-screen map mode with day-tab navigation. |
 | **🎴 Rich Activity Cards** | PolaroidCard components with Wikipedia photos, hover zoom, YouTube link overlay. |
 | **🌐 Travel Tips** | Gemini-powered tips + Reddit highlights with YouTube thumbnails. |
@@ -240,6 +240,15 @@ Open `http://localhost:3000`.
 ---
 
 ## Changelog
+
+### v5.2 — RAG Pipeline Overhaul (June 2026)
+- ✅ **NEW: Gemini path now RAG-grounded** — `_gemini_itinerary()` was silently bypassing `retrieve_context()`. All production itineraries now receive real traveller data from Qdrant.
+- ✅ **NEW: Multi-query retrieval with RRF** — 3 parallel query variants (config / vibe / practical) merged via Reciprocal Rank Fusion (k=60). Better recall for niche trips and vibe searches.
+- ✅ **NEW: Time-decay scoring** — exponential decay with 18-month half-life. A 3-year-old post at score 0.91 → 0.55. `published_date` stored in Reddit Qdrant payloads.
+- ✅ **NEW: Context summarisation** — `summarise_context()` compresses 20 raw chunks (~7,500 tokens) to ~600 tokens via score filter, Jaccard dedup, and 2400-char budget. **87% token reduction**.
+- ✅ **NEW: Sentence-boundary Wikivoyage chunking** — replaced hard 1500-char cuts with sentence-aware ~500-char chunks. Each section now produces N high-precision chunks.
+- ✅ **NEW: Reddit paragraph chunking** — each post split at `\n\n` into paragraph chunks (≥80 chars), each prefixed with the title for standalone retrieval context.
+- ✅ **NEW: Reddit destination tagging fixed** — `_extract_destination()` now uses word-boundary regex against 200+ destinations. Was always returning `"general"`.
 
 ### v5.0 — LLM Wizard + Mobile-Responsive (June 2026)
 - ✅ **NEW: LLM-powered Anya wizard** — replaces scripted state machine. Gemini 2.5 Flash collects all trip fields through freeform conversation. One message can fill multiple fields ("just me and my wife for 7 days to Bali, budget ₹1L, moderate pace").

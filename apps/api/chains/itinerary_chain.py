@@ -5,7 +5,7 @@ import uuid
 from core.config import settings
 from models.itinerary import ItineraryResponse, ItineraryDay, ItineraryItem, ItineraryItemLocation
 from models.trip import TripConfig
-from services.search import retrieve_context
+from services.search import retrieve_context, summarise_context
 from chains.scoring import calculate_alignment_score
 from chains.safety import apply_kid_safety_filter, inject_persona_modules
 
@@ -243,8 +243,15 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
     client = google_genai.Client(api_key=settings.gemini_api_key)
     trip_json = trip_config.model_dump_json(indent=2)
 
+    # Ground the prompt with real destination research from Qdrant
+    context_docs = await retrieve_context(trip_config)
+    if context_docs:
+        context_text = summarise_context(context_docs, max_chars=2400)
+    else:
+        context_text = "No pre-fetched research available — use your own knowledge of the destination."
+
     prompt = SYSTEM_PROMPT.format(
-        context="No pre-fetched research available — use your own knowledge of the destination.",
+        context=context_text,
         trip_config=trip_json,
     )
 

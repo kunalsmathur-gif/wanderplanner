@@ -1,53 +1,58 @@
 # WanderPlan — RAG Strategy: Current State, Gaps & Roadmap
-**Version:** 2.0 · **Date:** June 2026
+**Version:** 3.0 · **Date:** June 2026 · **Updated:** June 29, 2026
 
 ---
 
 ## 1. Are We Using RAG Today?
 
-**Yes — but partially, with a critical gap.**
+**Yes — fully wired into production as of v5.2.**
 
-WanderPlan has a RAG infrastructure in place (Qdrant + `all-MiniLM-L6-v2` embeddings), but it is only wired into the **non-production** itinerary path (Groq/Ollama). The production path — **Gemini** — calls `_gemini_itinerary()` which **never calls `retrieve_context()`**. The RAG pipeline exists but is silently bypassed for every real user.
+WanderPlan has a RAG infrastructure in place (Qdrant + `all-MiniLM-L6-v2` embeddings). All retrieval paths — including the primary **Gemini** production path — now call `retrieve_context()`. The previous silent bypass has been fixed.
 
 ### What's Wired Up (Current)
 
 ```
 Data Sources                Qdrant Collections           Where Used
 ─────────────────────       ──────────────────           ──────────────────────
-Wikivoyage (on-demand) ──▶  wiki (384-dim)  ─────────▶  retrieve_context()
-Reddit (every 6 hours) ──▶  reddit (384-dim) ─────────▶  /api/reddit-highlights
-OSM POIs               ──▶  osm_pois (384-dim)            ⚠️ EMPTY — no ingestor exists
+Wikivoyage (on-demand) ──▶  wiki (384-dim)  ─────────▶  retrieve_context() → Gemini prompt
+Reddit (every 6 hours) ──▶  reddit (384-dim) ─────────▶  retrieve_context() + /api/reddit-highlights
+OSM POIs               ──▶  osm_pois (384-dim)            ⚠️ EMPTY — ingestor not yet built
 ```
 
-### What Is NOT Using RAG (Gaps)
+### Component RAG Status
 
-| Component | RAG used? | Impact |
+| Component | RAG used? | Notes |
 |---|---|---|
-| Gemini itinerary generation | ❌ No | LLM generates from training data only — stale, hallucinated POIs |
-| Anya wizard chat | ❌ No | Can't suggest real places; relies entirely on Gemini's parametric memory |
-| City recommender | ❌ No | Suggestions not grounded in real community data |
-| Destination comparison | ❌ No | Qualitative data is LLM-generated, not sourced from real posts |
-| Best time (seasonal data) | ⚠️ Partial | Scrapes Wikivoyage live on every request — not cached in Qdrant |
-| Reddit tagging | ⚠️ Broken | `_extract_destination()` always returns `"general"` — all posts untagged |
+| Gemini itinerary generation | ✅ Yes | Fixed in v5.2 — multi-query RRF + summarised context injected |
+| Anya wizard chat | ❌ No | Still relies on Gemini parametric memory |
+| City recommender | ❌ No | LLM-only |
+| Destination comparison | ❌ No | LLM-only |
+| Best time (seasonal data) | ⚠️ Partial | Scrapes Wikivoyage live — not yet cached in Qdrant |
+| Reddit tagging | ✅ Fixed | `_extract_destination()` now matches against 200+ known destinations |
 
 ---
 
 ## 2. How Is It Leveraged Today?
 
-### Itinerary Generation (Groq/Ollama path only)
+### Itinerary Generation (all providers)
 ```python
 # services/search.py
 async def retrieve_context(trip_config) -> list[dict]:
-    query = f"{dest} travel {persona_keywords} highlights activities food"
-    results = await semantic_search(query, dest, limit=20)
-    # Returns top-20 chunks from wiki + reddit collections
+    # Runs 3 query variants in parallel
+    queries = [
+        f"{dest} travel {personas} highlights activities food",
+        f"things to do in {dest} {purpose} {pace} trip hidden gems local tips",
+        f"{dest} best restaurants sightseeing transport safety advice",
+    ]
+    result_lists = await asyncio.gather(*[semantic_search(q, dest, limit=15) for q in queries])
+    merged = _rrf_merge(result_lists)[:20]   # Reciprocal Rank Fusion
 
-# itinerary_chain.py (Groq path)
+# itinerary_chain.py (Gemini + Groq/Ollama paths)
 context_docs = await retrieve_context(trip_config)
-context_text = "\n\n".join(doc["text"] for doc in context_docs[:20])
+context_text = summarise_context(context_docs, max_chars=2400)   # ~600 tokens
 # Injected as {context} in SYSTEM_PROMPT
 ```
-The 20 chunks (up to ~1500 chars each = up to 30,000 chars / ~7,500 tokens) are blindly concatenated and dropped into the prompt. No reranking, no summarisation.
+The 20 RRF-merged chunks are compressed through `summarise_context()` before injection — time-decay applied, deduplicated by Jaccard similarity, sorted by decayed score, capped at 2400 chars (~600 tokens).
 
 ### Reddit Highlights (UI component)
 ```python
@@ -55,28 +60,104 @@ The 20 chunks (up to ~1500 chars each = up to 30,000 chars / ~7,500 tokens) are 
 vector = embed([f"{destination} travel tips guide best places"])[0]
 hits = client.search(collection_name="reddit", query_vector=vector, limit=10)
 ```
-Used for the Reddit highlights card in the itinerary UI. Works, but returns untagged posts (destination filter is unreliable due to the broken `_extract_destination()`).
+Now returns properly destination-tagged posts thanks to the fixed `_extract_destination()`.
 
-### What's Missing from the Current Pipeline
-1. **No reranking** — top-k by cosine score is naive; unrelated chunks score high if they share surface words
-2. **No chunking strategy** — 1,500-char hard-cut mid-sentence
-3. **No deduplication** — repeated context (e.g. 3 Wikivoyage chunks all saying "Bali is hot") wastes tokens
-4. **No query augmentation** — single query per retrieval; misses semantic variants
-5. **Context blindly injected** — no summarisation; a 30k-char dump hurts generation quality and costs ~$0.002 extra per call
+### What's Still Missing from the Pipeline
+1. **No Wikivoyage Qdrant cache for best-time** — still live-scraped on every request
+2. **No OSM POI data** — `osm_pois` collection exists but is empty; lat/lon still LLM-generated
+3. **No itinerary cache collection** — no semantic fallback when Gemini is down
+4. **No Anya wizard RAG** — city suggestions rely on Gemini parametric memory alone
 
 ---
 
-## 3. Making RAG More Robust & Optimising LLM Token Usage
+## 3. Implemented Improvements (v5.2)
 
-### 3A — Fix the Gemini Path (Critical)
+### 3A — Gemini Path Now Uses RAG ✅ DONE
 
 ```python
-# itinerary_chain.py — _gemini_itinerary() must call retrieve_context
-async def _gemini_itinerary(trip_config: TripConfig) -> dict:
-    context_docs = await retrieve_context(trip_config)          # ADD THIS
-    context_text = _summarise_context(context_docs, max_tokens=600)  # ADD THIS
-    # ... rest of Gemini call with context_text injected
+# itinerary_chain.py — _gemini_itinerary()
+context_docs = await retrieve_context(trip_config)
+context_text = summarise_context(context_docs, max_chars=2400)
+prompt = SYSTEM_PROMPT.format(context=context_text, trip_config=trip_json)
 ```
+
+### 3B — Better Chunking ✅ DONE
+
+| Source | Before | After |
+|---|---|---|
+| Wikivoyage | 1 chunk per section, hard 1500-char cut | N chunks per section at sentence boundaries, ~500 chars each |
+| Reddit | 1 chunk per post (title + 800-char body) | 1 chunk per paragraph (`\n\n` split), each prefixed with title |
+
+```python
+# wikivoyage.py — _sentence_boundary_chunks()
+def _sentence_boundary_chunks(text: str, max_chars: int = 500) -> list[str]:
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    # Accumulate sentences until max_chars, then start new chunk
+    return [c for c in chunks if len(c) > 80]
+
+# reddit.py — _chunk_reddit_post()
+def _chunk_reddit_post(title: str, selftext: str) -> list[str]:
+    paragraphs = [p.strip() for p in re.split(r'\n{2,}', selftext) if len(p.strip()) >= 80]
+    return [f"{title}. {para}" for para in paragraphs]
+```
+
+### 3C — Context Summarisation ✅ DONE
+
+```python
+def summarise_context(docs: list[dict], max_chars: int = 2400) -> str:
+    # 1. Apply time-decay to scores
+    # 2. Drop decayed score < 0.35
+    # 3. Deduplicate by Jaccard word overlap (> 0.60 → keep highest scored)
+    # 4. Sort by decayed score DESC
+    # 5. Truncate at 2400 chars (~600 tokens)
+```
+**Token savings:** Context injection drops from ~7,500 tokens (20 raw chunks) to ~600 tokens — a **12× reduction**.
+
+### 3D — Multi-Query Retrieval with Reciprocal Rank Fusion ✅ DONE
+
+Three parallel queries are run per request and merged with RRF (k=60):
+
+```python
+queries = [
+    f"{dest} travel {personas} highlights activities food",      # config-oriented
+    f"things to do in {dest} {purpose} {pace} hidden gems",     # vibe/purpose
+    f"{dest} best restaurants sightseeing transport safety",     # practical
+]
+result_lists = await asyncio.gather(*[semantic_search(q, dest, limit=15) for q in queries])
+merged = _rrf_merge(result_lists)  # RRF score = Σ 1/(k + rank_i)
+```
+
+### 3E — Time-Decay Scoring ✅ DONE
+
+```python
+def _time_decay_score(base_score: float, published_date: str | None) -> float:
+    """Half-life: 18 months. Floor: 40% of base score."""
+    decay = 0.5 ** (age_days / 548)
+    return base_score * (0.4 + 0.6 * decay)
+```
+
+| Content age | Score multiplier |
+|---|---|
+| 1 month | 0.978× |
+| 1 year | 0.778× |
+| 3 years | 0.550× |
+| Unknown date | 0.850× |
+
+Reddit posts now store `published_date` from `created_utc` in the Qdrant payload.
+
+### 3F — Reddit Destination Tagging ✅ DONE
+
+```python
+def _extract_destination(title: str, selftext: str) -> str:
+    for text in (title, selftext):
+        for dest_lower, dest_canonical in _DEST_LOWER.items():
+            if re.search(r'\b' + re.escape(dest_lower) + r'\b', lower):
+                return dest_canonical
+    return "general"
+```
+Regex word-boundary matching against 200+ canonical destination names. `"Balinese culture"` correctly returns `"general"` (not `"Bali"`).
+
+---
 
 ### 3B — Better Chunking (Smaller, Cleaner)
 
@@ -300,35 +381,44 @@ Gemini API call
 
 ---
 
-## 5. Recommended RAG Pipeline Architecture
+## 5. Current RAG Pipeline Architecture
 
 ```
 INGESTION PIPELINE (offline / scheduled)
 ─────────────────────────────────────────
-Wikivoyage ──▶ Scrape sections ──▶ Chunk (500 chars) ──▶ Embed ──▶ Qdrant [wiki]
-Reddit     ──▶ Top posts (6hr)  ──▶ NER tag dest      ──▶ Embed ──▶ Qdrant [reddit]
-OSM POIs   ──▶ Overpass API     ──▶ {name,type,coords} ──▶ Embed ──▶ Qdrant [osm_pois]
-Itinerary  ──▶ Post-generation  ──▶ Cache popular trips ──▶ Embed ──▶ Qdrant [itinerary_cache]
-Visa/Entry ──▶ Static JSON      ──▶ Per country rules   ──▶ Embed ──▶ Qdrant [visa_info]
+Wikivoyage ──▶ Scrape sections ──▶ Sentence-boundary chunks (~500 chars) ──▶ Embed ──▶ Qdrant [wiki]
+Reddit     ──▶ Top posts (6hr)  ──▶ Paragraph chunks (≥80 chars, title prefix) ──▶ Embed ──▶ Qdrant [reddit]
+OSM POIs   ──▶ Overpass API     ──▶ {name,type,coords}  ⚠️ NOT YET BUILT ──▶ Qdrant [osm_pois]
+Itinerary  ──▶ Post-generation  ──▶ Cache popular trips  ⚠️ NOT YET BUILT ──▶ Qdrant [itinerary_cache]
+Visa/Entry ──▶ Static JSON      ──▶ Per country rules    ⚠️ NOT YET BUILT ──▶ Qdrant [visa_info]
 
 
-RETRIEVAL PIPELINE (per request)
-──────────────────────────────────
+RETRIEVAL PIPELINE (per request) — as of v5.2
+─────────────────────────────────────────────
 User trip config
     │
-    ├─ Query augmentation (HyDE or multi-query)
+    ├─ 3 parallel query variants (config / vibe / practical)
     │       │
     │       ▼
-    ├─ Parallel search: wiki + reddit + osm_pois
+    ├─ Qdrant cosine search: wiki + reddit (limit=15 each per query)
     │       │
     │       ▼
-    ├─ Rerank (cross-encoder or MMR for diversity)
+    ├─ Reciprocal Rank Fusion (k=60) — merge 3×30 = up to 90 results
     │       │
     │       ▼
-    ├─ Deduplicate (jaccard similarity)
+    ├─ Time-decay scoring (half-life 18 months, floor 40%)
     │       │
     │       ▼
-    ├─ Summarise → 600-token context budget
+    ├─ Score filter (decayed score < 0.35 → drop)
+    │       │
+    │       ▼
+    ├─ Jaccard deduplication (>0.60 word overlap → keep higher-scored)
+    │       │
+    │       ▼
+    ├─ Sort by decayed score DESC
+    │       │
+    │       ▼
+    ├─ Truncate at 2400 chars (~600 tokens)
     │       │
     │       ▼
     └─ Inject into LLM prompt {context}
@@ -355,28 +445,32 @@ User trip config
 
 ## 7. Token Cost Impact
 
-| Scenario | Without RAG optimisation | With optimised RAG | Savings |
+| Scenario | Before v5.2 | After v5.2 | Savings |
 |---|---|---|---|
 | Itinerary prompt context | ~7,500 tokens (20 raw chunks) | ~600 tokens (summarised) | ~87% reduction |
-| Wizard (with destination grounding) | 0 tokens (no RAG) | ~200 tokens (top-3 POIs) | New capability |
-| Per session total (Gemini 2.0 Flash) | ~$0.007 | ~$0.003 | ~57% |
+| Gemini path RAG | 0 tokens (not wired) | ~600 tokens | New capability |
+| Wizard (with destination grounding) | 0 tokens (no RAG) | ~200 tokens (top-3 POIs, future) | Planned |
+| Per session total (Gemini 2.5 Flash) | ~$0.007 | ~$0.003 | ~57% |
 | At 10,000 sessions/month | ~$70 | ~$30 | ~$40/mo |
 
 ---
 
 ## 8. Implementation Priority
 
-| Priority | Task | Effort | Impact |
+| Priority | Task | Status | Impact |
 |---|---|---|---|
-| P0 | Wire `retrieve_context()` into `_gemini_itinerary()` | 30 min | Immediately grounds all production itineraries |
-| P0 | Fix Reddit `_extract_destination()` with keyword list | 2 hrs | Makes Reddit filter usable |
-| P1 | Context summarisation before injection | 3 hrs | 87% token reduction |
-| P1 | Better chunking (500-char, sentence-boundary) | 2 hrs | Higher retrieval precision |
-| P1 | OSM POI ingestor (Overpass API) | 4 hrs | Real coordinates; no hallucinated lat/lon |
-| P2 | `itinerary_cache` collection + cache hit logic | 4 hrs | Fallback + free repeat visits |
-| P2 | Visa info collection + wizard injection | 3 hrs | Practical user value |
-| P2 | HyDE query augmentation | 2 hrs | Better recall for niche trips |
-| P3 | Cross-encoder reranker | 1 day | Best precision; overkill for Phase 1 |
+| P0 | Wire `retrieve_context()` into `_gemini_itinerary()` | ✅ Done | Grounds all production itineraries |
+| P0 | Fix Reddit `_extract_destination()` with keyword list | ✅ Done | Makes Reddit destination filter reliable |
+| P1 | Context summarisation (`summarise_context()`) | ✅ Done | 87% token reduction |
+| P1 | Wikivoyage sentence-boundary chunking (~500 chars) | ✅ Done | Higher retrieval precision |
+| P1 | Reddit paragraph-level chunking + `published_date` | ✅ Done | Paragraph-granularity chunks, time-decay enabled |
+| P1 | Multi-query (3 variants) + Reciprocal Rank Fusion | ✅ Done | Better recall for vibe/niche/practical queries |
+| P1 | Time-decay scoring (18-month half-life) | ✅ Done | Stale content penalised at retrieval |
+| P1 | OSM POI ingestor (Overpass API) | ❌ Pending | Real coordinates; eliminates hallucinated lat/lon |
+| P2 | `itinerary_cache` collection + cache hit logic | ❌ Pending | Fallback + free repeat visits |
+| P2 | Visa info collection + wizard injection | ❌ Pending | Practical user value |
+| P2 | HyDE query augmentation | ❌ Pending | Better recall for niche trips (replaces multi-query) |
+| P3 | Cross-encoder reranker | ❌ Pending | Best precision; overkill until corpus is large |
 
 ---
 

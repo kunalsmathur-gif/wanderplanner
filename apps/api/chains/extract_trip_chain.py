@@ -52,24 +52,31 @@ async def _fetch_url_text(url: str) -> str:
 
 async def extract_trip_from_text(text: str) -> ExtractedTrip:
     """Use Gemini to extract trip fields from free-form text."""
-    import google.generativeai as genai  # type: ignore
+    try:
+        from google import genai as google_genai
+        from google.genai import types as genai_types
+    except ImportError:
+        raise RuntimeError("google-genai not installed. Run: pip install google-genai")
 
-    genai.configure(api_key=settings.gemini_api_key)
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
-        system_instruction=_EXTRACT_SYSTEM_PROMPT,
-    )
-
+    client = google_genai.Client(api_key=settings.gemini_api_key)
     prompt = f"Extract trip info from the following text:\n\n{text[:4000]}"
 
     for attempt in range(3):
         try:
-            response = await asyncio.to_thread(
-                model.generate_content,
-                prompt,
-                generation_config={"temperature": 0.1, "max_output_tokens": 512},
-            )
-            raw = response.text.strip()
+            def _call_sync() -> str:
+                resp = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                    config=genai_types.GenerateContentConfig(
+                        system_instruction=_EXTRACT_SYSTEM_PROMPT,
+                        temperature=0.1,
+                        max_output_tokens=512,
+                    ),
+                )
+                return resp.text or ""
+
+            raw = await asyncio.to_thread(_call_sync)
+            raw = raw.strip()
             # Strip possible markdown fences
             raw = re.sub(r"^```[a-z]*\n?", "", raw)
             raw = re.sub(r"\n?```$", "", raw)
