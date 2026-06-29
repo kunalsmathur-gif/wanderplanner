@@ -1,5 +1,5 @@
 # WanderPlan — RAG Strategy: Current State, Gaps & Roadmap
-**Version:** 1.0 · **Date:** June 2026
+**Version:** 2.0 · **Date:** June 2026
 
 ---
 
@@ -279,4 +279,432 @@ User trip config
 
 ---
 
-*Maintainer: Engineering · Last updated: June 2026*
+## 9. Web-Scraped Itinerary Corpus Pipeline
+
+### Concept
+
+Scrape real, human-authored itineraries from travel blogs, forums, and social media. Extract them into a structured format, embed them, and store in a new `itinerary_corpus` Qdrant collection. When a user asks for a Tokyo 7-day trip, the LLM receives 2–3 real itineraries from other travellers as grounding — the output is built on patterns that actually worked, not just training data.
+
+This is fundamentally different from the existing wiki/reddit collections:
+- **Wiki/Reddit** → unstructured tips, advice, sentiment ("Avoid Patong Beach in peak season")
+- **Itinerary corpus** → structured day-by-day plans ("Day 1: Senso-ji → Akihabara → Shibuya crossing")
+
+### Data Sources & Scraping Strategy
+
+| Source | Content type | Scrape method | Volume | Refresh |
+|---|---|---|---|---|
+| **Nomadic Matt** (nomadicmatt.com) | Detailed destination guides with day breakdowns | `httpx` + BeautifulSoup on `/destinations/*` | ~2,000 guides | Monthly |
+| **The Planet D** (theplanetd.com) | Country/city itineraries by duration | `httpx` + BeautifulSoup | ~1,500 guides | Monthly |
+| **Lonely Planet** (lonelyplanet.com/itineraries) | Structured `n-day` itinerary pages | Public HTML; itinerary pages structured with `<section>` | ~5,000 pages | Monthly |
+| **TripAdvisor Forums** (tripadvisor.com/ShowForum-*) | "Just got back — here's my itinerary" threads | Forum thread scraper, filter for "itinerary", "day 1", "day 2" | High volume | Weekly |
+| **Reddit trip reports** (r/travel, r/solotravel, r/indiatravel) | "My X-day trip to Y" self-posts | Reddit JSON API (no key needed); filter `flair:trip-report` or title match regex | High volume | Daily |
+| **YouTube descriptions** | Travel vlog day-by-day descriptions | YouTube Data API v3 (`search.list` → `videos.list` for description); free 10k units/day | ~500/day | Daily |
+
+### Extraction Mini-LLM Chain
+
+Raw blog/forum text is unstructured. A lightweight extraction chain converts it to a canonical JSON schema before embedding:
+
+```
+Raw blog text (HTML → plain text)
+         │
+         ▼
+  Gemini Flash (extraction prompt, temp=0.1, max_tokens=1200)
+         │
+         ▼
+  Structured ItineraryCorpusDoc:
+  {
+    "destination": "Kyoto",
+    "country": "Japan",
+    "duration_days": 5,
+    "pace": "moderate",         # inferred from density of activities
+    "purpose": "cultural",      # inferred from themes
+    "budget_tier": "mid-range", # inferred from accommodation/dining mentions
+    "group_type": "couple",     # inferred from author context
+    "source_url": "...",
+    "source_name": "Nomadic Matt",
+    "published_month": "November",
+    "days": [
+      {
+        "day_number": 1,
+        "theme": "Temples & Bamboo",
+        "places": ["Fushimi Inari", "Arashiyama", "Philosopher's Path"],
+        "tips": ["Go to Fushimi Inari before 8am", "Rent a bike in Arashiyama"]
+      }
+    ]
+  }
+```
+
+**Extraction prompt key rules:**
+- Extract only factual day-by-day structure — no opinions
+- Infer pace from activity density (relaxed < 4/day, moderate 4–5, packed 5+)
+- Infer budget tier from hotel names / dining style mentioned
+- If structure is ambiguous (listicle without days), skip the document
+
+### Embedding Strategy for Corpus
+
+Each document gets **two embeddings** stored side by side:
+
+| Embedding | Text embedded | Purpose |
+|---|---|---|
+| **Config embedding** | `"5 day moderate cultural couple trip Kyoto Japan November"` | Retrieved by user config similarity |
+| **Content embedding** | Full day-by-day places text | Retrieved by semantic content similarity |
+
+At retrieval time, query both and merge results (weighted: 60% config, 40% content).
+
+### Qdrant Collection Schema
+
+```python
+# New collection: itinerary_corpus (384-dim)
+PointStruct(
+    id=hash(source_url),
+    vector=embed(config_text),          # primary vector
+    payload={
+        "destination": "Kyoto",
+        "country": "Japan",
+        "duration_days": 5,
+        "pace": "moderate",
+        "purpose": "cultural",
+        "budget_tier": "mid-range",     # "budget" | "mid-range" | "premium" | "luxury"
+        "group_type": "couple",         # "solo" | "couple" | "family" | "friends" | "group"
+        "published_month": "November",
+        "source_name": "Nomadic Matt",
+        "source_url": "https://...",
+        "days_json": "[{...}]",         # structured days for injection
+        "quality_score": 0.82,          # source authority weight
+        "ingested_at": "2026-06-29",
+    }
+)
+```
+
+### Source Quality Scoring
+
+Not all sources are equal. Weight retrieved documents by source authority:
+
+| Source tier | Examples | Quality score |
+|---|---|---|
+| **Authoritative** | Lonely Planet, Nomadic Matt, Travel + Leisure | 0.90–1.00 |
+| **Community (high karma)** | Reddit posts with score > 500 | 0.75–0.90 |
+| **Community (standard)** | Reddit posts score 50–500, TripAdvisor threads | 0.55–0.75 |
+| **Community (low signal)** | Reddit score < 50, generic blogs | 0.30–0.55 |
+| **Generated (WanderPlan)** | Past generated itineraries (Section 10) | 0.60–0.85 (feedback-based) |
+
+### Ingestion Pipeline (Scheduled)
+
+```
+Scheduler (APScheduler — existing)
+    │
+    ├── Monthly: blog scrapers (Nomadic Matt, Planet D, Lonely Planet)
+    │       └── scrape HTML → strip boilerplate → extraction LLM → validate JSON
+    │           → embed (config + content) → upsert Qdrant [itinerary_corpus]
+    │
+    ├── Weekly: TripAdvisor forum scraper
+    │       └── Filter threads: "day 1", "itinerary", "trip report"
+    │
+    └── Daily: Reddit trip reports + YouTube descriptions
+            └── Reddit: r/travel + r/solotravel, flair=trip-report
+                YouTube: search "X day itinerary [destination]" → extract description
+```
+
+### Injection into LLM Prompt
+
+```python
+async def retrieve_itinerary_examples(trip_config: TripConfig) -> str:
+    config_text = (
+        f"{trip_config.dates.duration_days or 7} day "
+        f"{trip_config.pace} {trip_config.purpose} "
+        f"{_group_type(trip_config.group)} trip "
+        f"{trip_config.destination.city} {trip_config.destination.country}"
+    )
+    vector = embed([config_text])[0]
+    hits = client.search(
+        "itinerary_corpus", vector,
+        query_filter=Filter(must=[
+            FieldCondition("destination", MatchValue(trip_config.destination.city))
+        ]),
+        limit=3, score_threshold=0.72
+    )
+    examples = []
+    for hit in hits:
+        days = json.loads(hit.payload["days_json"])
+        source = hit.payload["source_name"]
+        examples.append(f"[Source: {source}]\n" + _format_days_brief(days))
+    return "\n\n---\n\n".join(examples)
+```
+
+Added to the itinerary system prompt as `{examples}`:
+```
+REAL TRAVELLER ITINERARIES FOR REFERENCE (use as inspiration, not verbatim):
+{examples}
+```
+
+**Token budget:** 3 itineraries × ~150 tokens each = ~450 tokens. Negligible cost, high grounding value.
+
+---
+
+## 10. Learning from Past Generated Itineraries (Persona-Based Retrieval)
+
+### Concept: RAG as Collaborative Filtering
+
+Every itinerary WanderPlan generates is a data point. When a new user has a similar profile to past users, the system retrieves their itineraries as implicit "examples of what worked". This is **few-shot prompting with dynamically retrieved examples** — the model learns behaviorally without any retraining.
+
+The key insight: a digital nomad solo traveller in Chiang Mai for 10 days at ₹80k budget is nearly identical to 20 previous such users. Their itinerary should start from that learned baseline, not from scratch.
+
+### What to Store per Generated Itinerary
+
+```python
+# New collection: generated_itineraries (384-dim)
+PointStruct(
+    id=uuid(),
+    vector=embed(persona_fingerprint),
+    payload={
+        # Config snapshot
+        "destination": "Chiang Mai",
+        "country": "Thailand",
+        "duration_days": 10,
+        "pace": "moderate",
+        "purpose": "solo_backpacking",
+        "budget_tier": "budget",        # derived from amount per person per day
+        "personas": ["digital_nomad"],
+        "themes": ["food", "culture"],
+        "group_type": "solo",
+        "travel_month": "February",
+
+        # Generated output
+        "itinerary_summary": "10 days in Chiang Mai: temples, nomad cafes, night markets...",
+        "top_places": ["Doi Suthep", "Nimman Road", "Sunday Walking Street"],
+        "days_json": "[{...}]",
+
+        # Implicit quality signals (updated after session)
+        "was_shared": False,
+        "session_duration_s": 0,
+        "regenerated": False,
+        "regen_count": 0,
+        "post_gen_chat_turns": 0,
+        "quality_score": 0.70,          # baseline; updated by background task
+        "generated_at": "2026-06-29",
+    }
+)
+```
+
+### Persona Fingerprint (Embedding Key)
+
+```python
+def _persona_fingerprint(trip_config: TripConfig) -> str:
+    budget_tier = _budget_tier(trip_config.budget.amount, trip_config.group)
+    group_type = _group_type(trip_config.group)
+    month = trip_config.dates.start[:7] if trip_config.dates.start else "flexible"
+    return (
+        f"{trip_config.destination.city} {trip_config.destination.country} "
+        f"{trip_config.dates.duration_days or 7}d "
+        f"{trip_config.pace} {trip_config.purpose} "
+        f"{budget_tier} {group_type} "
+        f"{' '.join(trip_config.personas)} "
+        f"{' '.join(trip_config.themes[:3])} "
+        f"{month}"
+    )
+# Example: "Chiang Mai Thailand 10d moderate solo_backpacking budget solo digital_nomad food culture 2026-02"
+```
+
+### Implicit Quality Signal Scoring
+
+No user ratings needed — infer quality from behaviour:
+
+| Signal | Score delta | Logic |
+|---|---|---|
+| Not regenerated | +0.30 | User accepted first output |
+| Session duration > 3 min | +0.25 | Read it thoroughly |
+| Shared via link | +0.25 | Strong endorsement |
+| Post-gen chat used (not regenerate) | +0.10 | Engaged with refinements |
+| Regenerated once | −0.20 | Didn't like first output |
+| Regenerated twice+ | −0.40 | Strong dissatisfaction |
+| Session < 30s | −0.15 | Bounced without reading |
+
+```python
+def _compute_quality_score(signals: dict) -> float:
+    score = 0.70  # baseline
+    if not signals.get("regenerated"): score += 0.30
+    if signals.get("session_duration_s", 0) > 180: score += 0.25
+    if signals.get("was_shared"): score += 0.25
+    if signals.get("post_gen_chat_turns", 0) > 0: score += 0.10
+    score -= min(0.40, signals.get("regen_count", 0) * 0.20)
+    if signals.get("session_duration_s", 999) < 30: score -= 0.15
+    return max(0.0, min(1.0, round(score, 2)))
+```
+
+### Retrieval at Inference Time
+
+```python
+async def retrieve_similar_past_itineraries(trip_config: TripConfig) -> str:
+    fingerprint = _persona_fingerprint(trip_config)
+    vector = embed([fingerprint])[0]
+    hits = client.search(
+        "generated_itineraries", vector,
+        query_filter=Filter(
+            must=[FieldCondition("destination", MatchValue(trip_config.destination.city))],
+            should=[
+                FieldCondition("pace", MatchValue(trip_config.pace)),
+                FieldCondition("group_type", MatchValue(_group_type(trip_config.group))),
+            ]
+        ),
+        limit=10, score_threshold=0.78
+    )
+    # Re-rank: cosine similarity × quality_score
+    ranked = sorted(hits, key=lambda h: h.score * h.payload.get("quality_score", 0.70), reverse=True)[:2]
+
+    if not ranked:
+        return ""
+
+    examples = []
+    for hit in ranked:
+        p = hit.payload
+        examples.append(
+            f"[Past trip: {p['duration_days']}d {p['pace']} {p['purpose']} "
+            f"for {p['group_type']}, {p['budget_tier']} budget, {p['travel_month']}]\n"
+            f"Top places: {', '.join(p.get('top_places', []))}\n"
+            f"Summary: {p['itinerary_summary']}"
+        )
+    return "\n\n".join(examples)
+```
+
+Injected as `{past_itineraries}`:
+```
+PAST ITINERARIES FOR SIMILAR TRAVELLERS (high-quality, accepted by users):
+{past_itineraries}
+
+Use these as inspiration for structure, place selection and pacing.
+Do NOT copy verbatim — adapt to this user's specific dates and preferences.
+```
+
+### Cold Start Strategy
+
+At zero users the `generated_itineraries` collection is empty. Bootstrap with:
+
+1. **Pre-seed from itinerary_corpus**: copy 50 high-quality blog itineraries with `quality_score=0.75`
+2. **Internal test runs**: generate itineraries for 20 popular destination × persona combos, `quality_score=0.70`
+3. **After ~100 real users**: real signal dominates; pre-seeded content naturally de-ranks
+
+### The Learning Flywheel
+
+```
+New user generates itinerary
+        │
+        ├── Stored in generated_itineraries (quality_score = 0.70 baseline)
+        │
+        ├── User behaviour tracked (shared? regenerated? session time?)
+        │
+        └── Background task updates quality_score after session ends
+                │
+                └── Next similar user retrieves this itinerary
+                        │
+                        ├── High quality_score → injected as example → better output
+                        └── Low quality_score → filtered out → not used
+```
+
+Over time the system **automatically learns** which itinerary structures work for which personas at which destinations — without any model retraining, fine-tuning, or labelling.
+
+---
+
+## 11. Full Updated RAG Architecture (v2)
+
+```
+═══════════════════════════════════════════════════════════════════
+                INGESTION PIPELINES (offline / scheduled)
+═══════════════════════════════════════════════════════════════════
+
+  EXTERNAL CONTENT                                 QDRANT COLLECTIONS
+  ─────────────────                                ──────────────────
+  Wikivoyage         ──(on-demand scrape)──▶       [wiki]
+  Reddit top posts   ──(every 6 hours)────▶        [reddit]
+  OSM POIs           ──(weekly)───────────▶        [osm_pois]              ← ingestor needed
+  Travel blogs       ──(monthly)──────────▶        [itinerary_corpus]      ← NEW
+  Reddit trip rprt   ──(daily)────────────▶        [itinerary_corpus]      ← NEW
+  YouTube vlogs      ──(daily)────────────▶        [itinerary_corpus]      ← NEW
+  Visa/entry rules   ──(monthly static)───▶        [visa_info]             ← NEW
+  WanderPlan output  ──(per generation)───▶        [generated_itineraries] ← NEW
+  Pre-generated      ──(bootstrap)────────▶        [itinerary_cache]       ← NEW
+
+═══════════════════════════════════════════════════════════════════
+                RETRIEVAL PIPELINE (per request, ~50ms)
+═══════════════════════════════════════════════════════════════════
+
+  User TripConfig
+       │
+       ├─ [1] Build queries
+       │       ├── context query:    "{dest} travel {personas} highlights activities food"
+       │       ├── config query:     "{N}d {pace} {purpose} {budget_tier} {group_type} {dest}"
+       │       └── fingerprint:      full persona fingerprint string
+       │
+       ├─ [2] Parallel Qdrant searches (async)
+       │       ├── wiki             (context query)     → top 5 chunks
+       │       ├── reddit           (context query)     → top 5 chunks
+       │       ├── osm_pois         (context query)     → top 5 POIs
+       │       ├── itinerary_corpus (config query)      → top 3 real itineraries
+       │       └── generated_itin.  (fingerprint)       → top 2 past WanderPlan trips
+       │
+       ├─ [3] Rerank + deduplicate
+       │       └── score × quality_score; remove jaccard > 0.6 duplicates
+       │
+       ├─ [4] Summarise to token budget
+       │       ├── context chunks:    600 tokens
+       │       ├── real itineraries:  450 tokens (3 × 150)
+       │       └── past itineraries:  300 tokens (2 × 150)
+       │                              ─────────────────────
+       │                              Total: ~1,350 tokens  (vs 7,500 today)
+       │
+       └─ [5] Inject into LLM prompt
+               ├── {context}           → wiki + reddit + OSM tips
+               ├── {examples}          → blog/forum/YouTube itineraries
+               └── {past_itineraries}  → WanderPlan learned itineraries
+
+═══════════════════════════════════════════════════════════════════
+                POST-GENERATION PIPELINE
+═══════════════════════════════════════════════════════════════════
+
+  Itinerary generated
+       │
+       ├── Store in [generated_itineraries] (quality_score = 0.70)
+       ├── Store in [itinerary_cache] (for API-down fallback)
+       └── Background task: update quality_score after session ends
+```
+
+---
+
+## 12. Updated Token Cost Comparison
+
+| Context component | Today | v2 (optimised RAG) |
+|---|---|---|
+| Wiki/Reddit raw chunks | ~7,500 tokens | ~600 tokens (summarised) |
+| Real itinerary examples | 0 | ~450 tokens |
+| Past WanderPlan itineraries | 0 | ~300 tokens |
+| **Total context** | **~7,500 tokens** | **~1,350 tokens** |
+| **Output quality** | Training data only | Real + learned + community-grounded |
+| **Cost per session (Gemini 2.0 Flash)** | **~$0.007** | **~$0.004** |
+| **At 10,000 sessions/month** | **~$70** | **~$40** |
+
+More context signal, fewer tokens, better output.
+
+---
+
+## 13. Updated Implementation Roadmap
+
+| Priority | Task | Effort | Impact |
+|---|---|---|---|
+| P0 | Wire `retrieve_context()` into `_gemini_itinerary()` | 30 min | Grounds all production itineraries immediately |
+| P0 | Fix Reddit `_extract_destination()` NER | 2 hrs | Makes Reddit destination filter usable |
+| P1 | Context summarisation (600-token budget) | 3 hrs | 87% token reduction |
+| P1 | Better chunking (500-char sentence boundaries) | 2 hrs | Higher retrieval precision |
+| P1 | OSM POI ingestor (Overpass API) | 4 hrs | Real coordinates; no hallucinated lat/lon |
+| P1 | `generated_itineraries` collection + store on generate | 4 hrs | Learning flywheel starts accumulating data immediately |
+| P2 | Travel blog scraper (Nomadic Matt, Planet D, Lonely Planet) | 1 day | itinerary_corpus seeded with authoritative content |
+| P2 | Reddit trip report scraper + extraction LLM chain | 1 day | High-volume community itineraries ingested daily |
+| P2 | Quality score background task (session signals) | 4 hrs | Enables persona-based re-ranking |
+| P2 | `itinerary_cache` + fallback retrieval logic | 4 hrs | API-down resilience using real cached itineraries |
+| P2 | Visa info collection | 3 hrs | Entry requirements surfaced in wizard |
+| P3 | YouTube description scraper (YouTube Data API v3) | 1 day | Video-native itinerary patterns |
+| P3 | HyDE query augmentation | 2 hrs | Better recall for niche personas |
+| P3 | Dual embedding per corpus doc (config + content) | 3 hrs | More precise retrieval |
+| P3 | Cross-encoder reranker | 1 day | Highest precision; Phase 2 feature |
+
+---
+
+*Maintainer: Engineering · Last updated: June 2026 · Version 2.0*
