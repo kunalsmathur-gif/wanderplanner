@@ -1,0 +1,16 @@
+# Code owners for high-risk / high-scrutiny paths.
+# See docs/scaling-tech-challenges.md, Security Vulnerabilities #10:
+# AGENTS.md / CLAUDE.md instruct AI coding agents to read/execute guidance
+# from arbitrary repo paths. A compromised dependency or a malicious PR could
+# plant similar "agent instructions" that get silently obeyed by AI coding
+# assistants. Changes to these files require a second, human reviewer — do
+# not let an AI agent approve or auto-merge changes to them.
+#
+# NOTE: replace @wanderplan/maintainers below with a real GitHub team/user
+# handle for this repo, then enable "Require review from Code Owners" in
+# branch protection settings for this to actually gate merges.
+
+/apps/web/AGENTS.md      @wanderplan/maintainers
+/apps/web/CLAUDE.md      @wanderplan/maintainers
+**/AGENTS.md             @wanderplan/maintainers
+**/CLAUDE.md             @wanderplan/maintainers

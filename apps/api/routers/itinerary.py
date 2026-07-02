@@ -1,14 +1,15 @@
-from __future__ import annotations
 import asyncio
 import json
 import uuid
 from typing import AsyncGenerator
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from chains.itinerary_chain import generate_itinerary
 from core.config import settings
+from core.errors import sanitize_error
+from core.rate_limit import LLM_RATE_LIMIT, limiter
 from models.itinerary import GenerateItineraryRequest
 from models.trip import TripConfig
 
@@ -41,15 +42,16 @@ async def _stream_generation(trip_config: TripConfig) -> AsyncGenerator[str, Non
     except Exception as exc:
         yield await send("error", {
             "code": "GENERATION_FAILED",
-            "message": str(exc),
+            "message": sanitize_error(exc, context="generate-itinerary"),
             "retryable": True,
         })
 
 
 @router.post("/generate-itinerary")
-async def generate_itinerary_endpoint(request: GenerateItineraryRequest):
+@limiter.limit(LLM_RATE_LIMIT)
+async def generate_itinerary_endpoint(request: Request, body: GenerateItineraryRequest):
     return StreamingResponse(
-        _stream_generation(request.trip_config),
+        _stream_generation(body.trip_config),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

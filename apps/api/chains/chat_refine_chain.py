@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from core.config import settings
+from core.prompt_guard import neutralize
 from models.chat import ChatMessage
 from models.trip import TripConfig
 
@@ -83,14 +84,14 @@ async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
         raise RuntimeError("GEMINI_API_KEY is not set.")
 
     client = google_genai.Client(api_key=settings.gemini_api_key)
-    trip_json = request.trip_config.model_dump_json(indent=2)
+    trip_json = neutralize(request.trip_config.model_dump_json(indent=2), context="trip configuration")
     system_prompt = _REFINE_SYSTEM_PROMPT.format(trip_config_json=trip_json)
 
     history = request.messages[-10:]
     contents = []
     for msg in history:
         role = "user" if msg.role == "user" else "model"
-        contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=msg.content)]))
+        contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=neutralize(msg.content, context="chat message"))]))
 
     def _call_sync() -> str:
         response = client.models.generate_content(

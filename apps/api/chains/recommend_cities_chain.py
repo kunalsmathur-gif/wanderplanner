@@ -3,10 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pydantic import BaseModel
 
 from core.config import settings
+from core.prompt_guard import neutralize
 from models.trip import TripConfig
+
+logger = logging.getLogger(__name__)
 
 
 class RecommendedCity(BaseModel):
@@ -65,11 +69,11 @@ async def recommend_cities(request: RecommendCitiesRequest) -> RecommendCitiesRe
         from google import genai as google_genai
         from google.genai import types as genai_types
     except ImportError:
-        print("⚠️ google-genai not installed, using mock")
+        logger.warning("google-genai not installed, using mock")
         return _mock_response(request.country)
 
     if not settings.gemini_api_key:
-        print("⚠️ GEMINI_API_KEY not set, using mock")
+        logger.warning("GEMINI_API_KEY not set, using mock")
         return _mock_response(request.country)
 
     cfg = request.trip_config
@@ -88,8 +92,8 @@ async def recommend_cities(request: RecommendCitiesRequest) -> RecommendCitiesRe
     )
 
     prompt = _RECOMMEND_PROMPT.format(
-        country=request.country,
-        trip_profile=trip_profile,
+        country=neutralize(request.country, context="country field"),
+        trip_profile=neutralize(trip_profile, context="trip profile"),
     )
 
     client = google_genai.Client(api_key=settings.gemini_api_key)
@@ -111,8 +115,8 @@ async def recommend_cities(request: RecommendCitiesRequest) -> RecommendCitiesRe
         cities = [RecommendedCity(**c) for c in cities_data[:6]]
         return RecommendCitiesResponse(cities=cities)
     except Exception as e:
-        print(f"⚠️ Gemini API failed for recommend_cities: {type(e).__name__}: {e}")
-        print(f"   Returning mock response for {request.country}")
+        logger.warning("Gemini API failed for recommend_cities: %s: %s", type(e).__name__, e)
+        logger.info("Returning mock response for %s", request.country)
         return _mock_response(request.country)
 
 

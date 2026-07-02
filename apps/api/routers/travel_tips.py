@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from urllib.parse import quote_plus
 
 import httpx
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 from core.config import settings
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # In-memory cache: destination (lowercased) → list of tips
 # Persists for the lifetime of the API process (cleared on restart)
@@ -79,7 +81,7 @@ async def _fetch_reddit_tips(destination: str, http: httpx.AsyncClient) -> list[
                 score=int(data.get("score", 0)),
             ))
     except Exception as e:
-        print(f"⚠️ Reddit tips failed for {destination}: {type(e).__name__}: {e}")
+        logger.warning("Reddit tips failed for %s: %s: %s", destination, type(e).__name__, e)
     return tips
 
 
@@ -91,7 +93,7 @@ async def _generate_gemini_tips(destination: str, limit: int) -> list[TravelTip]
         from google import genai as google_genai
         from google.genai import types as genai_types
     except ImportError:
-        print("⚠️ Gemini SDK not installed")
+        logger.warning("Gemini SDK not installed")
         return []
 
     try:
@@ -116,7 +118,7 @@ async def _generate_gemini_tips(destination: str, limit: int) -> list[TravelTip]
         items = json.loads(cleaned)
         return [TravelTip(**item) for item in items if isinstance(item, dict)]
     except Exception as e:
-        print(f"⚠️ Gemini tips failed for {destination}: {type(e).__name__}: {e}")
+        logger.warning("Gemini tips failed for %s: %s: %s", destination, type(e).__name__, e)
         return []
 
 
@@ -194,7 +196,7 @@ async def travel_tips(
 
     # Use fallback if both sources failed
     if not combined:
-        print(f"ℹ️ Using fallback tips for {destination}")
+        logger.info("Using fallback tips for %s", destination)
         combined = _fallback_tips(destination, limit)
 
     combined = combined[:limit]

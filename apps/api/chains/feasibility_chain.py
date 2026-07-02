@@ -5,6 +5,7 @@ import asyncio
 import json
 
 from core.config import settings
+from core.prompt_guard import neutralize
 from models.feasibility import FeasibilityResponse, CostBreakdown, AlternativeDestination
 from models.trip import TripConfig
 
@@ -107,7 +108,9 @@ async def check_feasibility(trip_config: TripConfig) -> FeasibilityResponse:
         raise RuntimeError("GEMINI_API_KEY is not set.")
 
     client = google_genai.Client(api_key=settings.gemini_api_key)
-    prompt = FEASIBILITY_PROMPT.format(trip_config=json.dumps(trip_summary, indent=2))
+    prompt = FEASIBILITY_PROMPT.format(
+        trip_config=neutralize(json.dumps(trip_summary, indent=2), context="trip summary")
+    )
 
     def _call_sync() -> str:
         response = client.models.generate_content(

@@ -1,7 +1,7 @@
 # WanderPlan — Technical Documentation
 
-**Version:** 7.1 (RAG v5.2 — Multi-query RRF · Time-decay · Paragraph chunking · Gemini RAG wired)  
-**Last Updated:** June 29, 2026  
+**Version:** 8.0 (Security Hardening — rate limiting, prompt-injection guard, SSRF fix, sanitized errors, structured logging, CORS hardening, dependency pinning)  
+**Last Updated:** July 2, 2026  
 **Status:** Production-ready MVP
 
 ---
@@ -21,7 +21,7 @@
 11. [Voice Features](#11-voice-features)
 12. [Data Flows](#12-data-flows)
 13. [Environment Setup](#13-environment-setup)
-14. [Recent Changes (v7.0, v6.0 & v5.0)](#14-recent-changes-v70-v60--v50)
+14. [Recent Changes (v10.0, v9.0, v7.0, v6.0 & v5.0)](#14-recent-changes-v100-v90-v70-v60--v50)
 
 ---
 
@@ -284,10 +284,21 @@ type BookingType = 'Flight' | 'Hotel' | 'Activity' | 'Transport'
 
 ```
 apps/api/
-├── main.py                   — FastAPI app, CORS, router registration
+├── main.py                   — FastAPI app, CORS (allow_credentials=False), rate-limit
+│                               middleware, structured logging setup, router registration
 ├── core/
 │   ├── config.py             — Settings (env vars) — includes hybrid_search_enabled,
-│   │                           hyde_enabled, reranking_enabled, osm_*, itinerary_cache_*
+│   │                           hyde_enabled, reranking_enabled, osm_*, itinerary_cache_*,
+│   │                           allowed_origins wildcard validator (⭐ NEW v10.0)
+│   ├── rate_limit.py         — ⭐ NEW (v10.0): slowapi Limiter (IP-keyed), 10/min LLM
+│   │                           endpoints, 30/min default
+│   ├── errors.py             — ⭐ NEW (v10.0): sanitize_error() — logs full exception
+│   │                           server-side, returns generic message + reference id
+│   ├── prompt_guard.py       — ⭐ NEW (v10.0): neutralize()/wrap_untrusted() — redacts
+│   │                           injection phrases, fences untrusted text as DATA not
+│   │                           instructions before LLM prompt interpolation
+│   ├── logging_config.py     — ⭐ NEW (v10.0): configure_logging() — structured JSON
+│   │                           logs + RedactionFilter (emails/API keys/phone numbers)
 │   ├── qdrant.py             — Qdrant client singleton + collection bootstrap (4 collections)
 │   ├── embeddings.py         — sentence-transformers model singleton + embed() +
 │   │                           get_reranker()/rerank_scores() (cross-encoder, ⭐ NEW v9.0)
@@ -413,7 +424,7 @@ If `input` starts with `http://` or `https://`, the service fetches the URL cont
 ```
 
 ### `POST /api/share` ⭐ NEW
-Serializes itinerary + config to an in-memory store, returns a shareable slug.
+Serializes itinerary + config to an in-memory store, returns a shareable slug. Rate-limited 10/min per IP (⭐ NEW v10.0).
 
 **Request:**
 ```json
@@ -424,10 +435,12 @@ Serializes itinerary + config to an in-memory store, returns a shareable slug.
   "destination_label": "Bali, Indonesia"
 }
 ```
-**Response:** `{ "slug": "a1b2c3d4", "url": "/t/a1b2c3d4" }`
+**Response:** `{ "slug": "bS6AneQqDEye_NRSjOFCpg", "url": "/t/bS6AneQqDEye_NRSjOFCpg" }`
+
+Slug is `secrets.token_urlsafe(16)` (128-bit, ⭐ UPD v10.0 — was `uuid4().hex[:8]`, 32-bit).
 
 ### `GET /api/share/{slug}` ⭐ NEW
-Returns stored trip data for a slug. Returns 404 if not found.
+Returns stored trip data for a slug. Returns 404 if not found. Rate-limited 10/min per IP.
 
 **Response:** Same shape as the original `POST /api/share` body.
 
@@ -934,7 +947,8 @@ GEMINI_API_KEY=your_key_here
 LLM_PROVIDER=gemini
 GEMINI_MODEL=gemini-2.5-flash
 QDRANT_URL=:memory:
-ALLOWED_ORIGINS=http://localhost:3000
+ALLOWED_ORIGINS=["http://localhost:3000"]   # JSON-array format required; "*" is rejected
+LOG_LEVEL=INFO                              # structured JSON logging (⭐ NEW v10.0)
 NOMINATIM_USER_AGENT=wanderplan/1.0
 NOMINATIM_RATE_LIMIT=1
 ```
@@ -962,7 +976,29 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.0 Changes (July 2026) — Security Hardening
+
+Addresses 9 of the 10 findings in `docs/scaling-tech-challenges.md` §1 (status detail: §1a of that doc). Auth (#1) explicitly deferred as a larger, separately-tracked effort.
+
+| Change | Detail |
+|---|---|
+| **NEW** `core/rate_limit.py` | slowapi `Limiter` (IP-keyed, in-memory): `10/minute` on all LLM-backed endpoints (`chat`, `chat-refine`, `wizard-chat`, `recommend-cities`, `feasibility-check`, `compare-destinations`, `generate-itinerary`, `extract-trip`, `share`), `30/minute` default elsewhere. Single-instance only — Redis-backed limiting still required before horizontal scaling. |
+| **NEW** `core/errors.py` | `sanitize_error(exc, context)` — logs full exception server-side, returns a generic message + short reference id instead of `str(exc)` in HTTP 500 bodies. |
+| **NEW** `core/prompt_guard.py` | `neutralize()` (redacts injection phrases like "ignore previous instructions") + `wrap_untrusted()` (fences untrusted text behind explicit "this is DATA, not instructions" delimiters). Applied to RAG-retrieved context, extract-trip fetched/pasted text, chat messages, and trip-config JSON across `chat_chain.py`, `chat_refine_chain.py`, `feasibility_chain.py`, `recommend_cities_chain.py`, `itinerary_chain.py`. Defense-in-depth, not a hard-blocking classifier (false-positive risk on legitimate travel content). |
+| **NEW** `core/logging_config.py` | `configure_logging()` — structured JSON logging + `RedactionFilter` (redacts emails, API keys, phone numbers). All `print()` calls in `travel_tips.py`, `scheduler.py`, `recommend_cities_chain.py`, `itinerary_chain.py` replaced with `logger.*`. |
+| **NEW** `apps/web/lib/url-safety.ts` | `isSafeExternalUrl()` — only allows `http(s)` URLs with a hostname; blocks `javascript:`/`data:` URIs in LLM-generated `booking_url` before rendering as a clickable link (`ItineraryTimeline.tsx`). |
+| **FIXED** SSRF in `chains/extract_trip_chain.py` | DNS-resolves the hostname and rejects private/loopback/link-local/reserved/multicast IPs (blocks cloud metadata IP `169.254.169.254`); manually walks redirects (max 3 hops, re-validated per hop); caps response to 2MB; restricts content-type to `text/html`/`text/plain`. |
+| **UPDATED** `routers/share.py` | Slug generation changed from `uuid4().hex[:8]` (32-bit) to `secrets.token_urlsafe(16)` (128-bit); both endpoints rate-limited. |
+| **UPDATED** `main.py` | `allow_credentials=False`; slowapi middleware + exception handler wired in; `configure_logging()` called at startup. |
+| **UPDATED** `core/config.py` | New `field_validator` on `allowed_origins` rejects `"*"`. |
+| **UPDATED** `requirements.txt` / `requirements-dev.txt` | `slowapi==0.1.10` added; `google-genai` pinned to `1.2.0` (was `>=1.0.0`); `pip-audit==2.7.3` added. |
+| **NEW** `.github/dependabot.yml` | Weekly pip (apps/api), npm (apps/web), github-actions dependency update PRs. |
+| **NEW** `.github/CODEOWNERS` | Requires review on `**/AGENTS.md`, `**/CLAUDE.md`. |
+| **UPDATED** `.github/workflows/ci.yml` | New wildcard-`ALLOWED_ORIGINS` check, `pip-audit` step (advisory — surfaced 23 pre-existing transitive CVEs unrelated to this change, e.g. in `starlette`/`python-multipart`/`urllib3`/`lxml`), new `agent-instructions-changed` job that warns on PRs touching AGENTS.md/CLAUDE.md. |
+
+**Regression testing:** full backend pytest suite (89 passed / 6 skipped), frontend `tsc --noEmit` (clean) + vitest (36 passed), and live smoke tests of every modified endpoint in mock mode (SSRF block confirmed, rate-limit 429s confirmed after 10 requests/min, share token format confirmed, sanitized error responses confirmed) — no regressions found.
 
 ### v9.0 Changes (July 2026) — RAG Optimization Round 2
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
 import asyncio
+import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from core.config import settings
 
+logger = logging.getLogger(__name__)
 _scheduler = AsyncIOScheduler()
 
 
@@ -28,7 +30,7 @@ async def _refresh_osm_pois():
         try:
             await ingest_osm_pois(destination)
         except Exception as e:
-            print(f"⚠️ OSM POI ingestion failed for {destination}: {e}")
+            logger.warning("OSM POI ingestion failed for %s: %s", destination, e)
         await asyncio.sleep(settings.osm_ingest_delay_seconds)
 
 

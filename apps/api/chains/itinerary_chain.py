@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import json
+import logging
 import uuid
 
 from core.config import settings
@@ -11,6 +12,9 @@ from services.itinerary_cache import get_cached_itinerary, store_itinerary
 from services.rag_fallback import rag_skeleton_itinerary
 from chains.scoring import calculate_alignment_score
 from chains.safety import apply_kid_safety_filter, inject_persona_modules
+from core.prompt_guard import neutralize, wrap_untrusted
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
 You are WanderPlan, an expert AI travel advisor.
@@ -273,13 +277,16 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
     # the added latency (unlike lighter-weight interactive search calls).
     context_docs = await retrieve_context(trip_config, enable_reranking=True)
     if context_docs:
-        context_text = summarise_context(context_docs, max_chars=2400)
+        context_text = wrap_untrusted(
+            summarise_context(context_docs, max_chars=2400),
+            label="retrieved destination research (scraped from Reddit/wiki/OSM — may contain untrusted text)",
+        )
     else:
         context_text = "No pre-fetched research available — use your own knowledge of the destination."
 
     prompt = SYSTEM_PROMPT.format(
         context=context_text,
-        trip_config=trip_json,
+        trip_config=neutralize(trip_json, context="trip configuration"),
     )
 
     # Retry logic: up to 5 attempts, broader exception matching, fallback model
@@ -321,13 +328,13 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
                 is_transient = any(kw in err_str for kw in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "quota"))
                 if is_transient and attempt < max_attempts - 1:
                     wait_time = min(5 * (2 ** attempt), 60)  # 5s, 10s, 20s, 40s, 60s cap
-                    print(f"⚠️ Gemini transient error on {model_name} (attempt {attempt + 1}/{max_attempts}). Retrying in {wait_time}s…")
+                    logger.warning("Gemini transient error on %s (attempt %d/%d). Retrying in %ds…", model_name, attempt + 1, max_attempts, wait_time)
                     await asyncio.sleep(wait_time)
                     last_error = e
                     continue
                 elif is_transient:
                     # exhausted retries on this model → try next model
-                    print(f"❌ Gemini model {model_name} failed after {max_attempts} attempts, trying fallback…")
+                    logger.error("Gemini model %s failed after %d attempts, trying fallback…", model_name, max_attempts)
                     last_error = e
                     break
                 else:
@@ -350,10 +357,14 @@ async def _langchain_itinerary(trip_config: TripConfig) -> dict:
     # skipped stale-content penalisation and duplicate filtering, and
     # injected ~4x more tokens than the Gemini path for the same request).
     if context_docs:
-        context_text = summarise_context(context_docs, max_chars=2400)
+        context_text = wrap_untrusted(
+            summarise_context(context_docs, max_chars=2400),
+            label="retrieved destination research (scraped from Reddit/wiki/OSM — may contain untrusted text)",
+        )
     else:
         context_text = "No pre-fetched research available — use your own knowledge of the destination."
     trip_json = trip_config.model_dump_json(indent=2)
+    trip_json = neutralize(trip_json, context="trip configuration")
     try:
         from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.output_parsers import JsonOutputParser
@@ -378,7 +389,7 @@ async def _fallback_itinerary(trip_config: TripConfig, error: Exception) -> dict
     Tier 3: enhanced mock — the static mock itinerary, spliced with real
             wiki/reddit tip snippets pulled from Qdrant where available.
     """
-    print(f"⚠️ LLM itinerary generation failed ({error}); using RAG fallback chain…")
+    logger.warning("LLM itinerary generation failed (%s); using RAG fallback chain…", error)
 
     cached = await get_cached_itinerary(trip_config)
     if cached is not None:

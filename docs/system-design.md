@@ -90,6 +90,15 @@
 │  POST /api/compare-destinations→ 10-param AI comparison                  │
 │  GET  /health                  → Readiness probe                          │
 │                                                                            │
+│  Security middleware (⭐ NEW v10.0):                                      │
+│  - slowapi rate limiting: 10/min on all LLM-backed endpoints, 30/min      │
+│    default elsewhere (IP-keyed, in-memory — single-instance only)        │
+│  - CORS: allow_credentials=False, wildcard origin rejected by validator  │
+│  - Structured JSON logging with PII redaction (core/logging_config.py)  │
+│  - Prompt-injection guard (core/prompt_guard.py) wraps/neutralizes all   │
+│    untrusted text (chat, scraped pages, RAG context) before LLM prompts │
+│  - SSRF-hardened URL fetch in extract-trip (private-IP/metadata block)  │
+│                                                                            │
 │  Background (APScheduler):                                                │
 │  - Reddit content refresh every 6h                                        │
 │  - Qdrant vector ingestion on startup                                     │
@@ -382,10 +391,10 @@ User clicks ShareButton (center column header)
          }
                   │
                   ▼
-         share.py router
-           → slug = uuid4().hex[:8]   e.g. "a1b2c3d4"
+         share.py router (rate-limited 10/min per IP)
+           → slug = secrets.token_urlsafe(16)   e.g. "bS6AneQqDEye_NRSjOFCpg" (128-bit, ⭐ UPD v10.0)
            → _store[slug] = payload
-           → return { slug, url: "/t/a1b2c3d4" }
+           → return { slug, url: "/t/bS6AneQqDEye_NRSjOFCpg" }
                   │
                   ◄──────
                   │
@@ -399,7 +408,7 @@ Recipient opens https://wanderplan.app/t/a1b2c3d4
 app/t/[slug]/page.tsx
          │
          ▼
-GET /api/share/a1b2c3d4
+GET /api/share/bS6AneQqDEye_NRSjOFCpg
          │
          ├─ Found → { itinerary, trip_config, labels, destination_label }
          │    → render read-only day-by-day view
@@ -506,11 +515,13 @@ Request:  { itinerary: object, trip_config: object,
             labels: Record<string,string>, destination_label: string }
 Response: { slug: string, url: string }
 ```
+Rate-limited 10/min per IP. Slug is `secrets.token_urlsafe(16)` (128-bit, ⭐ UPD v10.0 — was `uuid4().hex[:8]`).
 
 #### `GET /api/share/{slug}` ⭐ NEW
 ```
 Response: same shape as POST /api/share body, or 404
 ```
+Rate-limited 10/min per IP.
 
 #### `GET /api/geocode?q={query}`
 ```
@@ -837,7 +848,8 @@ Breaking any link in this chain prevents scrolling. `<main className="h-full">` 
 | `LLM_PROVIDER` | `gemini` | — | `gemini` or `mock` (for testing) |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | — | Primary model ID |
 | `QDRANT_URL` | `:memory:` | — | Qdrant instance URL |
-| `ALLOWED_ORIGINS` | `http://localhost:3000` | ✅ | CORS whitelist |
+| `ALLOWED_ORIGINS` | `["http://localhost:3000"]` | ✅ | CORS whitelist — **must be JSON-array format** (pydantic-settings list parsing), `"*"` is rejected by a validator (⭐ NEW v10.0) |
+| `LOG_LEVEL` | `INFO` | — | Structured JSON logging level (⭐ NEW v10.0, `core/logging_config.py`) |
 | `NOMINATIM_USER_AGENT` | `wanderplan/1.0` | — | Nominatim ToS compliance |
 | `NOMINATIM_RATE_LIMIT` | `1` | — | Requests per second |
 
@@ -939,6 +951,21 @@ POST /api/chat-refine fails →
 ---
 
 ## 16. Change Log
+
+### v10.0 (July 2026) — Security Hardening
+
+Addresses 9 of the 10 findings in `docs/scaling-tech-challenges.md` §1 (full detail + status table: `docs/scaling-tech-challenges.md` §1a). Auth (#1) explicitly deferred.
+
+- **SSRF fix** (`chains/extract_trip_chain.py`): DNS-resolve + reject private/loopback/link-local/reserved/multicast IPs (blocks cloud metadata IP `169.254.169.254`); manual redirect walk (max 3 hops, re-validated); 2MB response cap; content-type allowlist.
+- **Rate limiting** (`core/rate_limit.py`, slowapi, IP-keyed, in-memory): `10/min` on all LLM-backed endpoints, `30/min` default elsewhere.
+- **Share link hardening** (`routers/share.py`): `secrets.token_urlsafe(16)` (128-bit) replaces `uuid4().hex[:8]` (32-bit); both endpoints rate-limited.
+- **Sanitized errors** (`core/errors.py`): all router exception handlers now log full detail server-side and return a generic message + reference id instead of `str(exc)`.
+- **Prompt-injection guarding** (`core/prompt_guard.py`): `neutralize()` + `wrap_untrusted()` applied to RAG context, extract-trip fetched/pasted text, chat messages, and trip-config JSON across all LLM chains; frontend `lib/url-safety.ts` blocks unsafe `booking_url` schemes.
+- **CORS hardening**: `allow_credentials=False`; `core/config.py` validator rejects `"*"` in `ALLOWED_ORIGINS`; CI wildcard check added.
+- **Structured logging + redaction** (`core/logging_config.py`): JSON logs, PII redaction filter (emails/API keys/phone numbers); all `print()` calls replaced with `logger.*`.
+- **Dependency hygiene**: `google-genai` pinned to `1.2.0`; `pip-audit` added to CI (advisory); `.github/dependabot.yml` added.
+- **AGENTS.md review process**: `.github/CODEOWNERS` + CI job warns on AGENTS.md/CLAUDE.md changes.
+- **Regression testing**: full backend pytest (89 passed/6 skipped), frontend `tsc --noEmit` + vitest (36 passed), live smoke tests of every modified endpoint in mock mode — no regressions.
 
 ### v9.0 (July 2026)
 - RAG retrieval upgraded to hybrid search: BM25 (destination-scoped Qdrant scroll) fused with semantic cosine search via Reciprocal Rank Fusion, applied to every `semantic_search()` call

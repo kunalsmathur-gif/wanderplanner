@@ -1,12 +1,14 @@
 # End-to-End Itinerary Generation Flow
 
-Traces the full path of a `/api/generate-itinerary` request, from the frontend wizard submission to the final SSE response, based on `apps/api/routers/itinerary.py`, `chains/itinerary_chain.py`, `services/search.py`, `services/hyde.py`, `services/itinerary_cache.py`, `services/rag_fallback.py`, `chains/safety.py`, and `chains/scoring.py`.
+Traces the full path of a `/api/generate-itinerary` request, from the frontend wizard submission to the final SSE response, based on `apps/api/routers/itinerary.py`, `chains/itinerary_chain.py`, `services/search.py`, `services/hyde.py`, `services/itinerary_cache.py`, `services/rag_fallback.py`, `chains/safety.py`, `chains/scoring.py`, `core/rate_limit.py`, and `core/prompt_guard.py` (⭐ NEW v10.0 — security hardening, see `docs/scaling-tech-challenges.md` §1a).
 
 ```mermaid
 flowchart TD
     A["User completes Wizard /\nsubmits TripConfig\n(destination, dates, pace,\npersonas, budget, group)"] --> B["Frontend: streamItinerary()\nPOST /api/generate-itinerary\n(fetch + SSE reader)"]
 
-    B --> C["Backend: generate_itinerary_endpoint\nreturns StreamingResponse (SSE)"]
+    B --> RL{"slowapi rate limit\n(10/min per IP, ⭐ NEW v10.0)"}
+    RL -- "exceeded" --> RL429["HTTP 429\nRate limit exceeded"]
+    RL -- "ok" --> C["Backend: generate_itinerary_endpoint\nreturns StreamingResponse (SSE)"]
     C --> C1["emit status: 'Analysing your preferences...' (1/4)"]
     C1 --> C2["emit status: 'Searching destination content...' (2/4)"]
     C2 --> D["generate_itinerary(trip_config)"]
@@ -44,7 +46,7 @@ flowchart TD
     G --> RAG
     R11 --> S["summarise_context()\n1. time-decay score (18mo half-life)\n2. drop score < 0.35\n3. Jaccard dedup (>0.60 overlap)\n4. sort by score desc\n5. truncate to ~2400 chars (~600 tokens)"]
 
-    S --> T["Build LLM prompt:\nSYSTEM_PROMPT + DESTINATION\nRESEARCH (context) + TRIP CONFIG (json)"]
+    S --> T["Build LLM prompt:\nSYSTEM_PROMPT + DESTINATION\nRESEARCH (context, wrap_untrusted()'d\n⭐ NEW v10.0) + TRIP CONFIG (json,\nneutralize()'d ⭐ NEW v10.0)"]
 
     T --> U["Call LLM\n(Gemini: primary model →\nflash-lite → 1.5-flash fallback,\nup to 5 attempts/model on 429/503)"]
 
@@ -80,8 +82,8 @@ flowchart TD
     C3 --> C4["emit data: ItineraryResponse\n(SSE 'data' event)"]
     C4 --> B2["Frontend: onData(result)\nrender itinerary UI"]
 
-    U -.->|"asyncio.wait_for timeout\n(llm_timeout_seconds)"| ERR["emit error: LLM_TIMEOUT\n(retryable: true)"]
-    D -.->|"unhandled exception"| ERR2["emit error: GENERATION_FAILED\n(retryable: true)"]
+    U -.->|"asyncio.wait_for timeout\n(llm_timeout_seconds)"| ERR["emit error: LLM_TIMEOUT\n(retryable: true)\nmessage sanitized via\nsanitize_error() ⭐ NEW v10.0"]
+    D -.->|"unhandled exception"| ERR2["emit error: GENERATION_FAILED\n(retryable: true)\nmessage sanitized via\nsanitize_error() ⭐ NEW v10.0"]
     ERR --> B3["Frontend: onError()\nshow retry UI"]
     ERR2 --> B3
 ```
@@ -94,3 +96,4 @@ flowchart TD
 - **Retry amplification risk.** In the worst case (all 3 Gemini models throttled), the happy path alone can issue up to `3 models × 5 attempts = 15` LLM calls before falling back — this is the retry-cost risk flagged in `scaling-tech-challenges.md` §4.
 - **Cache writes are best-effort and asynchronous-safe.** `store_itinerary()` never blocks or fails the user-facing response, but this also means the itinerary cache (used for Tier 1 fallback) is only as good as your steady-state success rate — a period of sustained LLM outages means Tier 1 cache also can't help new destination/pace combos not seen before the outage.
 - **Post-processing runs regardless of which path produced the itinerary.** Kid-safety filtering, persona injection, and alignment scoring apply uniformly to LLM output, cached output, RAG skeleton, and mock — ensuring consistent safety/quality guarantees no matter which tier served the response.
+- **Security hardening applied end-to-end (⭐ NEW v10.0).** Rate limiting (10/min per IP) gates entry to this whole flow; RAG-retrieved context and trip-config JSON are wrapped/neutralized via `core/prompt_guard.py` before prompt interpolation (defense against injected content from scraped Reddit/wiki/OSM sources); both timeout and unhandled-exception error paths route through `core/errors.py::sanitize_error()` so raw provider errors/stack traces never reach the client. See `docs/scaling-tech-challenges.md` §1a for the full remediation status.

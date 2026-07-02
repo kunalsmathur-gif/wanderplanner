@@ -25,6 +25,27 @@
 
 ---
 
+## 1a. Remediation Status (as of July 2026)
+
+9 of the 10 findings above have been fixed; #1 (full auth) was explicitly deferred by product decision.
+
+| # | Finding | Status | Implementation |
+|---|---|---|---|
+| 1 | No authentication/authorization | 🟡 **Deferred** (product decision — larger effort, tracked separately) | Not implemented this round. All other endpoints are now rate-limited and SSRF/injection-hardened in the meantime, which reduces (but does not eliminate) the blast radius of remaining unauthenticated access. |
+| 2 | Enumerable share links | ✅ **Fixed** | `routers/share.py` now uses `secrets.token_urlsafe(16)` (128-bit) instead of `uuid4().hex[:8]` (32-bit); both `POST /api/share` and `GET /api/share/{slug}` are rate-limited. Still in-memory (per-instance) — DB-backing remains a scaling task, not a security one. |
+| 3 | SSRF via `extract-trip` | ✅ **Fixed** | `chains/extract_trip_chain.py` now resolves DNS and rejects private/loopback/link-local/reserved/multicast IPs (blocks cloud metadata IP), manually walks redirects (max 3 hops, re-validated each hop), caps response to 2MB, and restricts content-type to `text/html`/`text/plain`. |
+| 4 | Prompt injection via free text + scraped content | ✅ **Fixed (defense-in-depth)** | New `core/prompt_guard.py`: `neutralize()` redacts common injection phrases, `wrap_untrusted()` fences untrusted content behind explicit "this is DATA, not instructions" delimiters. Applied to RAG context, extract-trip fetched/pasted text, chat messages, and trip-config JSON across `chat_chain.py`, `chat_refine_chain.py`, `feasibility_chain.py`, `recommend_cities_chain.py`, `itinerary_chain.py`. Frontend: new `lib/url-safety.ts` (`isSafeExternalUrl()`) blocks `javascript:`/`data:` URIs before rendering LLM-generated `booking_url` links. This is a mitigation, not a guarantee — no hard-blocking classifier was added (false-positive risk on legitimate travel content was judged too high for a heuristic-only approach). |
+| 5 | Verbose error responses leak internals | ✅ **Fixed** | New `core/errors.py::sanitize_error()` logs full exception server-side and returns a generic message + short reference id to the client. Applied to all LLM-backed routers. |
+| 6 | No rate limiting | ✅ **Fixed (single-instance)** | `core/rate_limit.py` (slowapi, IP-keyed): `10/minute` on all LLM-backed endpoints (`chat`, `chat-refine`, `wizard-chat`, `recommend-cities`, `feasibility-check`, `compare-destinations`, `generate-itinerary`, `extract-trip`, `share`), `30/minute` default elsewhere. **Caveat:** in-memory, per-process — does not enforce a shared limit across horizontally-scaled instances; Redis-backed limiting is still required before multi-instance deployment (see §2). |
+| 7 | CORS `allow_credentials=True` + env-configurable origins | ✅ **Fixed** | `main.py` now sets `allow_credentials=False`; `core/config.py` has a `field_validator` that rejects `"*"` in `ALLOWED_ORIGINS`; CI now fails if a wildcard origin is configured. |
+| 8 | Sensitive-ish data in logs via `print()` | ✅ **Fixed** | New `core/logging_config.py`: structured JSON logging + `RedactionFilter` (redacts emails, API keys, phone numbers). All `print()` calls in `travel_tips.py`, `scheduler.py`, `recommend_cities_chain.py`, `itinerary_chain.py` replaced with `logger.*`. |
+| 9 | Unpinned/loosely pinned dependencies | ✅ **Fixed (partial)** | `google-genai` pinned to `1.2.0` (was `>=1.0.0`); `pip-audit` added to CI (advisory, non-blocking — surfaced 23 pre-existing transitive CVEs in `starlette`/`python-multipart`/`urllib3`/`lxml` etc. pulled in by already-pinned `fastapi`/`uvicorn`; upgrading those is a larger, separate effort); `.github/dependabot.yml` added for weekly pip/npm/github-actions update PRs. |
+| 10 | AI-agent prompt-injection surface in the repo itself | ✅ **Fixed** | New `.github/CODEOWNERS` requires review on `**/AGENTS.md`/`**/CLAUDE.md`; new `agent-instructions-changed` CI job posts a warning annotation on any PR touching those files. |
+
+**Regression testing performed:** full backend pytest suite (89 passed / 6 skipped), frontend `tsc --noEmit` + vitest (36 passed), and live smoke tests of every modified endpoint in mock mode (SSRF block, rate-limit 429s, share token format, sanitized error bodies) — no regressions found. See `checkpoints/001-regression-testing-security-fi.md` in session history for full detail.
+
+---
+
 ## 2. What breaks at > 1,000,000 Monthly Active Users
 
 | Component | Why it breaks | When it becomes critical |

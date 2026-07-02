@@ -4,6 +4,7 @@ import { useItineraryStore } from '@/store/itineraryStore'
 import { PolaroidCard } from '@/components/itinerary/PolaroidCard'
 import type { ItineraryItem } from '@/types'
 import { useEffect, useState } from 'react'
+import { isSafeExternalUrl } from '@/lib/url-safety'
 
 const thumbnailCache = new Map<string, string | null>()
 const videoIdCache   = new Map<string, string | null>()
@@ -89,7 +90,7 @@ function ActivityCard({ item, isActive, onHover }: {
               {tag === 'instaworthy' ? '📸 ' : ''}{tag.replace(/_/g, ' ')}
             </span>
           ))}
-          {item.booking_url && (
+          {isSafeExternalUrl(item.booking_url) && (
             <a
               href={item.booking_url}
               target="_blank"

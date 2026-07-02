@@ -5,6 +5,7 @@ import asyncio
 import json
 
 from core.config import settings
+from core.prompt_guard import neutralize
 from models.chat import ChatMessage, ChatRequest
 
 GUARDRAIL_SYSTEM_PROMPT = """\
@@ -40,7 +41,7 @@ CONTEXT:
 def _build_prompt(request: ChatRequest) -> str:
     if request.trip_context:
         ctx = json.dumps(request.trip_context, indent=2)
-        trip_section = f"\nCURRENT TRIP BEING PLANNED:\n{ctx}"
+        trip_section = f"\nCURRENT TRIP BEING PLANNED:\n{neutralize(ctx, context='trip context')}"
     else:
         trip_section = ""
 
@@ -71,7 +72,7 @@ async def chat(request: ChatRequest) -> str:
     contents = []
     for msg in history:
         role = "user" if msg.role == "user" else "model"
-        contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=msg.content)]))
+        contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=neutralize(msg.content, context="chat message"))]))
 
     def _call_sync() -> str:
         response = client.models.generate_content(

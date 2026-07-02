@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
@@ -41,6 +42,19 @@ class Settings(BaseSettings):
 
     # CORS
     allowed_origins: list[str] = ["http://localhost:3000"]
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def _no_wildcard_origins(cls, v: list[str]) -> list[str]:
+        # A wildcard here combined with credentialed requests is a classic
+        # CORS misconfiguration (see docs/scaling-tech-challenges.md,
+        # Security Vulnerabilities #7). Fail fast at startup rather than
+        # silently accepting it.
+        if any(origin.strip() == "*" for origin in v):
+            raise ValueError(
+                "ALLOWED_ORIGINS must not contain '*' — list explicit origins per environment."
+            )
+        return v
 
     # Nominatim
     nominatim_user_agent: str = "wanderplan/1.0"
