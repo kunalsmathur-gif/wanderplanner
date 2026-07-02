@@ -8,9 +8,65 @@ from qdrant_client.models import Filter, FieldCondition, MatchValue
 
 from core.config import settings
 from core.qdrant import get_qdrant
-from core.embeddings import embed
+from core.embeddings import embed, rerank_scores
+from services.hyde import generate_hypothetical_passage
 from models.common import SearchResult
 from models.trip import TripConfig
+
+
+# ---------------------------------------------------------------------------
+# Hybrid lexical pass: BM25 over destination-filtered corpus (docs §3D)
+# ---------------------------------------------------------------------------
+
+def _bm25_search_collection_sync(
+    client, collection: str, destination: str, query: str, limit: int, max_candidates: int = 500
+) -> list[SearchResult]:
+    """Keyword/BM25 pass over all points for `destination` in `collection`.
+
+    Pure vector search can miss exact, specific nouns (place names, dish
+    names) when their embeddings happen to sit further away than a more
+    "generic" chunk. BM25 catches these deterministically via term overlap.
+    Scoped to a single destination via Qdrant's `scroll` (not `search`) so
+    it works without needing an existing query vector.
+    """
+    try:
+        from rank_bm25 import BM25Okapi
+    except ImportError:
+        raise RuntimeError("rank_bm25 not installed. Run: pip install rank_bm25")
+
+    dest_filter = Filter(
+        must=[FieldCondition(key="destination", match=MatchValue(value=destination))]
+    )
+    points, _ = client.scroll(
+        collection_name=collection,
+        scroll_filter=dest_filter,
+        limit=max_candidates,
+        with_payload=True,
+        with_vectors=False,
+    )
+    if not points:
+        return []
+
+    texts = [(p.payload or {}).get("text", (p.payload or {}).get("text_preview", "")) for p in points]
+    tokenized = [t.lower().split() for t in texts]
+    bm25 = BM25Okapi(tokenized)
+    scores = bm25.get_scores(query.lower().split())
+
+    ranked_idx = sorted(range(len(points)), key=lambda i: scores[i], reverse=True)[:limit]
+    results = []
+    for i in ranked_idx:
+        if scores[i] <= 0:
+            continue  # no lexical overlap at all — not a useful lexical match
+        p = points[i].payload or {}
+        results.append(SearchResult(
+            text=p.get("text", p.get("text_preview", "")),
+            source=p.get("source", collection),
+            source_url=p.get("source_url", p.get("post_url", "")),
+            score=float(scores[i]),
+            destination=p.get("destination", destination),
+            published_date=p.get("published_date"),
+        ))
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -18,26 +74,44 @@ from models.trip import TripConfig
 # ---------------------------------------------------------------------------
 
 async def semantic_search(
-    query: str, destination: str, limit: int = 10
+    query: str,
+    destination: str,
+    limit: int = 10,
+    vector: list[float] | None = None,
+    bm25_query: str | None = None,
 ) -> list[SearchResult]:
-    vector = embed([query])[0]
+    # embed() is CPU-bound (sentence-transformers) and client.search() is a
+    # blocking network call (sync QdrantClient). Both block the asyncio event
+    # loop if called inline, which serializes concurrent requests under load.
+    # Offload each to a worker thread so the event loop stays free.
+    # Callers with multiple queries (e.g. retrieve_context) can pass a
+    # precomputed `vector` to batch-embed once instead of one model call per query.
+    if vector is None:
+        vector = (await asyncio.to_thread(embed, [query]))[0]
     client = get_qdrant()
 
     dest_filter = Filter(
         must=[FieldCondition(key="destination", match=MatchValue(value=destination))]
     )
 
-    results = []
-    for collection in [settings.qdrant_collection_wiki, settings.qdrant_collection_reddit]:
-        hits = client.search(
+    def _search_collection(collection: str):
+        return client.search(
             collection_name=collection,
             query_vector=vector,
             query_filter=dest_filter,
             limit=limit // 2,
         )
+
+    collections = [settings.qdrant_collection_wiki, settings.qdrant_collection_reddit]
+    hits_per_collection = await asyncio.gather(
+        *[asyncio.to_thread(_search_collection, c) for c in collections]
+    )
+
+    semantic_results = []
+    for collection, hits in zip(collections, hits_per_collection):
         for hit in hits:
             p = hit.payload or {}
-            results.append(SearchResult(
+            semantic_results.append(SearchResult(
                 text=p.get("text", p.get("text_preview", "")),
                 source=p.get("source", collection),
                 source_url=p.get("source_url", p.get("post_url", "")),
@@ -45,9 +119,30 @@ async def semantic_search(
                 destination=p.get("destination", destination),
                 published_date=p.get("published_date"),
             ))
+    semantic_results.sort(key=lambda r: r.score, reverse=True)
 
-    results.sort(key=lambda r: r.score, reverse=True)
-    return results[:limit]
+    if not settings.hybrid_search_enabled:
+        return semantic_results[:limit]
+
+    # Hybrid: fuse the semantic ranking with a BM25 keyword ranking via RRF.
+    # bm25_query defaults to the same text used for embedding, but callers
+    # doing HyDE-style query augmentation should pass the original raw query
+    # here — BM25 needs literal terms, not a synthesized hypothetical passage.
+    lexical_query = bm25_query if bm25_query is not None else query
+    bm25_lists = await asyncio.gather(
+        *[
+            asyncio.to_thread(_bm25_search_collection_sync, client, c, destination, lexical_query, limit)
+            for c in collections
+        ]
+    )
+    bm25_flat = [r for sub in bm25_lists for r in sub]
+    bm25_flat.sort(key=lambda r: r.score, reverse=True)
+
+    if not bm25_flat:
+        return semantic_results[:limit]
+
+    merged = _rrf_merge([semantic_results, bm25_flat])
+    return merged[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -101,23 +196,64 @@ def _time_decay_score(base_score: float, published_date: str | None) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Cross-encoder reranking (docs §P3)
+# ---------------------------------------------------------------------------
+
+async def _rerank(query: str, results: list[SearchResult], top_n: int = 40) -> list[SearchResult]:
+    """Rerank the top `top_n` RRF candidates with a cross-encoder.
+
+    A cross-encoder scores (query, doc) pairs jointly and is meaningfully
+    more precise than comparing independently-computed embeddings, at the
+    cost of one forward pass per candidate — cheap enough for a ~40-doc
+    shortlist, prohibitive for full-corpus retrieval. Best-effort: any
+    failure (model download/OOM/etc.) falls back to the incoming RRF order
+    rather than breaking retrieval.
+    """
+    if not results:
+        return results
+    head, tail = results[:top_n], results[top_n:]
+    try:
+        texts = [r.text for r in head]
+        scores = await asyncio.to_thread(rerank_scores, query, texts)
+    except Exception:
+        return results
+
+    reranked_head = [
+        r.model_copy(update={"score": float(s)})
+        for r, s in sorted(zip(head, scores), key=lambda pair: pair[1], reverse=True)
+    ]
+    return reranked_head + tail
+
+
+# ---------------------------------------------------------------------------
 # High-level retrieval
 # ---------------------------------------------------------------------------
 
-async def retrieve_context(trip_config: TripConfig) -> list[dict]:
+async def retrieve_context(trip_config: TripConfig, enable_reranking: bool | None = None) -> list[dict]:
     """
     Retrieve the top-20 context chunks for itinerary generation.
 
     Runs three query variants in parallel and merges with Reciprocal Rank
     Fusion so both specific terms ("anime cafes") and vibe queries
-    ("relaxed cultural experience") are well-covered.
+    ("relaxed cultural experience") are well-covered. Optionally augments
+    the vibe query with a HyDE hypothetical passage, fuses semantic +
+    BM25 rankings per query (hybrid search), and — when reranking is
+    enabled — reranks the merged shortlist with a cross-encoder before
+    truncating to top-20.
+
+    `enable_reranking`: cross-encoder reranking adds a second model call
+    and measurably increases latency (see load-test results), so it's off
+    by default (falls back to `settings.reranking_enabled`, itself False).
+    Pass `enable_reranking=True` explicitly for call sites where the extra
+    precision is worth the cost — currently only final itinerary generation
+    in chains/itinerary_chain.py.
     """
     dest = trip_config.destination.city if trip_config.destination else "general"
     personas = " ".join(trip_config.personas).replace("_", " ") if trip_config.personas else ""
     purpose = getattr(trip_config, "purpose", "") or ""
     pace = getattr(trip_config, "pace", "") or ""
 
-    queries = [
+    raw_queries = [
         # Query 1 — config-oriented: persona + core nouns
         f"{dest} travel {personas} highlights activities food",
         # Query 2 — purpose/vibe: what kind of trip
@@ -126,11 +262,39 @@ async def retrieve_context(trip_config: TripConfig) -> list[dict]:
         f"{dest} best restaurants sightseeing transport safety advice",
     ]
 
+    # HyDE (§3G): embed a synthesized "ideal passage" for the vibe query
+    # instead of the raw sparse query text — dense prose embeds closer to
+    # real guide/forum content than a keyword-ish query does. BM25 still
+    # uses the original raw query text (passed as bm25_query below), since
+    # lexical matching needs literal terms, not synthesized prose.
+    embed_queries = list(raw_queries)
+    if settings.hyde_enabled:
+        embed_queries[1] = generate_hypothetical_passage(dest, purpose, pace, trip_config.personas)
+
+    # Batch-embed all 3 query variants in a single model call instead of one
+    # embed() call per query — sentence-transformers batches efficiently, so
+    # this cuts model invocation overhead ~3x versus embedding one at a time.
+    vectors = await asyncio.to_thread(embed, embed_queries)
+
     result_lists = await asyncio.gather(
-        *[semantic_search(q, dest, limit=15) for q in queries]
+        *[
+            semantic_search(embed_queries[i], dest, limit=15, vector=vectors[i], bm25_query=raw_queries[i])
+            for i in range(len(raw_queries))
+        ]
     )
 
-    merged = _rrf_merge(list(result_lists))[:20]
+    merged = _rrf_merge(list(result_lists))
+
+    should_rerank = settings.reranking_enabled if enable_reranking is None else enable_reranking
+    if should_rerank:
+        # Anchor reranking on all three raw query facets combined (config +
+        # vibe + practical) rather than a single variant — a cross-encoder
+        # anchored on just the vibe query can under-rank docs that are
+        # specifically about safety/practical topics.
+        rerank_anchor = " ".join(raw_queries)
+        merged = await _rerank(rerank_anchor, merged, top_n=40)
+
+    merged = merged[:20]
 
     return [
         {

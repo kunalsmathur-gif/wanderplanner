@@ -1,9 +1,10 @@
 # WanderPlan — Evaluation Set
-**Version:** 4.0 · **Date:** June 29, 2026  
-**Scope:** All AI, API, and integration surfaces across WanderPlan v5.2  
+**Version:** 5.0 · **Date:** July 2, 2026  
+**Scope:** All AI, API, and integration surfaces across WanderPlan v5.3 (RAG Optimization Round 2)  
 **Purpose:** Manual and automated regression testing for correctness, safety, tone, cost and reliability
 
-RAG eval coverage: **RAG-001 to RAG-081** (81 cases — 61 implemented ✅, 20 pending ❌)  
+RAG eval coverage: **RAG-001 to RAG-090** (90 cases — 74 implemented ✅, 1 partial ⚠️, 15 pending ❌)  
+Also see: **Golden Dataset & Automated Retrieval Metrics** (§4U below) for the separate `run_rag_eval.py` scoring suite (not individually numbered test cases — a single automated harness with 12 labeled queries against a 40-chunk curated corpus).  
 Non-RAG coverage: **ANYA-W, ANYA-V, ITN, CITIES, CMP, CHAT, SCORE, EXT, COST, BOOKING, WIKI, MOB, THEME** (160+ cases)
 
 ---
@@ -323,16 +324,16 @@ Covers: every ingested `SearchResult` carries the required metadata fields.
 
 ---
 
-### 4M — RAG Fallback Chain (`§4`) ❌ NOT YET IMPLEMENTED
+### 4M — RAG Fallback Chain (`§4`) ✅ DONE
 
-Covers: 3-tier fallback when Gemini fails: cache lookup → RAG skeleton → enhanced mock.
+Covers: 3-tier fallback when the LLM fails: cache lookup → RAG skeleton → enhanced mock. Implemented in `chains/itinerary_chain.py::_fallback_itinerary()`, `services/itinerary_cache.py`, `services/rag_fallback.py`.
 
 | ID | Scenario | Expected | Pass criteria | Priority | Status |
 |---|---|---|---|---|---|
-| RAG-064 | Gemini fails; `itinerary_cache` has cosine ≥ 0.88 match | Return cached JSON | Response matches cached itinerary | P0 | ❌ Pending |
-| RAG-065 | Cache miss; `osm_pois` + wikivoyage data exists | Return RAG-skeleton itinerary without LLM | Structured itinerary with seeded POIs, no Gemini call | P0 | ❌ Pending |
-| RAG-066 | Both cache + skeleton fail | Return enhanced mock with RAG context | Response includes at least 1 landmark from Qdrant | P1 | ❌ Pending |
-| RAG-067 | All 3 tiers fail | Return standard mock itinerary | No crash; valid JSON response | P0 | ❌ Pending |
+| RAG-064 | Gemini fails; `itinerary_cache` has cosine ≥ 0.88 match | Return cached JSON | Response matches cached itinerary | P0 | ✅ Done — `test_fallback_tier1_cache_hit` |
+| RAG-065 | Cache miss; `osm_pois` data exists (≥3 POIs) | Return RAG-skeleton itinerary without LLM | Structured itinerary with seeded POIs, no Gemini call | P0 | ✅ Done — `test_fallback_tier2_rag_skeleton_builds_from_osm_pois` |
+| RAG-066 | Both cache + skeleton fail (< 3 POIs) | Return enhanced mock with RAG context | Response includes at least 1 real tip spliced from retrieved wiki/reddit content | P1 | ✅ Done — `test_fallback_tier3_enhanced_mock_splices_real_tips` |
+| RAG-067 | All 3 tiers fail (no Qdrant data at all) | Return standard mock itinerary | No crash; valid JSON response | P0 | ✅ Done — negative-path tests for all 3 tiers in `test_rag.py` |
 
 ---
 
@@ -342,7 +343,7 @@ Covers: 3-tier fallback when Gemini fails: cache lookup → RAG skeleton → enh
 |---|---|---|---|---|---|---|
 | RAG-068 | UC1: Itinerary grounding | Qdrant seeded with Louvre docs, request Paris 3-day trip | Louvre appears in day plan | `"Louvre" in itinerary_text` | P0 | ❌ Requires live Qdrant+Gemini |
 | RAG-069 | UC3: Traveller sentiment | Reddit doc with "unsafe at night" injected | Safety warning in output | `"avoid" or "caution"` in response | P1 | ❌ Requires live pipeline |
-| RAG-070 | UC2: Wizard destination chips | Request `destination_mode="exploring"` | Chips include wiki/OSM sourced locations | Chip labels match known destinations | P1 | ❌ OSM POI not implemented |
+| RAG-070 | UC2: Wizard destination chips | Request `destination_mode="exploring"` | Chips include wiki/OSM sourced locations | Chip labels match known destinations | P1 | ⚠️ Partial — OSM POI ingestor now built (`scrapers/osm.py`), but not yet wired into wizard destination-chip suggestions; currently only consumed by the RAG-skeleton fallback (§4M) |
 | RAG-071 | UC4–UC10 | — | — | — | P2 | ❌ Not yet scoped |
 
 ---
@@ -365,7 +366,7 @@ Covers: 3-tier fallback when Gemini fails: cache lookup → RAG skeleton → enh
 | ID | Feature | Scenario | Expected | Pass criteria | Priority | Status |
 |---|---|---|---|---|---|---|
 | RAG-078 | `_persona_fingerprint()` | `TripConfig(personas=["solo"], pace="packed")` | Deterministic 8-token string | Same config → same fingerprint | P1 | ❌ Pending |
-| RAG-079 | Quality score × cosine re-rank | Two candidates: cosine 0.9/quality 0.3 vs cosine 0.7/quality 0.9 | Second candidate ranked first | `results[0].quality_score == 0.9` | P2 | ❌ Pending |
+| RAG-079 | Quality score × cosine re-rank (persona fingerprint based) | Two candidates: cosine 0.9/quality 0.3 vs cosine 0.7/quality 0.9 | Second candidate ranked first | `results[0].quality_score == 0.9` | P2 | ❌ Pending — **not the same as the cross-encoder reranker shipped this cycle** (see §4T); this is a separate, still-unbuilt persona-quality-score rerank over the `generated_itineraries` learning flywheel |
 
 ---
 
@@ -375,6 +376,69 @@ Covers: 3-tier fallback when Gemini fails: cache lookup → RAG skeleton → enh
 |---|---|---|---|---|---|
 | RAG-080 | Static: `"best restaurants in Rome"` | Qdrant only; no live web call | `router.route(q).source == "qdrant"` | P1 | ❌ Pending |
 | RAG-081 | Dynamic: `"flight prices to Tokyo this week"` | Live web search | `router.route(q).source == "web"` | P2 | ❌ Pending |
+
+---
+
+### 4R — Hybrid Search: BM25 + Semantic (`services/search.py`) ✅ DONE
+
+| ID | Scenario | Expected | Pass criteria | Priority | Status |
+|---|---|---|---|---|---|
+| RAG-082 | BM25 scores a proper-noun query higher for exact-match chunk | Query "Tanah Lot", corpus with & without "Tanah Lot" in text | Chunk containing the literal term ranks in the fused top-k | `TestHybridBM25Search` in `test_rag.py` | P1 | ✅ Done |
+| RAG-083 | Hybrid search gated by `settings.hybrid_search_enabled` | Flag set `False` | Falls back to pure semantic search, no BM25 scroll call | Mocked flag, assert `_bm25_search_collection_sync` not called | P1 | ✅ Done |
+| RAG-084 | RRF fusion of BM25 + semantic rankings | Both ranking lists provided | Fused order matches manual RRF calculation | Unit-tested via existing `_rrf_merge()` reused for this fusion | P1 | ✅ Done |
+
+---
+
+### 4S — HyDE Query Augmentation (`services/hyde.py`) ✅ DONE
+
+| ID | Scenario | Expected | Pass criteria | Priority | Status |
+|---|---|---|---|---|---|
+| RAG-085 | `generate_hypothetical_passage()` output is deterministic and non-empty | Same trip_config inputs called twice | Identical passage text both times | P1 | ✅ Done — `TestHyDEPassageGeneration` |
+| RAG-086 | Persona hooks appear in the synthesized passage | `personas=["digital_nomad"]` | Passage mentions co-working/wifi-related language | P2 | ✅ Done |
+| RAG-087 | HyDE applied only to the vibe query variant, not BM25 | Inspect `retrieve_context()` call args | BM25 receives the raw query text; semantic search receives the HyDE passage | P1 | ✅ Done |
+
+---
+
+### 4T — Cross-Encoder Reranking (`core/embeddings.py`, `services/search.py`) ✅ DONE (scoped)
+
+| ID | Scenario | Expected | Pass criteria | Priority | Status |
+|---|---|---|---|---|---|
+| RAG-088 | Reranker reorders candidates by joint (query, doc) relevance | Candidates with misleading independent cosine scores | Reranked order matches cross-encoder ground truth ordering | P0 | ✅ Done — `TestCrossEncoderReranking` |
+| RAG-089 | Reranker fails safe on exception | `rerank_scores` raises `RuntimeError` | Falls back silently to incoming RRF order, no crash | P0 | ✅ Done |
+| RAG-090 | Reranking disabled by default; only enabled at itinerary-generation call sites | `settings.reranking_enabled` default `False`; `retrieve_context(enable_reranking=True)` only from `_gemini_itinerary()`/`_langchain_itinerary()` | Code inspection + config default assertion | P0 | ✅ Done |
+
+---
+
+### 4U — Golden Dataset & Automated Retrieval Metrics (`eval/golden_dataset.json`, `eval/run_rag_eval.py`) ✅ DONE
+
+Unlike the manual/unit-test cases above, this is an **automated retrieval-quality harness**, not individually numbered test cases. It measures ranking quality directly, independent of LLM output variability.
+
+**Corpus & queries:** `apps/api/eval/golden_dataset.json` — a curated 40-chunk corpus (mix of wiki-style and reddit-style travel content across several destinations/personas) plus 12 labeled queries, each with a hand-picked set of "expected relevant" chunk IDs.
+
+**Seeding quirk:** because `semantic_search()`/`retrieve_context()` always query both the `wiki` and `reddit` collections, the same 40-chunk corpus is seeded into **both** collections at eval time. This means a query can legitimately surface the same underlying chunk twice (once from each collection). `run_rag_eval.py` deduplicates retrieved chunk IDs by first-occurrence before scoring — without this, Recall could exceed 1.0, which is nonsensical. If you're extending this eval script, preserve the dedup step.
+
+**Metrics computed** (`run_rag_eval.py`):
+- **Precision@k** — fraction of the top-k retrieved chunks that are actually relevant
+- **Recall@k** — fraction of all relevant chunks that appear in the top-k
+- **MRR (Mean Reciprocal Rank)** — 1 / rank of the first relevant result, averaged across queries
+- **nDCG@k (normalized Discounted Cumulative Gain)** — rewards relevant results appearing higher in the ranking
+
+**Current results** (against `semantic_search()` directly — see limitation below):
+
+| Metric | Value |
+|---|---|
+| Recall@10 | 1.00 |
+| MRR | ≈ 0.85 – 0.94 |
+| nDCG@10 | ≈ 0.89 – 0.96 |
+| Precision@10 | ≈ 0.18 – 0.21 (expected — hybrid search widens the candidate pool; low precision at k=10 is normal when only 1-4 chunks per query are truly relevant out of a 40-chunk corpus) |
+
+**Known limitation:** `run_rag_eval.py` calls `semantic_search()` directly, which exercises the new hybrid BM25+semantic fusion (§4R) but does **not** exercise HyDE (§4S) or cross-encoder reranking (§4T) — those live only inside `retrieve_context()`, the higher-level function used by actual itinerary generation. A one-off manual smoke test of the full `retrieve_context()` pipeline (HyDE + hybrid + rerank) confirmed correct top-ranked results for a sample digital-nomad Bali query, but this is not part of the automated harness. Extending `run_rag_eval.py` to call `retrieve_context()` instead (with reranking forced on) is a natural follow-up if more rigorous end-to-end pipeline scoring is needed.
+
+**How to run:**
+```bash
+cd apps/api
+python -m eval.run_rag_eval
+```
 
 ---
 
@@ -610,8 +674,16 @@ Nominatim is free but has a **hard limit of 1 req/sec** and requires a valid `Us
 ## Appendix B — How to Run Automated Cases
 
 ```bash
-# Unit + integration tests (existing)
+# Unit + integration tests (existing, includes all RAG test classes:
+# TestHybridBM25Search, TestHyDEPassageGeneration, TestCrossEncoderReranking,
+# TestOSMPoiParsing, TestItineraryCacheKey, + 3-tier fallback tests)
 cd apps/api && .venv/bin/pytest tests/ -v
+
+# RAG golden-dataset retrieval evaluation (Precision@k/Recall@k/MRR/nDCG@k) — see §4U
+cd apps/api && python -m eval.run_rag_eval
+
+# RAG retrieval load test (throughput/latency under concurrency)
+cd apps/api && python load_test_rag.py
 
 # Wizard chat — field extraction smoke test
 curl -X POST http://localhost:8000/api/wizard-chat \

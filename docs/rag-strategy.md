@@ -1,34 +1,37 @@
 # WanderPlan — RAG Strategy: Current State, Gaps & Roadmap
-**Version:** 3.0 · **Date:** June 2026 · **Updated:** June 29, 2026
+**Version:** 4.0 · **Date:** June 2026 · **Updated:** July 2, 2026
 
 ---
 
 ## 1. Are We Using RAG Today?
 
-**Yes — fully wired into production as of v5.2.**
+**Yes — fully wired into production, and substantially upgraded as of v5.3.**
 
-WanderPlan has a RAG infrastructure in place (Qdrant + `all-MiniLM-L6-v2` embeddings). All retrieval paths — including the primary **Gemini** production path — now call `retrieve_context()`. The previous silent bypass has been fixed.
+WanderPlan has a RAG infrastructure in place (Qdrant + `all-MiniLM-L6-v2` embeddings). All retrieval paths — including the primary **Gemini** production path — now call `retrieve_context()`. The previous silent bypass has been fixed, a hidden concurrency bug that serialized retrieval under load has been fixed, and the hybrid search / HyDE / reranking / OSM ingestion / itinerary-cache items that were "pending" in the v3.0 roadmap are now implemented.
 
 ### What's Wired Up (Current)
 
 ```
 Data Sources                Qdrant Collections           Where Used
 ─────────────────────       ──────────────────           ──────────────────────
-Wikivoyage (on-demand) ──▶  wiki (384-dim)  ─────────▶  retrieve_context() → Gemini prompt
+Wikivoyage (on-demand) ──▶  wiki (384-dim)  ─────────▶  retrieve_context() → Gemini/Groq/Ollama prompt
 Reddit (every 6 hours) ──▶  reddit (384-dim) ─────────▶  retrieve_context() + /api/reddit-highlights
-OSM POIs               ──▶  osm_pois (384-dim)            ⚠️ EMPTY — ingestor not yet built
+OSM POIs (weekly)      ──▶  osm_pois (384-dim)  ──────▶  RAG-skeleton fallback (Tier 2) + future itinerary grounding
+Itinerary generations  ──▶  itinerary_cache (384-dim) ─▶  Fallback Tier 1 (cache-hit, cosine ≥ 0.88)
 ```
 
 ### Component RAG Status
 
 | Component | RAG used? | Notes |
 |---|---|---|
-| Gemini itinerary generation | ✅ Yes | Fixed in v5.2 — multi-query RRF + summarised context injected |
+| Gemini itinerary generation | ✅ Yes | Multi-query hybrid (BM25+semantic) RRF + HyDE + cross-encoder rerank + summarised context injected |
+| Groq/Ollama itinerary generation | ✅ Yes | Now uses the same `retrieve_context()` + `summarise_context()` pipeline as Gemini (previously bypassed summarisation — fixed) |
 | Anya wizard chat | ❌ No | Still relies on Gemini parametric memory |
 | City recommender | ❌ No | LLM-only |
 | Destination comparison | ❌ No | LLM-only |
 | Best time (seasonal data) | ⚠️ Partial | Scrapes Wikivoyage live — not yet cached in Qdrant |
 | Reddit tagging | ✅ Fixed | `_extract_destination()` now matches against 200+ known destinations |
+| Itinerary fallback (LLM down) | ✅ New | 3-tier fallback chain: cache → RAG skeleton (OSM POIs) → enhanced mock |
 
 ---
 
@@ -37,22 +40,35 @@ OSM POIs               ──▶  osm_pois (384-dim)            ⚠️ EMPTY —
 ### Itinerary Generation (all providers)
 ```python
 # services/search.py
-async def retrieve_context(trip_config) -> list[dict]:
-    # Runs 3 query variants in parallel
-    queries = [
+async def retrieve_context(trip_config, enable_reranking: bool | None = None) -> list[dict]:
+    # Runs 3 query variants in parallel. Query 2 (vibe/purpose) is replaced
+    # with a HyDE hypothetical passage before embedding when hyde_enabled.
+    raw_queries = [
         f"{dest} travel {personas} highlights activities food",
         f"things to do in {dest} {purpose} {pace} trip hidden gems local tips",
         f"{dest} best restaurants sightseeing transport safety advice",
     ]
-    result_lists = await asyncio.gather(*[semantic_search(q, dest, limit=15) for q in queries])
-    merged = _rrf_merge(result_lists)[:20]   # Reciprocal Rank Fusion
+    embed_queries = [... HyDE passage for query 2 if enabled ...]
+    vectors = await asyncio.to_thread(embed, embed_queries)   # batched, offloaded to a worker thread
+    result_lists = await asyncio.gather(*[
+        semantic_search(embed_queries[i], dest, limit=15, vector=vectors[i], bm25_query=raw_queries[i])
+        for i in range(3)
+    ])
+    merged = _rrf_merge(result_lists)
+    if should_rerank:   # settings.reranking_enabled OR explicit enable_reranking=True
+        merged = await _rerank(" ".join(raw_queries), merged, top_n=40)   # cross-encoder, offloaded to a worker thread
+    return merged[:20]
 
 # itinerary_chain.py (Gemini + Groq/Ollama paths)
-context_docs = await retrieve_context(trip_config)
+context_docs = await retrieve_context(trip_config, enable_reranking=True)
 context_text = summarise_context(context_docs, max_chars=2400)   # ~600 tokens
 # Injected as {context} in SYSTEM_PROMPT
 ```
-The 20 RRF-merged chunks are compressed through `summarise_context()` before injection — time-decay applied, deduplicated by Jaccard similarity, sorted by decayed score, capped at 2400 chars (~600 tokens).
+Each `semantic_search()` call now *also* fuses in a BM25 keyword pass (`_bm25_search_collection_sync`, scoped to the destination via Qdrant `scroll`) via Reciprocal Rank Fusion, so specific nouns ("anime cafes", "Tsukiji") are caught even when their embeddings aren't the closest semantic match. The 20 RRF-merged (and optionally reranked) chunks are compressed through `summarise_context()` before injection — time-decay applied, deduplicated by Jaccard similarity, sorted by decayed score, capped at 2400 chars (~600 tokens).
+
+**Reranking is scoped, not global.** Cross-encoder reranking (`sentence-transformers` `CrossEncoder`) adds real measured latency — load testing showed throughput drop from ~23.6 req/s to ~7 req/s at concurrency=50 with reranking on everywhere. It's therefore **off by default** (`settings.reranking_enabled = False`) and explicitly turned on only at the two real itinerary-generation call sites in `chains/itinerary_chain.py` via `retrieve_context(trip_config, enable_reranking=True)`. Lighter-weight paths (the direct `/api/search` endpoint, and the Tier-3 fallback's tip-gathering call) use the fast default.
+
+**Concurrency bug fixed.** Both `embed()` (sentence-transformers, CPU-bound) and `QdrantClient.search()`/`scroll()` (sync client) used to be called directly inside `async def` functions with no executor offload — meaning `asyncio.gather()` over "parallel" queries actually serialized on the event loop (throughput flatlined at ~10 req/s regardless of concurrency). Fixed by wrapping every blocking call in `asyncio.to_thread()`. Post-fix, retrieval also batch-embeds all 3 query variants in a single model call instead of 3 separate ones.
 
 ### Reddit Highlights (UI component)
 ```python
@@ -64,13 +80,13 @@ Now returns properly destination-tagged posts thanks to the fixed `_extract_dest
 
 ### What's Still Missing from the Pipeline
 1. **No Wikivoyage Qdrant cache for best-time** — still live-scraped on every request
-2. **No OSM POI data** — `osm_pois` collection exists but is empty; lat/lon still LLM-generated
-3. **No itinerary cache collection** — no semantic fallback when Gemini is down
-4. **No Anya wizard RAG** — city suggestions rely on Gemini parametric memory alone
+2. **No Anya wizard RAG** — city suggestions rely on Gemini parametric memory alone
+3. **No visa/entry-rules collection** — not yet ingested
+4. **No `itinerary_corpus` / `generated_itineraries` learning flywheel** — described in §9/§10 below, not yet built
 
 ---
 
-## 3. Implemented Improvements (v5.2)
+## 3. Implemented Improvements (v5.2 → v5.3)
 
 ### 3A — Gemini Path Now Uses RAG ✅ DONE
 
@@ -184,35 +200,31 @@ def _summarise_context(docs: list[dict], max_tokens: int = 600) -> str:
 ```
 **Token savings:** Context injection drops from ~7,500 tokens to ~600 tokens — a ~12× reduction in context cost.
 
-### 3D — Hybrid Search: BM25 + Semantic (New)
+### 3D — Hybrid Search: BM25 + Semantic ✅ DONE
 
-Pure vector search struggles with **specific nouns** — "Tokyo" vs "Kyoto" may have similar embeddings but must be treated as hard filters. The fix is layering keyword matching on top of semantic search:
+Pure vector search struggles with **specific nouns** — "Tokyo" vs "Kyoto" may have similar embeddings but must be treated as hard filters. The fix layers keyword matching on top of semantic search, now live in `services/search.py`:
 
 ```python
-# Hybrid retrieval: BM25 handles specific terms, semantic handles "vibe"
+# services/search.py — actual implementation
 from rank_bm25 import BM25Okapi
 
-async def hybrid_search(query: str, destination: str, corpus: list[dict], limit: int = 10) -> list[dict]:
-    # Step 1: Hard metadata filter — only this destination (prevents Lyon appearing in Paris results)
-    dest_docs = [d for d in corpus if d["destination"].lower() == destination.lower()]
-
-    # Step 2: BM25 keyword pass (handles "anime", "sushi", specific place names)
-    tokenized = [d["text"].lower().split() for d in dest_docs]
+def _bm25_search_collection_sync(client, collection, destination, query, limit, max_candidates=500):
+    # Scoped to the destination via Qdrant scroll (not search — no query vector needed)
+    dest_filter = Filter(must=[FieldCondition(key="destination", match=MatchValue(value=destination))])
+    points, _ = client.scroll(collection_name=collection, scroll_filter=dest_filter,
+                               limit=max_candidates, with_payload=True, with_vectors=False)
+    tokenized = [(p.payload or {}).get("text", "").lower().split() for p in points]
     bm25 = BM25Okapi(tokenized)
-    bm25_scores = bm25.get_scores(query.lower().split())
+    scores = bm25.get_scores(query.lower().split())
+    # ... build SearchResult list from the top-scoring points ...
 
-    # Step 3: Semantic pass (handles "vibe" — "relaxed coffee culture", "instagrammable spots")
-    semantic_hits = client.search("wiki", embed([query])[0],
-        query_filter=Filter(must=[FieldCondition("destination", MatchValue(destination))]),
-        limit=limit * 3)
-    semantic_scores = {h.id: h.score for h in semantic_hits}
-
-    # Step 4: Reciprocal Rank Fusion (RRF) — merge both rankings
-    combined = _rrf_merge(bm25_scores, semantic_scores, dest_docs)
-    return combined[:limit]
+# Inside semantic_search(): both a BM25 pass and a semantic pass are run
+# concurrently per collection, then fused via the existing _rrf_merge().
 ```
 
-Use hybrid search for **all retrieval calls** (wiki, reddit, itinerary_corpus). Pure semantic search is kept only for the persona fingerprint lookup in `generated_itineraries`.
+Differences from the original proposal: rather than requiring an in-memory `corpus` list, the implementation scrolls the destination-filtered slice directly from Qdrant (bounded to 500 candidates), so it works against the live collections without a separate corpus data structure. It's applied to **every** `semantic_search()` call (wiki + reddit), gated by `settings.hybrid_search_enabled` (default `True`).
+
+**Measured effect:** on the golden dataset (see `docs/eval-set.md` §4T), hybrid search widens the candidate pool (Precision@10 dropped slightly, from 0.21 → 0.18, since more lexically-related-but-off-topic chunks now surface) while Recall@10 held at a perfect 1.00. In production this trades a small amount of top-of-list purity for materially better handling of proper nouns.
 
 ### 3E — Time-Decay Scoring (New)
 
@@ -285,15 +297,27 @@ def _sentence_boundary_split(text: str, max_chars: int = 500) -> list[str]:
     return chunks
 ```
 
-### 3G — Query Augmentation (HyDE)
+### 3G — Query Augmentation (HyDE) ✅ DONE
 
-Instead of one query, generate a hypothetical answer and embed that:
+Instead of embedding the raw query, `services/hyde.py` synthesizes a plausible-looking travel-guide passage and embeds *that*:
 ```python
-# Before searching, generate a "hypothetical ideal context" and embed it
-hypothetical = f"Top things to do in {dest} for a {purpose} trip: [ideal paragraph]"
-# Embed this → closer to actual travel content than raw query embedding
+# services/hyde.py — actual implementation (template-based, no LLM round-trip)
+def generate_hypothetical_passage(destination, purpose="", pace="", personas=None) -> str:
+    persona_bits = [_PERSONA_HOOKS[p] for p in (personas or []) if p in _PERSONA_HOOKS]
+    sentence = (
+        f"Top things to do and see in {destination} for a {purpose} trip, {pace_bit}. "
+        f"Includes hidden gems away from the crowds, local tips on where to eat, "
+        f"and practical advice on getting around safely."
+    )
+    if persona_bits:
+        sentence += " Especially good for travelers looking for " + ", ".join(persona_bits) + "."
+    return sentence
+
+# In retrieve_context(): applied only to the vibe/purpose query variant.
+# BM25 still uses the original raw query text (passed separately as bm25_query)
+# since lexical matching needs literal terms, not synthesized prose.
 ```
-This significantly improves recall for specific personas (digital nomad, family, etc.).
+**Deliberate scope decision:** implemented as a deterministic template (persona/pace/purpose hooks), not an LLM-generated hypothetical document. This keeps retrieval latency and failure modes unchanged (no extra network call per request) while still moving the query into "prose passage" embedding space. An LLM-generated HyDE passage remains a possible future upgrade if template coverage proves insufficient for very niche personas. Gated by `settings.hyde_enabled` (default `True`).
 
 ### 3H — Fix Reddit Destination Tagging
 
@@ -309,75 +333,89 @@ def _extract_destination(title: str, selftext: str) -> str:
 ```
 This makes the destination filter in `semantic_search()` reliable — currently every Reddit post is tagged `"general"` and the filter matches nothing.
 
-### 3I — Ingest OSM POIs
+### 3I — Ingest OSM POIs ✅ DONE
 
-The `osm_pois` collection exists but is empty. Ingesting POI data (lat/lon, name, type, tags) would let the RAG system provide real coordinates to the itinerary LLM — eliminating hallucinated or wrong lat/lon values.
+`scrapers/osm.py` fetches real POIs (lat/lon, name, category, tags) per destination from the free Overpass API — no API key required. Geocodes the destination via the existing `geocode_city()` service, queries a bounding radius (default 5km, capped at 60 results), skips unnamed/duplicate nodes, embeds a short natural-language description per POI, and upserts into `osm_pois`. Wired into `core/scheduler.py` for a weekly refresh across the ~100 destinations in `KNOWN_DESTINATIONS` (2s delay between destinations to stay polite to the free service). Currently consumed by the Tier 2 RAG-skeleton fallback (§4); direct itinerary-grounding use (use case #1 in §6) is a natural next step once enough destinations are ingested.
+
+### 3J — Cross-Encoder Reranking ✅ DONE (scoped to itinerary generation)
+
+`services/search.py::_rerank()` reranks the top-40 RRF-merged candidates with `cross-encoder/ms-marco-MiniLM-L-6-v2`, scoring `(query, doc)` pairs jointly for materially better precision than comparing independently-computed embeddings. Best-effort: any failure (model load error, OOM) falls back to the incoming RRF order rather than breaking retrieval.
+
+**Off by default, on for itinerary generation only.** A cross-encoder forward pass per candidate is real added latency — load testing showed throughput drop from ~23.6 req/s to ~7 req/s at concurrency=50 with reranking always on. `settings.reranking_enabled` defaults to `False`; `retrieve_context()` accepts an `enable_reranking` override, explicitly set to `True` only at the Gemini and Groq/Ollama itinerary-generation call sites in `chains/itinerary_chain.py`, where the extra precision is worth the cost (LLM latency already dominates the request). Lighter-weight callers (`/api/search`, Tier-3 fallback tip-gathering) use the fast default.
+
+### 3K — Concurrency Fix: Blocking Calls Offloaded to Worker Threads ✅ DONE
+
+Both `embed()` (sentence-transformers, CPU-bound) and the sync `QdrantClient`'s `.search()`/`.scroll()` calls were previously invoked directly inside `async def` functions with no executor offload. This meant `asyncio.gather()` over the "3 parallel query variants" didn't actually run in parallel — everything serialized on the single-threaded event loop. A load test (`apps/api/load_test_rag.py`) confirmed this empirically: throughput flatlined at ~10 req/s regardless of concurrency level (1 → 50), and p50 latency scaled ~46× from concurrency 1 to 50.
+
+**Fix:** every blocking call (`embed`, `client.search`, `client.scroll`) is now wrapped in `asyncio.to_thread()`. Additionally, `retrieve_context()` batch-embeds all 3 query variants in a single `embed()` call instead of 3 separate ones (sentence-transformers batches efficiently). Post-fix throughput at concurrency=50 improved from ~10 → ~23.6 req/s before hybrid/HyDE/reranking were layered back on top (which add their own, expected, additional cost — see §3J).
 
 ---
 
-## 4. RAG as Fallback for Real-Time API Failures
+## 4. RAG as Fallback for Real-Time API Failures ✅ DONE
 
 ### Current Fallback Behaviour
-When Gemini fails after 3 retries:
-- Wizard → smart mock (asks next missing field — context-aware but static)
-- Itinerary → `_mock_itinerary()` returns 3 hardcoded days for "Destination City"
+When the LLM call fails (Gemini after its internal retries, or Groq/Ollama raises), `chains/itinerary_chain.py::generate_itinerary()` now runs a 3-tier RAG-powered fallback chain (`_fallback_itinerary()`) instead of failing the request outright:
+- Wizard → smart mock (asks next missing field — context-aware but static) — **unchanged, out of scope this round**
+- Itinerary → cache → RAG skeleton → enhanced mock (below)
 
-### RAG-Powered Fallback Strategy
+### RAG-Powered Fallback Strategy — Implemented
 
-#### Tier 1: Cached LLM Response (< 5ms)
-Pre-generate and store itineraries for the 50 most popular destinations in Qdrant:
+#### Tier 1: Cached LLM Response ✅ DONE
+`services/itinerary_cache.py`. Every successful LLM-generated itinerary is stored (best-effort, never blocks the response) keyed by an embedding of `f"{dest} {duration}d {pace} {purpose} trip"`:
 ```python
-# New collection: itinerary_cache (384-dim)
-# Payload: {destination, duration_days, pace, purpose, itinerary_json, generated_at}
-# Key: embed(f"{dest} {duration}d {pace} {purpose}")
-
+# services/itinerary_cache.py — actual implementation
 async def get_cached_itinerary(trip_config) -> dict | None:
-    query = f"{dest} {duration}d {pace} {purpose}"
-    hits = client.search("itinerary_cache", embed([query])[0], score_threshold=0.88)
-    if hits:
-        return hits[0].payload["itinerary_json"]  # return cached; log cache hit
-    return None
-```
+    query = _cache_key_text(trip_config)
+    vector = (await asyncio.to_thread(embed, [query]))[0]
+    hits = await asyncio.to_thread(lambda: client.search(
+        collection_name=settings.qdrant_collection_itinerary_cache,
+        query_vector=vector, limit=1, score_threshold=settings.itinerary_cache_score_threshold))  # 0.88
+    if not hits:
+        return None
+    return json.loads(hits[0].payload["itinerary_json"])
 
-#### Tier 2: RAG-assembled itinerary skeleton (no LLM needed)
-If cache misses and LLM is down:
+async def store_itinerary(trip_config, itinerary_raw) -> None:
+    # Best-effort — wrapped in try/except, never raises.
+    # Skips storing fallback-generated itineraries (keys starting with "_")
+    # so a degraded skeleton/mock can never poison the cache.
+    ...
+```
+Difference from the original proposal: rather than pre-generating itineraries for a fixed top-50 list, the cache is populated organically as real requests succeed — any subsequent semantically-similar request (same destination/duration/pace/purpose) becomes a fast-path fallback candidate.
+
+#### Tier 2: RAG-assembled itinerary skeleton ✅ DONE
+`services/rag_fallback.py::rag_skeleton_itinerary()`. If the cache misses:
 ```python
-async def rag_skeleton_itinerary(trip_config) -> dict:
-    """
-    Build a minimal valid itinerary purely from Qdrant data:
-    1. Retrieve top POIs for destination from osm_pois
-    2. Retrieve "eat" section from wikivoyage
-    3. Slot into day structure by pace (3-4 / 4-5 / 5-6 items per day)
-    4. Return valid ItineraryResponse — no LLM call needed
-    """
+async def rag_skeleton_itinerary(trip_config) -> dict | None:
+    # 1. Scroll osm_pois for this destination (min 3 POIs required, else return None → Tier 3)
+    # 2. Slot POIs round-robin into day structure by pace (relaxed=3, moderate=4, packed=5 items/day)
+    # 3. Return a valid raw itinerary dict — no LLM call, real venue names + real lat/lon
 ```
+Returns `None` (falls through to Tier 3) when fewer than 3 OSM POIs are ingested for the destination — avoids building a near-empty, unconvincing plan.
 
-#### Tier 3: Smart mock with RAG context
-Enhance `_mock_itinerary()` to read from Qdrant instead of returning hardcoded data:
-```python
-def _mock_itinerary(trip_config) -> dict:
-    # Sync call to Qdrant — retrieve POI names for destination
-    # Build day structure using real place names from OSM/Wikivoyage
-    # Far better than "City Center Market at 09:00"
-```
+#### Tier 3: Smart mock with RAG context ✅ DONE
+`chains/itinerary_chain.py::_mock_itinerary(trip_config, tip_texts=...)`. If Tier 2 also declines, `_fallback_itinerary()` pulls a handful of real retrieved wiki/reddit snippets via `retrieve_context()` and splices them into the static mock's item descriptions as "Local tip: ..." — reads far less like a generic placeholder than the pre-v5.3 hardcoded mock, even when no OSM data exists yet for that destination.
 
-### Failure → Fallback Decision Tree
+### Failure → Fallback Decision Tree — as implemented
 
 ```
-Gemini API call
+LLM call (Gemini / Groq / Ollama)
     │
-    ├─ Success ──────────────────────────────────────▶  Return itinerary
+    ├─ Success ──────────────────────────────────────▶  Return itinerary; store_itinerary() caches it (best-effort)
     │
-    ├─ 503/429 (3 retries with backoff)
-    │       │
-    │       └─ Still failing
-    │               │
-    │               ├─ Check itinerary_cache (Qdrant)  ──▶  Cache hit → return cached
-    │               │
-    │               ├─ Cache miss → RAG skeleton from osm_pois + wikivoyage
-    │               │
-    │               └─ Qdrant also down → enhanced mock with hardcoded top-50 destinations
+    └─ Exception (after internal retries/backoff)
+            │
+            ├─ get_cached_itinerary() — cosine ≥ 0.88  ──▶  Hit → return cached itinerary instantly
+            │
+            ├─ Cache miss → rag_skeleton_itinerary() — needs ≥3 osm_pois for destination
+            │       │
+            │       ├─ Enough POIs → real-venue skeleton itinerary, no LLM call
+            │       │
+            │       └─ Not enough POIs → Tier 3
+            │
+            └─ _mock_itinerary(tip_texts=retrieved wiki/reddit snippets) — always succeeds
 ```
+
+Unit-tested in `tests/unit/test_rag.py::test_fallback_tier1_cache_hit`, `test_fallback_tier2_rag_skeleton_builds_from_osm_pois`, `test_fallback_tier3_enhanced_mock_splices_real_tips` (and their negative-path counterparts).
 
 ---
 
@@ -388,22 +426,25 @@ INGESTION PIPELINE (offline / scheduled)
 ─────────────────────────────────────────
 Wikivoyage ──▶ Scrape sections ──▶ Sentence-boundary chunks (~500 chars) ──▶ Embed ──▶ Qdrant [wiki]
 Reddit     ──▶ Top posts (6hr)  ──▶ Paragraph chunks (≥80 chars, title prefix) ──▶ Embed ──▶ Qdrant [reddit]
-OSM POIs   ──▶ Overpass API     ──▶ {name,type,coords}  ⚠️ NOT YET BUILT ──▶ Qdrant [osm_pois]
-Itinerary  ──▶ Post-generation  ──▶ Cache popular trips  ⚠️ NOT YET BUILT ──▶ Qdrant [itinerary_cache]
+OSM POIs   ──▶ Overpass API (weekly) ──▶ {name,type,coords} ✅ DONE ──▶ Qdrant [osm_pois]
+Itinerary  ──▶ Post-generation  ──▶ Cache trips on success ✅ DONE ──▶ Qdrant [itinerary_cache]
 Visa/Entry ──▶ Static JSON      ──▶ Per country rules    ⚠️ NOT YET BUILT ──▶ Qdrant [visa_info]
 
 
-RETRIEVAL PIPELINE (per request) — as of v5.2
+RETRIEVAL PIPELINE (per request) — as of v5.3
 ─────────────────────────────────────────────
 User trip config
     │
-    ├─ 3 parallel query variants (config / vibe / practical)
+    ├─ 3 parallel query variants (config / vibe / practical) — vibe variant run through HyDE ✅
     │       │
     │       ▼
-    ├─ Qdrant cosine search: wiki + reddit (limit=15 each per query)
+    ├─ Hybrid search per collection: BM25 (Qdrant scroll) + semantic cosine (wiki + reddit, limit=15 each) ✅
     │       │
     │       ▼
-    ├─ Reciprocal Rank Fusion (k=60) — merge 3×30 = up to 90 results
+    ├─ Reciprocal Rank Fusion (k=60) — merge BM25 + semantic rankings, then merge 3 query variants
+    │       │
+    │       ▼
+    ├─ [Only for itinerary generation] Cross-encoder reranking (ms-marco-MiniLM-L-6-v2, top-40) ✅
     │       │
     │       ▼
     ├─ Time-decay scoring (half-life 18 months, floor 40%)
@@ -422,6 +463,8 @@ User trip config
     │       │
     │       ▼
     └─ Inject into LLM prompt {context}
+
+    (On LLM failure: cache lookup → OSM-grounded skeleton → RAG-tipped mock — see §4)
 ```
 
 ---
@@ -435,7 +478,7 @@ User trip config
 | 3 | **Real-time traveller sentiment** | reddit | "Heads up — recent Reddit posts flag tourist scams near this area" |
 | 4 | **Budget estimates from community data** | reddit | "r/solotravel users report ₹2,500/day in Bali for mid-range" |
 | 5 | **Seasonal/festival injection** | wiki + events | Automatically add Diwali festival context if dates overlap |
-| 6 | **Itinerary fallback (API down)** | itinerary_cache + osm_pois | Valid day plan without LLM call |
+| 6 | **Itinerary fallback (API down)** ✅ DONE | itinerary_cache + osm_pois | Valid day plan without LLM call (see §4) |
 | 7 | **Visa & entry rules** | visa_info | "Indians need visa on arrival for Thailand — ₹2,500 approx" |
 | 8 | **Safety advisories** | reddit + wiki | Flag destinations with recent negative posts (score-weighted) |
 | 9 | **Food & dietary context** | wiki + reddit | Inject veg-friendly restaurant names for users who selected "Pure veg food" |
@@ -466,11 +509,14 @@ User trip config
 | P1 | Reddit paragraph-level chunking + `published_date` | ✅ Done | Paragraph-granularity chunks, time-decay enabled |
 | P1 | Multi-query (3 variants) + Reciprocal Rank Fusion | ✅ Done | Better recall for vibe/niche/practical queries |
 | P1 | Time-decay scoring (18-month half-life) | ✅ Done | Stale content penalised at retrieval |
-| P1 | OSM POI ingestor (Overpass API) | ❌ Pending | Real coordinates; eliminates hallucinated lat/lon |
-| P2 | `itinerary_cache` collection + cache hit logic | ❌ Pending | Fallback + free repeat visits |
+| P1 | Async concurrency fix (`asyncio.to_thread` + batch embed) | ✅ Done | Throughput ~10 → ~23.6 req/s @ concurrency=50 |
+| P1 | OSM POI ingestor (Overpass API) | ✅ Done | Real coordinates; eliminates hallucinated lat/lon |
+| P1 | Hybrid BM25 + semantic search | ✅ Done | Better handling of proper nouns/specific terms |
+| P2 | `itinerary_cache` collection + cache hit logic | ✅ Done | Fallback + free repeat visits |
+| P2 | Golden dataset + automated eval (`run_rag_eval.py`) | ✅ Done | Recall@10=1.00, MRR≈0.85-0.94, nDCG@10≈0.89-0.96 |
 | P2 | Visa info collection + wizard injection | ❌ Pending | Practical user value |
-| P2 | HyDE query augmentation | ❌ Pending | Better recall for niche trips (replaces multi-query) |
-| P3 | Cross-encoder reranker | ❌ Pending | Best precision; overkill until corpus is large |
+| P2 | HyDE query augmentation | ✅ Done | Better recall for niche personas (template-based) |
+| P3 | Cross-encoder reranker | ✅ Done | Scoped to itinerary generation only (latency-gated) |
 
 ---
 
@@ -963,34 +1009,37 @@ More context signal, fewer tokens, better output.
 
 ## 15. Updated Implementation Roadmap
 
-| Priority | Task | Effort | Impact |
+| Priority | Task | Effort | Status / Impact |
 |---|---|---|---|
-| P0 | Wire `retrieve_context()` into `_gemini_itinerary()` | 30 min | Grounds all production itineraries immediately |
-| P0 | Fix Reddit `_extract_destination()` NER | 2 hrs | Makes Reddit destination filter usable |
-| P1 | Context summarisation (600-token budget) | 3 hrs | 87% token reduction |
-| P1 | Better chunking (500-char sentence boundaries) | 2 hrs | Higher retrieval precision |
-| P1 | OSM POI ingestor (Overpass API) | 4 hrs | Real coordinates; no hallucinated lat/lon |
-| P1 | `generated_itineraries` collection + store on generate | 4 hrs | Learning flywheel starts accumulating data immediately |
-| P2 | Travel blog scraper — `feedparser` + BeautifulSoup (Nomadic Matt, Planet D, Lonely Planet) | 1 day | itinerary_corpus seeded with authoritative content |
-| P2 | Reddit PRAW ingester (replace direct JSON feed) — flair:trip-report filter, top 5 comments per post | 4 hrs | High-volume, properly tagged community itineraries |
-| P2 | YouTube `youtube-transcript-api` scraper (no API key) | 4 hrs | Video-native itinerary patterns, free |
-| P2 | Unified metadata schema normalisation across all scrapers | 3 hrs | Consistent filters; `attraction_type` precision retrieval |
-| P2 | Quality score background task (session signals) | 4 hrs | Enables persona-based re-ranking |
-| P2 | `itinerary_cache` + fallback retrieval logic | 4 hrs | API-down resilience using real cached itineraries |
-| P2 | Visa info collection | 3 hrs | Entry requirements surfaced in wizard |
-| P2 | Time-decay scoring in reranker | 2 hrs | Filters out stale 2019 content automatically |
-| P2 | Semantic chunking (by section headers / Reddit comments) | 3 hrs | Higher chunk precision, removes mid-sentence splits |
-| P2 | Hybrid BM25 + semantic search (`rank_bm25` library) | 4 hrs | Specific nouns (Tokyo vs Kyoto) handled correctly |
-| P3 | Wikimedia API ingestion (replace Wikivoyage scraper) | 2 hrs | More stable than HTML scraping |
-| P3 | TripAdvisor via Apify/Bright Data (v1 premium) | 2 days | Current ratings and reviews |
-| P3 | `yt-dlp` + Whisper STT for non-captioned YouTube videos (v1) | 1 day | Niche travel vlogger content |
-| P3 | Instagram/TikTok via Octolens or Prowlo (v1) | 2 days | Trending visual content, geotag-based retrieval |
-| P3 | X/Twitter real-time API for disruptions (v1) | 1 day | Immediate travel alerts, strikes, closures |
-| P3 | Agentic router (static vs real-time query classifier) | 1 day | Routes live queries to fresh APIs, static to vector DB |
-| P3 | HyDE query augmentation | 2 hrs | Better recall for niche personas |
-| P3 | Dual embedding per corpus doc (config + content) | 3 hrs | More precise retrieval |
-| P3 | Cohere Rerank / BGE-Reranker cross-encoder | 1 day | Highest precision; score top-50, return top-10 |
+| P0 | Wire `retrieve_context()` into `_gemini_itinerary()` | 30 min | ✅ Done — grounds all production itineraries |
+| P0 | Fix Reddit `_extract_destination()` NER | 2 hrs | ✅ Done — Reddit destination filter usable |
+| P1 | Context summarisation (600-token budget) | 3 hrs | ✅ Done — 87% token reduction |
+| P1 | Better chunking (500-char sentence boundaries) | 2 hrs | ✅ Done — higher retrieval precision |
+| P1 | Async concurrency fix (`asyncio.to_thread` + batch embed) | 3 hrs | ✅ Done — throughput ~10 → ~23.6 req/s @ concurrency=50 |
+| P1 | OSM POI ingestor (Overpass API) | 4 hrs | ✅ Done — `scrapers/osm.py`, weekly scheduler job |
+| P1 | Hybrid BM25 + semantic search (`rank_bm25` library) | 4 hrs | ✅ Done — `services/search.py::_bm25_search_collection_sync` |
+| P1 | HyDE query augmentation | 2 hrs | ✅ Done — template-based, `services/hyde.py` |
+| P1 | `itinerary_cache` + fallback retrieval logic | 4 hrs | ✅ Done — `services/itinerary_cache.py`, 3-tier fallback |
+| P1 | Cross-encoder reranker | 1 day | ✅ Done — scoped to itinerary generation only (§3J) |
+| P1 | Golden dataset + automated retrieval eval | 4 hrs | ✅ Done — `eval/golden_dataset.json` + `eval/run_rag_eval.py` |
+| P1 | `generated_itineraries` collection + store on generate | 4 hrs | ❌ Pending — learning flywheel not yet started |
+| P2 | Travel blog scraper — `feedparser` + BeautifulSoup (Nomadic Matt, Planet D, Lonely Planet) | 1 day | ❌ Pending — itinerary_corpus seeded with authoritative content |
+| P2 | Reddit PRAW ingester (replace direct JSON feed) — flair:trip-report filter, top 5 comments per post | 4 hrs | ❌ Pending — high-volume, properly tagged community itineraries |
+| P2 | YouTube `youtube-transcript-api` scraper (no API key) | 4 hrs | ❌ Pending — video-native itinerary patterns, free |
+| P2 | Unified metadata schema normalisation across all scrapers | 3 hrs | ❌ Pending — consistent filters; `attraction_type` precision retrieval |
+| P2 | Quality score background task (session signals) | 4 hrs | ❌ Pending — enables persona-based re-ranking |
+| P2 | Visa info collection | 3 hrs | ❌ Pending — entry requirements surfaced in wizard |
+| P2 | Time-decay scoring in reranker | 2 hrs | ✅ Done — 18-month half-life, floor 40% |
+| P2 | Semantic chunking (by section headers / Reddit comments) | 3 hrs | ✅ Done |
+| P3 | Wikimedia API ingestion (replace Wikivoyage scraper) | 2 hrs | ❌ Pending — more stable than HTML scraping |
+| P3 | TripAdvisor via Apify/Bright Data (v1 premium) | 2 days | ❌ Pending — current ratings and reviews |
+| P3 | `yt-dlp` + Whisper STT for non-captioned YouTube videos (v1) | 1 day | ❌ Pending — niche travel vlogger content |
+| P3 | Instagram/TikTok via Octolens or Prowlo (v1) | 2 days | ❌ Pending — trending visual content, geotag-based retrieval |
+| P3 | X/Twitter real-time API for disruptions (v1) | 1 day | ❌ Pending — immediate travel alerts, strikes, closures |
+| P3 | Agentic router (static vs real-time query classifier) | 1 day | ❌ Pending — routes live queries to fresh APIs, static to vector DB |
+| P3 | Dual embedding per corpus doc (config + content) | 3 hrs | ❌ Pending — more precise retrieval |
+| P3 | LLM-generated HyDE passages (upgrade from template-based) | 4 hrs | ❌ Pending — only worth it if template coverage proves insufficient |
 
 ---
 
-*Maintainer: Engineering · Last updated: June 2026 · Version 2.0*
+*Maintainer: Engineering · Last updated: July 2, 2026 · Version 4.0*

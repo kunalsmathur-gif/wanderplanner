@@ -240,22 +240,40 @@ POST /api/generate-itinerary { trip_config: TripConfig }
          ▼
 itinerary_chain.py
          │
+         ├─ CACHE CHECK (best-effort, non-blocking on success path) ──────
+         │    itinerary_cache.py stores on success; consulted only in the
+         │    failure/fallback branch below (see §15)
+         │
          ├─ RAG RETRIEVAL ──────────────────────────────────────────────
-         │    services/search.py → retrieve_context(trip_config)
+         │    services/search.py → retrieve_context(trip_config, enable_reranking=True)
          │    │
          │    ├─ Build 3 query variants in parallel:
          │    │    Q1: "{city} travel {personas} highlights activities food"
-         │    │    Q2: "things to do in {city} {purpose} {pace} hidden gems"
+         │    │    Q2: "things to do in {city} {purpose} {pace} hidden gems"  ── run through HyDE
          │    │    Q3: "{city} best restaurants sightseeing transport safety"
          │    │
-         │    ├─ asyncio.gather() → 3 × semantic_search(limit=15)
-         │    │    Each: embed(query) → 384-dim → Qdrant cosine search
+         │    ├─ HyDE (services/hyde.py): Q2 is replaced with a synthesized
+         │    │    hypothetical travel-guide passage before embedding — template-based,
+         │    │    persona/pace/purpose aware, no extra LLM call/latency
+         │    │
+         │    ├─ asyncio.gather() → 3 × semantic_search(limit=15), each wrapped in
+         │    │    asyncio.to_thread() so calls run on real worker threads (previously
+         │    │    all serialized on the event loop — fixed this session)
+         │    │    Each: hybrid search = BM25 (Qdrant scroll, destination-scoped) +
+         │    │    embed(query) → 384-dim cosine search, fused via RRF
          │    │    Filter: destination == trip_config.destination.city
          │    │    Collections: wiki + reddit (split 50/50 per query)
          │    │
-         │    └─ _rrf_merge(): Reciprocal Rank Fusion (k=60)
-         │         Score = Σ 1/(60 + rank_i) across 3 query lists
-         │         Top-20 unique chunks returned with published_date
+         │    ├─ _rrf_merge(): Reciprocal Rank Fusion (k=60)
+         │    │    Score = Σ 1/(60 + rank_i) across 3 query lists
+         │    │    Top-40 unique chunks kept for reranking
+         │    │
+         │    └─ Cross-encoder reranking (ms-marco-MiniLM-L-6-v2) — ONLY on this
+         │         call site (itinerary generation). Scores (query, doc) pairs jointly;
+         │         falls back to RRF order on any failure. Top-20 returned with published_date.
+         │         Disabled by default elsewhere (settings.reranking_enabled=False) since a
+         │         cross-encoder pass adds real latency (~23.6 → ~7 req/s @ concurrency=50
+         │         when enabled globally) — scoping it here keeps other RAG callers fast.
          │
          ├─ RAG COMPRESSION ────────────────────────────────────────────
          │    summarise_context(context_docs, max_chars=2400)
@@ -278,11 +296,17 @@ itinerary_chain.py
          │      trip_config = TripConfig JSON
          │    )
          │
-         └─ Retry loop (5 attempts):
-              Model 1-3: gemini-2.5-flash (temp 0.4)
-              Model 4:   gemini-2.5-flash-lite
-              Model 5:   gemini-1.5-flash
-              Each: validate JSON schema → ItineraryResponse
+         ├─ Retry loop (5 attempts):
+         │    Model 1-3: gemini-2.5-flash (temp 0.4)
+         │    Model 4:   gemini-2.5-flash-lite
+         │    Model 5:   gemini-1.5-flash
+         │    Each: validate JSON schema → ItineraryResponse
+         │
+         ├─ On success → store_itinerary() caches result (best-effort, strips
+         │    any "_"-prefixed fallback markers so degraded output can never be cached)
+         │
+         ├─ On exception (all retries + Groq/Ollama exhausted) → _fallback_itinerary()
+         │    3-tier chain: cache hit → OSM-grounded skeleton → RAG-tipped mock (see §15)
          │
          ◄─ SSE stream: status events → final ItineraryResponse
          │
@@ -526,7 +550,7 @@ Response: { best_months: string[], weather_summary: string, avoid_months: string
 
 ## 9. Qdrant Collection Schema
 
-Two active collections, both using `all-MiniLM-L6-v2` (384 dims, cosine distance):
+Four active collections, all using `all-MiniLM-L6-v2` (384 dims, cosine distance):
 
 ### `reddit` collection
 ```json
@@ -560,12 +584,44 @@ Two active collections, both using `all-MiniLM-L6-v2` (384 dims, cosine distance
 ```
 **Chunking:** Each Wikivoyage section → N sentence-boundary chunks (~500 chars, ≥80 chars min). Point ID: `md5(url + section + text[:50])`.
 
-### `osm_pois` collection ⚠️ Empty — ingestor not yet built
-Planned schema: `{ name, type, lat, lon, destination, tags[] }` from Overpass API.
+### `osm_pois` collection ✅ Live (weekly ingestion)
+```json
+{
+  "vector": [384 floats],
+  "payload": {
+    "text": "Short embeddable description, e.g. 'Tanah Lot Temple — temple in Bali'",
+    "name": "Tanah Lot Temple",
+    "type": "temple",
+    "lat": -8.6212,
+    "lon": 115.0868,
+    "destination": "Bali",
+    "tags": ["tourism=attraction", "historic=temple"]
+  }
+}
+```
+Populated by `scrapers/osm.py::ingest_osm_pois()` from the free Overpass API (no key required); geocodes the destination, queries a ~5km radius across ~14 POI tag categories, dedupes by name. Consumed today by the Tier-2 RAG-skeleton fallback (§15); direct itinerary-grounding is a planned next step (see `docs/rag-strategy.md` §6, use case #1).
+
+### `itinerary_cache` collection ✅ Live (populated organically on successful generations)
+```json
+{
+  "vector": [384 floats],
+  "payload": {
+    "destination": "Bali",
+    "duration_days": 5,
+    "pace": "moderate",
+    "purpose": "leisure",
+    "itinerary_json": "{...serialized ItineraryResponse...}",
+    "generated_at": "2026-07-02T10:00:00Z"
+  }
+}
+```
+Key: `embed(f"{destination} {duration_days}d {pace} {purpose} trip")`. Written by `services/itinerary_cache.py::store_itinerary()` after every successful LLM generation (best-effort, never blocks the response; strips any `_`-prefixed fallback markers so degraded fallback output is never cached). Read by `get_cached_itinerary()` with `score_threshold=0.88` as Tier 1 of the fallback chain.
 
 ### Ingestion Schedule
 - **Reddit**: APScheduler, every 6h. Subreddits: `travel`, `solotravel`, `digitalnomad`, `backpacking`.
 - **Wiki**: On-demand, triggered at itinerary generation time for the destination if not cached.
+- **OSM POIs**: APScheduler, weekly (`osm_refresh_days` setting). Iterates `KNOWN_DESTINATIONS` with a polite delay (`osm_ingest_delay_seconds`) between Overpass calls.
+- **Itinerary cache**: Event-driven — written on every successful itinerary generation, no separate scheduled job.
 
 ---
 
@@ -846,7 +902,14 @@ Attempt 3: gemini-2.5-flash, temperature=0.3
 Attempt 4: gemini-2.5-flash-lite (simpler, faster, cheaper)
   → Still failing?
 Attempt 5: gemini-1.5-flash (stable fallback)
-  → All fail → SSE error event { code, message, retryable: true }
+  → All fail → RAG-powered 3-tier fallback (✅ new this cycle, replaces the old
+     bare SSE-error behaviour):
+       Tier 1: itinerary_cache lookup (cosine ≥ 0.88) → instant cached itinerary
+       Tier 2: rag_skeleton_itinerary() — real OSM POIs slotted into day structure,
+                requires ≥3 POIs ingested for the destination, else falls through
+       Tier 3: _mock_itinerary(tip_texts=...) — static mock enhanced with real
+                retrieved wiki/reddit snippets spliced in as "Local tip: ..."
+                (always succeeds — final safety net)
 ```
 
 ### Extract Trip Resilience
@@ -876,6 +939,17 @@ POST /api/chat-refine fails →
 ---
 
 ## 16. Change Log
+
+### v9.0 (July 2026)
+- RAG retrieval upgraded to hybrid search: BM25 (destination-scoped Qdrant scroll) fused with semantic cosine search via Reciprocal Rank Fusion, applied to every `semantic_search()` call
+- HyDE query augmentation added (template-based hypothetical passage, `services/hyde.py`) for the "vibe" query variant
+- Cross-encoder reranking (`ms-marco-MiniLM-L-6-v2`) added, deliberately scoped to only the two true itinerary-generation call sites (`retrieve_context(..., enable_reranking=True)`); disabled by default elsewhere due to latency cost (~23.6 → ~7 req/s @ concurrency=50 when enabled globally)
+- OSM POI ingestion built (`scrapers/osm.py`, Overpass API, weekly scheduled job) — `osm_pois` collection now live
+- `itinerary_cache` collection now live — itineraries cached organically on successful generation, read back via cosine similarity ≥ 0.88
+- 3-tier RAG-powered fallback chain implemented in `chains/itinerary_chain.py` for LLM failures: cache hit → OSM-grounded skeleton (`services/rag_fallback.py`) → RAG-tipped enhanced mock
+- Fixed a concurrency bug where blocking `embed()`/Qdrant calls inside `async def` functions serialized on the event loop despite `asyncio.gather()`; now offloaded via `asyncio.to_thread()`, plus batched embedding of the 3 query variants in one call — throughput ~10 → ~23.6 req/s @ concurrency=50 (pre-hybrid/HyDE/rerank)
+- Golden dataset + automated retrieval evaluation added (`apps/api/eval/golden_dataset.json`, `apps/api/eval/run_rag_eval.py`) — Precision@k/Recall@k/MRR/nDCG@k metrics
+- Load testing tool added (`apps/api/load_test_rag.py`) to measure retrieval throughput/latency under concurrency
 
 ### v8.0 (June 2026)
 - Wizard end-to-end fix: JSON history wrapping, retry logic, config_patch on ChatMessage, allFilled/isFieldFilled unification, smart mock fallback, prompt v5

@@ -12,16 +12,16 @@ import { extractTrip } from '@/lib/api'
 const FEATURED_TRIPS = [
   { emoji: '🏖️', dest: 'Bali, Indonesia',    days: 7,  budget: '₹80,000',   theme: 'Beach & Temples',      gradient: 'linear-gradient(135deg,#0EA5E9 0%,#0C4A6E 100%)' },
   { emoji: '🗼', dest: 'Paris, France',       days: 5,  budget: '₹1,80,000', theme: 'Romance & Culture',    gradient: 'linear-gradient(135deg,#DB2777 0%,#831843 100%)' },
-  { emoji: '🏰', dest: 'Rajasthan, India',    days: 10, budget: '₹60,000',   theme: 'Heritage & Forts',     gradient: 'linear-gradient(135deg,#D4AF37 0%,#9A3412 100%)' },
+  { emoji: '🏰', dest: 'Rajasthan, India',    days: 10, budget: '₹60,000',   theme: 'Heritage & Forts',     gradient: 'linear-gradient(135deg,#D4AF37 0%,#9A3412 100%)', imageQuery: 'Amber Fort Jaipur' },
   { emoji: '🌃', dest: 'Dubai, UAE',          days: 4,  budget: '₹1,20,000', theme: 'Luxury City Break',    gradient: 'linear-gradient(135deg,#EA580C 0%,#9A3412 100%)' },
   { emoji: '⛩️', dest: 'Kyoto, Japan',        days: 7,  budget: '₹2,00,000', theme: 'Culture & Zen',        gradient: 'linear-gradient(135deg,#DC2626 0%,#7F1D1D 100%)' },
   { emoji: '🦁', dest: 'Kenya Safari',        days: 8,  budget: '₹3,50,000', theme: 'Wildlife & Nature',    gradient: 'linear-gradient(135deg,#059669 0%,#065F46 100%)' },
   { emoji: '🏔️', dest: 'Himachal Pradesh',   days: 6,  budget: '₹45,000',   theme: 'Mountains & Treks',    gradient: 'linear-gradient(135deg,#7C3AED 0%,#1E3A5F 100%)' },
   { emoji: '🌊', dest: 'Maldives',            days: 5,  budget: '₹2,50,000', theme: 'Overwater & Snorkel',  gradient: 'linear-gradient(135deg,#06B6D4 0%,#0C4A6E 100%)' },
   { emoji: '🌆', dest: 'Singapore',           days: 4,  budget: '₹1,00,000', theme: 'Food & Skyline',       gradient: 'linear-gradient(135deg,#0EA5E9 0%,#7C3AED 100%)' },
-  { emoji: '🏝️', dest: 'Andaman Islands',    days: 6,  budget: '₹70,000',   theme: 'Beaches & Diving',     gradient: 'linear-gradient(135deg,#10B981 0%,#0C4A6E 100%)' },
+  { emoji: '🏝️', dest: 'Andaman Islands',    days: 6,  budget: '₹70,000',   theme: 'Beaches & Diving',     gradient: 'linear-gradient(135deg,#10B981 0%,#0C4A6E 100%)', imageQuery: 'Radhanagar Beach Andaman' },
   { emoji: '🗽', dest: 'New York, USA',       days: 7,  budget: '₹2,80,000', theme: 'Iconic City Life',     gradient: 'linear-gradient(135deg,#1E40AF 0%,#0F172A 100%)' },
-  { emoji: '🌸', dest: 'Bangkok, Thailand',  days: 5,  budget: '₹55,000',   theme: 'Street Food & Temples',gradient: 'linear-gradient(135deg,#F59E0B 0%,#DC2626 100%)' },
+  { emoji: '🌸', dest: 'Bangkok, Thailand',  days: 5,  budget: '₹55,000',   theme: 'Street Food & Temples',gradient: 'linear-gradient(135deg,#F59E0B 0%,#DC2626 100%)', imageQuery: 'Wat Pho Bangkok temple' },
 ]
 
 const FEATURES = [
@@ -56,7 +56,7 @@ function InspirationCard({
 }) {
   const city = trip.dest.split(',')[0].trim()
   const country = trip.dest.includes(',') ? trip.dest.split(',').slice(1).join(',').trim() : city
-  const imgUrl = useWikiImage(city)
+  const imgUrl = useWikiImage(city, country, trip.imageQuery)
 
   function handleClick() {
     onPlan({ city, country, days: trip.days, label: trip.dest })

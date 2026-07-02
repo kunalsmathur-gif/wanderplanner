@@ -557,26 +557,118 @@ class TestWikivoyagePointIdUniqueness:
 
 
 # ---------------------------------------------------------------------------
-# §4 – Fallback chain placeholders (RAG-064–066) — NOT YET IMPLEMENTED
+# §4 – Fallback chain (RAG-064–066) — now implemented
 # ---------------------------------------------------------------------------
 import pytest
 
-@pytest.mark.skip(reason="§4 Tier 1 not yet implemented: itinerary_cache lookup")
+
 def test_fallback_tier1_cache_hit():
-    """On Gemini failure, system returns cached itinerary JSON if cosine ≥ 0.88."""
-    pass
+    """On LLM failure, system returns cached itinerary JSON if cosine >= threshold."""
+    import asyncio
+    from models.trip import TripConfig, DestinationInput
+    from services.itinerary_cache import get_cached_itinerary, store_itinerary
+
+    trip_config = TripConfig(
+        destination=DestinationInput(city="Cache Test City"),
+        dates={"start_date": "2026-05-01", "end_date": "2026-05-04"},
+        pace="moderate",
+        purpose="leisure",
+    )
+    fake_itinerary = {"days": [{"day_number": 1, "date": "2026-05-01", "theme": "t", "items": []}],
+                       "expense_breakdown": {}}
+
+    async def run():
+        await store_itinerary(trip_config, fake_itinerary)
+        return await get_cached_itinerary(trip_config)
+
+    result = asyncio.get_event_loop().run_until_complete(run())
+    assert result is not None
+    assert result["days"][0]["theme"] == "t"
+    assert result["_from_fallback"] == "cache"
 
 
-@pytest.mark.skip(reason="§4 Tier 2 not yet implemented: RAG skeleton itinerary")
-def test_fallback_tier2_rag_skeleton():
-    """If cache misses, system returns RAG-skeleton itinerary from wiki+osm without LLM."""
-    pass
+def test_fallback_tier1_cache_miss_for_unrelated_destination():
+    """A cache entry for one destination must not be returned for an unrelated one."""
+    import asyncio
+    from models.trip import TripConfig, DestinationInput
+    from services.itinerary_cache import get_cached_itinerary
+
+    trip_config = TripConfig(destination=DestinationInput(city="Nowhere Ever Cached City XYZ"))
+    result = asyncio.get_event_loop().run_until_complete(get_cached_itinerary(trip_config))
+    assert result is None
 
 
-@pytest.mark.skip(reason="§4 Tier 3 not yet implemented: enhanced mock from Qdrant")
-def test_fallback_tier3_enhanced_mock():
-    """If skeleton fails, system falls back to mock itinerary seeded with RAG context."""
-    pass
+def test_fallback_tier2_rag_skeleton_builds_from_osm_pois():
+    """If cache misses, system returns a RAG-skeleton itinerary from real OSM POI data."""
+    import asyncio
+    import uuid as uuid_module
+    from qdrant_client.models import PointStruct
+    from core.config import settings
+    from core.qdrant import get_qdrant
+    from core.embeddings import embed
+    from models.trip import TripConfig, DestinationInput
+    from services.rag_fallback import rag_skeleton_itinerary
+
+    dest = "Skeleton Test City"
+    pois = [
+        {"name": "Skeleton Temple", "poi_type": "attraction", "lat": 1.0, "lon": 2.0, "text": "A temple.", "destination": dest},
+        {"name": "Skeleton Cafe", "poi_type": "cafe", "lat": 1.1, "lon": 2.1, "text": "A cafe.", "destination": dest},
+        {"name": "Skeleton Park", "poi_type": "park", "lat": 1.2, "lon": 2.2, "text": "A park.", "destination": dest},
+        {"name": "Skeleton Museum", "poi_type": "museum", "lat": 1.3, "lon": 2.3, "text": "A museum.", "destination": dest},
+    ]
+    vectors = embed([p["text"] for p in pois])
+    client = get_qdrant()
+    client.upsert(
+        collection_name=settings.qdrant_collection_osm,
+        points=[PointStruct(id=uuid_module.uuid4().int % (2**63), vector=v, payload=p) for v, p in zip(vectors, pois)],
+    )
+
+    trip_config = TripConfig(
+        destination=DestinationInput(city=dest),
+        dates={"start_date": "2026-06-01", "end_date": "2026-06-03"},
+        pace="relaxed",
+    )
+    result = asyncio.get_event_loop().run_until_complete(rag_skeleton_itinerary(trip_config))
+
+    assert result is not None
+    assert result["_from_fallback"] == "rag_skeleton"
+    assert len(result["days"]) >= 1
+    titles = {item["title"] for day in result["days"] for item in day["items"]}
+    assert titles & {p["name"] for p in pois}, "Skeleton itinerary must use real POI names"
+
+
+def test_fallback_tier2_returns_none_without_enough_pois():
+    """Tier 2 must decline (return None) rather than build a near-empty plan."""
+    import asyncio
+    from models.trip import TripConfig, DestinationInput
+    from services.rag_fallback import rag_skeleton_itinerary
+
+    trip_config = TripConfig(destination=DestinationInput(city="No OSM Data Whatsoever City"))
+    result = asyncio.get_event_loop().run_until_complete(rag_skeleton_itinerary(trip_config))
+    assert result is None
+
+
+def test_fallback_tier3_enhanced_mock_splices_real_tips():
+    """If skeleton also declines, the mock itinerary is enhanced with real retrieved tip text."""
+    from chains.itinerary_chain import _mock_itinerary
+    from models.trip import TripConfig, DestinationInput
+
+    trip_config = TripConfig(destination=DestinationInput(city="Mock City"))
+    tips = ["Always carry a reusable water bottle here.", "The old town closes early on Sundays."]
+    raw = _mock_itinerary(trip_config, tip_texts=tips)
+
+    descriptions = " ".join(item["description"] for day in raw["days"] for item in day["items"])
+    assert any(tip in descriptions for tip in tips), "Enhanced mock should splice in real tip text"
+
+
+def test_fallback_tier3_mock_without_tips_unchanged():
+    """With no tip_texts, the mock itinerary is unchanged from the plain version."""
+    from chains.itinerary_chain import _mock_itinerary
+    from models.trip import TripConfig, DestinationInput
+
+    trip_config = TripConfig(destination=DestinationInput(city="Plain Mock City"))
+    raw = _mock_itinerary(trip_config)
+    assert "Local tip:" not in raw["days"][0]["items"][0]["description"]
 
 
 # ---------------------------------------------------------------------------
@@ -625,3 +717,234 @@ def test_persona_fingerprint_format():
 def test_agentic_router_routes_static_query():
     """Router classifies 'best restaurants in Rome' as static → Qdrant only, no web search."""
     pass
+
+
+# ---------------------------------------------------------------------------
+# §3D – Hybrid BM25 + semantic search
+# ---------------------------------------------------------------------------
+
+class TestHybridBM25Search:
+    def test_bm25_finds_specific_noun_missed_by_stub_semantic_ranking(self):
+        """BM25 pass should surface an exact keyword match even if it wasn't
+        the top semantic hit, via a fake Qdrant client (no real embeddings)."""
+        from services.search import _bm25_search_collection_sync
+
+        class FakePoint:
+            def __init__(self, payload):
+                self.payload = payload
+
+        class FakeClient:
+            def scroll(self, collection_name, scroll_filter, limit, with_payload, with_vectors):
+                points = [
+                    FakePoint({"text": "Tokyo has many quiet parks and shrines.", "destination": "Tokyo"}),
+                    FakePoint({"text": "Akihabara is the best district for anime figures and manga.", "destination": "Tokyo"}),
+                    FakePoint({"text": "Tokyo's transit system is extensive and punctual.", "destination": "Tokyo"}),
+                ]
+                return points, None
+
+        results = _bm25_search_collection_sync(FakeClient(), "wiki", "Tokyo", "anime manga shopping", limit=10)
+        assert results, "BM25 should return at least one match"
+        assert "anime" in results[0].text.lower() or "manga" in results[0].text.lower()
+
+    def test_bm25_no_lexical_overlap_returns_empty(self):
+        from services.search import _bm25_search_collection_sync
+
+        class FakePoint:
+            def __init__(self, payload):
+                self.payload = payload
+
+        class FakeClient:
+            def scroll(self, collection_name, scroll_filter, limit, with_payload, with_vectors):
+                return [FakePoint({"text": "completely unrelated content about gardening", "destination": "X"})], None
+
+        results = _bm25_search_collection_sync(FakeClient(), "wiki", "X", "scuba diving equipment", limit=10)
+        assert results == []
+
+    def test_bm25_empty_collection_returns_empty(self):
+        from services.search import _bm25_search_collection_sync
+
+        class FakeClient:
+            def scroll(self, collection_name, scroll_filter, limit, with_payload, with_vectors):
+                return [], None
+
+        assert _bm25_search_collection_sync(FakeClient(), "wiki", "X", "anything", limit=10) == []
+
+
+# ---------------------------------------------------------------------------
+# §3G – HyDE query augmentation
+# ---------------------------------------------------------------------------
+
+class TestHyDEPassageGeneration:
+    def test_passage_mentions_destination_and_purpose(self):
+        from services.hyde import generate_hypothetical_passage
+
+        passage = generate_hypothetical_passage("Lisbon", purpose="honeymoon", pace="relaxed", personas=["foodie"])
+        assert "Lisbon" in passage
+        assert "honeymoon" in passage
+        assert "must-try local dishes" in passage  # foodie persona hook
+
+    def test_passage_handles_no_personas_or_purpose(self):
+        from services.hyde import generate_hypothetical_passage
+
+        passage = generate_hypothetical_passage("Oslo")
+        assert "Oslo" in passage
+        assert isinstance(passage, str) and len(passage) > 20
+
+    def test_unknown_persona_silently_ignored(self):
+        from services.hyde import generate_hypothetical_passage
+
+        # Should not raise even if a persona isn't in the hook table.
+        passage = generate_hypothetical_passage("Oslo", personas=["not_a_real_persona"])
+        assert "Oslo" in passage
+
+
+# ---------------------------------------------------------------------------
+# §P3 – Cross-encoder reranking
+# ---------------------------------------------------------------------------
+
+class TestCrossEncoderReranking:
+    def test_rerank_reorders_by_cross_encoder_score(self):
+        import asyncio
+        from services.search import _rerank
+        from models.common import SearchResult
+
+        results = [
+            SearchResult(text="low relevance chunk", source="wiki", source_url="", score=0.9, destination="X", published_date=None),
+            SearchResult(text="high relevance chunk", source="wiki", source_url="", score=0.1, destination="X", published_date=None),
+        ]
+
+        with patch("services.search.rerank_scores", return_value=[0.1, 0.9]):
+            reranked = asyncio.get_event_loop().run_until_complete(_rerank("query", results, top_n=10))
+
+        assert reranked[0].text == "high relevance chunk"
+
+    def test_rerank_falls_back_to_original_order_on_failure(self):
+        """A cross-encoder failure (e.g. model load error) must not break retrieval."""
+        import asyncio
+        from services.search import _rerank
+        from models.common import SearchResult
+
+        results = [
+            SearchResult(text="a", source="wiki", source_url="", score=0.5, destination="X", published_date=None),
+            SearchResult(text="b", source="wiki", source_url="", score=0.4, destination="X", published_date=None),
+        ]
+
+        with patch("services.search.rerank_scores", side_effect=RuntimeError("model unavailable")):
+            reranked = asyncio.get_event_loop().run_until_complete(_rerank("query", results, top_n=10))
+
+        assert [r.text for r in reranked] == ["a", "b"]
+
+    def test_rerank_empty_input_returns_empty(self):
+        import asyncio
+        from services.search import _rerank
+
+        reranked = asyncio.get_event_loop().run_until_complete(_rerank("query", [], top_n=10))
+        assert reranked == []
+
+
+# ---------------------------------------------------------------------------
+# §3I – OSM POI ingestion
+# ---------------------------------------------------------------------------
+
+class TestOSMPoiParsing:
+    def test_poi_type_maps_known_tags(self):
+        from scrapers.osm import _poi_type
+
+        assert _poi_type({"amenity": "restaurant"}) == "restaurant"
+        assert _poi_type({"tourism": "museum"}) == "museum"
+        assert _poi_type({"natural": "beach"}) == "beach"
+
+    def test_poi_type_defaults_for_unknown_tags(self):
+        from scrapers.osm import _poi_type
+        assert _poi_type({"foo": "bar"}) == "place of interest"
+
+    def test_describe_poi_includes_name_type_and_destination(self):
+        from scrapers.osm import _describe_poi
+
+        text = _describe_poi("Test Cafe", "cafe", "Testville", {})
+        assert "Test Cafe" in text
+        assert "cafe" in text
+        assert "Testville" in text
+
+    def test_fetch_osm_pois_parses_overpass_response_and_dedupes(self):
+        """fetch_osm_pois must skip unnamed nodes and duplicate names, and
+        cap results at settings.osm_poi_max_results."""
+        import asyncio
+        import httpx
+        from unittest.mock import AsyncMock
+        from scrapers import osm
+
+        overpass_response = {
+            "elements": [
+                {"id": 1, "lat": 10.0, "lon": 20.0, "tags": {"name": "Named Place", "amenity": "cafe"}},
+                {"id": 2, "lat": 10.1, "lon": 20.1, "tags": {"amenity": "cafe"}},  # unnamed — should be skipped
+                {"id": 3, "lat": 10.2, "lon": 20.2, "tags": {"name": "Named Place", "amenity": "bar"}},  # duplicate name — skipped
+                {"id": 4, "center": {"lat": 10.3, "lon": 20.3}, "tags": {"name": "Way Node", "tourism": "museum"}},
+            ]
+        }
+
+        class FakeResponse:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return overpass_response
+
+        async def fake_post(*args, **kwargs):
+            return FakeResponse()
+
+        with patch("httpx.AsyncClient.post", new=fake_post):
+            pois = asyncio.get_event_loop().run_until_complete(
+                osm.fetch_osm_pois("Testville", lat=10.0, lon=20.0)
+            )
+
+        names = {p["name"] for p in pois}
+        assert names == {"Named Place", "Way Node"}
+        # Way-node center coordinates must be used when lat/lon aren't top-level
+        way_node = next(p for p in pois if p["name"] == "Way Node")
+        assert way_node["lat"] == 10.3 and way_node["lon"] == 20.3
+
+    def test_fetch_osm_pois_returns_empty_on_request_failure(self):
+        import asyncio
+        from scrapers import osm
+
+        async def fake_post(*args, **kwargs):
+            raise ConnectionError("network down")
+
+        with patch("httpx.AsyncClient.post", new=fake_post):
+            pois = asyncio.get_event_loop().run_until_complete(
+                osm.fetch_osm_pois("Testville", lat=10.0, lon=20.0)
+            )
+        assert pois == []
+
+
+# ---------------------------------------------------------------------------
+# §4 Tier 1 – itinerary_cache key construction
+# ---------------------------------------------------------------------------
+
+class TestItineraryCacheKey:
+    def test_cache_key_includes_destination_pace_purpose_and_duration(self):
+        from services.itinerary_cache import _cache_key_text
+        from models.trip import TripConfig, DestinationInput
+
+        trip_config = TripConfig(
+            destination=DestinationInput(city="Kyoto"),
+            dates={"start_date": "2026-01-01", "end_date": "2026-01-05"},
+            pace="packed",
+            purpose="culture",
+        )
+        key = _cache_key_text(trip_config)
+        assert "Kyoto" in key
+        assert "packed" in key
+        assert "culture" in key
+        assert "4d" in key  # 5 - 1 = 4 days
+
+    def test_cache_key_handles_missing_dates(self):
+        from services.itinerary_cache import _cache_key_text
+        from models.trip import TripConfig, DestinationInput
+
+        trip_config = TripConfig(destination=DestinationInput(city="Kyoto"))
+        key = _cache_key_text(trip_config)
+        assert "Kyoto" in key
+        assert "unknown" in key
+

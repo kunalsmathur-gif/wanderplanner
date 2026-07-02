@@ -1,0 +1,77 @@
+{
+  "_readme": "Golden dataset for WanderPlan RAG evaluation. `corpus` is a small, hand-curated set of destination passages (standing in for real Wikivoyage/Reddit ingested content) seeded into Qdrant for eval runs. `queries` pairs realistic user-intent queries with the corpus chunk ids that are genuinely relevant (`relevant_ids`). Extend both lists to grow eval coverage — keep relevance judgments honest (don't mark a chunk relevant just because it mentions the destination; it must actually answer the query intent). Used by eval/run_rag_eval.py to compute Precision@k, Recall@k, MRR, and nDCG@k.",
+
+  "corpus": [
+    {"id": "paris_01", "destination": "Paris", "topic": "see", "text": "The Louvre is best visited right at opening time to avoid the worst crowds around the Mona Lisa; the Denon wing sculpture galleries are almost empty even at midday.", "published_date": "2025-03-01"},
+    {"id": "paris_02", "destination": "Paris", "topic": "eat", "text": "Le Marais has some of the best falafel and vegetarian sandwich spots in the city, especially along Rue des Rosiers.", "published_date": "2025-01-15"},
+    {"id": "paris_03", "destination": "Paris", "topic": "practical", "text": "The metro runs until about 1am on weekdays and 2am on weekends; buy a Navigo Easy card to avoid paper ticket queues.", "published_date": "2024-11-01"},
+    {"id": "paris_04", "destination": "Paris", "topic": "nightlife", "text": "Budget-friendly nightlife in Paris centers around Bastille and Oberkampf, with cheap wine bars and student-priced cocktails.", "published_date": "2025-02-10"},
+    {"id": "paris_05", "destination": "Paris", "topic": "hidden_gem", "text": "The Promenade Plantée, an elevated garden walkway above Avenue Daumesnil, is a quiet alternative to the crowded Champs-Élysées.", "published_date": "2024-09-20"},
+    {"id": "paris_06", "destination": "Paris", "topic": "family", "text": "The Jardin d'Acclimatation amusement park and the Cité des Sciences science museum are both well suited for children under 10.", "published_date": "2025-04-05"},
+    {"id": "paris_07", "destination": "Paris", "topic": "safety", "text": "Pickpocketing is common around the Eiffel Tower and on RER B trains to the airport; keep bags zipped and in front of you.", "published_date": "2025-01-01"},
+    {"id": "paris_08", "destination": "Paris", "topic": "shopping", "text": "Le Bon Marché and the Marché aux Puces de Saint-Ouen flea market are popular for both luxury and vintage shopping.", "published_date": "2024-12-01"},
+
+    {"id": "tokyo_01", "destination": "Tokyo", "topic": "see", "text": "Senso-ji Temple in Asakusa is most peaceful before 8am; the Nakamise shopping street leading to it opens later and gets crowded by mid-morning.", "published_date": "2025-02-01"},
+    {"id": "tokyo_02", "destination": "Tokyo", "topic": "eat", "text": "Standing sushi bars near Tsukiji Outer Market offer high-quality omakase at a fraction of Michelin-starred prices.", "published_date": "2025-03-15"},
+    {"id": "tokyo_03", "destination": "Tokyo", "topic": "practical", "text": "The Suica or Pasmo IC card works across nearly all trains, subways, and even vending machines; top up at any station kiosk.", "published_date": "2024-10-01"},
+    {"id": "tokyo_04", "destination": "Tokyo", "topic": "nightlife", "text": "Golden Gai in Shinjuku has dozens of tiny themed bars, many with a seating cover charge of just a few hundred yen.", "published_date": "2025-01-20"},
+    {"id": "tokyo_05", "destination": "Tokyo", "topic": "hidden_gem", "text": "Yanaka, one of the few Tokyo neighborhoods that survived WWII bombing, has an old-town atmosphere with cat cafes and a traditional cemetery walk.", "published_date": "2024-08-11"},
+    {"id": "tokyo_06", "destination": "Tokyo", "topic": "family", "text": "TeamLab Planets and the Ghibli Museum are the two most requested family attractions, both requiring advance timed tickets.", "published_date": "2025-04-01"},
+    {"id": "tokyo_07", "destination": "Tokyo", "topic": "safety", "text": "Tokyo is very safe even late at night, but earthquake drills are common — familiarize yourself with hotel evacuation routes.", "published_date": "2025-02-15"},
+    {"id": "tokyo_08", "destination": "Tokyo", "topic": "anime", "text": "Nakano Broadway and Akihabara are the two best districts for anime figures, retro games, and manga cafes.", "published_date": "2025-03-01"},
+
+    {"id": "bali_01", "destination": "Bali", "topic": "see", "text": "Tegalalang rice terraces near Ubud are best visited at sunrise before the tour buses arrive around 9am.", "published_date": "2025-01-05"},
+    {"id": "bali_02", "destination": "Bali", "topic": "eat", "text": "Warungs (small family-run eateries) in Ubud serve nasi campur and babi guling far cheaper and often tastier than resort restaurants.", "published_date": "2025-02-20"},
+    {"id": "bali_03", "destination": "Bali", "topic": "practical", "text": "Renting a scooter is the most flexible way to get around, but an international driving permit is technically required and checkpoints do occur.", "published_date": "2024-11-15"},
+    {"id": "bali_04", "destination": "Bali", "topic": "digital_nomad", "text": "Canggu and Ubud both have a strong coworking scene, with Dojo Bali and Outpost being the most popular spaces for long-stay remote workers.", "published_date": "2025-03-10"},
+    {"id": "bali_05", "destination": "Bali", "topic": "hidden_gem", "text": "Sidemen Valley offers the rice-terrace scenery of Ubud without the crowds, and is a good base for slower-paced trips.", "published_date": "2024-09-01"},
+    {"id": "bali_06", "destination": "Bali", "topic": "safety", "text": "Rip currents are dangerous at several south coast beaches like Kuta; swim only between the flagged patrol areas.", "published_date": "2025-01-25"},
+    {"id": "bali_07", "destination": "Bali", "topic": "wellness", "text": "Ubud has dozens of yoga studios and traditional Balinese massage spas, with Yoga Barn being the most established for drop-in classes.", "published_date": "2025-02-05"},
+    {"id": "bali_08", "destination": "Bali", "topic": "nightlife", "text": "Seminyak and Canggu beach clubs like Potato Head and Finns draw a lively sunset crowd, with cover charges usually waived before 5pm.", "published_date": "2025-03-20"},
+
+    {"id": "rome_01", "destination": "Rome", "topic": "see", "text": "Booking a timed entry ticket for the Colosseum online in advance avoids the multi-hour queue at the entrance.", "published_date": "2025-02-01"},
+    {"id": "rome_02", "destination": "Rome", "topic": "eat", "text": "Trastevere's back streets have trattorias serving cacio e pepe and carbonara at local prices, away from the tourist-priced spots near the Pantheon.", "published_date": "2025-01-10"},
+    {"id": "rome_03", "destination": "Rome", "topic": "practical", "text": "Validate paper bus and metro tickets in the yellow machines before boarding — inspectors do fine tourists for unvalidated tickets.", "published_date": "2024-12-05"},
+    {"id": "rome_04", "destination": "Rome", "topic": "hidden_gem", "text": "The Aventine Keyhole, a small gate on Aventine Hill, frames a perfectly hidden view of St. Peter's dome through a hedge tunnel.", "published_date": "2024-10-20"},
+    {"id": "rome_05", "destination": "Rome", "topic": "family", "text": "The Bioparco di Roma zoo and Explora children's museum are good options for a lower-walking day with young kids.", "published_date": "2025-03-05"},
+    {"id": "rome_06", "destination": "Rome", "topic": "safety", "text": "Scam artists near major landmarks sometimes pose as 'free' bracelet vendors or petition signers as a distraction for pickpocketing.", "published_date": "2025-01-15"},
+    {"id": "rome_07", "destination": "Rome", "topic": "nightlife", "text": "Testaccio has a mix of clubs and casual bars popular with locals rather than tourists, especially around Monte Testaccio.", "published_date": "2025-02-25"},
+    {"id": "rome_08", "destination": "Rome", "topic": "shopping", "text": "Via del Corso and the Monti neighborhood both offer shopping, with Monti favoring small independent and vintage boutiques.", "published_date": "2024-11-30"},
+
+    {"id": "newyork_01", "destination": "New York", "topic": "see", "text": "The 9/11 Memorial and Museum requires timed tickets that sell out days in advance during peak season.", "published_date": "2025-02-10"},
+    {"id": "newyork_02", "destination": "New York", "topic": "eat", "text": "Halal carts and pizza-by-the-slice spots in Midtown are the fastest, cheapest lunch options between sightseeing stops.", "published_date": "2025-01-20"},
+    {"id": "newyork_03", "destination": "New York", "topic": "practical", "text": "A 7-day unlimited MetroCard (or OMNY tap card) pays for itself after about 13 subway or bus rides.", "published_date": "2024-11-10"},
+    {"id": "newyork_04", "destination": "New York", "topic": "hidden_gem", "text": "The Elevated Acre, a small rooftop park near Wall Street, has skyline and harbor views with almost no tourists.", "published_date": "2024-09-15"},
+    {"id": "newyork_05", "destination": "New York", "topic": "family", "text": "The American Museum of Natural History and Central Park Zoo are the most reliably kid-friendly full-day options.", "published_date": "2025-03-01"},
+    {"id": "newyork_06", "destination": "New York", "topic": "safety", "text": "The subway is generally safe, but avoid empty end-of-platform areas late at night and stay near the conductor's car.", "published_date": "2025-01-05"},
+    {"id": "newyork_07", "destination": "New York", "topic": "nightlife", "text": "The Lower East Side and Bushwick have the city's most active indie bar and live-music scene, cheaper than Manhattan clubs.", "published_date": "2025-02-15"},
+    {"id": "newyork_08", "destination": "New York", "topic": "digital_nomad", "text": "WeWork locations are common, but independent cafes in Williamsburg and the East Village are popular unofficial coworking spots with good wifi.", "published_date": "2025-03-25"}
+  ],
+
+  "queries": [
+    {"id": "q_paris_food", "destination": "Paris", "query": "vegetarian food options in Paris", "relevant_ids": ["paris_02"]},
+    {"id": "q_paris_hidden", "destination": "Paris", "query": "things to do in Paris hidden gems away from crowds", "relevant_ids": ["paris_05", "paris_01"]},
+    {"id": "q_paris_family", "destination": "Paris", "query": "Paris activities for young kids", "relevant_ids": ["paris_06"]},
+    {"id": "q_paris_safety", "destination": "Paris", "query": "Paris safety pickpocket advice", "relevant_ids": ["paris_07"]},
+
+    {"id": "q_tokyo_anime", "destination": "Tokyo", "query": "best places for anime and manga shopping in Tokyo", "relevant_ids": ["tokyo_08"]},
+    {"id": "q_tokyo_food", "destination": "Tokyo", "query": "affordable sushi in Tokyo", "relevant_ids": ["tokyo_02"]},
+    {"id": "q_tokyo_nightlife", "destination": "Tokyo", "query": "budget nightlife bars in Tokyo", "relevant_ids": ["tokyo_04"]},
+    {"id": "q_tokyo_hidden", "destination": "Tokyo", "query": "Tokyo neighborhoods with old town atmosphere hidden gems", "relevant_ids": ["tokyo_05"]},
+
+    {"id": "q_bali_nomad", "destination": "Bali", "query": "coworking spaces for digital nomads in Bali", "relevant_ids": ["bali_04"]},
+    {"id": "q_bali_wellness", "destination": "Bali", "query": "yoga and wellness retreats in Bali", "relevant_ids": ["bali_07"]},
+    {"id": "q_bali_safety", "destination": "Bali", "query": "beach safety rip currents Bali", "relevant_ids": ["bali_06"]},
+    {"id": "q_bali_food", "destination": "Bali", "query": "cheap authentic local food in Bali", "relevant_ids": ["bali_02"]},
+
+    {"id": "q_rome_hidden", "destination": "Rome", "query": "secret viewpoints hidden gems in Rome", "relevant_ids": ["rome_04"]},
+    {"id": "q_rome_food", "destination": "Rome", "query": "authentic pasta away from tourist traps in Rome", "relevant_ids": ["rome_02"]},
+    {"id": "q_rome_family", "destination": "Rome", "query": "Rome activities for kids and families", "relevant_ids": ["rome_05"]},
+    {"id": "q_rome_scam", "destination": "Rome", "query": "common tourist scams in Rome", "relevant_ids": ["rome_06"]},
+
+    {"id": "q_ny_hidden", "destination": "New York", "query": "quiet rooftop parks hidden gems in New York", "relevant_ids": ["newyork_04"]},
+    {"id": "q_ny_transport", "destination": "New York", "query": "best subway pass for a week in New York", "relevant_ids": ["newyork_03"]},
+    {"id": "q_ny_nomad", "destination": "New York", "query": "cafes for remote work digital nomads in New York", "relevant_ids": ["newyork_08"]},
+    {"id": "q_ny_safety", "destination": "New York", "query": "subway safety tips at night in New York", "relevant_ids": ["newyork_06"]}
+  ]
+}

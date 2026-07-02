@@ -1,253 +1,95 @@
-# WanderPlan Design Revamp — Implementation Summary
+# WanderPlan Design System — Implementation Summary
 
 ## Overview
-This document summarizes the comprehensive design overhaul of WanderPlan, transforming it from a generic SaaS interface to a distinctive travel platform with a visual identity rooted in physical travel artifacts (vintage luggage tags, weathered maps, passport stamps).
+This document describes WanderPlan's current, adopted design system: a **Sky Blue + Adventure Orange** travel/tourism palette generated via the `ui-ux-pro-max` skill, paired with a **Space Grotesk + DM Sans** typography system. This supersedes an earlier "Passport Navy" travel-artifact direction (leather/map/stamp motifs), which was explored but never fully carried through the codebase and has now been retired.
 
 ---
 
-## ✨ Key Changes Implemented
+## ✨ Current Design System
 
-### 1. **Color Palette** — From Generic to Travel-Inspired
+### 1. Color Palette — Sky Blue + Adventure Orange
 
-**Before:**
-- `#1E40AF` - Generic Tailwind blue (SaaS default)
-- `#047857` - Emerald green
-- `#D97706` - Amber gold
+Defined as semantic, dark-mode-aware CSS custom properties in `apps/web/app/globals.css` (`ui-ux-pro-max` skill output, Product Type: *Travel/Tourism Agency*):
 
-**After:**
-- `#1A3A52` - **Passport Navy** (deep, trustworthy)
-- `#E88D3A` - **Horizon Amber** (sunset glow, warmth)
-- `#F7F4EF` - **Map Ivory** (aged paper texture)
-- `#2C3338` - **Ink Charcoal** (grounded body text)
-- `#A8BFDB` - **Sky Periwinkle** (light accents)
-- `#B85C3F` - **Earth Clay** (CTAs, urgency)
+| Token | Light | Dark | Usage |
+|---|---|---|---|
+| `--color-primary` | `#0EA5E9` (Sky 500) | `#38BDF8` (Sky 400) | Primary actions, links, focus ring |
+| `--color-accent` | `#EA580C` (Orange 600) | `#FB923C` (Orange 400) | CTAs, highlights, the Listening Orb |
+| `--color-background` | `#F0F9FF` (Sky 50) | `#040D14` (Ocean 950) | Page background |
+| `--color-card` | `#FFFFFF` | `#071522` (Ocean 900) | Card/surface background |
+| `--color-foreground` | `#0C4A6E` (Sky 900) | `#E0F2FE` (Sky 100) | Body text |
+| `--color-border` | `#BAE6FD` (Sky 200) | `#0E3A57` (Ocean 700) | Borders/dividers |
+| `--color-destructive` | `#DC2626` | `#F87171` | Errors, recording indicator |
 
-**Rationale:** Colors now evoke physical travel materials (leather-bound journals, vintage luggage tags, aged maps) rather than corporate dashboards.
+All raw palette values live under `@theme inline` in `globals.css`; components should reference the **semantic** tokens (`var(--color-primary)`, etc.) rather than raw hex or raw palette scales, so they stay dark-mode aware.
 
----
+### 2. Typography — Space Grotesk + DM Sans ("Tech Startup" pairing)
 
-### 2. **Typography** — Three Distinctive Faces
+- **Display (`--font-display`):** Space Grotesk — headings (`h1`–`h6`), bold (700), tight tracking (`-0.03em`)
+- **Body (`--font-body`):** DM Sans — body copy, tightened letter-spacing (`-0.01em`)
+- **Mono (`--font-mono`):** JetBrains Mono — timestamps, numeric/data display
 
-**Before:**
-- Geist (neutral sans-serif) for everything
+Loaded via `next/font/google` in `apps/web/app/layout.tsx`.
 
-**After:**
-- **Display:** Fraunces (variable serif with "wonky" axis for Anya's personality)
-- **Body:** Inter (tightened letter-spacing `-0.01em` for confidence)
-- **Mono:** JetBrains Mono (timestamps, budget figures, data)
+### 3. The Listening Orb — Signature Element
 
-**Rationale:** Typography now carries personality and hierarchy through texture (bold vs. light) rather than just size. The trio feels intentional and specific to travel planning.
+A custom SVG component (`apps/web/components/voice/ListeningOrb.tsx`) used in `ConversationalWizard` and `FloatingAnyaButton`:
+- Breathing circle animation (idle vs. active pulse speed)
+- Gradient fill from `var(--color-accent)` → `var(--color-primary)`
+- Pulse rings in `var(--color-accent)` when actively listening
+- Recording indicator dot in `var(--color-destructive)`
 
----
+Now fully token-driven, so it adapts correctly between light and dark mode (previously hardcoded to the retired Passport Navy palette).
 
-### 3. **The Listening Orb** — Signature Element
+### 4. Shared UI Primitives
 
-**Before:**
-- 🎙️ emoji with generic pulsing animation
-
-**After:**
-- Custom SVG component with:
-  - Breathing oval animation (organic, not circular)
-  - Gradient: Horizon Amber → Sky Periwinkle
-  - Pulse rings when active (sound waves aesthetic)
-  - Microphone icon overlay
-  - Recording indicator dot
-
-**Location:** `apps/web/components/voice/ListeningOrb.tsx`
-
-**Rationale:** This is the ONE thing people will screenshot and say "that's WanderPlan." It's not a button — it's a living presence.
+`globals.css` defines reusable, token-based classes used consistently across the app:
+- `.btn` / `.btn-primary` / `.btn-accent` / `.btn-outline` / `.btn-ghost` — all enforce a 44px minimum touch target
+- `.input`, `.card`, `.card-elevated`
+- `.chip` / `.chip-selected` — used directly (e.g. in `ConversationalWizard`) instead of a separate dedicated chip component
+- `.focus-ring` / `:focus-visible` — consistent keyboard focus treatment
+- Global `prefers-reduced-motion` override
 
 ---
 
-### 4. **Anya's Header** — From Generic to Memorable
+## 🧹 Cleanup From Previous Direction
 
-**Before:**
-```tsx
-<p className="text-lg font-semibold">✈ Anya - Your AI Travel Assistant</p>
-```
+The earlier "Passport Navy" travel-artifact concept (`#1A3A52` navy, `#E88D3A` amber, `#F7F4EF` ivory, Fraunces serif, dashed-border "stamp" chips) was only ever partially applied:
 
-**After:**
-- Fraunces typography with "wonky" axis (`fontVariationSettings: '"WONK" 1'`)
-- Subtle map texture background (grid pattern at 5% opacity)
-- Copy: "Your AI travel companion — tap the orb to chat by voice"
-- Passport Navy (#1A3A52) background
-- Sky Periwinkle (#A8BFDB) for subtitle
+- `globals.css`, `layout.tsx`, and all live components use the Sky Blue + Orange / Space Grotesk system.
+- `StampChip.tsx` was dead code — hardcoded to the retired navy/amber palette and not imported anywhere in the app. **Removed.**
+- `ListeningOrb.tsx` still had hardcoded navy/amber hex values despite being actively used. **Migrated** to the current semantic tokens.
 
-**Rationale:** Anya now feels like a character with handwriting, not a bot label. The map texture signals travel without being decorative.
-
----
-
-### 5. **Stamp Chips** — From Generic Pills to Travel Stamps
-
-**Before:**
-- Rounded pills with borders (`border-radius: full`)
-- Standard hover effects
-
-**After:**
-- Rectangular with dashed borders (stamp aesthetic)
-- Slight rotation (-2° to +2°) for tactile feel
-- Striped texture overlay (repeating linear gradient)
-- JetBrains Mono font (vintage typewriter)
-- Selected state: Horizon Amber background
-
-**Location:** `apps/web/components/wizard/StampChip.tsx`
-
-**Rationale:** Chips now feel like artifacts from travel (passport stamps, luggage tags) rather than UI components.
-
----
-
-### 6. **Polaroid Cards** — Ready for Itinerary Implementation
-
-**Created component** (not yet integrated into timeline):
-- Polaroid photo aesthetic with caption area
-- Handwritten-style title (Fraunces)
-- Monospace timestamps
-- Slight rotation for scrapbook feel
-- Gradient photo placeholder
-
-**Location:** `apps/web/components/itinerary/PolaroidCard.tsx`
-
-**Next step:** Replace current list items in ItineraryTimeline with PolaroidCard components.
-
----
-
-### 7. **Layout Colors** — From BI Dashboard to Travel Journal
-
-**Before:**
-- `bg-slate-50` on sidebars
-- `border-slate-200` dividers
-- Stark white background
-
-**After:**
-- `bg-[#F7F4EF]` (Map Ivory) for center itinerary area
-- `bg-white` on sidebars with inset shadows (`shadow-[inset_-1px_0_0_rgba(26,58,82,0.1)]`)
-- 25%-50%-25% asymmetric layout (more breathing room)
-
-**Rationale:** Now feels like a journal with aged paper, not a spreadsheet.
-
----
-
-## 📊 Updated Components
-
-### Modified Files:
-1. **`apps/web/app/globals.css`**
-   - New color tokens (Passport Navy, Horizon Amber, Map Ivory, etc.)
-   - Typography scale with Fraunces, Inter, JetBrains Mono
-   - Tighter letter-spacing for body text
-
-2. **`apps/web/app/layout.tsx`**
-   - Added Fraunces, Inter, JetBrains_Mono font imports
-   - Updated viewport themeColor to Passport Navy
-
-3. **`apps/web/components/wizard/ConversationalWizard.tsx`**
-   - Replaced header with Fraunces typography + map texture
-   - Integrated ListeningOrb (replaced emoji button)
-   - Updated all button colors (Passport Navy → Earth Clay for CTAs)
-   - Replaced QuickReplyChips with StampChips
-   - Updated message bubble colors (user messages now Passport Navy)
-
-4. **`apps/web/components/layout/ThreeColumnLayout.tsx`**
-   - Changed background from white to Map Ivory
-   - Updated sidebar widths (20% → 25%)
-   - Added inset shadows (depth without hard borders)
-
-### New Components:
-1. **`ListeningOrb.tsx`** — Signature voice interaction element
-2. **`StampChip.tsx`** — Vintage travel stamp aesthetic for quick replies
-3. **`PolaroidCard.tsx`** — Ready for itinerary timeline integration
-
----
-
-## 🎯 What Makes This Distinctive?
-
-1. **No default AI patterns:**
-   - Not warm cream + serif (AI default #1)
-   - Not black + acid green (AI default #2)
-   - Not broadsheet hairlines (AI default #3)
-
-2. **Rooted in travel's physical materials:**
-   - Passport Navy (leather)
-   - Map Ivory (aged paper)
-   - Stamp Chips (luggage tags)
-   - Polaroid Cards (travel memories)
-
-3. **The Listening Orb:**
-   - The ONE signature element people will recognize
-   - Breathing animation = organic, alive
-   - Not just functional — memorable
-
----
-
-## 🚀 Next Steps (Not Yet Implemented)
-
-1. **Integrate Polaroid Cards:**
-   - Replace current activity list items in `ItineraryTimeline.tsx`
-   - Use gradient colors based on activity category
-   - Add hover effects (rotate to 0°, lift on hover)
-
-2. **Update Button Components:**
-   - Audit remaining blue (#1E40AF) references
-   - Replace with Earth Clay (#B85C3F) for primary actions
-   - Passport Navy for secondary actions
-
-3. **Weather Widget Styling:**
-   - Apply Map Ivory backgrounds
-   - Use monospace for temperatures
-   - Stamp-style borders
-
-4. **Travel Tips Cards:**
-   - Convert to stamp aesthetic
-   - Add slight rotation
-   - Reddit integration stays, but visual treatment updates
+This document previously described the retired direction as if it were fully implemented; it has been rewritten to match what's actually in the codebase.
 
 ---
 
 ## 📐 Design Tokens Reference
 
 ```css
-/* Primary Colors */
---color-passport-navy:   #1A3A52;  /* Brand, headers */
---color-horizon-amber:   #E88D3A;  /* Accents, progress */
---color-map-ivory:       #F7F4EF;  /* Backgrounds */
---color-ink-charcoal:    #2C3338;  /* Body text */
---color-sky-periwinkle:  #A8BFDB;  /* Subtle accents */
---color-earth-clay:      #B85C3F;  /* CTAs */
+/* Semantic tokens (light values shown; see globals.css :root / .dark) */
+--color-primary:    #0EA5E9;  /* Sky 500 — actions, links, focus */
+--color-accent:     #EA580C; /* Orange 600 — CTAs, highlights */
+--color-background: #F0F9FF; /* Sky 50 */
+--color-foreground: #0C4A6E; /* Sky 900 */
+--color-card:       #FFFFFF;
+--color-border:     #BAE6FD; /* Sky 200 */
+--color-destructive:#DC2626;
 
 /* Typography */
---font-display: var(--font-fraunces);  /* Fraunces */
---font-body:    var(--font-inter);     /* Inter */
---font-mono:    var(--font-jetbrains); /* JetBrains Mono */
+--font-display: var(--font-space-grotesk); /* Space Grotesk */
+--font-body:    var(--font-dm-sans);       /* DM Sans */
+--font-mono:    var(--font-jetbrains);     /* JetBrains Mono */
 
-/* Spacing */
---radius-card: 4px;   /* Reduced from 8px */
---radius-stamp: 2px;  /* For stamp chips */
-
-/* Shadows */
---shadow-card: 0 2px 8px rgb(26 58 82 / 0.1);
---shadow-polaroid: 0 4px 12px rgb(26 58 82 / 0.15);
+/* Radius */
+--radius-card: 12px;
+--radius-lg:   16px;
 ```
 
 ---
 
-## ✅ Build Status
+## ✅ Status
 
-**Build successful:** ✓  
-All TypeScript compilation passed.  
-No runtime errors detected.
+**Status:** Sky Blue + Orange system is the single source of truth. All components should reference `var(--color-*)` semantic tokens — no new hardcoded hex values for brand colors.
 
----
-
-## 🎨 Design Philosophy Applied
-
-This revamp followed the custom design-revamp skill principles:
-
-1. **Ground in subject:** Travel materials (passports, luggage tags, maps)
-2. **Avoid AI defaults:** Unique color palette and typography
-3. **Signature element:** The Listening Orb
-4. **Restraint:** Bold in one place (the Orb), quiet elsewhere
-5. **Two-pass workflow:** Brainstorm → critique → build
-
----
-
-**Last Updated:** June 17, 2026  
-**Status:** Phase 1 Complete — Core design system implemented, ready for iterative refinement.
+**Last Updated:** July 1, 2026

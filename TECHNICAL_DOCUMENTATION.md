@@ -286,11 +286,14 @@ type BookingType = 'Flight' | 'Hotel' | 'Activity' | 'Transport'
 apps/api/
 ├── main.py                   — FastAPI app, CORS, router registration
 ├── core/
-│   ├── config.py             — Settings (env vars)
-│   ├── qdrant.py             — Qdrant client singleton + collection bootstrap
-│   └── embeddings.py         — sentence-transformers model singleton + embed()
+│   ├── config.py             — Settings (env vars) — includes hybrid_search_enabled,
+│   │                           hyde_enabled, reranking_enabled, osm_*, itinerary_cache_*
+│   ├── qdrant.py             — Qdrant client singleton + collection bootstrap (4 collections)
+│   ├── embeddings.py         — sentence-transformers model singleton + embed() +
+│   │                           get_reranker()/rerank_scores() (cross-encoder, ⭐ NEW v9.0)
+│   └── scheduler.py          — APScheduler jobs: reddit refresh (6h), OSM POI refresh (weekly, ⭐ NEW v9.0)
 ├── chains/
-│   ├── itinerary_chain.py    — Gemini 2.5 Flash itinerary gen (5× retry + fallback)
+│   ├── itinerary_chain.py    — Gemini/Groq/Ollama itinerary gen (5× retry + 3-tier RAG fallback)
 │   ├── chat_refine_chain.py  — Anya post-gen chat (patch_config / regenerate actions)
 │   ├── wizard_chat_chain.py  — Anya LLM wizard (collects TripConfig conversationally)
 │   ├── extract_trip_chain.py — URL/text → structured trip fields (Start Anywhere)
@@ -308,14 +311,24 @@ apps/api/
 │   ├── best_time.py          — GET /api/best-time/{city}
 │   └── ...
 ├── services/
-│   ├── search.py             — semantic_search() + retrieve_context() (3-query RRF) + summarise_context()
-│   │                           _rrf_merge() · _time_decay_score() · Jaccard dedup · 600-token budget
-│   └── geocode.py            — Nominatim proxy (1 req/s rate limit, LRU cache, is_country)
+│   ├── search.py             — semantic_search() (hybrid BM25+semantic) + retrieve_context()
+│   │                           (HyDE + 3-query RRF + optional cross-encoder rerank) +
+│   │                           summarise_context() · _rrf_merge() · _time_decay_score() ·
+│   │                           _bm25_search_collection_sync() · _rerank() (all ⭐ NEW/updated v9.0)
+│   ├── hyde.py                — ⭐ NEW (v9.0): template-based hypothetical passage generator
+│   ├── itinerary_cache.py     — ⭐ NEW (v9.0): Tier-1 fallback — cache key, get/store cached itineraries
+│   ├── rag_fallback.py        — ⭐ NEW (v9.0): Tier-2 fallback — OSM-grounded itinerary skeleton
+│   └── geocode.py             — Nominatim proxy (1 req/s rate limit, LRU cache, is_country)
 ├── scrapers/
 │   ├── reddit.py             — Reddit JSON scraper → Qdrant ingestion
-│   └── wikivoyage.py         — Wikivoyage HTML scraper → Qdrant ingestion
+│   ├── wikivoyage.py         — Wikivoyage HTML scraper → Qdrant ingestion
+│   └── osm.py                 — ⭐ NEW (v9.0): Overpass API POI scraper → Qdrant 'osm_pois' ingestion
+├── eval/                      — ⭐ NEW (v9.0)
+│   ├── golden_dataset.json    — curated corpus + labeled queries for retrieval eval
+│   └── run_rag_eval.py        — Precision@k/Recall@k/MRR/nDCG@k against semantic_search()
+├── load_test_rag.py           — ⭐ NEW (v9.0): concurrent-request throughput/latency load test
 └── models/
-    └── common.py             — GeocodeResponse (+ is_country: bool)
+    └── common.py              — GeocodeResponse (+ is_country: bool)
 ```
 
 ### Country Detection (Geocode Service)
@@ -476,12 +489,12 @@ All LLM tasks use Gemini 2.5 Flash with task-specific temperature settings:
 
 ### RAG Architecture (Retrieval-Augmented Generation)
 
-WanderPlan uses RAG to inject real traveller knowledge from Reddit and Wikivoyage into Gemini's itinerary generation prompt. As of v5.2, RAG is fully wired into all providers including the primary Gemini path.
+WanderPlan uses RAG to inject real traveller knowledge from Reddit, Wikivoyage, and (new) OpenStreetMap into Gemini's itinerary generation prompt. As of v9.0, retrieval is hybrid (BM25 + semantic), augmented with HyDE, optionally reranked with a cross-encoder for the primary generation path, and backed by a 3-tier RAG-powered fallback chain for LLM outages.
 
 #### How It Works
 
 ```
-1. INGESTION (startup + every 6h)
+1. INGESTION (startup + every 6h, OSM weekly)
    ┌──────────────────────────────────────────────────────┐
    │ scrapers/wikivoyage.py                               │
    │   → Scrape sections (See, Eat, Do, Drink, Sleep...)  │
@@ -498,23 +511,48 @@ WanderPlan uses RAG to inject real traveller knowledge from Reddit and Wikivoyag
    │   → _chunk_reddit_post(): paragraph-level chunks     │
    │      each chunk = title prefix + paragraph (≥80 chars)│
    │   → stores published_date from created_utc           │
-   │   → upsert into Qdrant 'reddit' collection           │
+   │   → upsert into Qdrant 'reddit' collection            │
+   └──────────────────────────────────────────────────────┘
+   ┌──────────────────────────────────────────────────────┐
+   │ scrapers/osm.py ⭐ NEW (v9.0)                          │
+   │   → Overpass API (free, no key) — ~14 POI tag categories │
+   │   → Geocodes destination via services/geocode.py      │
+   │   → Dedupes by name, builds short embeddable description │
+   │   → upsert into Qdrant 'osm_pois' collection           │
+   │   → Scheduled weekly (core/scheduler.py)               │
    └──────────────────────────────────────────────────────┘
 
 2. RETRIEVAL (at itinerary generation time)
-   services/search.py → retrieve_context(trip_config)
+   services/search.py → retrieve_context(trip_config, enable_reranking=True)
    │
    ├─ Build 3 query variants:
    │    Q1: "{dest} travel {personas} highlights activities food"
-   │    Q2: "things to do in {dest} {purpose} {pace} hidden gems"
+   │    Q2: "things to do in {dest} {purpose} {pace} hidden gems"  ← HyDE-augmented
    │    Q3: "{dest} best restaurants sightseeing transport safety"
    │
-   ├─ asyncio.gather() — run all 3 in parallel (limit=15 each)
+   ├─ HyDE (services/hyde.py) ⭐ NEW (v9.0): Q2's embedding target is replaced with a
+   │    synthesized hypothetical travel-guide passage (template-based — persona/pace/
+   │    purpose hooks, no LLM round-trip) before embedding
+   │
+   ├─ asyncio.gather() — run all 3 in parallel (limit=15 each), each offloaded via
+   │    asyncio.to_thread() so embed()/Qdrant calls run on real worker threads
+   │    (fixed a concurrency bug this cycle where they previously serialized on the
+   │    event loop despite gather())
+   │
+   ├─ Hybrid search per query ⭐ NEW (v9.0): BM25 (Qdrant scroll, destination-scoped,
+   │    rank_bm25.BM25Okapi) run alongside the semantic cosine search, fused via RRF
    │
    ├─ _rrf_merge(): Reciprocal Rank Fusion (k=60)
    │    Score = Σ 1/(60 + rank_i) across all query lists
    │
-   └─ Return top-20 merged chunks
+   ├─ Cross-encoder reranking ⭐ NEW (v9.0, ms-marco-MiniLM-L-6-v2): reranks top-40
+   │    candidates by scoring (query, doc) pairs jointly. Fails safe — falls back to
+   │    RRF order on any exception. Only enabled for this call site
+   │    (settings.reranking_enabled=False by default; enable_reranking=True passed
+   │    explicitly only from the Gemini and Groq/Ollama itinerary-generation paths,
+   │    since a cross-encoder pass adds real latency — see load test numbers below)
+   │
+   └─ Return top-20 merged/reranked chunks
 
 3. COMPRESSION (summarise_context)
    │
@@ -536,7 +574,27 @@ WanderPlan uses RAG to inject real traveller knowledge from Reddit and Wikivoyag
        trip_config=trip_config_json
    )
    → Gemini generates itinerary grounded in real traveller data
+
+5. FALLBACK ⭐ NEW (v9.0) — if all LLM attempts fail:
+   Tier 1: itinerary_cache lookup (services/itinerary_cache.py, cosine ≥ 0.88) → instant hit
+   Tier 2: rag_skeleton_itinerary() (services/rag_fallback.py) → real OSM POIs slotted
+           into a day structure by pace; requires ≥3 ingested POIs for the destination
+   Tier 3: _mock_itinerary(tip_texts=...) → static mock enhanced with real retrieved
+           wiki/reddit snippets spliced in as "Local tip: ..." (always succeeds)
+   On success, store_itinerary() caches the result (best-effort; strips any "_"-prefixed
+   fallback markers so degraded output is never cached and re-served as genuine).
 ```
+
+**Latency tradeoff (measured via `apps/api/load_test_rag.py`, concurrency=50):**
+
+| Configuration | Throughput |
+|---|---|
+| Original (pre-concurrency-fix) | ~10 req/s |
+| + `asyncio.to_thread` fix + batch embedding | ~23.6 req/s |
+| + hybrid BM25 + HyDE + reranking (all enabled globally) | ~7 req/s |
+| + reranking scoped to itinerary generation only (current) | ~13.5 req/s |
+
+Reranking is the dominant cost (a cross-encoder forward pass per candidate); scoping it to only the primary generation path — where LLM latency already dominates the request — keeps `/api/search` and other lightweight RAG callers fast.
 
 #### Example RAG Context Injection
 
@@ -544,10 +602,10 @@ WanderPlan uses RAG to inject real traveller knowledge from Reddit and Wikivoyag
 
 **Queries sent to Qdrant (parallel):**
 1. `"Bali travel beach culture highlights activities food"`
-2. `"things to do in Bali leisure moderate trip hidden gems local tips"`
+2. HyDE-synthesized passage for `"things to do in Bali leisure moderate trip hidden gems local tips"`
 3. `"Bali best restaurants sightseeing transport safety advice"`
 
-**Retrieved & compressed context (sample, after RRF + time-decay + dedup):**
+**Retrieved & compressed context (sample, after hybrid search + RRF + rerank + time-decay + dedup):**
 
 > *[reddit/solotravel]* "Ubud rice terraces: go at 7am to beat tourists. Best warung meal near the palace — Warung Babi Guling Ibu Oka." *(decayed score: 0.87)*
 
@@ -567,6 +625,16 @@ context = "No pre-fetched research available — use your own knowledge of the d
 - **Dimensions:** 384
 - **Distance metric:** Cosine similarity
 - **Runs locally** — no API key, no network call for embeddings
+
+#### Reranking Model
+- **Model:** `cross-encoder/ms-marco-MiniLM-L-6-v2` (`core/embeddings.py::get_reranker()`)
+- **Runs locally** — no API key; lazily loaded singleton
+- **Scope:** only the final itinerary-generation retrieval call (see latency tradeoff above)
+
+#### Golden Dataset & Retrieval Evaluation
+- `apps/api/eval/golden_dataset.json` — curated corpus + labeled queries with expected-relevant chunk IDs
+- `apps/api/eval/run_rag_eval.py` — computes Precision@k, Recall@k, MRR, nDCG@k against `semantic_search()` (exercises hybrid BM25, not HyDE/reranking — those live only inside `retrieve_context()`)
+- Current results: Recall@10 = 1.00, MRR ≈ 0.85–0.94, nDCG@10 ≈ 0.89–0.96 (see `docs/eval-set.md` for full methodology and how to run)
 
 ---
 
@@ -894,7 +962,26 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v9.0, v7.0, v6.0 & v5.0)
+
+### v9.0 Changes (July 2026) — RAG Optimization Round 2
+
+#### New RAG Capabilities
+| Change | Detail |
+|---|---|
+| **NEW** `services/hyde.py` | HyDE query augmentation — template-based hypothetical passage generator (persona/pace/purpose aware), applied to the "vibe" query variant only, no extra LLM call |
+| **UPDATED** `services/search.py` | Hybrid search: BM25 (`_bm25_search_collection_sync`, Qdrant scroll + `rank_bm25.BM25Okapi`) fused with semantic cosine search via existing RRF, applied to every `semantic_search()` call; added `_rerank()` cross-encoder step (fail-safe) and `enable_reranking` override param on `retrieve_context()` |
+| **NEW** `scrapers/osm.py` | Overpass API POI ingester — geocodes destination, queries ~14 POI categories in a radius, dedupes, builds embeddable descriptions, upserts to new `osm_pois` collection |
+| **NEW** `services/itinerary_cache.py` | Tier-1 fallback — caches successful itineraries keyed by `embed(dest+duration+pace+purpose)`, read back via cosine ≥ 0.88; strips fallback markers before storing to prevent cache-poisoning |
+| **NEW** `services/rag_fallback.py` | Tier-2 fallback — builds a real itinerary purely from ingested OSM POIs (no LLM), declines (returns `None`) if fewer than 3 POIs exist for the destination |
+| **UPDATED** `chains/itinerary_chain.py` | New `_fallback_itinerary()` 3-tier chain (cache → RAG skeleton → enhanced mock with spliced-in real tip text); wired into `generate_itinerary()`'s exception path; cache-store-on-success wired into the happy path |
+| **UPDATED** `core/scheduler.py` | New weekly OSM POI refresh job iterating `KNOWN_DESTINATIONS` with a polite delay between Overpass calls |
+| **UPDATED** `core/config.py` | New settings: `hybrid_search_enabled`, `hyde_enabled`, `reranking_enabled` (default `False` — scoped on, see below), `qdrant_collection_itinerary_cache`, `itinerary_cache_score_threshold`, `reranker_model`, `osm_overpass_url`, `osm_poi_radius_m`, `osm_poi_max_results`, `osm_refresh_days`, `osm_ingest_delay_seconds` |
+| **FIXED** concurrency bug | Blocking `embed()`/Qdrant `.search()`/`.scroll()` calls were invoked directly inside `async def` functions, so `asyncio.gather()` over the 3 query variants never actually ran in parallel. Fixed via `asyncio.to_thread()` on every blocking call, plus batching all 3 query embeddings into a single `embed()` call. Throughput ~10 → ~23.6 req/s @ concurrency=50 (measured via new `load_test_rag.py`) |
+| **NEW** `apps/api/eval/golden_dataset.json` + `run_rag_eval.py` | Golden dataset for automated retrieval evaluation — Precision@k/Recall@k/MRR/nDCG@k. Current: Recall@10=1.00, MRR≈0.85–0.94, nDCG@10≈0.89–0.96 |
+| **NEW** `apps/api/load_test_rag.py` | Concurrent-request load test tool for measuring retrieval throughput/latency |
+
+**Design decision — reranking scoped, not global:** cross-encoder reranking (`ms-marco-MiniLM-L-6-v2`) is disabled by default (`settings.reranking_enabled=False`) and explicitly enabled (`enable_reranking=True`) only at the two true LLM-generation call sites in `chains/itinerary_chain.py`. Enabling it globally dropped load-test throughput from ~23.6 to ~7 req/s @ concurrency=50; scoping it to itinerary generation (where LLM latency already dominates) recovered throughput to ~13.5 req/s for all other RAG callers while keeping the precision benefit where it matters most.
 
 ### v7.0 Changes (June 2026)
 
