@@ -36,6 +36,10 @@ htmlcov/
 coverage/
 .pytest_cache/
 
+# Playwright
+apps/web/playwright-report/
+apps/web/test-results/
+
 # Logs
 *.log
 npm-debug.log*
