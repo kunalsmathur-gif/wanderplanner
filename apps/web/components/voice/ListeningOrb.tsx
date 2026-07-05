@@ -27,12 +27,12 @@ export function ListeningOrb({ isActive, isRecording, className = '' }: Listenin
         {/* Gradient definition */}
         <defs>
           <linearGradient id="orbGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#E88D3A" />
-            <stop offset="100%" stopColor="#A8BFDB" />
+            <stop offset="0%" style={{ stopColor: 'var(--color-accent)' }} />
+            <stop offset="100%" style={{ stopColor: 'var(--color-primary)' }} />
           </linearGradient>
           <radialGradient id="pulseGradient" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#E88D3A" stopOpacity="0.6" />
-            <stop offset="100%" stopColor="#E88D3A" stopOpacity="0" />
+            <stop offset="0%" style={{ stopColor: 'var(--color-accent)', stopOpacity: 0.6 }} />
+            <stop offset="100%" style={{ stopColor: 'var(--color-accent)', stopOpacity: 0 }} />
           </radialGradient>
         </defs>
 
@@ -44,7 +44,7 @@ export function ListeningOrb({ isActive, isRecording, className = '' }: Listenin
               cy="36"
               r="36"
               fill="none"
-              stroke="#E88D3A"
+              stroke="var(--color-accent)"
               strokeWidth="2"
               opacity="0.4"
               className="pulse-ring"
@@ -54,7 +54,7 @@ export function ListeningOrb({ isActive, isRecording, className = '' }: Listenin
               cy="36"
               r="42"
               fill="none"
-              stroke="#E88D3A"
+              stroke="var(--color-accent)"
               strokeWidth="1"
               opacity="0.2"
               className="pulse-ring-delayed"
@@ -92,7 +92,7 @@ export function ListeningOrb({ isActive, isRecording, className = '' }: Listenin
 
       {/* Recording indicator dot */}
       {isRecording && (
-        <div className="absolute bottom-1 right-1 h-3 w-3 rounded-full bg-red-500 animate-pulse" />
+        <div className="absolute bottom-1 right-1 h-3 w-3 rounded-full bg-[var(--color-destructive)] animate-pulse" />
       )}
 
       <style jsx>{`

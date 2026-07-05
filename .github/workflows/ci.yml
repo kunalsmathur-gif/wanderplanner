@@ -7,6 +7,28 @@ on:
     branches: [main]
 
 jobs:
+  # ─── High-scrutiny file changes ────────────────────────────────────────
+  # See docs/scaling-tech-challenges.md, Security Vulnerabilities #10:
+  # AGENTS.md/CLAUDE.md instruct AI coding agents to consult specific repo
+  # paths — a compromised dependency or malicious PR could plant similar
+  # "agent instructions" that get silently obeyed. Flag any PR touching
+  # these files for mandatory human (not AI-agent) review.
+  agent-instructions-changed:
+    name: Flag AGENTS.md / CLAUDE.md changes for review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for AGENTS.md / CLAUDE.md changes
+        run: |
+          changed=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '**/AGENTS.md' '**/CLAUDE.md')
+          if [ -n "$changed" ]; then
+            echo "::warning::This PR modifies AI-agent instruction file(s): $changed — requires a second human reviewer per repo policy (see .github/CODEOWNERS). Do not let an AI agent auto-approve these changes."
+          fi
+
   # ─── Backend ───────────────────────────────────────────────────────────
   backend-lint-and-test:
     name: Backend — Lint, Type-check & Test
@@ -36,6 +58,21 @@ jobs:
 
       - name: Type-check (mypy)
         run: mypy . --ignore-missing-imports
+
+      - name: Fail on wildcard ALLOWED_ORIGINS
+        working-directory: ${{ github.workspace }}
+        run: |
+          if grep -RInE 'ALLOWED_ORIGINS\s*=\s*"?\*' --include='*.env*' --include='*.yml' --include='*.yaml' --include='*.toml' . 2>/dev/null | grep -v '\.example'; then
+            echo "::error::ALLOWED_ORIGINS must not contain a wildcard ('*') in any committed env/deploy config."
+            exit 1
+          fi
+
+      - name: Audit dependencies for known vulnerabilities (pip-audit)
+        # Advisory only for now: this surfaced pre-existing transitive CVEs
+        # (starlette/python-multipart pulled in by the pinned fastapi/uvicorn
+        # versions) that need a dedicated upgrade effort, not a silent CI
+        # block. Flip to blocking once those are remediated.
+        run: pip-audit -r requirements.txt || echo "::warning::pip-audit found known vulnerabilities — see job log. Non-blocking until existing findings are remediated."
 
       - name: Run tests
         run: pytest tests/ -v --tb=short

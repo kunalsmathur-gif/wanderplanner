@@ -40,6 +40,7 @@ class SearchResult(BaseModel):
     source_url: str
     score: float
     destination: str
+    published_date: str | None = None
 
 
 class SearchResponse(BaseModel):

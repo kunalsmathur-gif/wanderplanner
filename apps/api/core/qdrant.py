@@ -28,6 +28,7 @@ def _ensure_collections(client: QdrantClient):
         settings.qdrant_collection_wiki: 384,
         settings.qdrant_collection_reddit: 384,
         settings.qdrant_collection_osm: 384,
+        settings.qdrant_collection_itinerary_cache: 384,
     }
     existing = {c.name for c in client.get_collections().collections}
     for name, dim in collections.items():

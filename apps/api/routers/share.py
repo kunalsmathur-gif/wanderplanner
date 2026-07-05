@@ -1,9 +1,10 @@
 """In-memory trip share store: POST /api/share → slug, GET /api/share/{slug} → data."""
-from __future__ import annotations
 
-import uuid
-from fastapi import APIRouter, HTTPException
+import secrets
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+
+from core.rate_limit import DEFAULT_RATE_LIMIT, limiter
 
 router = APIRouter()
 
@@ -24,8 +25,11 @@ class ShareResponse(BaseModel):
 
 
 @router.post("/share", response_model=ShareResponse)
-async def create_share(body: ShareRequest) -> ShareResponse:
-    slug = uuid.uuid4().hex[:8]
+@limiter.limit(DEFAULT_RATE_LIMIT)
+async def create_share(request: Request, body: ShareRequest) -> ShareResponse:
+    # 128-bit random token (vs. the previous 32-bit uuid4[:8]) so slugs can't
+    # be feasibly brute-forced/enumerated at scale.
+    slug = secrets.token_urlsafe(16)
     _store[slug] = {
         "itinerary": body.itinerary,
         "trip_config": body.trip_config,
@@ -36,7 +40,8 @@ async def create_share(body: ShareRequest) -> ShareResponse:
 
 
 @router.get("/share/{slug}")
-async def get_share(slug: str) -> dict:
+@limiter.limit(DEFAULT_RATE_LIMIT)
+async def get_share(request: Request, slug: str) -> dict:
     data = _store.get(slug)
     if not data:
         raise HTTPException(status_code=404, detail="Trip not found or expired")

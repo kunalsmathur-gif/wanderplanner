@@ -40,9 +40,11 @@ WanderPlan uses conversational AI to help you plan trips through a natural chat 
 
 | Feature | Description |
 |---|---|
+| **🤖 LLM-Powered Anya Wizard** | Gemini 2.5 Flash drives the wizard — natural freeform conversation in English or Hinglish. One message fills multiple fields. Smart extraction: "yaar Bali trip 7 days, budget 1.5 lakh types" sets destination + dates + budget at once. `config_patch` accumulation is fixed with JSON history replay, plus a 3-attempt retry on Gemini outages and a smart mock fallback. Indian cultural context: currency (25k/1L), travel seasons, family/veg preferences. |
 | **🎙️ Anya Voice Assistant** | Conversational AI with voice input/output. Talk naturally to plan your trip. Young Indian female voice (20-25 yrs). |
 | **💬 Persistent Anya Chat** | After itinerary generation, the floating Anya orb opens a slide-in chat panel. Ask questions, request changes — Anya patches config or offers to regenerate. |
-| **🤖 AI Itinerary Engine** | Gemini 2.5 Flash generates day-by-day schedules with timestamped activities, routing, and budget allocation. 5-attempt retry + fallback chain. |
+| **📱 Mobile-Responsive** | Bottom tab navigation on mobile (Itinerary · Overview · Map & Tips). Full desktop 3-column layout on larger screens. |
+| **🤖 AI Itinerary Engine** | Gemini 2.5 Flash generates day-by-day schedules with timestamped activities, routing, and budget allocation. 5-attempt retry + 3-tier RAG-powered fallback (cache → OSM skeleton → mock). RAG-grounded: hybrid BM25+semantic Qdrant retrieval (3 query variants w/ HyDE, RRF merge, cross-encoder rerank on the primary generation path) + time-decay + Jaccard dedup compressed to ~600 tokens. |
 | **🗺️ Interactive Maps** | OpenStreetMap with activity pins. Full-screen map mode with day-tab navigation. |
 | **🎴 Rich Activity Cards** | PolaroidCard components with Wikipedia photos, hover zoom, YouTube link overlay. |
 | **🌐 Travel Tips** | Gemini-powered tips + Reddit highlights with YouTube thumbnails. |
@@ -78,12 +80,13 @@ WanderPlan uses conversational AI to help you plan trips through a natural chat 
 |---|---|
 | Python 3.9+ + FastAPI | Async REST API, Pydantic v2 validation |
 | Google Gemini 2.5 Flash | Itinerary gen, chat refine, city recommendations, trip extraction |
-| Qdrant (in-memory) | Vector database for semantic travel content search |
-| sentence-transformers | Local text embeddings (all-MiniLM-L6-v2, 384 dims) |
-| httpx | Async HTTP client (URL fetching for Start Anywhere) |
+| Qdrant (in-memory) | Vector database — 4 collections: `wiki`, `reddit`, `osm_pois`, `itinerary_cache` |
+| sentence-transformers | Local text embeddings (all-MiniLM-L6-v2, 384 dims) + cross-encoder reranking (ms-marco-MiniLM-L-6-v2) |
+| rank_bm25 | Lexical (BM25) retrieval, fused with semantic search via Reciprocal Rank Fusion |
+| httpx | Async HTTP client (URL fetching for Start Anywhere, Overpass API POI queries) |
 | BeautifulSoup4 | HTML parsing (Wikivoyage, Reddit) |
 | Open-Meteo API | Historical weather data (free, no key) |
-| APScheduler | Background jobs (Reddit content refresh every 6h) |
+| APScheduler | Background jobs (Reddit refresh every 6h, OSM POI refresh weekly) |
 
 ### Infrastructure
 | Service | Role |
@@ -136,14 +139,16 @@ WanderPlan uses conversational AI to help you plan trips through a natural chat 
 │  GET  /api/best-time/{city}     → Open-Meteo weather data       │
 │  GET  /api/geocode              → Nominatim (en names, is_country)│
 │  POST /api/compare-destinations → 10-param AI comparison        │
-│  Background: Reddit refresh every 6h · Qdrant ingestion         │
+│  Background: Reddit refresh every 6h · OSM POI refresh weekly    │
+│              Qdrant ingestion + hybrid BM25/semantic retrieval  │
 └──────┬──────────────┬────────────────┬──────────────────────────┘
        │              │                │
 ┌──────▼──────┐ ┌─────▼──────┐  ┌─────▼──────────────────────────┐
 │   Qdrant    │ │   Gemini   │  │  External APIs                  │
 │ (in-memory) │ │  2.5 Flash │  │  Nominatim · Open-Meteo        │
-│ reddit+wiki │ │ lite/1.5   │  │  Reddit JSON · YouTube         │
-│ collections │ │ fallbacks  │  │  Wikipedia (frontend, CORS-safe)│
+│ wiki+reddit │ │ lite/1.5   │  │  Reddit JSON · YouTube          │
+│ osm_pois+   │ │ fallbacks  │  │  Overpass (OSM) · Wikipedia     │
+│ itin_cache  │ │            │  │  (frontend, CORS-safe)          │
 └─────────────┘ └────────────┘  └─────────────────────────────────┘
 ```
 
@@ -238,6 +243,41 @@ Open `http://localhost:3000`.
 ---
 
 ## Changelog
+
+### v5.3 — RAG Optimization Round 2 (July 2026)
+- ✅ **NEW: Hybrid BM25 + semantic search** — lexical BM25 (destination-scoped Qdrant scroll) fused with semantic cosine search via RRF on every retrieval call. Fixes proper-noun confusion (e.g. Tokyo vs Kyoto).
+- ✅ **NEW: HyDE query augmentation** — template-based hypothetical travel-guide passage synthesized and embedded for the "vibe" query variant, no extra LLM call.
+- ✅ **NEW: Cross-encoder reranking (scoped)** — `ms-marco-MiniLM-L-6-v2` reranks the primary itinerary-generation retrieval path only (disabled by default elsewhere due to latency cost).
+- ✅ **NEW: OSM POI ingestion** — `scrapers/osm.py` fetches real POIs (name, category, lat/lon) from the free Overpass API, weekly scheduled refresh, feeds the new `osm_pois` Qdrant collection.
+- ✅ **NEW: Itinerary cache + 3-tier RAG fallback** — successful itineraries cached (`itinerary_cache` collection); on LLM failure, falls through cache hit → OSM-grounded skeleton → RAG-tipped enhanced mock instead of a hard error.
+- ✅ **FIXED: RAG retrieval concurrency bug** — blocking `embed()`/Qdrant calls previously serialized on the event loop despite `asyncio.gather()`; now correctly offloaded via `asyncio.to_thread()` + batched embedding. Throughput ~10 → ~23.6 req/s @ concurrency=50 (pre-hybrid/HyDE/rerank).
+- ✅ **NEW: Golden dataset + automated retrieval eval** — `apps/api/eval/golden_dataset.json` + `run_rag_eval.py` compute Precision@k/Recall@k/MRR/nDCG@k.
+- ✅ **NEW: RAG load test tool** — `apps/api/load_test_rag.py` measures retrieval throughput/latency under concurrency.
+
+### v5.2 — RAG Pipeline Overhaul (June 2026)
+- ✅ **NEW: Gemini path now RAG-grounded** — `_gemini_itinerary()` was silently bypassing `retrieve_context()`. All production itineraries now receive real traveller data from Qdrant.
+- ✅ **NEW: Multi-query retrieval with RRF** — 3 parallel query variants (config / vibe / practical) merged via Reciprocal Rank Fusion (k=60). Better recall for niche trips and vibe searches.
+- ✅ **NEW: Time-decay scoring** — exponential decay with 18-month half-life. A 3-year-old post at score 0.91 → 0.55. `published_date` stored in Reddit Qdrant payloads.
+- ✅ **NEW: Context summarisation** — `summarise_context()` compresses 20 raw chunks (~7,500 tokens) to ~600 tokens via score filter, Jaccard dedup, and 2400-char budget. **87% token reduction**.
+- ✅ **NEW: Sentence-boundary Wikivoyage chunking** — replaced hard 1500-char cuts with sentence-aware ~500-char chunks. Each section now produces N high-precision chunks.
+- ✅ **NEW: Reddit paragraph chunking** — each post split at `\n\n` into paragraph chunks (≥80 chars), each prefixed with the title for standalone retrieval context.
+- ✅ **NEW: Reddit destination tagging fixed** — `_extract_destination()` now uses word-boundary regex against 200+ destinations. Was always returning `"general"`.
+
+### v5.0 — LLM Wizard + Mobile-Responsive (June 2026)
+- ✅ **NEW: LLM-powered Anya wizard** — replaces scripted state machine. Gemini 2.5 Flash collects all trip fields through freeform conversation. One message can fill multiple fields ("just me and my wife for 7 days to Bali, budget ₹1L, moderate pace").
+- ✅ **NEW: Mobile-responsive layout** — bottom tab bar (Itinerary · Overview · Map) on mobile; 3-column layout on desktop `lg+`
+- ✅ **NEW: `/api/wizard-chat` endpoint** — new backend chain with Anya wizard system prompt, `config_patch` extraction, and server-side `ready_to_generate` validation
+- ✅ **NEW: RAG context injection** — Reddit + Wikivoyage chunks retrieved via Qdrant and injected into every itinerary generation prompt
+
+### v5.1 — Anya Prompt v3 + Bug Fixes (June 2026)
+- Anya system prompt completely rewritten (v3): 9 structured sections, Indian cultural context, Hinglish/STT handling, currency parsing (25k/1L/lakh), travel season awareness, veg/Jain food sensitivity
+- 3-stage conversation flow: collect fields → "anything else?" checkpoint → generate
+- `thought_process` chain-of-thought field added to wizard responses (debug/logging)
+- Fixed: bootstrap empty messages → Gemini "contents required" error
+- Fixed: JSON fence parsing (regex-based, handles all code fence variants)
+- Fixed: stale closure bug — partialConfigRef ensures latest config sent to backend
+- Fixed: generate loop — "Generate itinerary" chip filtered; button shows on server ready signal
+- Fixed: Gemini API errors fall back to mock instead of returning 500
 
 ### v3.0 — Competitor Parity Update (June 2026)
 - ✅ **NEW: Persistent Anya chat panel** — floating orb opens slide-in chat after itinerary generation

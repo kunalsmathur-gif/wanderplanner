@@ -64,6 +64,28 @@ export async function chatRefine(
   return data as ChatRefineResponse
 }
 
+// ── Wizard chat (LLM Anya wizard) ────────────────────────────────────────
+export interface WizardChatResponse {
+  reply: string
+  chips: string[]
+  config_patch: Partial<TripConfig>
+  ready_to_generate: boolean
+  summary: string | null
+}
+
+export async function wizardChat(
+  messages: Array<{ role: string; content: string; config_patch?: Record<string, unknown> }>,
+  partialConfig: Partial<TripConfig>,
+  preloadedDestination?: string,
+): Promise<WizardChatResponse> {
+  const { data } = await api.post('/api/wizard-chat', {
+    messages,
+    partial_config: partialConfig,
+    preloaded_destination: preloadedDestination ?? null,
+  })
+  return data as WizardChatResponse
+}
+
 // ── Recommend cities (R15) ───────────────────────────────────────────────
 export async function recommendCities(
   country: string,
@@ -136,10 +158,36 @@ export function streamItinerary(
     signal: controller.signal,
   })
     .then(async (res) => {
+      // Handle non-2xx responses before trying to read SSE stream
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`
+        try {
+          const body = await res.json()
+          const raw = body?.detail ?? body?.message
+          if (raw !== undefined) {
+            if (typeof raw === 'string') {
+              detail = raw
+            } else if (Array.isArray(raw)) {
+              // FastAPI validation errors: [{loc, msg, type}, ...]
+              detail = raw.map((e: { msg?: string }) => e.msg ?? JSON.stringify(e)).join('; ')
+            } else {
+              detail = JSON.stringify(raw)
+            }
+          }
+        } catch { /* ignore parse errors */ }
+        onError('HTTP_ERROR', detail, res.status >= 500)
+        return
+      }
+
       const reader = res.body?.getReader()
-      if (!reader) return
+      if (!reader) {
+        onError('STREAM_ERROR', 'No response body from server.', true)
+        return
+      }
+
       const decoder = new TextDecoder()
       let buffer = ''
+      let receivedData = false
 
       while (true) {
         const { done, value } = await reader.read()
@@ -160,11 +208,17 @@ export function streamItinerary(
           if (event === 'status') {
             onStatus(payload.message, payload.step, payload.total_steps)
           } else if (event === 'data') {
+            receivedData = true
             onData(payload)
           } else if (event === 'error') {
             onError(payload.code, payload.message, payload.retryable)
           }
         }
+      }
+
+      // Stream ended without sending a data event — treat as a generation failure
+      if (!receivedData) {
+        onError('NO_DATA', 'Itinerary generation did not complete. Please try again.', true)
       }
     })
     .catch((err) => {

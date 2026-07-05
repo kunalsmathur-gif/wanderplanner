@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 
-import google.generativeai as google_genai
+from google import genai as google_genai
 
 from core.config import settings
 from models.itinerary import ComparisonResponse, ComparisonParameter

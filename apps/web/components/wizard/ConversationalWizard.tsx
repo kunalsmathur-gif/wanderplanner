@@ -1668,8 +1668,8 @@ export function ConversationalWizard() {
       aria-label="Trip Planning Wizard"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm [--color-primary:#0EA5E9] [--color-accent:#EA580C] [--color-background:#F0F9FF] [--color-card:#FFFFFF] [--color-foreground:#0C4A6E] [--color-foreground-muted:#64748B] [--color-border:#BAE6FD] [--color-ring:#0EA5E9] dark:[--color-background:#040D14] dark:[--color-card:#071522] dark:[--color-foreground:#E0F2FE] dark:[--color-primary:#38BDF8] dark:[--color-accent:#FB923C] dark:[--color-border:#0E3A57]"
     >
-      <div className="card relative mx-4 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border-[var(--color-border)] bg-[var(--color-card)] shadow-2xl">
-        <div className="flex items-start justify-between gap-4 bg-[var(--color-primary)] px-8 py-4 text-white">
+      <div className="card relative flex max-h-screen w-full flex-col overflow-hidden rounded-none bg-[var(--color-card)] shadow-2xl sm:mx-4 sm:max-h-[90vh] sm:max-w-lg sm:rounded-2xl border-[var(--color-border)]">
+        <div className="flex items-start justify-between gap-4 bg-[var(--color-primary)] px-4 py-4 text-white sm:px-8">
           <div className="min-w-0">
             <p className="text-xl font-bold leading-tight [font-family:var(--font-space-grotesk)]">Wanderplan</p>
             <p className="mt-1 text-sm text-white/80 [font-family:var(--font-dm-sans)]">Anya · Your travel concierge</p>
