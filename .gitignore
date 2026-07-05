@@ -43,3 +43,5 @@ apps/web/test-results/
 # Logs
 *.log
 npm-debug.log*
+.vercel
+.env*
