@@ -1,4 +1,4 @@
-# WanderPlan End-to-End Testing & Screen Recording Guide
+# WanderPlanner End-to-End Testing & Screen Recording Guide
 
 ## 🎬 Screen Recording Setup (macOS)
 
@@ -60,7 +60,7 @@ Then open OBS and configure screen capture source.
    - [ ] Check progress bar (0% initially)
    
 3. **Conversational Flow - Text Input**
-   - [ ] Read Anya's greeting: "Hi! I'm Anya from WanderPlan..."
+   - [ ] Read Anya's greeting: "Hi! I'm Anya from WanderPlanner..."
    - [ ] Answer each question via text:
      - **Purpose:** Click stamp chip (e.g., "Leisure 🏖️")
      - **Destination:** Type "Paris, France"
@@ -274,7 +274,7 @@ While testing, verify these new design elements:
 1. Review the video
 2. Note timestamp of any bugs
 3. Export in standard format (MP4)
-4. Store in `wanderplan/recordings/` folder
+4. Store in `wanderplanner/recordings/` folder
 
 ---
 

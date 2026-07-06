@@ -1,6 +1,6 @@
-# WanderPlan — Evaluation Set
+# WanderPlanner — Evaluation Set
 **Version:** 5.0 · **Date:** July 2, 2026  
-**Scope:** All AI, API, and integration surfaces across WanderPlan v5.3 (RAG Optimization Round 2)  
+**Scope:** All AI, API, and integration surfaces across WanderPlanner v5.3 (RAG Optimization Round 2)  
 **Purpose:** Manual and automated regression testing for correctness, safety, tone, cost and reliability
 
 RAG eval coverage: **RAG-001 to RAG-090** (90 cases — 74 implemented ✅, 1 partial ⚠️, 15 pending ❌)  
@@ -527,7 +527,7 @@ python -m eval.run_rag_eval
 
 ### 6A — Gemini API Cost Tracking
 
-WanderPlan uses **Gemini 2.0 Flash** (default) or **Gemini 2.5 Flash** (configurable via `gemini_model` env var). Pricing as of June 2026 (verify at [ai.google.dev/pricing](https://ai.google.dev/pricing)):
+WanderPlanner uses **Gemini 2.0 Flash** (default) or **Gemini 2.5 Flash** (configurable via `gemini_model` env var). Pricing as of June 2026 (verify at [ai.google.dev/pricing](https://ai.google.dev/pricing)):
 
 | Model | Input (per 1M tokens) | Output (per 1M tokens) | Threshold |
 |---|---|---|---|
@@ -586,7 +586,7 @@ Nominatim is free but has a **hard limit of 1 req/sec** and requires a valid `Us
 
 | ID | Test | Expected | Pass criteria | Priority |
 |---|---|---|---|---|
-| COST-016 | User-Agent set | Inspect outgoing Nominatim request headers | `User-Agent: wanderplan/1.0` | `user_agent == "wanderplan/1.0"` | P0 |
+| COST-016 | User-Agent set | Inspect outgoing Nominatim request headers | `User-Agent: wanderplanner/1.0` | `user_agent == "wanderplanner/1.0"` | P0 |
 | COST-017 | Rate limiter active | 3 rapid geocode calls | Min 1s between each outgoing HTTP call | No 403/429 from Nominatim | P0 |
 | COST-018 | No excessive calls | User types in wizard destination input | Geocode only on submit/confirm, NOT on every keystroke | ≤ 1 geocode call per user action | P1 |
 
@@ -607,7 +607,7 @@ Nominatim is free but has a **hard limit of 1 req/sec** and requires a valid `Us
 |---|---|---|---|---|---|
 | BOOKING-001 | Add a flight booking | Open BookingHub; select "Flight"; fill in name, confirmation, date, amount; save | Booking appears in list immediately | Row visible with correct type icon and data | P0 |
 | BOOKING-002 | Remove a booking | Hover over booking row; click delete | Row disappears from list | Booking no longer visible | P0 |
-| BOOKING-003 | BookingHub survives page refresh | Add booking; refresh page | Booking still visible after reload | `localStorage["wanderplan-bookings"]` persists entry | P0 |
+| BOOKING-003 | BookingHub survives page refresh | Add booking; refresh page | Booking still visible after reload | `localStorage["wanderplanner-bookings"]` persists entry | P0 |
 | BOOKING-004 | Total tracked spend | Add 2 bookings: ₹20,000 and ₹35,000 | Total shown as ₹55,000 | Sum displayed correctly | P1 |
 | BOOKING-005 | All 4 booking types selectable | Click each chip: Flight, Hotel, Activity, Transport | Each type selectable; icon changes per type | All 4 chips functional | P1 |
 

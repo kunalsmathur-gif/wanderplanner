@@ -33,7 +33,7 @@ async def _seed_reddit():
 
 
 app = FastAPI(
-    title="WanderPlan API",
+    title="WanderPlanner API",
     version="1.0.0",
     lifespan=lifespan,
 )

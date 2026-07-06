@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
   try {
     const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}&sp=CAMSAhAB`
     const response = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; WanderPlan/1.0)' },
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; WanderPlanner/1.0)' },
       signal: AbortSignal.timeout(5000),
     })
     const html = await response.text()

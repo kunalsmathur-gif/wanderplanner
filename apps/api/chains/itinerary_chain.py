@@ -18,7 +18,7 @@ from core.prompt_guard import neutralize, wrap_untrusted
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
-You are WanderPlan, an expert AI travel advisor.
+You are WanderPlanner, an expert AI travel advisor.
 Generate a detailed, realistic day-by-day travel itinerary based on the trip
 configuration and destination research provided.
 

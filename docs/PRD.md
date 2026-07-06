@@ -1,4 +1,4 @@
-# **WanderPlan (AI Travel Advisor) — Complete Product Requirements Document (PRD)**
+# **WanderPlanner (AI Travel Advisor) — Complete Product Requirements Document (PRD)**
 
 ## **1\. Document Control**
 
@@ -13,7 +13,7 @@
 
   ## **2\. Executive Summary & Objective**
 
-WanderPlan is an all-in-one desktop web application designed to solve the friction of fragmented, multi-tab travel coordination. By consolidating maps, booking aggregators, spreadsheets, and travel blogs into a single interface, WanderPlan functions as a unified engine for destination discovery, side-by-side location comparisons, hyper-personalized itinerary building, and post-selection logistics planning.
+WanderPlanner is an all-in-one desktop web application designed to solve the friction of fragmented, multi-tab travel coordination. By consolidating maps, booking aggregators, spreadsheets, and travel blogs into a single interface, WanderPlanner functions as a unified engine for destination discovery, side-by-side location comparisons, hyper-personalized itinerary building, and post-selection logistics planning.
 
 The application pairs traditional third-party travel APIs with an AI data layer to deliver granular, timestamped travel schedules tailored to complex group dynamics, pet constraints, accessibility limits, corporate/remote work needs, and budget boundaries. Recommendations are dynamically enhanced by real-time social signals (Reddit, YouTube, Instagram) to capture authentic, trending, on-the-ground user insights rather than static commercial itineraries.
 
@@ -154,7 +154,7 @@ The application follows a **Three-Column Split Architecture** for its main dashb
 
 ```
 +---------------------------------------------------------------------------------------------------------+
-| [W] WanderPlan  |  Trip: BLR to KUL + LGK (Nov 13-19, 2026)  |  12 Pax (4 Kids, 0 Pets)  |  Budget: Active |
+| [W] WanderPlanner  |  Trip: BLR to KUL + LGK (Nov 13-19, 2026)  |  12 Pax (4 Kids, 0 Pets)  |  Budget: Active |
 +---------------------------------------------------------------------------------------------------------+
 | COLUMN 1: TRACKING & UTILITIES    | COLUMN 2: TIMELINE & SELECTION     | COLUMN 3: CONTEXTUAL SIDEBAR   |
 | (Width: 20%)                      | (Width: 55%)                       | (Width: 25%)                   |
@@ -198,11 +198,11 @@ The application follows a **Three-Column Split Architecture** for its main dashb
 
   ## **6\. Data & AI Architecture Strategy**
 
-To support semantic searches, deep personalization, and the orchestration of real-time social metrics, WanderPlan implements an AI infrastructure layer on top of traditional transactional APIs.
+To support semantic searches, deep personalization, and the orchestration of real-time social metrics, WanderPlanner implements an AI infrastructure layer on top of traditional transactional APIs.
 
 ```
                   +------------------------------------------------------+
-                  |            WanderPlan Core Application               |
+                  |            WanderPlanner Core Application               |
                   +------------------------------------------------------+
                                              |
                   +------------------------------------------------------+
@@ -395,7 +395,7 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 | Parameter | Decision |
 |---|---|
 | Content scope | Full: day-by-day schedule + visa advisory + packing checklist + currency rates + booking deep-links |
-| Visual fidelity | **Styled, branded document** (react-pdf with WanderPlan design tokens, colorful travel-journal cards, and destination/day photography) |
+| Visual fidelity | **Styled, branded document** (react-pdf with WanderPlanner design tokens, colorful travel-journal cards, and destination/day photography) |
 | Map inclusion | **No maps** — text, lists, and destination photos only |
 | Pagination | **Single continuous document** (no page-per-day breaks) |
 | Clickable links | **Yes** — venue names and booking URLs are active hyperlinks |
@@ -467,7 +467,7 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 #### UI
 - A **floating action bubble** (🗺️ or ✈️ icon, 52px, fixed bottom-right, z-index: 9999) is visible on all screens.
 - Clicking the bubble opens a **chat panel** (360px wide, slides up from bottom-right, max-height 500px).
-- The panel has a header ("WanderPlan Assistant"), message list, and a text input with Send button.
+- The panel has a header ("WanderPlanner Assistant"), message list, and a text input with Send button.
 - Panel can be closed via ✕ or by clicking the bubble again.
 
 #### Functionality
@@ -485,7 +485,7 @@ The chatbot system prompt enforces:
 3. **No booking**: Do not make bookings or collect payment information.
 4. **No PII**: Do not store or reference any personal information beyond what's in the current message.
 5. **Safe content**: No content that promotes unsafe travel practices.
-- If user asks an out-of-scope question, respond: *"I'm WanderPlan's travel assistant — I can only help with travel-related questions! Try asking me about destinations, visas, packing lists, or trip planning."*
+- If user asks an out-of-scope question, respond: *"I'm WanderPlanner's travel assistant — I can only help with travel-related questions! Try asking me about destinations, visas, packing lists, or trip planning."*
 
 ---
 

@@ -57,7 +57,7 @@ class Settings(BaseSettings):
         return v
 
     # Nominatim
-    nominatim_user_agent: str = "wanderplan/1.0"
+    nominatim_user_agent: str = "wanderplanner/1.0"
     nominatim_rate_limit: int = 1
 
     # Pexels — hero photos for itinerary day cards / PDF

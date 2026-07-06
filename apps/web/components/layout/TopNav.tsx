@@ -2,7 +2,7 @@
 
 import { useAppStore } from '@/store/appStore'
 import { useItineraryStore } from '@/store/itineraryStore'
-import { WanderplanLogo } from '@/components/common/WanderplanLogo'
+import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 import { ThemeToggle } from '@/components/common/ThemeToggle'
 
 export function TopNav() {
@@ -14,7 +14,7 @@ export function TopNav() {
       role="banner"
       className="nav-header flex h-14 shrink-0 items-center gap-4 px-5"
     >
-      <WanderplanLogo size="sm" inverted />
+      <WanderplannerLogo size="sm" inverted />
 
       {step > 1 && days.length > 0 && (
         <span

@@ -1,4 +1,4 @@
-# WanderPlan — Scaling & Technical Risk Assessment
+# WanderPlanner — Scaling & Technical Risk Assessment
 
 **Basis for this document:** Full review of `docs/PRD.md`, `docs/system-design.md`, `docs/rag-strategy.md`, `docs/eval-set.md`, and the `apps/api` (FastAPI) + `apps/web` (Next.js) codebases as they exist today.
 

@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Users, Wallet, MapPin, Sparkles, ArrowRight, Plane, Link2, Loader2 } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
 import type { WizardPreload } from '@/store/appStore'
-import { WanderplanLogo } from '@/components/common/WanderplanLogo'
+import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 import { ThemeToggle } from '@/components/common/ThemeToggle'
 import { useWikiImage } from '@/hooks/useWikiImage'
 import { extractTrip } from '@/lib/api'
@@ -148,7 +148,7 @@ export function LandingHero() {
       {/* ── Site nav ─────────────────────────────────────────────── */}
       <header className="sticky top-0 z-10 border-b border-[var(--_border)] bg-[var(--_bg)]/90 backdrop-blur-sm">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
-          <WanderplanLogo size="md" wordmark />
+          <WanderplannerLogo size="md" wordmark />
           <nav className="flex items-center gap-4" aria-label="Site navigation">
             <a
               href="#inspiration"
@@ -184,7 +184,7 @@ export function LandingHero() {
         >
           {/* SEO eyebrow — crawlable brand + keyword signal */}
           <p className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-[var(--_primary)] [font-family:var(--font-dm-sans)]">
-            Wanderplan · Free AI Travel Planner
+            Wanderplanner · Free AI Travel Planner
           </p>
 
           {/* Primary H1 — above-fold, keyword-rich */}
@@ -201,7 +201,7 @@ export function LandingHero() {
           <p className="mx-auto mt-5 max-w-lg text-base leading-relaxed text-[var(--_muted-fg)] [font-family:var(--font-dm-sans)]">
             Tell{' '}
             <strong className="font-semibold text-[var(--_fg)]">Anya</strong>
-            {' — '}Wanderplan's AI concierge — your destination, budget, and group.
+            {' — '}Wanderplanner's AI concierge — your destination, budget, and group.
             Get a complete day-by-day itinerary in under a minute.
           </p>
 
@@ -211,7 +211,7 @@ export function LandingHero() {
             onClick={openWizard}
             className="btn btn-accent mt-8 gap-3 rounded-2xl px-8 py-4 text-base font-bold shadow-lg"
             style={{ minHeight: '52px' }}
-            aria-label="Start planning your trip with Anya, Wanderplan's AI concierge"
+            aria-label="Start planning your trip with Anya, Wanderplanner's AI concierge"
           >
             Start planning with Anya
             <ArrowRight size={18} />
@@ -306,16 +306,16 @@ export function LandingHero() {
             <dl className="space-y-6">
               {[
                 {
-                  q: 'Is Wanderplan free?',
+                  q: 'Is Wanderplanner free?',
                   a: 'Yes — completely free. No sign-up, no credit card, no catch.',
                 },
                 {
-                  q: 'How does Wanderplan generate itineraries?',
-                  a: 'Wanderplan uses Google Gemini AI combined with real traveller data from Reddit and Wikivoyage to build personalised day-by-day plans with activities, costs, and local tips.',
+                  q: 'How does Wanderplanner generate itineraries?',
+                  a: 'Wanderplanner uses Google Gemini AI combined with real traveller data from Reddit and Wikivoyage to build personalised day-by-day plans with activities, costs, and local tips.',
                 },
                 {
-                  q: 'Which destinations does Wanderplan support?',
-                  a: 'Wanderplan covers 190+ countries — Bali, Paris, Dubai, Tokyo, Rajasthan, New York, and thousands more.',
+                  q: 'Which destinations does Wanderplanner support?',
+                  a: 'Wanderplanner covers 190+ countries — Bali, Paris, Dubai, Tokyo, Rajasthan, New York, and thousands more.',
                 },
                 {
                   q: 'Can it plan group or family trips?',
@@ -338,7 +338,7 @@ export function LandingHero() {
           className="border-t border-[var(--_border)] bg-[var(--_primary)] px-6 py-12 text-center"
           aria-label="Call to action"
         >
-          <WanderplanLogo size="md" inverted wordmark />
+          <WanderplannerLogo size="md" inverted wordmark />
           <p className="font-display mt-4 text-2xl font-bold text-white">
             Where are you headed next?
           </p>
@@ -353,7 +353,7 @@ export function LandingHero() {
             Plan my trip <ArrowRight size={16} />
           </button>
           <p className="mt-8 text-xs text-white/40 [font-family:var(--font-dm-sans)]">
-            © {new Date().getFullYear()} Wanderplan · AI-assisted travel planning
+            © {new Date().getFullYear()} Wanderplanner · AI-assisted travel planning
           </p>
         </footer>
       </main>

@@ -1,4 +1,4 @@
-# WanderPlan — Technical Documentation
+# WanderPlanner — Technical Documentation
 
 **Version:** 8.0 (Security Hardening — rate limiting, prompt-injection guard, SSRF fix, sanitized errors, structured logging, CORS hardening, dependency pinning)  
 **Last Updated:** July 2, 2026  
@@ -27,9 +27,9 @@
 
 ## 1. Overview
 
-WanderPlan is an AI-powered travel planning platform. Users interact with **Anya**, a conversational AI concierge, to produce a complete day-by-day itinerary. Key differentiators vs competitors (Mindtrip, TripIt, Travaa):
+WanderPlanner is an AI-powered travel planning platform. Users interact with **Anya**, a conversational AI concierge, to produce a complete day-by-day itinerary. Key differentiators vs competitors (Mindtrip, TripIt, Travaa):
 
-| Dimension | WanderPlan |
+| Dimension | WanderPlanner |
 |---|---|
 | Input method | Conversational wizard + voice + URL paste (Start Anywhere) |
 | Post-gen experience | Persistent Anya chat panel for real-time refinements |
@@ -133,7 +133,7 @@ apps/web/
 │   │   ├── LandingHero.tsx     — Landing: nav + hero + Start Anywhere + gallery + FAQ
 │   │   ├── FloatingAnyaButton.tsx — Orb: opens ChatPanel (itinerary) or wizard (landing)
 │   │   ├── ShareButton.tsx     — Generates /t/[slug] link, copies to clipboard
-│   │   ├── WanderplanLogo.tsx  — SVG geometric gold W
+│   │   ├── WanderplannerLogo.tsx  — SVG geometric gold W
 │   │   └── ThemeToggle.tsx     — Dark/light toggle
 │   ├── dashboard/
 │   │   ├── Column1Metrics.tsx  — Left sidebar: metrics, expenses, currency, booking hub
@@ -269,7 +269,7 @@ Persistent post-generation Anya chat.
 ```
 
 ### `bookingStore.ts`
-Booking hub with `zustand/persist` (localStorage key: `wanderplan-bookings`).
+Booking hub with `zustand/persist` (localStorage key: `wanderplanner-bookings`).
 
 ```typescript
 {
@@ -525,7 +525,7 @@ All LLM tasks use Gemini 2.5 Flash with task-specific temperature settings:
 
 ### RAG Architecture (Retrieval-Augmented Generation)
 
-WanderPlan uses RAG to inject real traveller knowledge from Reddit, Wikivoyage, and (new) OpenStreetMap into Gemini's itinerary generation prompt. As of v9.0, retrieval is hybrid (BM25 + semantic), augmented with HyDE, optionally reranked with a cross-encoder for the primary generation path, and backed by a 3-tier RAG-powered fallback chain for LLM outages.
+WanderPlanner uses RAG to inject real traveller knowledge from Reddit, Wikivoyage, and (new) OpenStreetMap into Gemini's itinerary generation prompt. As of v9.0, retrieval is hybrid (BM25 + semantic), augmented with HyDE, optionally reranked with a cross-encoder for the primary generation path, and backed by a 3-tier RAG-powered fallback chain for LLM outages.
 
 #### How It Works
 
@@ -710,7 +710,7 @@ The backend `_has_all_required()` server-validates `ready_to_generate`. Stage 2 
 **History:** Last 10 messages
 
 ```
-You are Anya, WanderPlan's friendly AI travel assistant.
+You are Anya, WanderPlanner's friendly AI travel assistant.
 
 ROLE: Help refine the user's active trip plan. You can:
 1. Answer travel questions factually.
@@ -741,7 +741,7 @@ GUARDRAILS:
 - Keep replies concise and friendly
 
 Non-travel response:
-  "I'm Anya, WanderPlan's travel assistant — I can only help with travel questions! 🌍"
+  "I'm Anya, WanderPlanner's travel assistant — I can only help with travel questions! 🌍"
 ```
 
 ---
@@ -752,7 +752,7 @@ Non-travel response:
 **Temperature:** 0.4 · **Max tokens:** 16384
 
 ```
-You are WanderPlan, an expert AI travel advisor.
+You are WanderPlanner, an expert AI travel advisor.
 Generate a detailed, realistic day-by-day travel itinerary based on the trip
 configuration and destination research provided.
 
@@ -987,7 +987,7 @@ QDRANT_URL=:memory:
 PEXELS_API_KEY=                            # optional — itinerary still works without day photos
 ALLOWED_ORIGINS=["http://localhost:3000"]   # JSON-array format required; "*" is rejected
 LOG_LEVEL=INFO                              # structured JSON logging (⭐ NEW v10.0)
-NOMINATIM_USER_AGENT=wanderplan/1.0
+NOMINATIM_USER_AGENT=wanderplanner/1.0
 NOMINATIM_RATE_LIMIT=1
 ```
 

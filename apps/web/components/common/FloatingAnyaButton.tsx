@@ -29,7 +29,7 @@ export function FloatingAnyaButton() {
       <button
         onClick={handleClick}
         className="group flex flex-col items-center gap-1.5 transition-transform hover:scale-105"
-        aria-label="Open Anya — Wanderplan concierge"
+        aria-label="Open Anya — Wanderplanner concierge"
         type="button"
       >
         <div className="relative">

@@ -1,7 +1,7 @@
-# WanderPlan — Startup Evaluation
+# WanderPlanner — Startup Evaluation
 
 **Phase:** Strategy & Validation (Fast-Track, via `startup-design` skill)
-**Project:** wanderplan
+**Project:** wanderplanner
 **Date:** 2026-07-03
 **Confidence:** Medium-High (competitor/market claims below verified via live research; see Sources)
 
@@ -16,28 +16,28 @@
 
 ### Global Players
 
-| Competitor | What it does | Monetization | Scale/Traction | How it differs from WanderPlan |
+| Competitor | What it does | Monetization | Scale/Traction | How it differs from WanderPlanner |
 |---|---|---|---|---|
-| **Mindtrip** (mindtrip.ai) | Conversational AI trip planner — chat, maps, photos, itineraries, integrated bookings (Priceline, Viator); agentic flight booking via Sabre + PayPal (May 2026) | Dual: consumer affiliate commissions (Priceline, Viator) **+** B2B SaaS licensing to DMOs/tourism boards/hotels | **$22.5M raised** (Costanoa Ventures, Forerunner Ventures, Amex Ventures, Capital One Ventures, United Airlines Ventures); **~1.5M monthly users**; 30+ US DMO partnerships + Europe expansion; PhocusWire Hot 25 2025 honoree | Has direct booking integration + agentic checkout (WanderPlan only redirects); B2B DMO business is its real growth engine; no India/Hinglish focus; funded team vs. solo |
-| **Layla AI** (formerly Roam Around) | AI chat-based trip planning, one of the first GPT-4-powered itinerary generators (2023) | Estimated: affiliate + freemium (unconfirmed) | Roam Around cited ~4M visits/month in 2023 hype wave (unverified estimate); rebrand to Layla suggests repositioning was needed | Chat-first with thinner itinerary UI vs. WanderPlan's richer interface; no India localization, no voice, no community tips |
-| **Wanderlog** (wanderlog.com) | Trip organizer + AI itinerary builder, interactive map, collaboration, Gmail booking auto-import | Freemium — Wanderlog Plus (~$10-12/mo, estimate) + affiliate revenue | Widely cited "10M+ users" (unverified this session) | Mobile-first vs. WanderPlan's desktop-first; organizer-led vs. concierge-led; has subscription revenue, WanderPlan has none |
+| **Mindtrip** (mindtrip.ai) | Conversational AI trip planner — chat, maps, photos, itineraries, integrated bookings (Priceline, Viator); agentic flight booking via Sabre + PayPal (May 2026) | Dual: consumer affiliate commissions (Priceline, Viator) **+** B2B SaaS licensing to DMOs/tourism boards/hotels | **$22.5M raised** (Costanoa Ventures, Forerunner Ventures, Amex Ventures, Capital One Ventures, United Airlines Ventures); **~1.5M monthly users**; 30+ US DMO partnerships + Europe expansion; PhocusWire Hot 25 2025 honoree | Has direct booking integration + agentic checkout (WanderPlanner only redirects); B2B DMO business is its real growth engine; no India/Hinglish focus; funded team vs. solo |
+| **Layla AI** (formerly Roam Around) | AI chat-based trip planning, one of the first GPT-4-powered itinerary generators (2023) | Estimated: affiliate + freemium (unconfirmed) | Roam Around cited ~4M visits/month in 2023 hype wave (unverified estimate); rebrand to Layla suggests repositioning was needed | Chat-first with thinner itinerary UI vs. WanderPlanner's richer interface; no India localization, no voice, no community tips |
+| **Wanderlog** (wanderlog.com) | Trip organizer + AI itinerary builder, interactive map, collaboration, Gmail booking auto-import | Freemium — Wanderlog Plus (~$10-12/mo, estimate) + affiliate revenue | Widely cited "10M+ users" (unverified this session) | Mobile-first vs. WanderPlanner's desktop-first; organizer-led vs. concierge-led; has subscription revenue, WanderPlanner has none |
 | **TripIt** (tripit.com) | Itinerary *organizer* — parses forwarded booking emails into a master itinerary | TripIt Pro ~$49/yr (flight alerts, points tracking) + enterprise via SAP Concur | Owned by SAP Concur; used by millions (no specific figure confirmed) | Fundamentally an organizer, not a generator — no AI conversation, no destination discovery |
 | **GuideGeek** (guidegeek.com) | AI travel guide via WhatsApp/iMessage/Messenger, built by Matador Network | Estimated affiliate revenue; strategic traffic driver for Matador's media business | No confirmed user numbers | Messaging-first, no visual itinerary builder, maps, or PDF export |
 | **TripAdvisor AI Trip Planner** | GPT-powered chat bolted onto TripAdvisor's core review platform (May 2023) | Existing OTA monetization (hotel CPA, Booking/Expedia affiliate, Viator commission) | ~463M monthly unique visitors (pre-AI figure) | Huge distribution but AI planner is a buried add-on, not the core product — has **not** driven meaningful revenue lift for them |
-| **Google (Gemini travel features)** | AI-organized search results, Gemini in Maps for trip planning | Not separately monetized — drives ad revenue/ecosystem lock-in | Reaches billions | The largest ambient threat: "why use WanderPlan when I can just ask Gemini?" |
+| **Google (Gemini travel features)** | AI-organized search results, Gemini in Maps for trip planning | Not separately monetized — drives ad revenue/ecosystem lock-in | Reaches billions | The largest ambient threat: "why use WanderPlanner when I can just ask Gemini?" |
 | **Vacay.io** | Was an AI vacation planning assistant | — | **⚠️ CONFIRMED SHUTDOWN** — domain now parked for sale on GoDaddy | Clear precedent: free AI travel planning without a monetization path leads to death |
 
 ### India-Specific Players
 
-| Competitor | What it does | Monetization | Scale/Traction | How it differs from WanderPlan |
+| Competitor | What it does | Monetization | Scale/Traction | How it differs from WanderPlanner |
 |---|---|---|---|---|
-| **MakeMyTrip — "Ingo" AI concierge** | India's largest OTA; AI chatbot for recommendations/itinerary suggestions inside their app | Full OTA model — hotel commissions (~8-15%), flight fees, package margins | ~35M+ MAU across MMT Group (Goibibo, redBus); ~$780M FY2024 revenue (estimate); ~$10B+ market cap | Controls the full booking funnel (WanderPlan can't compete there); Ingo is a buried feature, not a standalone experience |
+| **MakeMyTrip — "Ingo" AI concierge** | India's largest OTA; AI chatbot for recommendations/itinerary suggestions inside their app | Full OTA model — hotel commissions (~8-15%), flight fees, package margins | ~35M+ MAU across MMT Group (Goibibo, redBus); ~$780M FY2024 revenue (estimate); ~$10B+ market cap | Controls the full booking funnel (WanderPlanner can't compete there); Ingo is a buried feature, not a standalone experience |
 | **Pickyourtrail** | "India's largest DIY holiday platform" — itinerary + human-assisted booking for international trips | Commission + markup on packages (not free) | Founded 2014; ~$1.7M seed (2018, estimate); profitable; partner with 1,200+ hospitality providers | Sells packages via human curators + tech, not pure AI chat — completely different business model (transacting vs. free planning) |
 | **Thrillophilia** | AI-enhanced multi-day tour *operator* — owns on-ground coordination and inventory | Tour/package revenue, take-rate on activities | One of India's largest experiential travel platforms | Full-service paid operator, not a free planning assistant |
 | **TripXO** | India-based AI trip planning startup | Unknown | Unverified — site inaccessible during research | Unconfirmed; treat as unverified |
 | **Yatra / EaseMyTrip / Ixigo** | India's other major OTAs adding AI search/recommendation features | Booking commission (core business) | Large, established | Compete on booking, not on deep AI-native planning |
 
-**Verified gap:** No major global or Indian player has built a **Hinglish-native, culturally-contextual AI conversational trip planner.** MakeMyTrip's Ingo, Pickyourtrail, and Thrillophilia are all human/booking-hybrid models, not AI-conversation-first products. This is a real, currently uncontested wedge for WanderPlan. **[Data — verified via research]**
+**Verified gap:** No major global or Indian player has built a **Hinglish-native, culturally-contextual AI conversational trip planner.** MakeMyTrip's Ingo, Pickyourtrail, and Thrillophilia are all human/booking-hybrid models, not AI-conversation-first products. This is a real, currently uncontested wedge for WanderPlanner. **[Data — verified via research]**
 
 ---
 
@@ -61,7 +61,7 @@
 
 **Current state:** Fully free, no accounts, no payment infra, session-only state (per PRD). This is the central structural problem — most revenue models need persistent identity.
 
-| Model | Fit for WanderPlan | Notes |
+| Model | Fit for WanderPlanner | Notes |
 |---|---|---|
 | **Affiliate/CPA on existing deep-links** | ✅ Lowest lift | Viator: **8%** standard, **10%** promotional, ~$220 AOV, 30-day cookie [Verified]. GetYourGuide: **8-10%**, ~$100 AOV [Verified]. KAYAK/Skyscanner: **CPC-based**, not % of booking [Verified]. Booking.com: ~**4% net to affiliates** [Estimate, unverified]. Needs real traffic to matter — $0 at current stage. |
 | **Freemium subscription** | ⚠️ Requires accounts | Conflicts with the current "no login, no cost" product principle — a real product decision, not just engineering |
@@ -130,4 +130,4 @@ Treat this as a **portfolio-quality technical showcase with a validated narrow n
 - Industry-cited estimates (Wanderlog user count, Booking.com affiliate %, India online travel market size, MakeMyTrip Ingo specifics, TripXO) — **not independently verified via direct source access**; treat as low-to-medium confidence estimates and confirm before making decisions based on them
 - DPDP Act 2023 context — widely documented in Indian legal/tech press; implementing Rules not yet notified as of mid-2026 — confirm current status with an Indian tech lawyer before wider release
 
-**Methodology note:** This evaluation was produced using the `startup-design` skill (fast-track mode: pre-flight check, competitive research, business model assessment, and go/no-go scorecard) sourced from [ferdinandobons/startup-skill](https://github.com/ferdinandobons/startup-skill), combined with direct review of the WanderPlan codebase, README, and PRD.
+**Methodology note:** This evaluation was produced using the `startup-design` skill (fast-track mode: pre-flight check, competitive research, business model assessment, and go/no-go scorecard) sourced from [ferdinandobons/startup-skill](https://github.com/ferdinandobons/startup-skill), combined with direct review of the WanderPlanner codebase, README, and PRD.

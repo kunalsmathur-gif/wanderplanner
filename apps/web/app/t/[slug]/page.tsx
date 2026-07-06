@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { WanderplanLogo } from '@/components/common/WanderplanLogo'
+import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 import { ThemeToggle } from '@/components/common/ThemeToggle'
 import type { ItineraryDay, ExpenseBreakdown } from '@/types'
 
@@ -30,7 +30,7 @@ export default function SharedTripPage({ params }: { params: { slug: string } })
       {/* Minimal nav */}
       <header className="sticky top-0 z-10 border-b border-[var(--_border)] bg-[var(--_bg)]/90 backdrop-blur-sm">
         <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-3">
-          <WanderplanLogo size="md" wordmark />
+          <WanderplannerLogo size="md" wordmark />
           <div className="flex items-center gap-3">
             <ThemeToggle />
             <a

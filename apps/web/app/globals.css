@@ -4,7 +4,7 @@
    Allows using `dark:` Tailwind variants when `.dark` is on <html>          */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* ── WanderPlan design tokens — from ui-ux-pro-max skill ─────────────────────
+/* ── WanderPlanner design tokens — from ui-ux-pro-max skill ─────────────────────
    Skill output: Travel/Tourism Agency palette (sky blue + adventure orange)
    Style: Exaggerated Minimalism | Typography: Space Grotesk + DM Sans       */
 @theme inline {

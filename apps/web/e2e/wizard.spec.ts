@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test'
 
-test.describe('WanderPlan wizard flow', () => {
+test.describe('WanderPlanner wizard flow', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
   })
 
   test('page loads with Step 1 visible', async ({ page }) => {
-    await expect(page).toHaveTitle(/WanderPlan/i)
+    await expect(page).toHaveTitle(/WanderPlanner/i)
     // Landing page should show the trip-planning entry point
     await expect(page.getByRole('heading', { name: /Plan any trip in minutes/i })).toBeVisible()
   })
@@ -22,8 +22,8 @@ test.describe('WanderPlan wizard flow', () => {
     await expect(page.getByText(/Trip Metrics/)).not.toBeVisible()
   })
 
-  test('TopNav renders the WanderPlan brand name', async ({ page }) => {
-    await expect(page.getByRole('banner').getByText('WANDERPLAN')).toBeVisible()
+  test('TopNav renders the WanderPlanner brand name', async ({ page }) => {
+    await expect(page.getByRole('banner').getByText('WANDERPLANNER')).toBeVisible()
   })
 
   test('wizard does not advance to step 2 without filling required fields', async ({ page }) => {

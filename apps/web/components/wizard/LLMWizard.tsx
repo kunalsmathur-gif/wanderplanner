@@ -9,7 +9,7 @@ import { useWizardChatStore } from '@/store/wizardChatStore'
 import { wizardChat } from '@/lib/api'
 import { streamItinerary } from '@/lib/api'
 import type { TripConfig } from '@/types'
-import { WanderplanLogo } from '@/components/common/WanderplanLogo'
+import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -413,7 +413,7 @@ export function LLMWizard() {
         {/* ── Header ──────────────────────────────────────────────────── */}
         <div className="flex shrink-0 items-center justify-between bg-[var(--_primary)] px-5 py-4 text-white">
           <div className="flex items-center gap-3">
-            <WanderplanLogo size="sm" inverted />
+            <WanderplannerLogo size="sm" inverted />
             <div>
               <p className="text-sm font-bold leading-tight">Anya</p>
               <p className="text-xs text-white/70">AI travel concierge</p>

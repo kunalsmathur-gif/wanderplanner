@@ -100,7 +100,7 @@ async def _fetch_url_text(url: str) -> str:
             for _ in range(_MAX_REDIRECTS + 1):
                 resp = await client.get(
                     current_url,
-                    headers={"User-Agent": "WanderPlan/1.0"},
+                    headers={"User-Agent": "WanderPlanner/1.0"},
                 )
                 if resp.is_redirect:
                     location = resp.headers.get("location")

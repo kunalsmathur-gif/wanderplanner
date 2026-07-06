@@ -15,7 +15,7 @@ const SIZES = {
 }
 
 /**
- * Wanderplan brand mark — inspired by the geometric W logo.
+ * Wanderplanner brand mark — inspired by the geometric W logo.
  *
  * W construction (viewBox 0 0 72 58):
  *  5-point W:  TL(6,6) → BL(18,50) → IT(34,8) → BR(50,50) → TR(62,6)
@@ -27,7 +27,7 @@ const SIZES = {
  *  inverted (dark bg) : bright metallic gold mark + gold wordmark
  *  normal  (light bg) : warm muted gold mark + dark-navy wordmark
  */
-export function WanderplanLogo({ size = 'md', inverted = false, wordmark = true }: Props) {
+export function WanderplannerLogo({ size = 'md', inverted = false, wordmark = true }: Props) {
   const { h, w, text, tagText, gap } = SIZES[size]
 
   // Gold palette — brighter on dark, richer/warmer on light
@@ -109,7 +109,7 @@ export function WanderplanLogo({ size = 'md', inverted = false, wordmark = true 
             className={`font-display font-bold tracking-[0.14em] ${text}`}
             style={{ color: wordmarkClr, fontFamily: 'var(--font-space-grotesk)' }}
           >
-            WANDERPLAN
+            WANDERPLANNER
           </span>
           {size !== 'sm' && (
             <span

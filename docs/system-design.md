@@ -1,4 +1,4 @@
-# WanderPlan — System Design Document
+# WanderPlanner — System Design Document
 
 **Version:** 8.1 (RAG v5.2 — Multi-query RRF · Time-decay · Paragraph chunking · Gemini RAG wired)  
 **Last Updated:** June 29, 2026  
@@ -415,7 +415,7 @@ User clicks ShareButton (center column header)
          setShareUrl(url)  ← cache for subsequent clicks
          Button: "Link copied!" (green, 3s)
 
-Recipient opens https://wanderplan.app/t/a1b2c3d4
+Recipient opens https://wanderplanner.app/t/a1b2c3d4
          │
          ▼
 app/t/[slug]/page.tsx
@@ -701,7 +701,7 @@ The backend `_has_all_required()` server-validates `ready_to_generate`. Stage 2 
 ### System Prompt 2 — Anya Post-Gen Chat (`chat_refine_chain.py`)
 
 ```
-You are Anya, WanderPlan's friendly AI travel assistant.
+You are Anya, WanderPlanner's friendly AI travel assistant.
 
 CURRENT TRIP CONFIG: {trip_config_json}
 
@@ -722,7 +722,7 @@ RESPONSE FORMAT:
 ### System Prompt 3 — Itinerary Generation (`itinerary_chain.py`)
 
 ```
-You are WanderPlan, an expert AI travel advisor.
+You are WanderPlanner, an expert AI travel advisor.
 Output ONLY valid JSON matching the schema.
 
 RULES:
@@ -868,7 +868,7 @@ Breaking any link in this chain prevents scrolling. `<main className="h-full">` 
 | `ALLOWED_ORIGINS` | `["http://localhost:3000"]` | ✅ | CORS whitelist — **must be JSON-array format** (pydantic-settings list parsing), `"*"` is rejected by a validator (⭐ NEW v10.0) |
 | `PEXELS_API_KEY` | — | — | Optional Pexels API key for itinerary day hero photos; generation degrades gracefully without it |
 | `LOG_LEVEL` | `INFO` | — | Structured JSON logging level (⭐ NEW v10.0, `core/logging_config.py`) |
-| `NOMINATIM_USER_AGENT` | `wanderplan/1.0` | — | Nominatim ToS compliance |
+| `NOMINATIM_USER_AGENT` | `wanderplanner/1.0` | — | Nominatim ToS compliance |
 | `NOMINATIM_RATE_LIMIT` | `1` | — | Requests per second |
 
 ### Frontend (`apps/web/.env.local`)

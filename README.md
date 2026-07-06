@@ -1,4 +1,4 @@
-# WanderPlan
+# WanderPlanner
 
 > AI-powered travel planning with Anya, your conversational AI concierge. Desktop-first, no sign-up, no cost.
 
@@ -20,7 +20,7 @@
 
 ## What It Does
 
-WanderPlan uses conversational AI to help you plan trips through a natural chat interface. Tell Anya about your trip — who's coming, what you like, your budget — and she generates a day-by-day itinerary with:
+WanderPlanner uses conversational AI to help you plan trips through a natural chat interface. Tell Anya about your trip — who's coming, what you like, your budget — and she generates a day-by-day itinerary with:
 
 - 📍 Timestamped activities with locations
 - 🗺️ Interactive maps with full-screen mode

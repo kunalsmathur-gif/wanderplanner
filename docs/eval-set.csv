@@ -149,7 +149,7 @@ Section 6 — Price Metering for Paid APIs,6B — Groq API (fallback LLM provide
 Section 6 — Price Metering for Paid APIs,6B — Groq API (fallback LLM provider),COST-014,Groq token usage logging,Add usage logging to itinerary chain,Logs prompt + completion token counts,P1,
 Section 6 — Price Metering for Paid APIs,6B — Groq API (fallback LLM provider),COST-015,Groq rate limit handling,Exceed free tier (30 req/min),429 handled gracefully; mock fallback or retry,P1,
 Section,Subsection,ID,Test,Expected,Pass criteria,Priority,
-Section 6 — Price Metering for Paid APIs,"6C — Nominatim (Free, Fair-Use Policy)",COST-016,User-Agent set,Inspect outgoing Nominatim request headers,User-Agent: wanderplan/1.0,"user_agent == ""wanderplan/1.0""",P0
+Section 6 — Price Metering for Paid APIs,"6C — Nominatim (Free, Fair-Use Policy)",COST-016,User-Agent set,Inspect outgoing Nominatim request headers,User-Agent: wanderplanner/1.0,"user_agent == ""wanderplanner/1.0""",P0
 Section 6 — Price Metering for Paid APIs,"6C — Nominatim (Free, Fair-Use Policy)",COST-017,Rate limiter active,3 rapid geocode calls,Min 1s between each outgoing HTTP call,No 403/429 from Nominatim,P0
 Section 6 — Price Metering for Paid APIs,"6C — Nominatim (Free, Fair-Use Policy)",COST-018,No excessive calls,User types in wizard destination input,"Geocode only on submit/confirm, NOT on every keystroke",≤ 1 geocode call per user action,P1
 Section,Subsection,ID,Test,Expected,Pass criteria,Priority,

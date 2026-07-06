@@ -48,7 +48,7 @@ export default function DevPage() {
     <div className="flex min-h-screen items-center justify-center bg-slate-50">
       <div className="w-full max-w-md rounded-2xl bg-white p-10 shadow-lg">
         <div className="mb-8 text-center">
-          <p className="text-2xl font-bold text-[#1E40AF]">✈ WanderPlan</p>
+          <p className="text-2xl font-bold text-[#1E40AF]">✈ WanderPlanner</p>
           <p className="mt-1 text-sm text-slate-500">Dev Preview — Tokyo 3-day itinerary pre-loaded</p>
         </div>
 

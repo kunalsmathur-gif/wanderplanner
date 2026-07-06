@@ -1,5 +1,5 @@
 """
-Retrieval load test for WanderPlan's RAG pipeline.
+Retrieval load test for WanderPlanner's RAG pipeline.
 
 Runs IN-PROCESS (imports the app's own service/core modules) rather than over
 HTTP, because local dev uses an in-memory Qdrant instance (QDRANT_URL=:memory:)

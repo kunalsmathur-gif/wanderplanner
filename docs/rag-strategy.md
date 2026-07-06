@@ -1,4 +1,4 @@
-# WanderPlan — RAG Strategy: Current State, Gaps & Roadmap
+# WanderPlanner — RAG Strategy: Current State, Gaps & Roadmap
 **Version:** 4.0 · **Date:** June 2026 · **Updated:** July 2, 2026
 
 ---
@@ -7,7 +7,7 @@
 
 **Yes — fully wired into production, and substantially upgraded as of v5.3.**
 
-WanderPlan has a RAG infrastructure in place (Qdrant + `all-MiniLM-L6-v2` embeddings). All retrieval paths — including the primary **Gemini** production path — now call `retrieve_context()`. The previous silent bypass has been fixed, a hidden concurrency bug that serialized retrieval under load has been fixed, and the hybrid search / HyDE / reranking / OSM ingestion / itinerary-cache items that were "pending" in the v3.0 roadmap are now implemented.
+WanderPlanner has a RAG infrastructure in place (Qdrant + `all-MiniLM-L6-v2` embeddings). All retrieval paths — including the primary **Gemini** production path — now call `retrieve_context()`. The previous silent bypass has been fixed, a hidden concurrency bug that serialized retrieval under load has been fixed, and the hybrid search / HyDE / reranking / OSM ingestion / itinerary-cache items that were "pending" in the v3.0 roadmap are now implemented.
 
 ### What's Wired Up (Current)
 
@@ -469,7 +469,7 @@ User trip config
 
 ---
 
-## 6. Use Cases RAG Can Power in WanderPlan
+## 6. Use Cases RAG Can Power in WanderPlanner
 
 | # | Use Case | Collections | Value |
 |---|---|---|---|
@@ -639,7 +639,7 @@ Not all sources are equal. Weight retrieved documents by source authority:
 | **Community (high karma)** | Reddit posts with score > 500 | 0.75–0.90 |
 | **Community (standard)** | Reddit posts score 50–500, TripAdvisor threads | 0.55–0.75 |
 | **Community (low signal)** | Reddit score < 50, generic blogs | 0.30–0.55 |
-| **Generated (WanderPlan)** | Past generated itineraries (Section 10) | 0.60–0.85 (feedback-based) |
+| **Generated (WanderPlanner)** | Past generated itineraries (Section 10) | 0.60–0.85 (feedback-based) |
 
 ### Ingestion Pipeline (Scheduled)
 
@@ -698,7 +698,7 @@ REAL TRAVELLER ITINERARIES FOR REFERENCE (use as inspiration, not verbatim):
 
 ### Concept: RAG as Collaborative Filtering
 
-Every itinerary WanderPlan generates is a data point. When a new user has a similar profile to past users, the system retrieves their itineraries as implicit "examples of what worked". This is **few-shot prompting with dynamically retrieved examples** — the model learns behaviorally without any retraining.
+Every itinerary WanderPlanner generates is a data point. When a new user has a similar profile to past users, the system retrieves their itineraries as implicit "examples of what worked". This is **few-shot prompting with dynamically retrieved examples** — the model learns behaviorally without any retraining.
 
 The key insight: a digital nomad solo traveller in Chiang Mai for 10 days at ₹80k budget is nearly identical to 20 previous such users. Their itinerary should start from that learned baseline, not from scratch.
 
@@ -942,7 +942,7 @@ async def route_query(question: str) -> str:
   Reddit trip rprt   ──(daily)────────────▶        [itinerary_corpus]      ← NEW
   YouTube vlogs      ──(daily)────────────▶        [itinerary_corpus]      ← NEW
   Visa/entry rules   ──(monthly static)───▶        [visa_info]             ← NEW
-  WanderPlan output  ──(per generation)───▶        [generated_itineraries] ← NEW
+  WanderPlanner output  ──(per generation)───▶        [generated_itineraries] ← NEW
   Pre-generated      ──(bootstrap)────────▶        [itinerary_cache]       ← NEW
 
 ═══════════════════════════════════════════════════════════════════
@@ -961,7 +961,7 @@ async def route_query(question: str) -> str:
        │       ├── reddit           (context query)     → top 5 chunks
        │       ├── osm_pois         (context query)     → top 5 POIs
        │       ├── itinerary_corpus (config query)      → top 3 real itineraries
-       │       └── generated_itin.  (fingerprint)       → top 2 past WanderPlan trips
+       │       └── generated_itin.  (fingerprint)       → top 2 past WanderPlanner trips
        │
        ├─ [3] Rerank + deduplicate
        │       └── score × quality_score; remove jaccard > 0.6 duplicates
@@ -976,7 +976,7 @@ async def route_query(question: str) -> str:
        └─ [5] Inject into LLM prompt
                ├── {context}           → wiki + reddit + OSM tips
                ├── {examples}          → blog/forum/YouTube itineraries
-               └── {past_itineraries}  → WanderPlan learned itineraries
+               └── {past_itineraries}  → WanderPlanner learned itineraries
 
 ═══════════════════════════════════════════════════════════════════
                 POST-GENERATION PIPELINE
@@ -997,7 +997,7 @@ async def route_query(question: str) -> str:
 |---|---|---|
 | Wiki/Reddit raw chunks | ~7,500 tokens | ~600 tokens (summarised) |
 | Real itinerary examples | 0 | ~450 tokens |
-| Past WanderPlan itineraries | 0 | ~300 tokens |
+| Past WanderPlanner itineraries | 0 | ~300 tokens |
 | **Total context** | **~7,500 tokens** | **~1,350 tokens** |
 | **Output quality** | Training data only | Real + learned + community-grounded |
 | **Cost per session (Gemini 2.0 Flash)** | **~$0.007** | **~$0.004** |
