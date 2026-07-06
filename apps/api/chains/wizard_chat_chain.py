@@ -159,7 +159,7 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       solo -> solo_backpacking
     ALWAYS include chips when asking about purpose: ["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"]
 
-  Field 2 -- destination (JSON keys: "destination" OR "destination_mode" + "destination_country")
+  Field 2 -- destination (JSON keys: "destination" OR "destination_mode" + "destination_country"; optionally "hops")
     Where they want to go.
     Case A -- specific city/place:
       destination: {{"city": "Bali", "country": "Indonesia", "lat": 0, "lon": 0}}
@@ -169,6 +169,19 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       destination_country: "Thailand"
     Case C -- open to AI suggestions:
       destination_mode: "exploring"
+    Case D -- MULTIPLE specific cities/places named explicitly (multi-city / multi-hop trip):
+      When the user lists 2+ specific place names (not a whole country) — e.g. "Colombo,
+      Mirissa, and Yala National Park" or "Paris then Amsterdam" — put the FIRST place in
+      "destination" and ALL remaining places (in the order given) in "hops". Never drop any
+      named place; every place the user mentions must appear in either destination or hops.
+      destination_mode: "fixed"
+      destination: {{"city": "Colombo", "country": "Sri Lanka", "lat": 0, "lon": 0}}
+      hops: [
+        {{"city": "Mirissa", "country": "Sri Lanka", "lat": 0, "lon": 0}},
+        {{"city": "Yala National Park", "country": "Sri Lanka", "lat": 0, "lon": 0}}
+      ]
+      This applies any time the user updates the destination too — e.g. "actually add Kandy
+      as well" -> append {{"city": "Kandy", ...}} to the existing hops in config_patch.
     Map: "suggest me" / "not sure" / "anywhere" / "kuch bhi" / "you decide" -> Case C
 
     COUNTRY DESTINATIONS: If the user names a country (not a specific city), warmly name
@@ -422,7 +435,12 @@ def _summarise_state(config: dict[str, Any]) -> str:
     elif mode == "country":
         lines.append(f"destination: exploring {config.get('destination_country', '?')}")
     elif dest and dest.get("city"):
-        lines.append(f"destination: {dest['city']}, {dest.get('country', '')}")
+        hops = config.get("hops") or []
+        if hops:
+            hop_names = ", ".join(h.get("city", "") for h in hops if h.get("city"))
+            lines.append(f"destination: {dest['city']}, {dest.get('country', '')} (multi-city, additional stops: {hop_names})")
+        else:
+            lines.append(f"destination: {dest['city']}, {dest.get('country', '')}")
 
     dates = config.get("dates", {})
     if dates.get("start") and dates.get("end"):
