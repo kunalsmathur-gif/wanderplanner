@@ -79,6 +79,7 @@
 │                                                                            │
 │  POST /api/wizard-chat         → Anya LLM wizard (Gemini 2.5 Flash)  ⭐NEW  │
 │  POST /api/generate-itinerary  → Gemini 2.5 Flash (5× retry + fallback) │
+│  Photo enrichment              → Pexels hero-photo lookup (best-effort)   │
 │  POST /api/chat-refine         → Anya post-gen chat handler              │
 │  POST /api/recommend-cities    → City suggestions (Gemini)               │
 │  POST /api/extract-trip        → URL/text → trip fields (Gemini) ⭐NEW  │
@@ -113,6 +114,8 @@
 │  - wiki     │  │             │  │  • YouTube       — video thumbnails   │
 └─────────────┘  └─────────────┘  │  • Wikipedia API — destination photos │
                                    │    (frontend, free, no key, CORS-safe)│
+                                   │  • Pexels API    — optional itinerary  │
+                                   │    day hero photos + attribution       │
                                    └───────────────────────────────────────┘
 
 Embedding Model: sentence-transformers/all-MiniLM-L6-v2 (local, 384 dims)
@@ -124,7 +127,7 @@ Embedding Model: sentence-transformers/all-MiniLM-L6-v2 (local, 384 dims)
 
 ### 2.1 Overview
 
-The wizard is fully LLM-powered. Each user message is sent to `POST /api/wizard-chat` (Gemini 2.5 Flash, temp 0.4). Anya returns a conversational reply, optional chip suggestions, and a `config_patch` of newly extracted fields. The frontend merges patches into a local `partialConfig` state, tracks `_checkpoint_asked`, and shows progress pills for the 6 required fields. Assistant turns are JSON-wrapped with the real `config_patch` when replayed to Gemini so the model learns from the actual extraction history, not plain-text replies alone.
+The wizard is fully LLM-powered. Each user message is sent to `POST /api/wizard-chat` (Gemini 2.5 Flash, temp 0.4). Anya returns a conversational reply, optional chip suggestions, and a `config_patch` of newly extracted fields. The frontend merges patches into a local `partialConfig` state, tracks `_checkpoint_asked`, and shows progress pills for the 6 required fields. Assistant turns are JSON-wrapped with the real `config_patch` when replayed to Gemini so the model learns from the actual extraction history, not plain-text replies alone. The frontend now treats the backend's Stage-3 `summary` / `ready_to_generate` signal as the single source of truth for showing the generate CTA, so Stage-2 optional follow-up questions never strand the user without an input box.
 
 ```
 openWizard() or openWizardWithPreload(preload)
@@ -146,9 +149,12 @@ wizard_chat_chain.py
   │    6 required fields, 3-stage flow, config_patch rules, concrete MUST examples
   ├─ CURRENT_STATE summary injected (shows status: all-6-collected or checkpoint-asked)
   ├─ Assistant history replayed as JSON with real config_patch per turn
-  ├─ Call Gemini 2.5 Flash (temp 0.4, max_tokens 800)
+  ├─ Call Gemini 2.5 Flash (temp 0.4, max_tokens 2048)
+  ├─ Validate full JSON via _looks_like_valid_json()
   ├─ Retry: 3 attempts with exponential backoff on 503/429/UNAVAILABLE
+  │         and on successfully returned-but-incomplete JSON
   ├─ Smart mock fallback reads partial_config and asks next missing field
+  ├─ Fallback reply cleanup: _strip_trailing_json_artifacts()
   └─ Parse JSON: { reply, chips, config_patch, ready_to_generate, summary }
          │
          ├─ Stage 1: ready_to_generate=false, missing fields → ask next question
@@ -158,7 +164,8 @@ wizard_chat_chain.py
          │    → Chips: "Just generate it!", "Add themes", "Add departure city"
          │
          └─ Stage 3: checkpoint done + user confirms → ready_to_generate=true
-              → show "Generate my itinerary" button
+              → frontend sees summary present and shows "Generate my itinerary" button
+              → reply text is also trimmed with _strip_leaked_schema_tail() if Gemini echoed schema keys inside it
               → User clicks → merge partialConfig → streamItinerary → SSE
 ```
 
@@ -313,6 +320,12 @@ itinerary_chain.py
          │
          ├─ On success → store_itinerary() caches result (best-effort, strips
          │    any "_"-prefixed fallback markers so degraded output can never be cached)
+         │
+         ├─ Photo enrichment (best-effort): build one query per day as
+         │    "{destination city or country} {day theme}" → services/pexels.py
+         │    runs concurrent lookups via get_day_photos() under a 6s overall timeout
+         │    and patches ItineraryDay.image_url, image_photographer,
+         │    image_photographer_url when available
          │
          ├─ On exception (all retries + Groq/Ollama exhausted) → _fallback_itinerary()
          │    3-tier chain: cache hit → OSM-grounded skeleton → RAG-tipped mock (see §15)
@@ -486,7 +499,8 @@ ItineraryResponse:
 
 ItineraryDay:
   { day_number: int, date: string, theme: string,
-    items: ItineraryItem[], transit_warnings: TransitWarning[] }
+    items: ItineraryItem[], transit_warnings: TransitWarning[],
+    image_url?: string, image_photographer?: string, image_photographer_url?: string }
 
 ItineraryItem:
   { id, time_start, time_end, title, local_name?, description,
@@ -642,7 +656,7 @@ Key: `embed(f"{destination} {duration_days}d {pace} {purpose} trip")`. Written b
 
 | Endpoint | Chain file | Model | Temperature | Max tokens |
 |---|---|---|---|---|
-| `POST /api/wizard-chat` | `wizard_chat_chain.py` | `gemini-2.5-flash` | **0.4** | 800 |
+| `POST /api/wizard-chat` | `wizard_chat_chain.py` | `gemini-2.5-flash` | **0.4** | 2048 |
 | `POST /api/chat-refine` | `chat_refine_chain.py` | `gemini-2.5-flash` | **0.5** | 1024 |
 | `POST /api/generate-itinerary` (attempts 1-3) | `itinerary_chain.py` | `gemini-2.5-flash` | **0.4** | 16384 |
 | `POST /api/generate-itinerary` (attempt 4) | `itinerary_chain.py` | `gemini-2.5-flash-lite` | **0.4** | — |
@@ -674,12 +688,13 @@ Temperature rationale:
 - **3-Stage Flow** — Stage 1: collect 6 fields → Stage 2: "anything else?" checkpoint → Stage 3: generate signal
 - **config_patch Rules** — "include every extracted field even if you think it is already known" and `config_patch` must never be empty when the user just supplied usable trip info
 - **JSON-Wrapped History** — assistant turns are replayed as JSON objects like `{"reply":"...","config_patch":{...}}` so Gemini learns from the real extraction history
-- **Retry Logic** — 3 attempts with exponential backoff on 503/429/UNAVAILABLE before fallback
+- **Retry Logic** — 3 attempts with exponential backoff on 503/429/UNAVAILABLE, plus parse-based retries when `_looks_like_valid_json()` detects a truncated/incomplete JSON body
+- **Fallback Text Sanitisation** — `_strip_trailing_json_artifacts()` removes dangling JSON punctuation from salvage text, while `_strip_leaked_schema_tail()` trims escaped schema-key echoes from the `reply` field itself
 - **Smart Mock Fallback** — reads `partial_config` and asks the next missing required field instead of returning a generic fallback
 - **Filled-State Consistency** — frontend `allFilled` is unified with `_isFieldFilled`, matching the progress pill logic
 - **Output Schema** — JSON only; `reply` is described as "what Anya says on a phone call — no field names, no system terms, no internal reasoning"
 
-The backend `_has_all_required()` server-validates `ready_to_generate`. Stage 2 checkpoint is tracked via `_checkpoint_asked` flag in `partialConfig` and surfaced to the LLM via `CURRENT_STATE`. Assistant history also includes raw-JSON leak guards (`or raw` → `or ""`) plus double-wrapped JSON detection before replay. A `_strip_leaked_reasoning()` function remains the last-resort safety net.
+The backend `_has_all_required()` server-validates `ready_to_generate`. Stage 2 checkpoint is tracked via `_checkpoint_asked` flag in `partialConfig` and surfaced to the LLM via `CURRENT_STATE`. Assistant history also includes raw-JSON leak guards (`or raw` → `or ""`) plus double-wrapped JSON detection before replay. A `_strip_leaked_reasoning()` function remains the last-resort safety net, but most user-visible truncation issues are now intercepted earlier by JSON completeness checks and the two cleanup helpers above.
 
 ---
 
@@ -757,6 +772,8 @@ wizardChatStore
   ├── messages → rendered by LLMWizard (legacy: ConversationalWizard)
   ├── currentField → legacy field tracking
   └── collectedLabels → passed to shareTrip
+     readyToGenerate in the live wizard is derived from backend `summary` state,
+     not a frontend required-field counter, so Stage-2 follow-up turns stay interactive
 
 itineraryStore
   ├── days → consumed by: ThreeColumnLayout, ItineraryTimeline, MapWrapper, ShareButton
@@ -849,6 +866,7 @@ Breaking any link in this chain prevents scrolling. `<main className="h-full">` 
 | `GEMINI_MODEL` | `gemini-2.5-flash` | — | Primary model ID |
 | `QDRANT_URL` | `:memory:` | — | Qdrant instance URL |
 | `ALLOWED_ORIGINS` | `["http://localhost:3000"]` | ✅ | CORS whitelist — **must be JSON-array format** (pydantic-settings list parsing), `"*"` is rejected by a validator (⭐ NEW v10.0) |
+| `PEXELS_API_KEY` | — | — | Optional Pexels API key for itinerary day hero photos; generation degrades gracefully without it |
 | `LOG_LEVEL` | `INFO` | — | Structured JSON logging level (⭐ NEW v10.0, `core/logging_config.py`) |
 | `NOMINATIM_USER_AGENT` | `wanderplan/1.0` | — | Nominatim ToS compliance |
 | `NOMINATIM_RATE_LIMIT` | `1` | — | Requests per second |
@@ -897,6 +915,7 @@ Per-user cost: ~₹0.15–0.30
 | Wikipedia images | Module-level Map (JS) | Session lifetime |
 | YouTube thumbnails | Module-level Map (JS) | Session lifetime |
 | Share slugs | In-memory dict (Python) | Server process lifetime |
+| Pexels day-photo searches | In-memory dict (Python, max 500 query keys) | Server process lifetime |
 
 ---
 
@@ -932,6 +951,18 @@ All fail → return ExtractedTrip with all nulls + summary "Could not extract...
 Frontend fallback: openWizard() (plain, no preload)
 ```
 
+### Wizard Chat Resilience
+
+```
+Attempt 1-3: Gemini 2.5 Flash (max_output_tokens=2048)
+  → Transport error / 429 / 503 / timeout? retry with backoff
+  → Response arrived but _looks_like_valid_json() says incomplete/truncated? retry too
+All retries fail → smart mock fallback picks the next missing required field
+Any salvage text shown to users is first cleaned by _strip_trailing_json_artifacts()
+Valid JSON whose reply text contains an escaped schema echo is trimmed by
+_strip_leaked_schema_tail() before rendering
+```
+
 ### Wikipedia Image Resilience
 
 ```
@@ -948,9 +979,25 @@ POST /api/chat-refine fails →
   Error banner shown in ChatPanel header
 ```
 
+### Pexels Photo Resilience
+
+```
+PEXELS_API_KEY missing / request fails / no result / 6s itinerary photo budget exceeded
+  → services/pexels.py returns None per query
+  → itinerary generation continues with image_* fields left empty
+  → PDF export simply omits the hero photo block for that day
+```
+
 ---
 
 ## 16. Change Log
+
+### v10.1 (July 2026) — Wizard Reliability + Visual PDF Export
+
+- **Wizard truncation/JSON-leak fixes** (`chains/wizard_chat_chain.py`): `max_output_tokens` raised 800 → 2048; `_looks_like_valid_json()` now gates every Gemini response, triggering a retry (up to 3 attempts) on incomplete/truncated JSON instead of immediately falling back to salvage text; new `_strip_trailing_json_artifacts()` and `_strip_leaked_schema_tail()` helpers clean stray JSON punctuation and escaped schema-key echoes from any text ultimately shown to the user.
+- **Wizard UX fixes** (`components/wizard/LLMWizard.tsx`): the "Generate my itinerary" CTA now derives from the backend's explicit Stage-3 signal (`summary !== null`) instead of a frontend required-field counter, so the text input stays available through Stage-2 optional follow-up questions (e.g. departure city); theme chip groups (Culture/Food/Adventure/etc.) are now multi-selectable via a toggle + "Continue" action instead of submitting on first click.
+- **Itinerary PDF redesign** (`components/pdf/ItineraryDocument.tsx`): replaced the dense single-color layout with a colorful travel-journal style — one pastel card per day (7-color cycling palette), bold-label bullets, booking-link preview chips, and matching card treatment for Trip Essentials/Visa & Safety/Cost Breakdown/Packing Checklist. Removed emoji/arrow/≈ characters that rendered as broken glyphs under react-pdf's base Helvetica font.
+- **Pexels photo enrichment** (new `services/pexels.py`): best-effort, non-blocking day-photo lookup added to `generate_itinerary()` — one landscape photo per day via `"{destination} {day theme}"` query, concurrent fetch, 6s timeout budget, in-memory query cache (500 entries), and required "Photo by X on Pexels" attribution rendered in the PDF. New optional `ItineraryDay` fields: `image_url`, `image_photographer`, `image_photographer_url`. New `PEXELS_API_KEY` env var (optional — app degrades gracefully without it).
 
 ### v10.0 (July 2026) — Security Hardening
 

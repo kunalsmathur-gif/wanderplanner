@@ -102,6 +102,9 @@ export interface ItineraryDay {
   theme: string
   items: ItineraryItem[]
   transit_warnings: TransitWarning[]
+  image_url?: string
+  image_photographer?: string
+  image_photographer_url?: string
 }
 
 export interface ItineraryResponse {

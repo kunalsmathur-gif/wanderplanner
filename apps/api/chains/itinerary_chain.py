@@ -10,6 +10,7 @@ from models.trip import TripConfig
 from services.search import retrieve_context, summarise_context
 from services.itinerary_cache import get_cached_itinerary, store_itinerary
 from services.rag_fallback import rag_skeleton_itinerary
+from services.pexels import get_day_photos
 from chains.scoring import calculate_alignment_score
 from chains.safety import apply_kid_safety_filter, inject_persona_modules
 from core.prompt_guard import neutralize, wrap_untrusted
@@ -438,6 +439,25 @@ async def generate_itinerary(trip_config: TripConfig) -> ItineraryResponse:
         ]
         day.items = scored_items
         scored_days.append(day)
+
+    # Best-effort: attach one relevant hero photo per day (destination + theme).
+    # Never blocks/fails itinerary generation if Pexels is unavailable.
+    dest_label = (
+        trip_config.destination.city if trip_config.destination and trip_config.destination.city
+        else (trip_config.destination_country or "travel")
+    )
+    try:
+        photos = await asyncio.wait_for(
+            get_day_photos([f"{dest_label} {d.theme}" for d in scored_days]),
+            timeout=6.0,
+        )
+        for day, photo in zip(scored_days, photos):
+            if photo:
+                day.image_url = photo["url"]
+                day.image_photographer = photo["photographer"]
+                day.image_photographer_url = photo["photographer_url"]
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Day-photo fetch skipped: %s", exc)
 
     overall_score = (
         sum(i.alignment_score for d in scored_days for i in d.items)

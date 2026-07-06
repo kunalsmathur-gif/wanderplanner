@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     nominatim_user_agent: str = "wanderplan/1.0"
     nominatim_rate_limit: int = 1
 
+    # Pexels — hero photos for itinerary day cards / PDF
+    pexels_api_key: str = ""
+
     # Ingestion
     reddit_refresh_hours: int = 6
     reddit_min_score: int = 10

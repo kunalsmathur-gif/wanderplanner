@@ -63,6 +63,18 @@ const REQUIRED_LABELS: { key: string; label: string }[] = [
   { key: 'pace',        label: 'Pace'        },
 ]
 
+// Theme chips (Culture, Food, Adventure, ...) map to a multi-value array
+// field, so unlike every other chip group (purpose, pace, etc.) the user
+// should be able to pick several before submitting.
+const THEME_CHIP_KEYWORDS = [
+  'culture', 'nature', 'food', 'adventure', 'shopping', 'photography',
+  'nightlife', 'sports', 'wellness', 'religious', 'vegetarian',
+]
+
+function _isThemeChipGroup(chips: string[]): boolean {
+  return chips.length >= 2 && chips.every((c) => THEME_CHIP_KEYWORDS.some((k) => c.toLowerCase().includes(k)))
+}
+
 function _isFieldFilled(key: string, config: Partial<TripConfig>): boolean {
   switch (key) {
     case 'purpose':     return Boolean(config.purpose)
@@ -104,6 +116,8 @@ export function LLMWizard() {
   const [error, setError]             = useState('')
   const [voiceActive, setVoiceActive] = useState(false)
   const [isSpeaking, setIsSpeaking]   = useState(false)
+  // Per-message selection set, only used for multi-select theme chip groups
+  const [themeSelections, setThemeSelections] = useState<Record<string, Set<string>>>({})
 
   // Always-current ref so sendMessage never reads stale partialConfig
   const partialConfigRef = useRef<Partial<TripConfig>>({})
@@ -378,8 +392,12 @@ export function LLMWizard() {
 
   const filledCount = REQUIRED_LABELS.filter(({ key }) => _isFieldFilled(key, partialConfig)).length
   const progressPct = Math.round((filledCount / REQUIRED_LABELS.length) * 100)
-  // Show generate button when server confirms ready OR all fields locally filled
-  const readyToGenerate = filledCount === REQUIRED_LABELS.length || summary !== null
+  // Only show the "Generate" card once the server explicitly confirms
+  // ready_to_generate (reflected via `summary`). Using "all required fields
+  // filled" here was wrong: it hid the text input as soon as the 6 required
+  // fields were done, even while Anya was still asking optional follow-up
+  // questions (e.g. departure city) — leaving the user with no way to reply.
+  const readyToGenerate = summary !== null
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -470,23 +488,54 @@ export function LLMWizard() {
                       {msg.content}
                     </div>
                     {/* Chips */}
-                    {msg.chips && msg.chips.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {msg.chips
-                          .filter((chip) => !/generate/i.test(chip))
-                          .map((chip) => (
-                          <button
-                            key={chip}
-                            type="button"
-                            onClick={() => handleSubmit(chip)}
-                            disabled={isSending || phase !== 'chatting'}
-                            className="rounded-full border border-[var(--_primary)] px-3 py-1 text-xs font-medium text-[var(--_primary)] transition-colors hover:bg-[var(--_primary)] hover:text-white disabled:opacity-50"
-                          >
-                            {chip}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                    {msg.chips && msg.chips.length > 0 && (() => {
+                      const visibleChips = msg.chips.filter((chip) => !/generate/i.test(chip))
+                      const isThemeGroup = _isThemeChipGroup(visibleChips)
+                      const selected = themeSelections[msg.id] ?? new Set<string>()
+
+                      function toggleTheme(chip: string) {
+                        setThemeSelections((prev) => {
+                          const next = new Set(prev[msg.id] ?? [])
+                          if (next.has(chip)) next.delete(chip)
+                          else next.add(chip)
+                          return { ...prev, [msg.id]: next }
+                        })
+                      }
+
+                      return (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {visibleChips.map((chip) => {
+                            const isSelected = isThemeGroup && selected.has(chip)
+                            return (
+                              <button
+                                key={chip}
+                                type="button"
+                                onClick={() => (isThemeGroup ? toggleTheme(chip) : handleSubmit(chip))}
+                                disabled={isSending || phase !== 'chatting'}
+                                className={[
+                                  'rounded-full border border-[var(--_primary)] px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50',
+                                  isSelected
+                                    ? 'bg-[var(--_primary)] text-white'
+                                    : 'text-[var(--_primary)] hover:bg-[var(--_primary)] hover:text-white',
+                                ].join(' ')}
+                              >
+                                {chip}
+                              </button>
+                            )
+                          })}
+                          {isThemeGroup && selected.size > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleSubmit(Array.from(selected).join(', '))}
+                              disabled={isSending || phase !== 'chatting'}
+                              className="rounded-full bg-[var(--_primary)] px-3 py-1 text-xs font-semibold text-white transition-colors hover:opacity-90 disabled:opacity-50"
+                            >
+                              Continue ✓
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })()}
                   </div>
                 </div>
               ) : (

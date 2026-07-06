@@ -28,6 +28,7 @@ WanderPlan uses conversational AI to help you plan trips through a natural chat 
 - 🎥 YouTube video recommendations per activity
 - ✈️ Deep-links to Skyscanner, Booking.com, Viator
 - 💰 Budget breakdown and live currency conversion
+- 📄 Scrapbook-style PDF export with colorful day cards and destination photos
 - 🌤️ Best time to visit with historical weather
 - 📤 Shareable trip link (`/t/abc123`)
 - 🗂️ Booking hub — track confirmation numbers, dates, amounts
@@ -40,7 +41,7 @@ WanderPlan uses conversational AI to help you plan trips through a natural chat 
 
 | Feature | Description |
 |---|---|
-| **🤖 LLM-Powered Anya Wizard** | Gemini 2.5 Flash drives the wizard — natural freeform conversation in English or Hinglish. One message fills multiple fields. Smart extraction: "yaar Bali trip 7 days, budget 1.5 lakh types" sets destination + dates + budget at once. `config_patch` accumulation is fixed with JSON history replay, plus a 3-attempt retry on Gemini outages and a smart mock fallback. Indian cultural context: currency (25k/1L), travel seasons, family/veg preferences. |
+| **🤖 LLM-Powered Anya Wizard** | Gemini 2.5 Flash drives the wizard — natural freeform conversation in English or Hinglish. One message fills multiple fields. Smart extraction: "yaar Bali trip 7 days, budget 1.5 lakh types" sets destination + dates + budget at once. Assistant history is replayed as structured JSON, invalid/truncated wizard responses are retried automatically, leaked schema/JSON tails are stripped before fallback text is shown, Stage-2 optional follow-ups stay interactive until the backend explicitly signals readiness, and theme chips support multi-select submission when the field is multi-value. |
 | **🎙️ Anya Voice Assistant** | Conversational AI with voice input/output. Talk naturally to plan your trip. Young Indian female voice (20-25 yrs). |
 | **💬 Persistent Anya Chat** | After itinerary generation, the floating Anya orb opens a slide-in chat panel. Ask questions, request changes — Anya patches config or offers to regenerate. |
 | **📱 Mobile-Responsive** | Bottom tab navigation on mobile (Itinerary · Overview · Map & Tips). Full desktop 3-column layout on larger screens. |
@@ -55,7 +56,7 @@ WanderPlan uses conversational AI to help you plan trips through a natural chat 
 | **🎨 Inspiration Gallery** | 12 curated trip starters with real Wikipedia photos on the landing page. Click any card to pre-fill the wizard with destination and days. |
 | **🗂️ Booking Hub** | Track flights, hotels, activities, and transport — confirmation number, date, amount. Persists in localStorage. |
 | **💰 Budget Tracking** | Expense breakdown by category with currency conversion widget. |
-| **📄 PDF Export** | Download your full itinerary — no account needed. |
+| **📄 PDF Export** | Download a colorful travel-journal PDF with per-day hero photos, booking link chips, transit warnings, and matching cards for essentials, visa/safety, cost breakdown, and packing checklist. |
 | **🎨 Design System** | Geometric gold W brand mark. Space Grotesk + DM Sans + JetBrains Mono. Full dark/light mode with CSS custom properties. |
 
 ---
@@ -86,6 +87,7 @@ WanderPlan uses conversational AI to help you plan trips through a natural chat 
 | httpx | Async HTTP client (URL fetching for Start Anywhere, Overpass API POI queries) |
 | BeautifulSoup4 | HTML parsing (Wikivoyage, Reddit) |
 | Open-Meteo API | Historical weather data (free, no key) |
+| Pexels API | Optional destination/activity stock photos for itinerary day cards in exported PDFs |
 | APScheduler | Background jobs (Reddit refresh every 6h, OSM POI refresh weekly) |
 
 ### Infrastructure
@@ -176,7 +178,7 @@ cp apps/web/.env.example apps/web/.env.local
 cp apps/api/.env.example apps/api/.env
 ```
 
-Edit `apps/api/.env` and set your `GEMINI_API_KEY`.
+Edit `apps/api/.env` and set your `GEMINI_API_KEY`. If you want itinerary day photos in exported PDFs, also add `PEXELS_API_KEY` (optional — generation still works without it).
 
 ### 3. Start the backend
 
@@ -226,6 +228,7 @@ Open `http://localhost:3000`.
 | `LLM_PROVIDER` | `gemini` (default) or `mock` | ❌ |
 | `GEMINI_MODEL` | Model ID (default: `gemini-2.5-flash`) | ❌ |
 | `QDRANT_URL` | Qdrant instance URL (default: `:memory:`) | ❌ |
+| `PEXELS_API_KEY` | Optional Pexels API key for itinerary day photos in exported PDFs | ❌ |
 | `ALLOWED_ORIGINS` | CORS origins (e.g. `http://localhost:3000`) | ✅ |
 
 ---

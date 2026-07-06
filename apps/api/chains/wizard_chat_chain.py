@@ -464,6 +464,31 @@ def _summarise_state(config: dict[str, Any]) -> str:
     return "\n".join(lines) if lines else "Nothing collected yet — this is the first message."
 
 
+def _strip_leaked_schema_tail(text: str) -> str:
+    """Strip a leaked copy of our own JSON schema keys from the end of the
+    reply text.
+
+    Occasionally Gemini emits *valid* JSON overall, but glitches while
+    writing the `reply` string value: it echoes the remaining schema keys
+    (chips/config_patch/ready_to_generate/summary) — properly escaped —
+    as literal trailing text inside the string itself, e.g.:
+      'Certainly! ...adventure?", "chips": [], "config_patch": {}, ...'
+    `json.loads` parses this fine (the quotes are escaped), so the
+    truncation/validity checks upstream never catch it. Cut the reply off
+    at the first sign of a leaked schema key.
+    """
+    import re as _re
+
+    tail_re = _re.compile(
+        r'"?\s*,?\s*"(?:chips|config_patch|ready_to_generate|summary|reply|assistant_reply|suggested_chips)"\s*:',
+        _re.IGNORECASE,
+    )
+    m = tail_re.search(text)
+    if m:
+        return text[: m.start()].rstrip().rstrip('",').rstrip()
+    return text
+
+
 def _strip_leaked_reasoning(text: str) -> str:
     """Strip any reasoning the LLM prepended to the reply field.
 
@@ -528,6 +553,44 @@ def _strip_leaked_reasoning(text: str) -> str:
             break  # First non-reasoning sentence — stop here
 
     return text.strip() or text
+
+
+def _strip_trailing_json_artifacts(text: str) -> str:
+    """Remove stray JSON syntax left over when a truncated/malformed LLM
+    response is displayed on a best-effort basis (e.g. a leaked `",` or a
+    dangling `}` / `]` from a cut-off JSON string value)."""
+    import re as _re
+
+    if not text:
+        return text
+    cleaned = _re.sub(r'\s*["\',\]\}]+\s*$', '', text.rstrip())
+    return cleaned.rstrip() or text
+
+
+def _looks_like_valid_json(raw: str) -> bool:
+    """Best-effort check that Gemini's raw text is a complete, parseable
+    JSON object with a non-empty `reply` field — used to decide whether a
+    response was truncated by the token cap and should be retried instead
+    of shown to the user as-is."""
+    import re as _re
+
+    if not raw:
+        return False
+    cleaned = raw.strip()
+    fence_match = _re.search(r'```(?:json)?\s*([\s\S]*?)```', cleaned)
+    if fence_match:
+        cleaned = fence_match.group(1).strip()
+    json_match = _re.search(r'\{[\s\S]*\}', cleaned)
+    if json_match:
+        cleaned = json_match.group(0)
+    try:
+        data = json.loads(cleaned)
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    reply = data.get("reply") or data.get("assistant_reply")
+    return bool(reply and reply.strip())
 
 
 # ── Main chain function ───────────────────────────────────────────────────────
@@ -602,7 +665,7 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             config=genai_types.GenerateContentConfig(
                 system_instruction=system_prompt,
                 temperature=0.4,
-                max_output_tokens=800,
+                max_output_tokens=2048,
             ),
         )
         return response.text or ""
@@ -610,15 +673,16 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
     import logging, time
     _log = logging.getLogger(__name__)
 
-    # Retry up to 3 times on transient errors (503, rate limit, timeout)
+    # Retry up to 3 times on transient API errors (503, rate limit, timeout)
+    # AND on malformed/truncated JSON responses — a response that arrives
+    # successfully but fails to parse is just as much a "try again" signal
+    # as a network hiccup, otherwise a truncated reply gets shown verbatim.
     raw = ""
     last_exc: Exception | None = None
     for attempt in range(3):
         try:
             loop = asyncio.get_event_loop()
             raw = await loop.run_in_executor(None, _call_sync)
-            last_exc = None
-            break  # success
         except Exception as exc:
             last_exc = exc
             err_str = str(exc)
@@ -627,10 +691,22 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                 wait = 1.5 * (attempt + 1)
                 _log.warning("Gemini transient error (attempt %d/3): %s — retrying in %.1fs", attempt + 1, exc, wait)
                 await asyncio.sleep(wait)
+                continue
             else:
                 break  # Non-retryable error — give up immediately
 
-    if last_exc is not None:
+        # Response arrived — check it actually parses as valid JSON before
+        # accepting it. If not (truncated mid-generation), retry the call
+        # rather than falling straight to best-effort text extraction.
+        if _looks_like_valid_json(raw):
+            last_exc = None
+            break
+        last_exc = ValueError("Gemini response was not valid/complete JSON")
+        if attempt < 2:
+            _log.warning("Gemini JSON parse check failed (attempt %d/3) — retrying", attempt + 1)
+            await asyncio.sleep(0.5)
+
+    if last_exc is not None and not raw:
         _log.warning("Gemini API failed after retries: %s", last_exc)
         return _mock_wizard(request)
 
@@ -704,6 +780,8 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
 
         # Safety net: strip any reasoning the LLM leaked into the reply field
         reply_text = _strip_leaked_reasoning(reply_text)
+        # Safety net: strip a leaked copy of our own schema keys from the tail
+        reply_text = _strip_leaked_schema_tail(reply_text)
 
         # Merge config_patch into partial_config to check completeness
         merged = {**request.partial_config}
@@ -755,6 +833,7 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             clean_raw = clean_raw[:chips_match2.start()].strip()
 
         clean_raw = _strip_leaked_reasoning(clean_raw)
+        clean_raw = _strip_leaked_schema_tail(clean_raw)
         # Guard: if clean_raw still looks like raw JSON, try to extract reply from it
         if clean_raw and clean_raw.strip().startswith("{"):
             try:
@@ -765,6 +844,11 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                     clean_raw = ""
             except Exception:
                 clean_raw = ""  # Do not display raw JSON to user
+
+        # Final safety net: strip any stray trailing JSON syntax (e.g. a
+        # leaked `",` or dangling `}`/`]`) from a truncated response before
+        # ever showing it to the user.
+        clean_raw = _strip_trailing_json_artifacts(clean_raw)
         return WizardChatResponse(reply=clean_raw or "I'm on it! Just a moment…", chips=extracted_chips, config_patch={}, ready_to_generate=False)
 
 

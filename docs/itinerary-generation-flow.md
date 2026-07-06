@@ -1,6 +1,6 @@
 # End-to-End Itinerary Generation Flow
 
-Traces the full path of a `/api/generate-itinerary` request, from the frontend wizard submission to the final SSE response, based on `apps/api/routers/itinerary.py`, `chains/itinerary_chain.py`, `services/search.py`, `services/hyde.py`, `services/itinerary_cache.py`, `services/rag_fallback.py`, `chains/safety.py`, `chains/scoring.py`, `core/rate_limit.py`, and `core/prompt_guard.py` (⭐ NEW v10.0 — security hardening, see `docs/scaling-tech-challenges.md` §1a).
+Traces the full path of a `/api/generate-itinerary` request, from the frontend wizard submission to the final SSE response, based on `apps/api/routers/itinerary.py`, `chains/itinerary_chain.py`, `services/search.py`, `services/hyde.py`, `services/itinerary_cache.py`, `services/rag_fallback.py`, `services/pexels.py`, `chains/safety.py`, `chains/scoring.py`, `core/rate_limit.py`, and `core/prompt_guard.py` (⭐ NEW v10.0 — security hardening, see `docs/scaling-tech-challenges.md` §1a).
 
 ```mermaid
 flowchart TD
@@ -76,7 +76,8 @@ flowchart TD
     Y --> Z1["apply_kid_safety_filter()\nstrip bar/nightclub/casino/\nextreme-sport items if\nhas_kids or has_infants"]
     Z1 --> Z2["inject_persona_modules()\nadd Work Block if digital_nomad\nadd Training Window if\nsports_fitness (safety net if\nLLM missed persona tags)"]
     Z2 --> Z3["calculate_alignment_score()\nper item: persona match (0.5) +\nbudget (0.3) + accessibility (0.2)\nminus social-keyword penalty\n(internal only, never shown to user)"]
-    Z3 --> Z4["Build ItineraryResponse\n(days, expense_breakdown)"]
+    Z3 --> P1["get_day_photos()\nbuild one query per day:\n'{destination city/country} {day theme}'\nasyncio.gather() over Pexels searches\n6s overall timeout, best-effort only"]
+    P1 --> Z4["Build ItineraryResponse\n(days, expense_breakdown,\noptional image_* attribution fields)"]
 
     Z4 --> C3["emit status: 'Finalising your\nschedule...' (4/4)"]
     C3 --> C4["emit data: ItineraryResponse\n(SSE 'data' event)"]
@@ -95,5 +96,6 @@ flowchart TD
 - **The fallback chain never lets a request hard-fail.** Even if the LLM call fails on all models/attempts, the user still gets *some* itinerary (cache → OSM skeleton → enhanced mock) — this is good resilience design, but it also means a "successful" response doesn't always mean an LLM actually generated it (worth surfacing `_from_fallback` in product analytics).
 - **Retry amplification risk.** In the worst case (all 3 Gemini models throttled), the happy path alone can issue up to `3 models × 5 attempts = 15` LLM calls before falling back — this is the retry-cost risk flagged in `scaling-tech-challenges.md` §4.
 - **Cache writes are best-effort and asynchronous-safe.** `store_itinerary()` never blocks or fails the user-facing response, but this also means the itinerary cache (used for Tier 1 fallback) is only as good as your steady-state success rate — a period of sustained LLM outages means Tier 1 cache also can't help new destination/pace combos not seen before the outage.
-- **Post-processing runs regardless of which path produced the itinerary.** Kid-safety filtering, persona injection, and alignment scoring apply uniformly to LLM output, cached output, RAG skeleton, and mock — ensuring consistent safety/quality guarantees no matter which tier served the response.
+- **Day-photo enrichment is best-effort and non-blocking.** After scoring, `services/pexels.py` searches one landscape image per day under a 6-second overall budget. Missing `PEXELS_API_KEY`, rate limits, empty results, or network failures simply leave `image_url` empty; the itinerary response still succeeds.
+- **Post-processing runs regardless of which path produced the itinerary.** Kid-safety filtering, persona injection, alignment scoring, and the optional photo enrichment pass apply uniformly to LLM output, cached output, RAG skeleton, and mock — ensuring consistent safety/quality guarantees no matter which tier served the response.
 - **Security hardening applied end-to-end (⭐ NEW v10.0).** Rate limiting (10/min per IP) gates entry to this whole flow; RAG-retrieved context and trip-config JSON are wrapped/neutralized via `core/prompt_guard.py` before prompt interpolation (defense against injected content from scraped Reddit/wiki/OSM sources); both timeout and unhandled-exception error paths route through `core/errors.py::sanitize_error()` so raw provider errors/stack traces never reach the client. See `docs/scaling-tech-challenges.md` §1a for the full remediation status.
