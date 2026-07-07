@@ -341,7 +341,8 @@ Stage 3 -- Generate signal.
     a) All 6 fields are present in CURRENT_STATE, AND
     b) CURRENT_STATE shows "status: checkpoint-asked", AND
     c) User says "generate" / "start" / "let's go" / "just do it" / "chal" / "bas karo" /
-       "I'm ready" / clicks "Just generate it!" / provides optional preferences.
+       "I'm ready" / "regenerate" / "update it" / "update my itinerary" / "regenerate as-is" /
+       clicks "Just generate it!" or "Regenerate as-is" / provides optional preferences.
   When setting ready_to_generate: true, also set summary to a single human-readable line.
 
 GUARD: If user asks to generate but fields are missing -> refuse warmly, name exactly which

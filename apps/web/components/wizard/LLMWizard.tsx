@@ -136,6 +136,44 @@ export function LLMWizard() {
     const preload = wizardPreload
     const preloadLabel = preload ? `${preload.city}, ${preload.country}` : undefined
 
+    // ── Edit mode: reopening the wizard from "Edit Trip" on an already-
+    // generated itinerary should carry the existing config forward instead
+    // of starting a brand-new conversation from scratch.
+    const existingConfig = useTripConfigStore.getState().config
+    const hasExistingItinerary = useItineraryStore.getState().days.length > 0
+    const isEditMode = !preload && hasExistingItinerary
+      && REQUIRED_LABELS.every(({ key }) => _isFieldFilled(key, existingConfig))
+
+    if (isEditMode) {
+      setPartialConfig({ ...existingConfig, _checkpoint_asked: true } as Partial<TripConfig>)
+
+      const destLabel = existingConfig.destination_mode === 'country'
+        ? (existingConfig.destination_country ?? 'your destination')
+        : existingConfig.hops.length > 0
+          ? `${existingConfig.destination?.city} +${existingConfig.hops.length} more`
+          : (existingConfig.destination?.city ?? 'your destination')
+      const durationLabel = existingConfig.dates.duration_days
+        ? `${existingConfig.dates.duration_days} days`
+        : existingConfig.dates.start && existingConfig.dates.end
+          ? `${existingConfig.dates.start} – ${existingConfig.dates.end}`
+          : ''
+      const summaryLine = [
+        destLabel,
+        durationLabel,
+        `${existingConfig.budget.currency} ${existingConfig.budget.amount.toLocaleString()}`,
+        `${existingConfig.group.adults} adult${existingConfig.group.adults !== 1 ? 's' : ''}`,
+        existingConfig.pace,
+      ].filter(Boolean).join(' · ')
+
+      addMessage({
+        role: 'assistant',
+        content: `Welcome back! Here's your current trip: ${summaryLine}. What would you like to change — destination, dates, budget, or themes? Or tell me to regenerate it as-is.`,
+        chips: ['Change destination', 'Change dates', 'Change budget', 'Add/change themes', 'Regenerate as-is'],
+      })
+      setPhase('chatting')
+      return
+    }
+
     // Pre-fill destination in config if preloaded
     if (preload) {
       const patch: Partial<TripConfig> = {
