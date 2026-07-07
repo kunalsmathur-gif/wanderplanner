@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 interface PolaroidCardProps {
   time: string
@@ -45,6 +45,11 @@ export function PolaroidCard({
   onClick,
 }: PolaroidCardProps) {
   const gradient = useMemo(() => imageGradient ?? pickGradient(title), [imageGradient, title])
+  // Some YouTube thumbnail URLs 404 (deleted/restricted videos, shorts with
+  // no mqdefault variant) — track that separately so we can fall back to
+  // the gradient instead of showing a broken-image icon.
+  const [imgFailed, setImgFailed] = useState(false)
+  const showImage = Boolean(imageSrc) && !imgFailed
 
   // Small, fixed-size thumbnail (not a hero image) — keeps the focus on the
   // itinerary text and lets many activities be scanned at a glance instead
@@ -52,14 +57,15 @@ export function PolaroidCard({
   const thumbnail = (
     <div
       className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg sm:h-24 sm:w-24"
-      style={{ background: imageSrc ? undefined : gradient }}
+      style={{ background: showImage ? undefined : gradient }}
     >
-      {imageSrc && (
+      {showImage && (
         <img
-          src={imageSrc}
+          src={imageSrc!}
           alt={title}
           className="h-full w-full object-cover"
           loading="lazy"
+          onError={() => setImgFailed(true)}
         />
       )}
       {videoHref && (

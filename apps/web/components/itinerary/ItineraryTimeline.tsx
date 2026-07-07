@@ -26,23 +26,41 @@ function useThumbnail(query?: string, fallbackVideoId?: string) {
       return
     }
     if (!query) { setVideoId(null); setThumbnailUrl(null); return }
+    // Only trust a cached HIT — a cached miss is never stored (see below),
+    // so a query that failed once (network blip, transient YouTube block)
+    // gets retried on next mount instead of being stuck blank forever.
     if (thumbnailCache.has(query)) {
       setThumbnailUrl(thumbnailCache.get(query) ?? null)
       setVideoId(videoIdCache.get(query) ?? null)
       return
     }
     let cancelled = false
-    fetch(`/api/youtube-thumbnail?q=${encodeURIComponent(query)}`)
-      .then((r) => r.json())
-      .then((d: { videoId: string | null; thumbnailUrl: string | null }) => {
+
+    // Retry with short backoff — the lookup is a live YouTube scrape and
+    // fails transiently fairly often (confirmed: the same query can fail
+    // then succeed seconds later), so a few retries clear up the vast
+    // majority of these without any user action.
+    async function fetchWithRetry(): Promise<{ videoId: string | null; thumbnailUrl: string | null }> {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const r = await fetch(`/api/youtube-thumbnail?q=${encodeURIComponent(query!)}`)
+          const d = await r.json()
+          if (d.videoId) return d
+        } catch { /* fall through to retry */ }
+        if (attempt < 2) await new Promise((res) => setTimeout(res, 500 * (attempt + 1)))
+      }
+      return { videoId: null, thumbnailUrl: null }
+    }
+
+    fetchWithRetry().then((d) => {
+      // Only cache genuine hits — leave misses uncached so future mounts
+      // (or navigating back to this day) get another chance.
+      if (d.videoId) {
         thumbnailCache.set(query, d.thumbnailUrl)
         videoIdCache.set(query, d.videoId)
-        if (!cancelled) { setThumbnailUrl(d.thumbnailUrl); setVideoId(d.videoId) }
-      })
-      .catch(() => {
-        thumbnailCache.set(query, null); videoIdCache.set(query, null)
-        if (!cancelled) { setThumbnailUrl(null); setVideoId(null) }
-      })
+      }
+      if (!cancelled) { setThumbnailUrl(d.thumbnailUrl); setVideoId(d.videoId) }
+    })
     return () => { cancelled = true }
   }, [fallbackVideoId, query])
 
