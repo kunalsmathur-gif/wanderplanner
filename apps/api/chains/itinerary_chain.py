@@ -14,6 +14,7 @@ from services.pexels import get_day_photos
 from chains.scoring import calculate_alignment_score
 from chains.safety import apply_kid_safety_filter, inject_persona_modules
 from core.prompt_guard import neutralize, wrap_untrusted
+from core.llm_client import track_gemini_usage
 
 logger = logging.getLogger(__name__)
 
@@ -300,8 +301,8 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
     for model_name in models_to_try:
         for attempt in range(max_attempts):
             try:
-                def _call_sync(m: str = model_name) -> str:  # noqa: E731
-                    response = client.models.generate_content(
+                def _call_sync(m: str = model_name):  # noqa: E731
+                    return client.models.generate_content(
                         model=m,
                         contents=prompt,
                         config=genai_types.GenerateContentConfig(
@@ -309,9 +310,10 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
                             response_mime_type="application/json",
                         ),
                     )
-                    return response.text
 
-                text = await loop.run_in_executor(None, _call_sync)
+                response = await loop.run_in_executor(None, _call_sync)
+                track_gemini_usage(response, model=model_name, purpose="itinerary_generation")
+                text = response.text
 
                 # Strip markdown fences if Gemini adds them despite response_mime_type
                 cleaned = text.strip()

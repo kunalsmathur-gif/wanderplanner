@@ -30,6 +30,10 @@ qdrant_storage/
 .DS_Store
 Thumbs.db
 
+# Local SQLite dev database
+apps/api/dev.db
+*.db-journal
+
 # Test coverage
 .coverage
 htmlcov/

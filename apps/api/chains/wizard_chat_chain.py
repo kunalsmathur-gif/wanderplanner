@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from core.config import settings
+from core.llm_client import track_gemini_usage
 from models.chat import ChatMessage
 
 
@@ -722,8 +723,8 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                 genai_types.Content(role="model", parts=[genai_types.Part(text=model_json)])
             )
 
-    def _call_sync() -> str:
-        response = client.models.generate_content(
+    def _call_sync():
+        return client.models.generate_content(
             model=settings.gemini_model,
             contents=contents,
             config=genai_types.GenerateContentConfig(
@@ -732,7 +733,6 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                 max_output_tokens=2048,
             ),
         )
-        return response.text or ""
 
     import logging, time
     _log = logging.getLogger(__name__)
@@ -746,7 +746,9 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
     for attempt in range(3):
         try:
             loop = asyncio.get_event_loop()
-            raw = await loop.run_in_executor(None, _call_sync)
+            response = await loop.run_in_executor(None, _call_sync)
+            track_gemini_usage(response, model=settings.gemini_model, purpose="wizard_chat")
+            raw = response.text or ""
         except Exception as exc:
             last_exc = exc
             err_str = str(exc)
@@ -860,6 +862,15 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
 
         # Server-side override: only allow ready=true if all required fields present
         ready = data.get("ready_to_generate", False) and _has_all_required(merged)
+
+        # Safety net: the very first turn always asks about trip purpose (system
+        # prompt Section 4, Field 1 mandates chips here), but with almost no
+        # conversation context yet, the LLM occasionally omits them. Since this
+        # is the single highest-traffic touchpoint (every user's first message),
+        # deterministically backfill the standard purpose chips rather than
+        # leaving the opening question chip-less.
+        if not chips_list and not merged.get("purpose") and len(request.messages) <= 1:
+            chips_list = ["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"]
 
         return WizardChatResponse(
             reply=reply_text,

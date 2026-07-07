@@ -107,7 +107,7 @@ export default function SharedTripPage({ params }: { params: { slug: string } })
                 Inspired? Plan your own version →
               </p>
               <p className="mt-2 text-sm text-white/80">
-                Personalise the destination, dates, budget and group — free, no sign-up.
+                Personalise the destination, dates, budget and group — free with a quick sign-up.
               </p>
               <a
                 href="/"

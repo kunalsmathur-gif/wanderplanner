@@ -1,13 +1,16 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Mic, MicOff, Send, Plane, X, CheckCircle2, Loader2 } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useWizardChatStore } from '@/store/wizardChatStore'
+import { useAuthStore } from '@/store/authStore'
 import { wizardChat } from '@/lib/api'
 import { streamItinerary } from '@/lib/api'
+import { savePendingGeneration, getPendingGeneration, clearPendingGeneration } from '@/lib/pendingGeneration'
 import type { TripConfig } from '@/types'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 
@@ -100,12 +103,14 @@ function _isFieldFilled(key: string, config: Partial<TripConfig>): boolean {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function LLMWizard() {
+  const router            = useRouter()
   const closeWizard       = useAppStore((s) => s.closeWizard)
   const wizardPreload     = useAppStore((s) => s.wizardPreload)
   const clearPreload      = useAppStore((s) => s.clearWizardPreload)
   const setDays           = useItineraryStore((s) => s.setDays)
   const updateConfig      = useTripConfigStore((s) => s.updateConfig)
   const wizardReset       = useWizardChatStore((s) => s.reset)
+  const authStatus        = useAuthStore((s) => s.status)
 
   const [messages, setMessages]       = useState<Message[]>([])
   const [input, setInput]             = useState('')
@@ -124,6 +129,18 @@ export function LLMWizard() {
   const partialConfigRef = useRef<Partial<TripConfig>>({})
   partialConfigRef.current = partialConfig
 
+  // Snapshot any pending post-auth generation exactly once at mount (lazy
+  // useState initializer), rather than each effect independently re-reading
+  // sessionStorage. Both the resume-after-auth effect and the bootstrap
+  // effect below need to agree on whether a resume is in flight — reading
+  // fresh each time creates a race where the resume effect's own
+  // `clearPendingGeneration()` call makes the bootstrap effect's guard see
+  // "nothing pending" a moment later (since effects run in declaration
+  // order within the same commit), causing it to also fire and inject a
+  // brand-new "Hello, I'm Anya" greeting on top of the resumed generation.
+  const [pendingGeneration] = useState<TripConfig | null>(() => getPendingGeneration())
+  const hasResumedGenerationRef = useRef(false)
+
   const messagesEndRef  = useRef<HTMLDivElement>(null)
   const inputRef        = useRef<HTMLInputElement>(null)
   const recognitionRef  = useRef<RecognitionInstance | null>(null)
@@ -132,7 +149,29 @@ export function LLMWizard() {
 
   // ── Bootstrap first Anya message ───────────────────────────────────────────
 
+  // Resume a generation that was interrupted by the sign-in gate — once the
+  // user authenticates (including via the full-page-reload Google SSO
+  // round-trip), pick the saved config back up and generate immediately
+  // instead of re-running the whole chat conversation.
   useEffect(() => {
+    if (authStatus !== 'authenticated') return
+    if (!pendingGeneration || hasResumedGenerationRef.current) return
+    hasResumedGenerationRef.current = true
+    clearPendingGeneration()
+    updateConfig(pendingGeneration)
+    startGeneration(pendingGeneration)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authStatus, pendingGeneration])
+
+  useEffect(() => {
+    // If a generation is pending resume (see effect above), skip the normal
+    // chat bootstrap entirely — it'll either auto-generate momentarily, or
+    // the user is still off completing sign-in. Uses the same mount-time
+    // snapshot as the resume effect above (not a fresh sessionStorage read)
+    // so the two effects can never disagree about whether a resume is in
+    // flight, regardless of effect execution order.
+    if (pendingGeneration) return
+
     const preload = wizardPreload
     const preloadLabel = preload ? `${preload.city}, ${preload.country}` : undefined
 
@@ -372,13 +411,7 @@ export function LLMWizard() {
 
   // ── Generate itinerary ─────────────────────────────────────────────────────
 
-  function handleGenerate() {
-    // Use ref to avoid stale closure (called from setTimeout or button click)
-    updateConfig(partialConfigRef.current as Partial<TripConfig>)
-
-    // Build a full TripConfig from the partialConfig + store defaults
-    const fullConfig = useTripConfigStore.getState().config
-
+  function startGeneration(fullConfig: TripConfig) {
     setPhase('generating')
     setProgress({ message: 'Starting up…', step: 0, total: 6 })
     wizardReset()
@@ -392,10 +425,36 @@ export function LLMWizard() {
         closeWizard()
       },
       (code, message, _retryable) => {
+        // Session expired mid-flow (or was never established) — save the
+        // fully-collected config and send the user to sign in, then resume
+        // generation automatically once they're back (see resume effect).
+        if (code === 'AUTH_REQUIRED') {
+          savePendingGeneration(fullConfig)
+          router.push(`/signup?returnTo=${encodeURIComponent('/')}`)
+          return
+        }
         setError(`Generation failed: ${message} (${code})`)
         setPhase('chatting')
       },
     )
+  }
+
+  function handleGenerate() {
+    // Use ref to avoid stale closure (called from setTimeout or button click)
+    updateConfig(partialConfigRef.current as Partial<TripConfig>)
+
+    // Build a full TripConfig from the partialConfig + store defaults
+    const fullConfig = useTripConfigStore.getState().config
+
+    // Require sign-in before generating — matches the itinerary-gate
+    // enforced server-side in /generate-itinerary.
+    if (useAuthStore.getState().status !== 'authenticated') {
+      savePendingGeneration(fullConfig)
+      router.push(`/signup?returnTo=${encodeURIComponent('/')}`)
+      return
+    }
+
+    startGeneration(fullConfig)
   }
 
   // ── Voice input ────────────────────────────────────────────────────────────

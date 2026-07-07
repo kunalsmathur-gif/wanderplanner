@@ -92,11 +92,38 @@ This document previously described the retired direction as if it were fully imp
 
 **Status:** Sky Blue + Orange system is the single source of truth. All components should reference `var(--color-*)` semantic tokens — no new hardcoded hex values for brand colors.
 
+**Implementation checklist**
+- ✅ Landing, wizard, itinerary, chat, and shared-trip surfaces use the current token system
+- ✅ Auth/legal/account surfaces (`/signup`, `/login`, `/forgot-password`, `/reset-password`, `/terms`, `/privacy`, `/account`) reuse the same design tokens and shared `.btn` / `.input` primitives
+- 🟡 Admin dashboard surface is planned/in progress; when it lands, it must use the same tokens and primitives rather than introducing a separate admin design language
+
 **Last Updated:** July 7, 2026
 
 ---
 
 ## 🧩 Component Updates (July 7, 2026)
+
+### Auth, legal, account, and admin page surfaces
+New full-page surfaces were added for authentication and compliance workflows:
+- `/signup`
+- `/login`
+- `/forgot-password`
+- `/reset-password`
+- `/terms`
+- `/privacy`
+- `/account`
+- `/admin` *(planned/in progress; backend metrics exist, frontend page not yet verified as shipped)*
+
+These pages intentionally **reuse the existing design system**:
+- centered card shell and tokenized backgrounds
+- existing `.btn`, `.btn-accent`, `.btn-outline`, and `.input` utility classes
+- Space Grotesk + DM Sans typography pairing
+- no new UI framework or parallel admin/auth design system introduced
+
+Shared auth-specific components:
+- `AuthLayout` — centered-card shell for auth pages
+- `GoogleSignInButton` — branded CTA that still inherits the app token system
+- `AuthHydrator` — non-visual bootstrap component that restores session state on app load and emits the `session_start` analytics beacon
 
 ### Activity card redesign — `PolaroidCard.tsx`
 The itinerary activity card was rebuilt from an oversized full-width 16:9 hero-video layout to a **compact horizontal layout**: a small 80–96px square thumbnail (Wikipedia photo or YouTube thumbnail) sits beside the activity text instead of above it. The previous layout pushed the actual itinerary copy (title, time, description) below a large video embed, making the center column feel unpolished and hard to scan. The card also gained an `onError` handler on the thumbnail `<img>` — if a YouTube thumbnail URL later 404s (deleted/restricted video), it now falls back to the existing deterministic gradient placeholder (`pickGradient(title)`) instead of showing a broken-image icon.

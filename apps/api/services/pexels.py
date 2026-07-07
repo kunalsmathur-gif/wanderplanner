@@ -12,6 +12,7 @@ import logging
 import httpx
 
 from core.config import settings
+from core.llm_usage import record_usage
 
 _log = logging.getLogger(__name__)
 
@@ -51,9 +52,11 @@ async def get_day_photo(query: str) -> dict | None:
                     "photographer": photo.get("photographer", ""),
                     "photographer_url": photo.get("photographer_url", ""),
                 }
+        record_usage(provider="pexels", purpose="day_photo", success=result is not None)
     except Exception as exc:
         _log.warning("Pexels photo fetch failed for query %r: %s", query, exc)
         result = None
+        record_usage(provider="pexels", purpose="day_photo", success=False, error=type(exc).__name__)
 
     if len(_cache) >= _CACHE_MAX_SIZE:
         _cache.clear()

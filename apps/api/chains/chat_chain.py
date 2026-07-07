@@ -6,6 +6,7 @@ import json
 
 from core.config import settings
 from core.prompt_guard import neutralize
+from core.llm_client import track_gemini_usage
 from models.chat import ChatMessage, ChatRequest
 
 GUARDRAIL_SYSTEM_PROMPT = """\
@@ -74,8 +75,8 @@ async def chat(request: ChatRequest) -> str:
         role = "user" if msg.role == "user" else "model"
         contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=neutralize(msg.content, context="chat message"))]))
 
-    def _call_sync() -> str:
-        response = client.models.generate_content(
+    def _call_sync():
+        return client.models.generate_content(
             model=settings.gemini_model,
             contents=contents,
             config=genai_types.GenerateContentConfig(
@@ -84,10 +85,11 @@ async def chat(request: ChatRequest) -> str:
                 max_output_tokens=1024,
             ),
         )
-        return response.text
 
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _call_sync)
+    response = await loop.run_in_executor(None, _call_sync)
+    track_gemini_usage(response, model=settings.gemini_model, purpose="chat")
+    return response.text
 
 
 def _mock_reply(user_msg: str) -> str:

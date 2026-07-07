@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { Space_Grotesk, DM_Sans, JetBrains_Mono } from 'next/font/google'
 import { MobileWarningBanner } from '@/components/common/MobileWarningBanner'
+import { AuthHydrator } from '@/components/common/AuthHydrator'
 import './globals.css'
 
 const spaceGrotesk = Space_Grotesk({
@@ -23,7 +24,7 @@ export const viewport: Viewport = { themeColor: '#0EA5E9' }
 const SITE_URL = 'https://wanderplanner.app'
 const SITE_TITLE = 'Wanderplanner — Free AI Travel Planner & Itinerary Generator'
 const SITE_DESCRIPTION =
-  'Wanderplanner is a free AI travel planner. Tell Anya — our AI concierge — your destination, budget, and group. Get a personalised day-by-day itinerary for Bali, Europe, Rajasthan, Dubai, and 190+ countries. No sign-up required.'
+  'Wanderplanner is a free AI travel planner. Tell Anya — our AI concierge — your destination, budget, and group. Get a personalised day-by-day itinerary for Bali, Europe, Rajasthan, Dubai, and 190+ countries. Free sign-up, no credit card required.'
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -142,7 +143,7 @@ const jsonLd = {
           name: 'Is Wanderplanner free to use?',
           acceptedAnswer: {
             '@type': 'Answer',
-            text: 'Yes. Wanderplanner is completely free. No sign-up, no credit card required.',
+            text: 'Yes. Wanderplanner is completely free. Just a free sign-up — no credit card required.',
           },
         },
         {
@@ -207,6 +208,7 @@ export default function RootLayout({
         />
       </head>
       <body className="h-full min-w-[320px] antialiased">
+        <AuthHydrator />
         <MobileWarningBanner />
         {children}
       </body>

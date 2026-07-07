@@ -5,6 +5,7 @@ import { PolaroidCard } from '@/components/itinerary/PolaroidCard'
 import type { ItineraryItem } from '@/types'
 import { useEffect, useState } from 'react'
 import { isSafeExternalUrl } from '@/lib/url-safety'
+import { logClientEvent } from '@/lib/analyticsBeacon'
 
 const thumbnailCache = new Map<string, string | null>()
 const videoIdCache   = new Map<string, string | null>()
@@ -45,8 +46,11 @@ function useThumbnail(query?: string, fallbackVideoId?: string) {
         try {
           const r = await fetch(`/api/youtube-thumbnail?q=${encodeURIComponent(query!)}`)
           const d = await r.json()
+          logClientEvent('youtube_thumbnail_call', { attempt, found: Boolean(d.videoId) })
           if (d.videoId) return d
-        } catch { /* fall through to retry */ }
+        } catch {
+          logClientEvent('youtube_thumbnail_failed', { attempt })
+        }
         if (attempt < 2) await new Promise((res) => setTimeout(res, 500 * (attempt + 1)))
       }
       return { videoId: null, thumbnailUrl: null }

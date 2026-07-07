@@ -4,6 +4,7 @@ import { useAppStore } from '@/store/appStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 import { ThemeToggle } from '@/components/common/ThemeToggle'
+import { UserMenu } from '@/components/common/UserMenu'
 
 export function TopNav() {
   const step = useAppStore((s) => s.step)
@@ -32,6 +33,7 @@ export function TopNav() {
           </span>
         )}
         <ThemeToggle />
+        <UserMenu inverted />
       </div>
     </header>
   )

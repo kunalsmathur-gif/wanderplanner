@@ -3,17 +3,19 @@
 ## **1\. Document Control**
 
 * **Author:** Product Manager  
-* **Status:** Rev 7 — Updated ✅ (Multi-City Reliability · Edit-in-Place · Dark Mode Everywhere)  
+* **Status:** Rev 8 — Updated ✅ (Accounts · Auth Gate · Password Reset · Analytics)
 * **Target Release:** Q4 2026  
 * **Platform:** Web Application — Desktop-first (1440x900, 1920x1080) with mobile-responsive support (v5.0+). Bottom tab navigation on mobile (`< lg` breakpoint). No standalone mobile PWA or native app scope.
 * **Language:** English only (no i18n or RTL support in Phase 1)
 * **Monetization:** Free product — no paywalls, no feature gating
 * **Collaboration:** Single-user planning only — co-travelers cannot edit itineraries
-* **API Strategy:** No third-party API key dependencies in Phase 1 (see Section 6.1 for full stack)
+* **API Strategy:** Minimize paid/contracted travel-data dependencies in Phase 1; core travel data remains mostly free/no-contract, while accounts/auth use Google OAuth, Resend, and managed Postgres (see Section 6.1 for full stack)
 
   ## **2\. Executive Summary & Objective**
 
 WanderPlanner is an all-in-one desktop web application designed to solve the friction of fragmented, multi-tab travel coordination. By consolidating maps, booking aggregators, spreadsheets, and travel blogs into a single interface, WanderPlanner functions as a unified engine for destination discovery, side-by-side location comparisons, hyper-personalized itinerary building, and post-selection logistics planning.
+
+Users can explore the landing experience freely, but **a free account is now required before itinerary generation**. Sign-in options are email/password or Google SSO, and the product intentionally gates auth at the moment the user clicks **Generate** rather than forcing login on first page load.
 
 The application pairs traditional third-party travel APIs with an AI data layer to deliver granular, timestamped travel schedules tailored to complex group dynamics, pet constraints, accessibility limits, corporate/remote work needs, and budget boundaries. Recommendations are dynamically enhanced by real-time social signals (Reddit, YouTube, Instagram) to capture authentic, trending, on-the-ground user insights rather than static commercial itineraries.
 
@@ -90,6 +92,22 @@ All fields below are presented on one scrollable page, grouped into logical visu
 * 7\. **Accommodations & Properties:** Style filters (Hotel, BnB, Service Apartment, Resort) + property toggles (Minimum Bedrooms, Bathrooms, Private Pool, Kitchen, Wheelchair Accessibility, Pet Friendly).  
 * 8\. **Pace & Budget:** Pace slider (Relaxed, Moderate, Packed) + currency selector and **maximum total group budget** input (all-inclusive: accommodation, activities, local transport — international flights handled separately in Epic 5).
 
+  ### **Epic 1A: Authentication, Consent & Data Rights**
+
+Authentication is now a product requirement, not a future enhancement. Users must create a **free account** before itinerary generation, using either:
+
+- **Email + password**
+- **Google SSO**
+
+Supporting requirements:
+
+- **Gate timing:** users may browse the landing page and complete the conversational wizard while signed out, but the auth gate appears when they click **Generate Itinerary**.
+- **Dedicated full pages, not modals:** `/signup`, `/login`, `/forgot-password`, `/reset-password`, `/account`, `/terms`, `/privacy` (and a planned `/admin` dashboard surface).
+- **Pending-generation resume:** if a signed-out user reaches the gate after fully completing the wizard, the collected trip config must survive the signup/login/OAuth round-trip and auto-resume generation afterward.
+- **Password reset:** forgot-password flow must avoid account enumeration, use emailed single-use reset links, and revoke all existing sessions after a successful password reset.
+- **Consent capture:** signup requires a single checkbox linking to the full Terms of Service and Privacy Policy, with consent timestamp recorded server-side.
+- **Data rights:** users can self-delete from `/account`; admin-managed deletion/bulk-purge tools are planned for operational use.
+
   ### **Epic 2: Dynamic Curated Itinerary Engine & Social Media Layer**
 
 Translates wizard inputs and semantic vector trends into a day-by-day, interactive schedule complete with timestamped routing.
@@ -99,7 +117,7 @@ Translates wizard inputs and semantic vector trends into a day-by-day, interacti
 * **Visual Highlights & Video Integration:** Flags highly photogenic spots with a prominent 📸 Instaworthy Photo Op badge and integrates high-resolution regional image galleries sourced from Unsplash (free tier, no API key required for non-commercial use) and Wikivoyage image assets.  
 * **Native YouTube Embeds:** Itinerary detail cards support inline video embedding via the YouTube oEmbed endpoint (no API key required). Users can watch neighborhood walk-throughs, food vlogs, or travel guides directly inside the itinerary timeline without breaking their planning flow.  
 * **Social Trend Factors:** Real-time recommendations ingest hot discussion topics from Reddit public JSON feeds (no OAuth required for read-only access) and contextual travel video embeds from YouTube. Instagram integration is **excluded from Phase 1** due to API restrictions on public hashtag access.  
-* **Session Persistence & PDF Export:** Itineraries are session-specific and are not persisted to a user account (no login required). Users are provided a prominent **"Download Itinerary as PDF"** CTA to save their plan locally. PDF is a styled branded document containing the full itinerary, visa advisory, packing checklist, currency rates, and booking deep-links — single continuous document with active hyperlinks, colorful travel-journal card styling, and destination/day photography to make the export more visual and shareable (no maps).
+* **Session Persistence & PDF Export:** Itineraries are now generated behind a free account and can survive authentication round-trips via pending-generation resume logic. Longer-term itinerary history persistence is still limited; the **"Download Itinerary as PDF"** export remains the primary user-controlled take-away artifact. PDF is a styled branded document containing the full itinerary, visa advisory, packing checklist, currency rates, and booking deep-links — single continuous document with active hyperlinks, colorful travel-journal card styling, and destination/day photography to make the export more visual and shareable (no maps).
 
   ### **Epic 3: Dual-Location Comparison Engine**
 
@@ -180,6 +198,8 @@ The application follows a **Three-Column Split Architecture** for its main dashb
   * **Step 1 — Plan Your Trip:** All input fields on a single scrollable screen. No per-category step splits. A horizontal 3-step progress indicator sits at the top. The "Generate Itinerary" CTA at the bottom activates only once all required fields pass inline validation.
   * **Step 2 — Itinerary Overview:** Destination overview cards and day-summary blocks are presented. User confirms or adjusts destination and dates before proceeding.
   * **Step 3 — Detailed Itinerary:** Full 3-column layout with the complete timestamped schedule.
+* **Auth-gate placement:** The product does **not** force login on landing-page entry. Users can explore and complete the wizard signed out; the account requirement is enforced at the moment they click **Generate Itinerary**. If the user is not authenticated, the fully collected config is preserved and resumed after signup/login.
+* **Auth/legal page surfaces:** Use dedicated full pages — not modal auth — for `/signup`, `/login`, `/forgot-password`, `/reset-password`, `/terms`, `/privacy`, and `/account`. A dedicated `/admin` dashboard surface is planned/in progress for internal admin analytics.
 * **Interactive Transitions:** Selected choice chips transition from a light grey border to Horizon Blue fill with a checkmark animation. Persona dropdown shows colored tags for each selected persona.
 * **Back Navigation:** Navigating back from Step 2 or 3 to Step 1 fully restores all previously entered values. State is session-scoped — does not survive a tab close or hard refresh.
 * **Auto-Pace Rule:** If the group includes any child under 5 years old, the Pace slider automatically sets to Relaxed and displays: *"Pace set to Relaxed — recommended for groups with young children."*
@@ -187,6 +207,7 @@ The application follows a **Three-Column Split Architecture** for its main dashb
 * **Multi-select Interests:** Chip groups representing array-style preferences (especially trip themes such as Culture, Food, Adventure, Photography) must support multi-select before the user advances the conversation. This is driven by an explicit `multi_select` signal from the backend per chip group (⭐ Rev 7) rather than inferred from chip label text on the frontend, so multiselect behavior stays correct regardless of how Anya phrases the options.
 * **Theme & Appearance:** A dark/light mode toggle is available everywhere the user can be — the itinerary dashboard header and the persistent Anya chat panel header, in addition to any shared read-only trip link (⭐ Rev 7).
 * **Activity Media:** YouTube video thumbnails on itinerary activity cards retry automatically on transient lookup failures and fall back to a gradient placeholder (never a broken-image icon) if a thumbnail is unavailable or a video has been removed (⭐ Rev 7).
+* **Shared auth shell:** All auth pages reuse the existing design tokens, `.btn` / `.input` primitives, and typography system through a shared centered-card `AuthLayout`; no separate auth-only design system is introduced.
 
   #### **B. The Live Comparison Matrix Screen**
 
@@ -222,9 +243,9 @@ To support semantic searches, deep personalization, and the orchestration of rea
  * Instagram Metadata Tags        * Natural Language Prompting     * Dynamic Penalty Adjustments
 ```
 
-### **6.1 AI Component Specifications & Phase 1 No-API-Key Data Stack**
+### **6.1 AI Component Specifications & Phase 1 Data Stack**
 
-> **Phase 1 Principle:** All data integrations must function without paid API keys or third-party API contracts. The stack below reflects this constraint.
+> **Phase 1 Principle:** Keep travel-data dependencies as lightweight and mostly free-tier/no-contract as possible, while allowing targeted managed services for core product infrastructure such as authentication, email delivery, and transactional storage.
 
 #### Phase 1 Approved Data Sources
 
@@ -241,7 +262,10 @@ To support semantic searches, deep personalization, and the orchestration of rea
 | YouTube Embeds | YouTube oEmbed endpoint | ❌ None | Embed public videos; no search quota |
 | Images | Unsplash (free tier) + Wikivoyage images | ❌ None | Destination photography |
 | LLM Engine | Google Gemini 2.5 Flash | ✅ GEMINI_API_KEY | Wizard chat, itinerary generation, city recommendations, trip extraction |
-| Vector Database | Qdrant (self-hosted) or Chroma (in-process) | ❌ None | Semantic search |
+| Transactional Database | PostgreSQL (Supabase in production) | ✅ DATABASE_URL | User accounts, consent, refresh tokens, analytics events, password reset tokens |
+| Vector Database | Qdrant | ❌ None | Semantic search / RAG retrieval — separate from Postgres |
+| Auth Identity | Google OAuth 2.0 | ✅ GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET | Optional Google SSO |
+| Transactional Email | Resend | ✅ RESEND_API_KEY | Password-reset delivery |
 | Flights | Skyscanner deep-link redirect | ❌ None | No live pricing; external redirect only |
 | Hotels | Booking.com deep-link redirect | ❌ None | No live inventory; external redirect only |
 | Visa Data | Wikivoyage visa sections (static, cached) | ❌ None | Advisory only; disclaimer required |
@@ -256,7 +280,8 @@ To support semantic searches, deep personalization, and the orchestration of rea
 * Instagram Graph API — **permanently excluded** (public hashtag search deprecated; no viable replacement)
 
 * **LLM Orchestration:** Google Gemini 2.5 Flash via the google-genai Python SDK. Handles wizard conversation, itinerary generation, city recommendations, destination comparison, and trip extraction. Temperature varies by task (0.1–0.6). No LangChain dependency.  
-* **Vector Database for Semantic Search:** **Qdrant** (self-hosted, open source) stores high-dimensional text embeddings of Wikivoyage destination guides, Wikipedia travel content, and Reddit post summaries from public JSON feeds. Enables semantic queries (e.g., *"remote work spots with good coffee near downtown"*).  
+* **Transactional Database:** **Postgres** (Supabase-managed in production) stores users, consent records, refresh tokens, password-reset tokens, and analytics events. This is the product system-of-record for auth/account/compliance data.
+* **Vector Database for Semantic Search:** **Qdrant** stores high-dimensional text embeddings of Wikivoyage destination guides, Wikipedia travel content, and Reddit post summaries from public JSON feeds. Enables semantic queries (e.g., *"remote work spots with good coffee near downtown"*). Qdrant and Postgres serve different roles: **Qdrant for retrieval, Postgres for user/auth/analytics state**.
 * **Social Ingestion:** Reddit public subreddit JSON endpoints (e.g., `reddit.com/r/travel.json`) ingested and indexed into the vector database on a scheduled basis. Content is filtered to safe, travel-relevant posts before indexing. YouTube video IDs are matched contextually using destination name + keyword heuristics against public oEmbed lookups — no YouTube Data API quota consumed.
 
   ### **6.2 Itinerary Alignment Score (Machine Learning Optimization Framework)**
@@ -314,7 +339,7 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
   * *Empty results (no venues match filters):* Display an inline empty state per panel: *"No results found for your filters — try adjusting your budget, pace, or destination."* Each empty panel shows the message independently; other panels are unaffected.
   * *Data source unavailable (Wikivoyage/Wikipedia/OSM unreachable):* Generation proceeds with affected sections blank. Affected cards display a stock destination image and a *"Limited information available for this destination"* badge. Generation is never fully blocked by a single data source failure.
   * *Comparison engine partial failure (one destination returns no data):* Display the grid with available data populated; affected cells show *"Data unavailable"* overlay. A warning banner above the grid reads: *"Some data could not be loaded for [Destination]. Results may be incomplete."*
-* **State Retention:** Itineraries are **session-specific**. No user account or login is required. The application does not persist itinerary data beyond the active browser session. Users retain their plan by using the **"Download Itinerary as PDF"** export function. Browser localStorage may be used only as a short-term within-session buffer against accidental tab refreshes, not as a long-term persistence mechanism.  
+* **State Retention:** A **free account is required before itinerary generation**. The application now persists core account/auth/analytics data in Postgres, but itinerary history itself is still primarily session-scoped in the current product. Browser sessionStorage/localStorage may be used as a short-term resilience buffer (for example, to survive the auth round-trip right before generation), while the **"Download Itinerary as PDF"** export remains the primary user-controlled long-term artifact.
 * **Cross-Browser Support:** Full layout rendering parity across all Chromium-based engines, Safari Desktop, and Mozilla Firefox releases.  
 * **Viewport:** Desktop-first. Minimum supported viewport: 1280px (desktop). Mobile-responsive layout (`< lg` breakpoint, ~1024px) added in v5.0 — bottom tab navigation replaces 3-column layout on small screens. No standalone mobile app scope.  
 * **Notifications:** No push notifications, email confirmations, or SMS alerts of any kind in Phase 1.  
@@ -402,6 +427,60 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 | Pagination | **Single continuous document** (no page-per-day breaks) |
 | Clickable links | **Yes** — venue names and booking URLs are active hyperlinks |
 
+---
+
+### **Clarification #7 — Authentication Method ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| OTP/mobile sign-in in Phase 1? | **No. Deferred.** Launch with **email/password + Google SSO** only. |
+| Why not OTP first? | Faster path to a secure, supportable launch using standard password recovery + a familiar federated identity option. |
+
+---
+
+### **Clarification #8 — Auth Surface: Pages vs Modal ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Login/signup as modal or full page? | **Dedicated full pages** — `/signup`, `/login`, `/forgot-password`, `/reset-password` |
+| Why? | Better for accessibility, direct linking, password-reset flows, and full-page OAuth round trips. |
+
+---
+
+### **Clarification #9 — Where to Enforce the Auth Gate ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Force login on landing page? | **No.** Let users explore and complete the wizard first. |
+| When is auth enforced? | **At the point of clicking "Generate Itinerary".** Preserve the completed trip config, redirect to auth, then auto-resume generation. |
+
+---
+
+### **Clarification #10 — Production Postgres Host ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Which Postgres host? | **Supabase** in production. |
+| Why? | Managed Postgres with a practical free tier; chosen over SQLite (multi-instance/file-locking mismatch), and over other candidates after evaluating ops vs cost tradeoffs. |
+
+---
+
+### **Clarification #11 — Transactional Email Provider ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| How are password-reset emails sent? | **Resend** via HTTP API. |
+| Why? | Simpler operational fit than SMTP-heavy flows and aligns with the app's existing `httpx`-centric integration style. |
+
+
+---
+
+### **Clarification #12 — Session Status Visibility in the Main App Shell ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Should the main app (not just `/account`) show whether the user is signed in, and let them sign out from there? | **Yes.** Found during local manual testing that there was no login/signup CTA on the home page, no "you're signed in" indicator, and no discoverable sign-out option outside of navigating directly to `/account`. |
+| Fix | Added a shared `UserMenu` component: "Log in"/"Sign up" links when signed out; user's name/email in a dropdown with "Account settings" + "Log out" when signed in. Rendered in the landing page nav, the itinerary dashboard title bar, and the top nav bar. |
 
 ---
 

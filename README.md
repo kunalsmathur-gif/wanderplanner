@@ -1,6 +1,6 @@
 # WanderPlanner
 
-> AI-powered travel planning with Anya, your conversational AI concierge. Desktop-first, no sign-up, no cost.
+> AI-powered travel planning with Anya, your conversational AI concierge. Free sign-up via Google SSO or email/password — then plan freely.
 
 [![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688)](https://fastapi.tiangolo.com)
@@ -33,7 +33,7 @@ WanderPlanner uses conversational AI to help you plan trips through a natural ch
 - 📤 Shareable trip link (`/t/abc123`)
 - 🗂️ Booking hub — track confirmation numbers, dates, amounts
 
-**No API keys. No login. No subscriptions.**
+**Free account. Google SSO or email/password. No subscription required.**
 
 ---
 
@@ -42,6 +42,11 @@ WanderPlanner uses conversational AI to help you plan trips through a natural ch
 | Feature | Description |
 |---|---|
 | **🤖 LLM-Powered Anya Wizard** | Gemini 2.5 Flash drives the wizard — natural freeform conversation in English or Hinglish. One message fills multiple fields. Smart extraction: "yaar Bali trip 7 days, budget 1.5 lakh types" sets destination + dates + budget at once. Naming several places (e.g. "Colombo, Mirissa, and Yala") splits into a primary destination + hops; naming a whole country resolves to real cities the moment they're proposed/confirmed. Assistant history is replayed as structured JSON, invalid/truncated wizard responses are retried automatically, leaked schema/JSON tails are stripped before fallback text is shown, Stage-2 optional follow-ups stay interactive until the backend explicitly signals readiness, and theme chips reliably support multi-select submission via an explicit backend signal (not frontend guesswork). Reopening the wizard via "Edit Trip" on an existing itinerary carries the current trip forward instead of restarting the conversation. |
+| **🔐 Free Account + Auth Gate** | Itinerary generation now requires a free account. Users can sign up with email/password or Google SSO; if they hit Generate while signed out, the frontend saves the collected trip config, redirects to `/signup?returnTo=/`, and auto-resumes generation after authentication. A shared `UserMenu` nav control shows "Log in/Sign up" when signed out, or your name/email + a "Log out" option when signed in — visible on the landing page, itinerary dashboard, and top nav. |
+| **🔑 Password Reset** | Forgot/reset password flow with single-use reset links delivered by Resend. Resetting a password invalidates all existing refresh-token sessions defensively. |
+| **✅ Consent + Legal Pages** | Signup requires a minimized consent checkbox linking to `/terms` and `/privacy`, with consent timestamped per account for DPDP-aligned recordkeeping. |
+| **🗑️ Self-Service Account Deletion** | `/account` includes a danger-zone flow that requires typing `DELETE` before permanently removing the account and revoking refresh-token sessions. |
+| **📈 Admin Analytics Dashboard** | Backend admin metrics endpoints summarize signups, sessions, logins, itinerary generation, and analytics events. Frontend dashboard UI is still in progress, but the backend data model and endpoints are live. |
 | **🎙️ Anya Voice Assistant** | Conversational AI with voice input/output. Talk naturally to plan your trip. Young Indian female voice (20-25 yrs). |
 | **💬 Persistent Anya Chat** | After itinerary generation, the floating Anya orb opens a slide-in chat panel. Ask questions, request changes — Anya patches config or offers to regenerate. |
 | **📱 Mobile-Responsive** | Bottom tab navigation on mobile (Itinerary · Overview · Map & Tips). Full desktop 3-column layout on larger screens. |
@@ -81,6 +86,12 @@ WanderPlanner uses conversational AI to help you plan trips through a natural ch
 |---|---|
 | Python 3.9+ + FastAPI | Async REST API, Pydantic v2 validation |
 | Google Gemini 2.5 Flash | Itinerary gen, chat refine, city recommendations, trip extraction |
+| PostgreSQL + Supabase | Production transactional database for users, consent, sessions, analytics, and password resets |
+| SQLAlchemy 2.0 async ORM + Alembic | Async database access and schema migrations (`0001_auth_analytics`, `0002_password_reset`) |
+| Argon2id | Password hashing (`argon2-cffi`) |
+| JWT + rotating refresh tokens | Cookie-based auth sessions (`wp_access_token`, `wp_refresh_token`) |
+| Google OAuth 2.0 | Stateless Authorization Code flow for Google SSO |
+| Resend | Transactional email delivery for password reset links |
 | Qdrant (in-memory) | Vector database — 4 collections: `wiki`, `reddit`, `osm_pois`, `itinerary_cache` |
 | sentence-transformers | Local text embeddings (all-MiniLM-L6-v2, 384 dims) + cross-encoder reranking (ms-marco-MiniLM-L-6-v2) |
 | rank_bm25 | Lexical (BM25) retrieval, fused with semantic search via Reciprocal Rank Fusion |
@@ -95,6 +106,7 @@ WanderPlanner uses conversational AI to help you plan trips through a natural ch
 |---|---|
 | Vercel | Frontend hosting (auto-deploy on push to `main`) |
 | Railway | Backend (FastAPI + Qdrant, persistent volume) |
+| Supabase | Managed Postgres for production auth / analytics data |
 | Docker + docker-compose | Local dev orchestration |
 | GitHub Actions | CI: lint, type-check, tests on every PR |
 
@@ -104,54 +116,49 @@ WanderPlanner uses conversational AI to help you plan trips through a natural ch
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Browser (Desktop)                          │
-│                                                                    │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │  Next.js 16 — 3-column layout (20% | 55% | 25%)            │ │
-│  │                                                               │ │
-│  │  ┌──────────┐  ┌──────────────────────┐  ┌───────────────┐ │ │
-│  │  │ Column 1 │  │      Column 2         │  │   Column 3    │ │ │
-│  │  │          │  │  Itinerary Timeline   │  │  Map (Leaflet)│ │ │
-│  │  │ Metrics  │  │  PolaroidCard cards   │  │  Full-screen  │ │ │
-│  │  │ Expenses │  │  Comparison Panel     │  │  map mode     │ │ │
-│  │  │ Currency │  │  ShareButton header   │  │  Best Time    │ │ │
-│  │  │ Booking  │  └──────────────────────┘  │  Travel Tips  │ │ │
-│  │  │   Hub    │                             └───────────────┘ │ │
-│  │  └──────────┘                                                │ │
-│  │                                                               │ │
-│  │  Floating: Anya Orb → ChatPanel (persistent post-gen chat)  │ │
-│  │  Overlay: ConversationalWizard (full-screen on open)        │ │
-│  │  LandingHero: Inspiration gallery + Start Anywhere input    │ │
-│  │                                                               │ │
-│  │  Zustand (6 stores): appStore · tripConfigStore             │ │
-│  │  wizardChatStore · itineraryStore · chatStore · bookingStore│ │
-│  └─────────────────────────────────────────────────────────────┘ │
+│                        Browser (Desktop)                        │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │ Next.js 16 — landing + auth pages + 3-column itinerary   │  │
+│  │                                                           │  │
+│  │  /signup /login /forgot-password /reset-password         │  │
+│  │  /account /terms /privacy                                │  │
+│  │                                                           │  │
+│  │  LLMWizard checks auth before generation:                 │  │
+│  │   signed out → save pending config to sessionStorage      │  │
+│  │             → redirect to /signup?returnTo=/             │  │
+│  │   signed in  → stream itinerary normally                  │  │
+│  └───────────────────────────────────────────────────────────┘  │
 └───────────────────────────┬─────────────────────────────────────┘
-                             │ HTTPS / JSON / SSE
+                            │ HTTPS / JSON / SSE / cookies
 ┌───────────────────────────▼─────────────────────────────────────┐
-│                   FastAPI (Python 3.9+) Port 8000                 │
-│                                                                    │
-│  POST /api/generate-itinerary   → Gemini 2.5 Flash (5× retry)  │
-│  POST /api/chat-refine          → Anya persistent chat handler  │
-│  POST /api/recommend-cities     → City suggestions (Gemini)     │
-│  POST /api/extract-trip         → URL/text → trip fields        │
-│  POST /api/share                → Serialize trip → slug         │
-│  GET  /api/share/{slug}         → Read-only trip data           │
-│  GET  /api/travel-tips          → AI tips (cached 1h)           │
-│  GET  /api/best-time/{city}     → Open-Meteo weather data       │
-│  GET  /api/geocode              → Nominatim (en names, is_country)│
-│  POST /api/compare-destinations → 10-param AI comparison        │
-│  Background: Reddit refresh every 6h · OSM POI refresh weekly    │
-│              Qdrant ingestion + hybrid BM25/semantic retrieval  │
-└──────┬──────────────┬────────────────┬──────────────────────────┘
-       │              │                │
-┌──────▼──────┐ ┌─────▼──────┐  ┌─────▼──────────────────────────┐
-│   Qdrant    │ │   Gemini   │  │  External APIs                  │
-│ (in-memory) │ │  2.5 Flash │  │  Nominatim · Open-Meteo        │
-│ wiki+reddit │ │ lite/1.5   │  │  Reddit JSON · YouTube          │
-│ osm_pois+   │ │ fallbacks  │  │  Overpass (OSM) · Wikipedia     │
-│ itin_cache  │ │            │  │  (frontend, CORS-safe)          │
-└─────────────┘ └────────────┘  └─────────────────────────────────┘
+│                   FastAPI (Python 3.9+) Port 8000              │
+│                                                                 │
+│  Auth/session layer                                             │
+│  POST /api/auth/signup|login    → email/password auth          │
+│  GET  /api/auth/google/*        → Google OAuth round-trip      │
+│  POST /api/auth/refresh         → rotate refresh token         │
+│  POST /api/auth/password/*      → forgot/reset password        │
+│                                                                 │
+│  Product/API layer                                               │
+│  POST /api/generate-itinerary  → requires get_current_user     │
+│  POST /api/chat-refine         → Anya persistent chat handler  │
+│  POST /api/recommend-cities    → City suggestions (Gemini)     │
+│  POST /api/extract-trip        → URL/text → trip fields        │
+│  GET  /api/admin/metrics/*     → admin analytics summaries     │
+│  POST /api/analytics/client-event → client-side analytics      │
+│                                                                 │
+│  Background: Reddit refresh every 6h · OSM POI refresh weekly  │
+│              Qdrant retrieval + Postgres-backed auth/analytics │
+└──────┬──────────────┬────────────────┬───────────────┬──────────┘
+       │              │                │               │
+┌──────▼──────┐ ┌─────▼──────┐  ┌─────▼──────┐ ┌──────▼─────────────────┐
+│   Qdrant    │ │   Gemini   │  │ Supabase   │ │ External APIs           │
+│ (in-memory) │ │  2.5 Flash │  │ Postgres   │ │ Google OAuth · Resend   │
+│ wiki+reddit │ │ lite/1.5   │  │ users      │ │ Nominatim · Open-Meteo  │
+│ osm_pois+   │ │ fallbacks  │  │ sessions    │ │ Reddit JSON · YouTube   │
+│ itin_cache  │ │            │  │ analytics   │ │ Overpass · Wikipedia    │
+└─────────────┘ └────────────┘  └────────────┘ └─────────────────────────┘
 ```
 
 ---
@@ -178,7 +185,14 @@ cp apps/web/.env.example apps/web/.env.local
 cp apps/api/.env.example apps/api/.env
 ```
 
-Edit `apps/api/.env` and set your `GEMINI_API_KEY`. If you want itinerary day photos in exported PDFs, also add `PEXELS_API_KEY` (optional — generation still works without it).
+Edit `apps/api/.env` and set at least:
+
+- `GEMINI_API_KEY`
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `FRONTEND_BASE_URL`
+
+If you want Google SSO, add the `GOOGLE_*` variables. If you want password reset, add `RESEND_API_KEY` + `EMAIL_FROM_ADDRESS`. `PEXELS_API_KEY` remains optional for itinerary day photos in exported PDFs.
 
 ### 3. Start the backend
 
@@ -227,6 +241,20 @@ Open `http://localhost:3000`.
 | `GEMINI_API_KEY` | Google Gemini API key | ✅ |
 | `LLM_PROVIDER` | `gemini` (default) or `mock` | ❌ |
 | `GEMINI_MODEL` | Model ID (default: `gemini-2.5-flash`) | ❌ |
+| `DATABASE_URL` | Postgres connection string (local Postgres or Supabase) | ✅ |
+| `JWT_SECRET` | Secret used to sign access tokens and auth state | ✅ |
+| `ACCESS_TOKEN_TTL_MINUTES` | Access-token lifetime (default: 15) | ❌ |
+| `REFRESH_TOKEN_TTL_DAYS` | Refresh-token lifetime (default: 30) | ❌ |
+| `COOKIE_DOMAIN` | Optional cookie domain override | ❌ |
+| `COOKIE_SECURE` | `true` in production; may be `false` for local HTTP dev | ❌ |
+| `COOKIE_SAMESITE` | `lax` for local dev, `none` for cross-origin prod | ❌ |
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID | ✅ for Google SSO |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | ✅ for Google SSO |
+| `GOOGLE_REDIRECT_URI` | OAuth callback URL (e.g. `http://localhost:8000/api/auth/google/callback`) | ✅ for Google SSO |
+| `FRONTEND_BASE_URL` | Frontend origin for redirects and reset links | ✅ |
+| `RESEND_API_KEY` | Resend API key for password-reset email | ✅ for password reset |
+| `EMAIL_FROM_ADDRESS` | From-address used by Resend | ✅ for password reset |
+| `PASSWORD_RESET_TOKEN_TTL_MINUTES` | Reset-link TTL (default: 30) | ❌ |
 | `QDRANT_URL` | Qdrant instance URL (default: `:memory:`) | ❌ |
 | `PEXELS_API_KEY` | Optional Pexels API key for itinerary day photos in exported PDFs | ❌ |
 | `ALLOWED_ORIGINS` | CORS origins (e.g. `http://localhost:3000`) | ✅ |
@@ -246,6 +274,20 @@ Open `http://localhost:3000`.
 ---
 
 ## Changelog
+
+### v5.6 — Local Testing Fixes: Auth Nav Indicator, Wizard Resume Race, Chip Backfill (July 2026)
+- ✅ **FIXED: no way to tell if you're signed in** — the home page had no login/signup CTA, no indicator of an active session, and no discoverable sign-out option outside of `/account`. Added a shared `UserMenu` component (Log in/Sign up when signed out; name/email + Log out dropdown when signed in), wired into the landing page nav, the itinerary dashboard title bar, and the top nav bar.
+- ✅ **FIXED: wizard losing/duplicating context after sign-in** — a mount-effect race in `LLMWizard.tsx` could inject a stray fresh greeting on top of a resumed generation right after completing signup mid-wizard. Fixed with a single shared snapshot of the pending-generation flag plus a resume idempotency guard.
+- ✅ **FIXED: missing trip-type chips on Anya's first message** — added a deterministic server-side backfill so the standard purpose chips (Leisure/Adventure/Honeymoon/etc.) always appear on turn one, even on the rare occasion Gemini's response omits them.
+- ✅ **FIXED: SQLite FK cascades silently no-op'ing during local testing** — `apps/api/db.py` now enables `PRAGMA foreign_keys=ON` for SQLite connections only; zero effect on the Postgres/Supabase production path.
+- ✅ Verified: 113 backend + 36 frontend automated tests pass; all four fixes additionally confirmed live against running local dev servers.
+
+### v5.5 — Accounts, Auth Gate, Password Reset & Admin Analytics (July 2026)
+- ✅ Added **Postgres-backed auth + analytics** with async SQLAlchemy 2.0 ORM, Alembic migrations, and **Supabase** as the production Postgres host.
+- ✅ Added **free accounts** via email/password or **Google SSO**, plus cookie-based JWT + rotating refresh-token sessions.
+- ✅ Added **forgot/reset password**, **consent capture**, `/terms` + `/privacy`, and self-service `/account` deletion.
+- ✅ Moved **itinerary generation behind server-side auth**; the frontend now preserves a pending trip config through the sign-in round-trip and auto-resumes generation afterward.
+- ✅ Added **admin analytics endpoints** plus a generic events table for sessions, logins, itinerary outcomes, and future Gemini/Pexels usage tracking.
 
 ### v5.4 — WanderPlanner Rebrand + Wizard/UI Reliability Fixes (July 2026)
 - ✅ **Rebrand: WanderPlan → WanderPlanner** across every UI string, backend module, doc, and asset — no functional change.

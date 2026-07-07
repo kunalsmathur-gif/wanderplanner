@@ -6,6 +6,7 @@ import { useAppStore } from '@/store/appStore'
 import type { WizardPreload } from '@/store/appStore'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 import { ThemeToggle } from '@/components/common/ThemeToggle'
+import { UserMenu } from '@/components/common/UserMenu'
 import { useWikiImage } from '@/hooks/useWikiImage'
 import { extractTrip } from '@/lib/api'
 
@@ -172,6 +173,8 @@ export function LandingHero() {
               <Plane size={14} />
               Plan a trip
             </button>
+            <span className="hidden h-4 w-px bg-[var(--_border)] sm:block" aria-hidden="true" />
+            <UserMenu />
           </nav>
         </div>
       </header>
@@ -307,7 +310,7 @@ export function LandingHero() {
               {[
                 {
                   q: 'Is Wanderplanner free?',
-                  a: 'Yes — completely free. No sign-up, no credit card, no catch.',
+                  a: 'Yes — completely free. Just a free sign-up to get started, no credit card, no catch.',
                 },
                 {
                   q: 'How does Wanderplanner generate itineraries?',
@@ -343,7 +346,7 @@ export function LandingHero() {
             Where are you headed next?
           </p>
           <p className="mt-2 text-sm text-white/70 [font-family:var(--font-dm-sans)]">
-            Free to use · No account · Powered by Gemini AI
+            Free to use · Free sign-up · Powered by Gemini AI
           </p>
           <button
             type="button"

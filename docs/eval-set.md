@@ -434,6 +434,19 @@ Unlike the manual/unit-test cases above, this is an **automated retrieval-qualit
 
 **Known limitation:** `run_rag_eval.py` calls `semantic_search()` directly, which exercises the new hybrid BM25+semantic fusion (§4R) but does **not** exercise HyDE (§4S) or cross-encoder reranking (§4T) — those live only inside `retrieve_context()`, the higher-level function used by actual itinerary generation. A one-off manual smoke test of the full `retrieve_context()` pipeline (HyDE + hybrid + rerank) confirmed correct top-ranked results for a sample digital-nomad Bali query, but this is not part of the automated harness. Extending `run_rag_eval.py` to call `retrieve_context()` instead (with reranking forced on) is a natural follow-up if more rigorous end-to-end pipeline scoring is needed.
 
+**Auth-gating regression note (July 2026):** the itinerary-generation system prompt itself is unchanged by the auth rollout. Code inspection confirms the same `SYSTEM_PROMPT` in `chains/itinerary_chain.py` is still formatted with `{context}` + `{trip_config}` exactly as before; the new work wraps the Gemini call with auth checks (`Depends(get_current_user)` in `routers/itinerary.py`) and post-call usage logging (`track_gemini_usage()` / `flush_llm_usage()`), but does **not** alter prompt content, model selection, or output schema.
+
+**What changes for golden regressions:** this retrieval-only harness still runs in-process and therefore remains unauthenticated, but any **end-to-end** golden run that hits `POST /api/generate-itinerary` must now authenticate first and replay the session cookies. In practice the one-line invocation change is: **log in once, save cookies, then send `-b cookies.txt` (or equivalent session-cookie state) on every itinerary-generation request.** Example shell flow:
+
+```bash
+curl -c cookies.txt -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"correct horse battery staple"}'
+# then reuse: curl -b cookies.txt -N -X POST http://localhost:8000/api/generate-itinerary ...
+```
+
+**Expected outcome:** auth-gating is an access-control change only. Because the prompt, model, and JSON response contract are unchanged, golden-output quality/format expectations should remain the same once the request is made with a valid authenticated session.
+
 **How to run:**
 ```bash
 cd apps/api
@@ -523,6 +536,75 @@ python -m eval.run_rag_eval
 
 ---
 
+
+### 5I — Authentication & Session Management (`/api/auth/*`)
+
+| ID | Test | Expected | Pass criteria | Priority |
+|---|---|---|---|---|
+| AUTH-001 | Email/password signup (valid payload, `consent_accepted=true`) | `POST /api/auth/signup` returns `200` + `UserResponse`; `wp_access_token` + `wp_refresh_token` cookies set | User row created with `auth_provider="password"`; cookies present; immediate `GET /api/auth/me` succeeds | P0 |
+| AUTH-002 | Duplicate-email signup | Existing email re-used on `POST /api/auth/signup` | HTTP 400 with `"Unable to sign up with these details."`; no second user row created | P0 |
+| AUTH-003 | Weak password on signup (`<8` chars) | Frontend blocks submit; direct API call fails validation | UI shows `"Password must be at least 8 characters."`; direct API returns 422 from `SignupRequest.password` min_length | P0 |
+| AUTH-004 | Missing consent field on signup request | `consent_accepted` omitted from JSON body | FastAPI validation rejects request with HTTP 422; account not created | P1 |
+| AUTH-005 | Explicit `consent_accepted=false` on signup | Request reaches router with false consent | HTTP 400 with `"You must accept the Terms of Service and Privacy Policy to sign up."` | P0 |
+| AUTH-006 | Email/password login (valid credentials) | `POST /api/auth/login` with correct password | HTTP 200 + `UserResponse`; both auth cookies refreshed; `last_login_at` updated | P0 |
+| AUTH-007 | Login enumeration resistance | Submit wrong password for a real account, then same request shape for a nonexistent email | Both return HTTP 401 with the exact same detail: `"Incorrect email or password."` | P0 |
+| AUTH-008 | Google SSO happy path | `GET /api/auth/google/start?return_to=/admin` → complete consent/account selection → callback | User ends on `FRONTEND_BASE_URL + return_to`; new Google user gets `auth_provider="google"`; existing same-email password account links instead of duplicating | P0 |
+| AUTH-009 | Google SSO failure redirect | Callback missing/invalid `code` or expired/bad `state`, or Google returns `error` | Redirect lands on `/login?error=google_sso_failed`; login page shows the Google-failure banner | P1 |
+| AUTH-010 | Refresh-token rotation + reuse rejection | Call `POST /api/auth/refresh` twice with the same original refresh cookie | First refresh succeeds and sets a new cookie pair; second reuse of the revoked/old refresh token returns HTTP 401 + clears cookies | P0 |
+| AUTH-011 | Logout clears session | `POST /api/auth/logout` with an active refresh cookie | Refresh row revoked (if present), both auth cookies deleted, follow-up `GET /api/auth/me` returns 401 | P0 |
+| AUTH-012 | `/auth/me` unauthenticated | `GET /api/auth/me` without `wp_access_token` cookie | HTTP 401 with `"Not authenticated"` | P0 |
+
+### 5J — Forgot / Reset Password (`/api/auth/password/*`)
+
+| ID | Test | Expected | Pass criteria | Priority |
+|---|---|---|---|---|
+| PWRESET-001 | Forgot-password response is identical for existing vs nonexistent email | `POST /api/auth/password/forgot` always returns `{"status":"if_account_exists_email_sent"}` | Same HTTP 200 body for both cases; frontend always shows `"If an account exists..."` copy | P0 |
+| PWRESET-002 | Reset with a valid single-use token | `POST /api/auth/password/reset` with fresh token + strong password | Password hash updates; token `used_at` set; all existing refresh tokens revoked; response is `{"status":"password_updated"}` | P0 |
+| PWRESET-003 | Reused reset token rejected | Re-submit the same token after a successful reset | HTTP 400 with `"This password reset link is invalid or has expired."` | P0 |
+| PWRESET-004 | Expired reset token rejected | Use a token past `password_reset_token_ttl_minutes` (30 min) | HTTP 400 with the same generic invalid/expired message; no password change | P0 |
+| PWRESET-005 | Malformed or missing token rejected | Invalid token string, or `/reset-password` opened without `?token=` | UI blocks with `"This reset link is missing its token..."` when absent; API rejects malformed token with HTTP 400 invalid/expired detail | P1 |
+| PWRESET-006 | Password strength enforced on reset | New password shorter than 8 chars | UI shows `"Password must be at least 8 characters."`; direct API call fails validation (HTTP 422) via `ResetPasswordRequest.new_password` | P0 |
+
+### 5K — Consent Capture & Legal Disclosure (Signup, `/terms`, `/privacy`)
+
+| ID | Test | Expected | Pass criteria | Priority |
+|---|---|---|---|---|
+| CONSENT-001 | Signup requires the consent checkbox | Email/password signup cannot complete unless checkbox is ticked | Button submit path shows `"Please accept the Terms of Service and Privacy Policy to continue."`; backend also rejects `consent_accepted=false` | P0 |
+| CONSENT-002 | Terms + Privacy links are present and open the correct pages | Signup form shows linked legal text | `/terms` and `/privacy` both open successfully (new tab target on signup form); terms mention account-required itinerary generation; privacy page explains account/trip/usage data collection | P0 |
+| CONSENT-003 | Consent timestamp recorded | Successful signup creates/updates `users.consent_accepted_at` | Non-null timestamp stored for password signup; first-time Google-account creation also stamps `consent_accepted_at` in callback flow | P0 |
+| CONSENT-004 | Consent copy is DPDP-aligned and consistent with legal pages | Checkbox text + `/terms` + `/privacy` are spot-checked together | Signup copy explicitly references Terms of Service and Privacy Policy; linked pages explain purpose limitation, processors (Gemini/Google OAuth/Pexels/Resend), deletion rights, and grievance/contact path | P1 |
+
+### 5L — Account Deletion & Admin Purge (`DELETE /api/auth/me`, `/api/admin/users/*`)
+
+| ID | Test | Expected | Pass criteria | Priority |
+|---|---|---|---|---|
+| PURGE-001 | Self-service delete confirmation UX | `/account` requires typing `DELETE` before the destructive button enables | Button stays disabled until exact uppercase `DELETE`; cancel clears the staged confirmation state | P0 |
+| PURGE-002 | Self-service delete cascades to sessions | `DELETE /api/auth/me` on an authenticated account | User row deleted; `refresh_tokens` cascade-delete; analytics `events.user_id` becomes `NULL`; response clears cookies and returns `{"status":"account_deleted"}` | P0 |
+| PURGE-003 | Admin single-user delete (non-admin target) | `DELETE /api/admin/users/{user_id}` as admin | HTTP 200 with `{"status":"deleted","user_id":"..."}`; target account gone; `admin_user_deleted` event logged | P0 |
+| PURGE-004 | Admin route cannot delete the acting admin's own account | Admin calls `DELETE /api/admin/users/{their_own_id}` | HTTP 400 with `"Use your own account settings to delete your own account, not this endpoint."` | P0 |
+| PURGE-005 | Bulk purge rejects the wrong confirmation phrase | `POST /api/admin/users/purge-all` with anything except `DELETE ALL USERS` | HTTP 400 with exact typed-phrase guidance; no accounts deleted | P0 |
+| PURGE-006 | Bulk purge deletes only non-admins and returns count | `POST /api/admin/users/purge-all` with `{"confirm":"DELETE ALL USERS"}` | Single bulk delete removes every `is_admin=false` user, preserves admins, and returns `{"status":"purged","deleted_count":N}` | P0 |
+
+### 5M — Admin Dashboard & Metrics (`/admin`, `/api/admin/metrics/*`)
+
+| ID | Test | Expected | Pass criteria | Priority |
+|---|---|---|---|---|
+| ADMIN-001 | Logged-out access to `/admin` | Page shows sign-in CTA; API summary endpoint denies anonymous access | `/admin` renders the login prompt with `returnTo=/admin`; direct `GET /api/admin/metrics/summary` without cookies returns 401 | P0 |
+| ADMIN-002 | Authenticated non-admin access to `/admin` | UI explains lack of admin access; backend returns 403 | `/admin` shows the shield warning; `GET /api/admin/metrics/summary` / `timeseries` return HTTP 403 with `"Admin access required"` | P0 |
+| ADMIN-003 | Summary stat cards populate correctly | Admin dashboard loads `total_users`, `signups`, `logins`, `itineraries` | Four top stat cards render non-stale values from `/api/admin/metrics/summary`; login success rate uses `success_30d / (success_30d + failed_30d)` | P0 |
+| ADMIN-004 | Activity chart supports 7d + 30d ranges | Toggle `/admin` range buttons | `GET /api/admin/metrics/timeseries?range=7d|30d` returns matching `range`; chart rows plot `session_start`, `signup`, `login_success`, `itinerary_generated` by day | P1 |
+| ADMIN-005 | Cost cards show Gemini + Pexels usage | Admin cost section renders request/token/cost counters | UI shows Gemini requests, Gemini tokens, estimated Gemini cost, and Pexels call count sourced from `cost_usage` in `/api/admin/metrics/summary` | P0 |
+| ADMIN-006 | YouTube thumbnail analytics remain queryable in admin metrics data | Generate thumbnail events, then inspect admin metrics data source | `youtube_thumbnail_call` / `youtube_thumbnail_failed` appear in `/api/admin/metrics/timeseries` on the correct day even though `/admin` currently has no dedicated YouTube stat card yet | P1 |
+
+### 5N — Auth-Gated Itinerary Generation (`/signup`, `/api/generate-itinerary`, `LLMWizard.tsx`)
+
+| ID | Test | Expected | Pass criteria | Priority |
+|---|---|---|---|---|
+| GATE-001 | Logged-out generate action redirects to signup with `returnTo` | Clicking Generate while unauthenticated pushes `/signup?returnTo=/` | Wizard saves the assembled `TripConfig` first, then redirects to signup instead of silently failing | P0 |
+| GATE-002 | Trip config survives the Google OAuth full-page redirect | Start unauthenticated → click Generate → choose Google Sign-In → return | `wp_pending_trip_config` in `sessionStorage` survives the round-trip and deserializes back into the wizard/app stores | P0 |
+| GATE-003 | Generation auto-resumes immediately after auth | After successful email/password signup/login or Google SSO, `authStatus` flips to `authenticated` | `LLMWizard` detects pending config, clears it, calls `startGeneration(...)`, and user does not need to re-enter trip details | P0 |
+| GATE-004 | Direct API call without a session cookie is blocked | `POST /api/generate-itinerary` without `wp_access_token` | HTTP 401 from `get_current_user`; frontend `streamItinerary()` maps this to `AUTH_REQUIRED` | P0 |
+
 ## Section 6 — Price Metering for Paid APIs
 
 ### 6A — Gemini API Cost Tracking
@@ -596,6 +678,16 @@ Nominatim is free but has a **hard limit of 1 req/sec** and requires a valid `Us
 |---|---|---|---|---|
 | COST-019 | Attribution shown on map | Open full-screen map in itinerary | "© OpenStreetMap contributors" visible | Attribution text visible in map UI | P0 |
 | COST-020 | Wikivoyage attribution | Travel tips sourced from Wikivoyage | Source credited in tip UI | Source label shown | P1 |
+
+
+### 6E — Auth-Era Usage Analytics & Admin Cost Signals
+
+| ID | Test | Expected | Pass criteria | Priority |
+|---|---|---|---|---|
+| COST-021 | One itinerary-generation request flushes exactly one aggregated `gemini_usage` event | All Gemini calls made during a single request are persisted together after generation | Exactly one `events` row of type `gemini_usage` per request; `event_metadata.total_tokens == sum(call.total_tokens)` and `total_cost_usd == sum(call.cost_usd)` across the embedded `calls` array | P0 |
+| COST-022 | Pexels cache hits do **not** increment call count | Repeat the same day-photo query within one process after the first successful fetch | Second call returns from `_cache` and records no additional `pexels_usage` event/call-count increment | P0 |
+| COST-023 | Real Pexels network calls increment usage exactly once per uncached query | Call `get_day_photo()` with a fresh query and valid API key | One provider call records one `pexels` usage item; after `flush_llm_usage()` the resulting `pexels_usage.event_metadata.call_count` reflects only uncached network attempts | P0 |
+| COST-024 | YouTube thumbnail lookup beacon fires on real frontend fetches | Load itinerary cards/tips that require `/api/youtube-thumbnail` lookups | Real fetch path logs `youtube_thumbnail_call`; retry failures log `youtube_thumbnail_failed`; cached hits in `ItineraryTimeline` short-circuit without emitting duplicate beacons | P1 |
 
 ---
 

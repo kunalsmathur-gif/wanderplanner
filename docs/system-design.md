@@ -1,6 +1,6 @@
 # WanderPlanner — System Design Document
 
-**Version:** 8.2 (Multi-City Reliability · Edit-in-Place · Dark Mode Everywhere)  
+**Version:** 8.3 (Accounts · Auth Gate · Password Reset · Analytics)
 **Last Updated:** July 7, 2026  
 **Audience:** Engineering team and technical stakeholders
 
@@ -11,12 +11,16 @@
 1. [High-Level Architecture](#1-high-level-architecture)
 2. [Data Flow: LLM Anya Wizard](#2-data-flow-llm-anya-wizard)
 3. [Data Flow: Start Anywhere](#3-data-flow-start-anywhere)
+3A. [Data Flow: Authentication (Signup / Login / Google SSO / Password Reset)](#3a-data-flow-authentication-signup--login--google-sso--password-reset)
+3B. [Data Flow: Account Deletion & Data Purge](#3b-data-flow-account-deletion--data-purge)
 4. [Data Flow: Itinerary Generation with RAG](#4-data-flow-itinerary-generation-with-rag)
 5. [Data Flow: Persistent Anya Chat](#5-data-flow-persistent-anya-chat)
 6. [Data Flow: Share Trip Link](#6-data-flow-share-trip-link)
 7. [Data Flow: Voice Interaction](#7-data-flow-voice-interaction)
 8. [API Contract](#8-api-contract)
+8A. [Database Schema](#8a-database-schema)
 9. [Qdrant Collection Schema](#9-qdrant-collection-schema)
+9A. [Admin Analytics & Cost Tracking](#9a-admin-analytics--cost-tracking)
 10. [Gemini Prompt Design & Temperature Settings](#10-gemini-prompt-design--temperature-settings)
 11. [Frontend State Architecture](#11-frontend-state-architecture)
 12. [Design System](#12-design-system)
@@ -245,19 +249,96 @@ handleStartAnywhere()
 
 ---
 
+## 3A. Data Flow: Authentication (Signup / Login / Google SSO / Password Reset)
+
+```mermaid
+flowchart TD
+    A["User hits auth surface<br/>/signup • /login • /forgot-password"] --> B{"Which path?"}
+
+    B -->|Email signup| C["POST /api/auth/signup<br/>email + password + display_name + consent_accepted"]
+    C --> C1["Argon2id hash password<br/>store consent_accepted + consent_accepted_at"]
+    C1 --> C2["Set httpOnly cookies:<br/>wp_access_token + wp_refresh_token"]
+    C2 --> C3["Frontend authStore becomes authenticated"]
+
+    B -->|Email login| D["POST /api/auth/login"]
+    D --> D1["Verify Argon2id password hash"]
+    D1 --> C2
+
+    B -->|Google SSO| E["GET /api/auth/google/start"]
+    E --> E1["Sign stateless state param<br/>via itsdangerous serializer"]
+    E1 --> E2["Redirect to Google consent screen"]
+    E2 --> E3["GET /api/auth/google/callback?code=...&state=..."]
+    E3 --> E4["Exchange code for tokens<br/>fetch /userinfo via httpx"]
+    E4 --> E5["Upsert/find user by google_sub"]
+    E5 --> C2
+
+    B -->|Forgot password| F["POST /api/auth/password/forgot"]
+    F --> F1["Always return 200<br/>even if email does not exist"]
+    F1 --> F2["If account exists:<br/>create hashed single-use reset token<br/>send email via Resend"]
+    F2 --> F3["User opens /reset-password?token=..."]
+    F3 --> F4["POST /api/auth/password/reset"]
+    F4 --> F5["Validate token TTL (~30 min)<br/>update Argon2id password hash<br/>revoke all refresh tokens"]
+
+    C3 --> G["Future boot: AuthHydrator → GET /api/auth/me"]
+    G --> H{"Access token valid?"}
+    H -->|Yes| I["Hydrated session"]
+    H -->|No| J["POST /api/auth/refresh"]
+    J --> J1["Hash old opaque refresh token<br/>verify DB match<br/>rotate token pair"]
+    J1 --> I
+```
+
+**Consent note:** signup is blocked unless the user accepts the linked Terms of Service and Privacy Policy. The checkbox is intentionally minimal in-page; the full legal text lives on dedicated `/terms` and `/privacy` pages.
+
+**Nav auth indicator (⭐ NEW):** `components/common/UserMenu.tsx` renders "Log in"/"Sign up" when signed out, or the user's name/email + a "Log out" dropdown when signed in. Wired into `LandingHero`, `ThreeColumnLayout`, and `TopNav` — previously the app had no visible sign-in state anywhere outside `/account`.
+
+---
+
+## 3B. Data Flow: Account Deletion & Data Purge
+
+```mermaid
+flowchart TD
+    A["Authenticated user opens /account"] --> B["Danger Zone UI requires typing DELETE"]
+    B --> C["DELETE /api/auth/me"]
+    C --> D["Delete users row"]
+    D --> E["refresh_tokens.user_id ON DELETE CASCADE"]
+    D --> F["password_reset_tokens.user_id ON DELETE CASCADE"]
+    D --> G["events.user_id ON DELETE SET NULL"]
+    G --> H["Aggregate analytics survive in anonymized form"]
+    F --> I["Frontend clears auth state + returns to signed-out UX"]
+
+    P["Admin bulk purge"] --> Q["Planned/in-progress only"]
+    Q --> R["Intended backend: DELETE /admin/users/{user_id}<br/>POST /admin/users/purge-all with confirmation string"]
+    R --> S["Do not treat as shipped until verified end-to-end"]
+```
+
+---
+
 ## 4. Data Flow: Itinerary Generation with RAG
 
 ```
 User clicks "Generate my itinerary 🚀" (LLMWizard)
          │
          ▼
-LLMWizard → merge partialConfig → tripConfigStore.updateConfig()
+LLMWizard → check authStore / pendingGeneration state
+         │
+         ├─ signed out → savePendingGeneration(fullConfig)
+         │              → redirect to /signup?returnTo=/
+         │              → after auth, restore pending config and resume
+         │
+         └─ signed in → merge partialConfig → tripConfigStore.updateConfig()
          │
          ▼
 streamItinerary(fullConfig, ...)
          │
          ▼
 POST /api/generate-itinerary { trip_config: TripConfig }
+         │
+         ▼
+Depends(get_current_user)
+         │
+         ├─ no valid session → HTTP 401 (frontend maps to AUTH_REQUIRED)
+         │
+         └─ authenticated user →
          │
          ▼
 itinerary_chain.py
@@ -579,6 +660,66 @@ Response: { best_months: string[], weather_summary: string, avoid_months: string
 
 ---
 
+## 8A. Database Schema
+
+The app now uses **Postgres** (Supabase in production) for user/auth/analytics state. This is separate from **Qdrant**, which remains the vector database for RAG retrieval.
+
+### `users`
+
+| Column | Notes |
+|---|---|
+| `id` | UUID primary key |
+| `email` | Unique email login identifier |
+| `password_hash` | Argon2id hash; nullable for Google-first accounts |
+| `display_name` | Optional profile name |
+| `auth_provider` | `password` or `google` |
+| `google_sub` | Unique Google subject for SSO accounts |
+| `is_admin` | Admin-dashboard access gate |
+| `consent_accepted` | Required signup consent flag |
+| `consent_accepted_at` | Timestamp of captured consent |
+| `created_at` | Account creation timestamp |
+
+### `refresh_tokens`
+
+| Column | Notes |
+|---|---|
+| `id` | UUID primary key |
+| `user_id` | FK → `users.id`, `ON DELETE CASCADE` |
+| `token_hash` | SHA-256 of opaque refresh token |
+| `expires_at` | Refresh-token expiry |
+| `created_at` | Issued timestamp |
+
+Refresh tokens rotate on every `/api/auth/refresh` call; only the hash is stored server-side.
+
+### `events`
+
+| Column | Notes |
+|---|---|
+| `id` | UUID primary key |
+| `event_type` | Generic analytics event name |
+| `event_metadata` | JSONB payload for event-specific detail |
+| `user_id` | Nullable FK → `users.id`, `ON DELETE SET NULL` |
+| `created_at` | Indexed event timestamp |
+
+The generic `event_type + JSONB metadata` design intentionally avoids new migrations for every analytics/cost-tracking addition.
+
+### `password_reset_tokens`
+
+| Column | Notes |
+|---|---|
+| `id` | UUID primary key |
+| `user_id` | FK → `users.id`, `ON DELETE CASCADE` |
+| `token_hash` | SHA-256 of raw reset token |
+| `expires_at` | ~30 minute TTL |
+| `used_at` | Single-use marker |
+| `created_at` | Issued timestamp |
+
+Migrations:
+- `0001_auth_analytics`
+- `0002_password_reset`
+
+---
+
 ## 9. Qdrant Collection Schema
 
 Four active collections, all using `all-MiniLM-L6-v2` (384 dims, cosine distance):
@@ -653,6 +794,49 @@ Key: `embed(f"{destination} {duration_days}d {pace} {purpose} trip")`. Written b
 - **Wiki**: On-demand, triggered at itinerary generation time for the destination if not cached.
 - **OSM POIs**: APScheduler, weekly (`osm_refresh_days` setting). Iterates `KNOWN_DESTINATIONS` with a polite delay (`osm_ingest_delay_seconds`) between Overpass calls.
 - **Itinerary cache**: Event-driven — written on every successful itinerary generation, no separate scheduled job.
+
+---
+
+## 9A. Admin Analytics & Cost Tracking
+
+### Access-control model
+
+All admin metrics routes depend on `get_current_admin_user`:
+
+- unauthenticated caller → **401**
+- authenticated non-admin caller → **403**
+- authenticated admin caller → success
+
+The 403 branch is intentional so the frontend can distinguish "sign in first" from "you're signed in but not authorized."
+
+### Metrics endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/admin/metrics/summary` | Aggregate counts for users, signups, sessions, logins, itinerary outcomes, and cost/usage buckets |
+| `GET /api/admin/metrics/timeseries?range=7d|30d` | Daily event counts grouped by `event_type` |
+| `POST /api/analytics/client-event` | Browser-originated beacons such as `session_start` and YouTube-thumbnail events |
+
+### Event design
+
+The `events` table is append-only and generic. Current event families include:
+- `signup`
+- `login_success`
+- `login_failed`
+- `session_start`
+- `itinerary_generated`
+- `itinerary_failed`
+- allowlisted client-originated YouTube thumbnail events
+
+### Cost-tracking status
+
+The backend summary endpoint already exposes fields for:
+- Gemini call counts
+- Gemini token totals
+- Gemini estimated USD cost
+- Pexels call counts
+
+However, **Gemini token/cost event instrumentation is still in progress** in the verified backend code path. Document this as a prepared monitoring surface rather than a fully populated production dashboard today. The intended scope covers all Gemini call sites plus free-tier-aware tracking for Pexels and client-side YouTube thumbnail fetches.
 
 ---
 
@@ -870,6 +1054,20 @@ Breaking any link in this chain prevents scrolling. `<main className="h-full">` 
 | `GEMINI_API_KEY` | — | ✅ | Google Gemini API key |
 | `LLM_PROVIDER` | `gemini` | — | `gemini` or `mock` (for testing) |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | — | Primary model ID |
+| `DATABASE_URL` | — | ✅ | Postgres connection string (local Postgres or Supabase) |
+| `JWT_SECRET` | — | ✅ | Secret for signing access tokens and auth state |
+| `ACCESS_TOKEN_TTL_MINUTES` | `15` | — | Access-token lifetime |
+| `REFRESH_TOKEN_TTL_DAYS` | `30` | — | Refresh-token lifetime |
+| `COOKIE_DOMAIN` | `""` | — | Optional cookie domain override |
+| `COOKIE_SECURE` | `true` | — | Must be `true` in production for cross-origin cookies |
+| `COOKIE_SAMESITE` | `lax` | — | Use `lax` locally, `none` in cross-origin production |
+| `GOOGLE_CLIENT_ID` | — | ✅ for SSO | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | — | ✅ for SSO | Google OAuth client secret |
+| `GOOGLE_REDIRECT_URI` | `http://localhost:8000/api/auth/google/callback` | ✅ for SSO | OAuth callback URI |
+| `FRONTEND_BASE_URL` | `http://localhost:3000` | ✅ | Redirect target after auth/password flows |
+| `RESEND_API_KEY` | — | ✅ for password reset | Resend HTTP API key |
+| `EMAIL_FROM_ADDRESS` | `Wanderplanner <no-reply@wanderplanner.app>` | — | Password-reset sender |
+| `PASSWORD_RESET_TOKEN_TTL_MINUTES` | `30` | — | Reset-link expiration |
 | `QDRANT_URL` | `:memory:` | — | Qdrant instance URL |
 | `ALLOWED_ORIGINS` | `["http://localhost:3000"]` | ✅ | CORS whitelist — **must be JSON-array format** (pydantic-settings list parsing), `"*"` is rejected by a validator (⭐ NEW v10.0) |
 | `PEXELS_API_KEY` | — | — | Optional Pexels API key for itinerary day hero photos; generation degrades gracefully without it |
@@ -911,6 +1109,16 @@ Breaking any link in this chain prevents scrolling. `<main className="h-full">` 
 | **Total** | **~₹15–30/month** |
 
 Per-user cost: ~₹0.15–0.30
+
+### Cost observability
+
+In addition to static modeling, the new auth/analytics layer introduces an **events-backed cost monitoring path**:
+
+- admin summary fields for Gemini call count / token totals / estimated USD cost
+- Pexels call-volume tracking
+- client-side YouTube thumbnail beacon events for calls the FastAPI backend does not directly observe
+
+This is a **monitoring capability**, not a direct cost-reduction mechanism. The Gemini token/cost event instrumentation is still being completed end-to-end, so treat the dashboard fields as partly in progress rather than fully populated today.
 
 ### Caching Strategy
 
@@ -997,6 +1205,22 @@ PEXELS_API_KEY missing / request fails / no result / 6s itinerary photo budget e
 ---
 
 ## 16. Change Log
+
+### v10.4 (July 2026) — Local Testing Fixes: Auth Nav Indicator, Wizard Resume Race, Chip Backfill, SQLite FK Cascade
+
+- **Auth nav indicator**: added `UserMenu.tsx` (Log in/Sign up when signed out; name/email + Log out dropdown when signed in), wired into `LandingHero`, `ThreeColumnLayout`, and `TopNav` — closes a gap where the app had no visible sign-in state or logout affordance outside `/account`.
+- **Wizard resume race fix**: `LLMWizard.tsx`'s two mount effects (bootstrap + resume-after-auth) raced on the same mutable `pendingGeneration` sessionStorage flag, occasionally producing a duplicate/stale greeting after a signed-out user completed signup mid-wizard. Fixed via a single lazily-initialized snapshot shared by both effects plus a resume idempotency ref.
+- **Chip-backfill safety net**: the primary Gemini-backed `wizard_chat()` path now deterministically backfills the 6 standard purpose chips if the LLM's first-turn response omits them, matching the guarantee the offline mock path already had.
+- **SQLite FK cascade fix**: `apps/api/db.py` now sets `PRAGMA foreign_keys=ON` for SQLite connections only (local/dev), fixing silently no-op'd `ON DELETE CASCADE`/`SET NULL` behavior discovered during live local testing; zero effect on Postgres/prod. See `docs/scaling-tech-challenges.md` §7.
+- Verified: 113 backend tests + 36 frontend tests pass; `tsc --noEmit` clean; all four fixes additionally live-tested against running local dev servers.
+
+### v8.3 (July 2026) — Accounts, Auth Gate, Password Reset & Analytics
+
+- Added authentication/session architecture covering email/password signup, Google OAuth SSO, cookie-based JWT + rotating refresh tokens, and password reset via Resend.
+- Added data-flow documentation for auth, refresh rotation, pending-generation resume, and self-service account deletion.
+- Documented the new Postgres schema (`users`, `refresh_tokens`, `events`, `password_reset_tokens`) and Supabase as the production Postgres host.
+- Documented admin analytics endpoints plus the generic events table used for session/login/itinerary metrics and future Gemini/Pexels cost tracking.
+- Updated itinerary-generation flow and environment-variable reference for the new auth/database stack.
 
 ### v10.2 (July 2026) — Brand Rename, Multi-City Reliability, Edit-in-Place, Dark Mode Everywhere
 

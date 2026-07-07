@@ -5,6 +5,7 @@ import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useWizardChatStore } from '@/store/wizardChatStore'
 import { getTravelTips, type TravelTip } from '@/lib/api'
+import { logClientEvent } from '@/lib/analyticsBeacon'
 import { MapWrapper } from '@/components/map/MapWrapper'
 import { BestTimeWidget } from '@/components/dashboard/BestTimeWidget'
 import { BookingLinksSection } from '@/components/itinerary/BookingLinksSection'
@@ -46,8 +47,10 @@ export function Column3Sidebar() {
               const searchQuery = `${destination} ${tip.title.slice(0, 50)}`
               const res = await fetch(`/api/youtube-thumbnail?q=${encodeURIComponent(searchQuery)}`)
               const { thumbnailUrl } = await res.json()
+              logClientEvent('youtube_thumbnail_call', { found: Boolean(thumbnailUrl) })
               return { ...tip, thumbnailUrl }
             } catch {
+              logClientEvent('youtube_thumbnail_failed')
               return { ...tip, thumbnailUrl: null }
             }
           })

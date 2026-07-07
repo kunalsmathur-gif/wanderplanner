@@ -12,6 +12,7 @@ import { ComparisonPanel } from '@/components/comparison/ComparisonPanel'
 import { MapWrapper } from '@/components/map/MapWrapper'
 import { ShareButton } from '@/components/common/ShareButton'
 import { ThemeToggle } from '@/components/common/ThemeToggle'
+import { UserMenu } from '@/components/common/UserMenu'
 
 type MobileTab = 'itinerary' | 'overview' | 'map'
 
@@ -25,6 +26,7 @@ function TitleBar({ destination, days }: { destination: { city: string; country:
       <div className="flex items-center gap-2">
         <ThemeToggle className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--_border)] text-[var(--_fg)] transition-colors hover:border-[var(--_primary)] hover:text-[var(--_primary)]" />
         <ShareButton />
+        <UserMenu />
       </div>
     </div>
   )

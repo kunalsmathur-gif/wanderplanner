@@ -73,5 +73,43 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    # Database (users, sessions, analytics events)
+    database_url: str = "postgresql+asyncpg://wanderplanner:wanderplanner@localhost:5432/wanderplanner"
+
+    # Auth / sessions
+    jwt_secret: str = "change-me-in-production"
+    jwt_algorithm: str = "HS256"
+    access_token_ttl_minutes: int = 15
+    refresh_token_ttl_days: int = 30
+    cookie_domain: str = ""  # empty = host-only cookie (fine for same-site local/dev)
+    cookie_secure: bool = True
+    # "lax" for local http dev; set to "none" in prod (requires cookie_secure=True)
+    # since frontend (Vercel) and backend (Railway) are different origins.
+    cookie_samesite: str = "lax"
+
+    # Google OAuth (SSO)
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:8000/api/auth/google/callback"
+
+    # Frontend origin to redirect back to after OAuth / password flows
+    frontend_base_url: str = "http://localhost:3000"
+
+    # Transactional email (Resend) — used for password reset links
+    resend_api_key: str = ""
+    email_from_address: str = "Wanderplanner <no-reply@wanderplanner.app>"
+    password_reset_token_ttl_minutes: int = 30
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def _require_real_secret_in_prod(cls, v: str) -> str:
+        # Fails loudly in CI/prod if someone forgets to set a real secret,
+        # rather than silently signing tokens with a well-known default.
+        import os
+
+        if v == "change-me-in-production" and os.getenv("ENVIRONMENT", "development") == "production":
+            raise ValueError("JWT_SECRET must be set to a strong random value in production.")
+        return v
+
 
 settings = Settings()

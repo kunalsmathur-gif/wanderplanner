@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from core.config import settings
+from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize
 from models.chat import ChatMessage
 from models.trip import TripConfig
@@ -93,8 +94,8 @@ async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
         role = "user" if msg.role == "user" else "model"
         contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=neutralize(msg.content, context="chat message"))]))
 
-    def _call_sync() -> str:
-        response = client.models.generate_content(
+    def _call_sync():
+        return client.models.generate_content(
             model=settings.gemini_model,
             contents=contents,
             config=genai_types.GenerateContentConfig(
@@ -103,10 +104,11 @@ async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
                 max_output_tokens=1024,
             ),
         )
-        return response.text
 
     loop = asyncio.get_event_loop()
-    raw = await loop.run_in_executor(None, _call_sync)
+    response = await loop.run_in_executor(None, _call_sync)
+    track_gemini_usage(response, model=settings.gemini_model, purpose="chat_refine")
+    raw = response.text
 
     try:
         cleaned = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
