@@ -14,7 +14,11 @@ export function Column3Sidebar() {
   const activeDay = useItineraryStore((state) => state.activeDay)
   const collectedLabels = useWizardChatStore((state) => state.collectedLabels)
   const configDestination = useTripConfigStore((state) => state.config.destination?.city ?? '')
-  const destination = collectedLabels.destination ?? configDestination
+  const destinationCountry = useTripConfigStore((state) => state.config.destination_country ?? '')
+  // Fall back to the country name when the LLM hasn't resolved a concrete
+  // city yet — without this, country-wide trips (e.g. "Italy") would show
+  // no map context, tips, or booking links at all.
+  const destination = collectedLabels.destination || configDestination || destinationCountry
   const [tips, setTips] = useState<TravelTip[]>([])
   const [loadingTips, setLoadingTips] = useState(false)
 

@@ -193,6 +193,26 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       User: "Japan" -> "Japan has so much to offer! Are you thinking Tokyo and Kyoto,
         or would you like to explore further — Osaka, Hiroshima, maybe Kyushu?"
 
+    CRITICAL — always resolve to concrete cities: "destination_mode": "country" is ONLY a
+    momentary placeholder for the single turn where you first ask which cities to cover.
+    The instant you name specific cities (in the very same reply — proposing them, not
+    waiting for confirmation) OR the user confirms/picks cities, you MUST immediately
+    switch to Case D/A in that SAME config_patch: set destination_mode: "fixed", destination
+    = the first named city, and hops = the rest, using country: "<the country the user named>"
+    for every one of them. Never leave a trip sitting at destination_mode "country" with no
+    concrete destination — the app cannot show budget, map, or travel-tips widgets without a
+    real city. Example — user says "Italy" and you reply proposing Rome, Florence, Venice:
+      config_patch: {{
+        "destination_mode": "fixed",
+        "destination": {{"city": "Rome", "country": "Italy", "lat": 0, "lon": 0}},
+        "hops": [
+          {{"city": "Florence", "country": "Italy", "lat": 0, "lon": 0}},
+          {{"city": "Venice", "country": "Italy", "lat": 0, "lon": 0}}
+        ]
+      }}
+    If the user later narrows it down to just one of those cities, replace destination with
+    that city and clear hops to [].
+
   Field 3 -- dates (JSON key: "dates")
     When and how long they want to travel.
     Fixed window: {{"start": "2026-12-20", "end": "2026-12-27", "flexible": false}}
