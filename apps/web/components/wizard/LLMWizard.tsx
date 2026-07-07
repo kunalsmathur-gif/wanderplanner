@@ -19,6 +19,7 @@ interface Message {
   content: string
   chips?: string[]
   config_patch?: Record<string, unknown>  // stored so backend can replay real patches in history
+  multiSelect?: boolean  // true when chips is a multi-value field (e.g. themes); server-computed
 }
 
 type Phase = 'chatting' | 'generating' | 'done'
@@ -292,6 +293,7 @@ export function LLMWizard() {
         content: res.reply,
         chips: res.chips.length > 0 ? res.chips : undefined,
         config_patch: Object.keys(res.config_patch ?? {}).length > 0 ? res.config_patch : undefined,
+        multiSelect: res.multi_select,
       }
       setMessages([...nextMessages, assistantMsg])
 
@@ -490,7 +492,9 @@ export function LLMWizard() {
                     {/* Chips */}
                     {msg.chips && msg.chips.length > 0 && (() => {
                       const visibleChips = msg.chips.filter((chip) => !/generate/i.test(chip))
-                      const isThemeGroup = _isThemeChipGroup(visibleChips)
+                      // Prefer the server-computed flag (reliable); fall back to the
+                      // keyword heuristic only for older/cached messages that predate it.
+                      const isThemeGroup = msg.multiSelect ?? _isThemeChipGroup(visibleChips)
                       const selected = themeSelections[msg.id] ?? new Set<string>()
 
                       function toggleTheme(chip: string) {

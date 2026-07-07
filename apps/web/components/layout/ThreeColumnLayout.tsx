@@ -11,6 +11,7 @@ import { Column3Sidebar } from '@/components/itinerary/Column3Sidebar'
 import { ComparisonPanel } from '@/components/comparison/ComparisonPanel'
 import { MapWrapper } from '@/components/map/MapWrapper'
 import { ShareButton } from '@/components/common/ShareButton'
+import { ThemeToggle } from '@/components/common/ThemeToggle'
 
 type MobileTab = 'itinerary' | 'overview' | 'map'
 
@@ -21,7 +22,10 @@ function TitleBar({ destination, days }: { destination: { city: string; country:
       <p className="truncate text-xs font-semibold text-[var(--_muted-fg)]">
         {destination ? `${destination.city}, ${destination.country}` : 'Your Itinerary'} · {days} days
       </p>
-      <ShareButton />
+      <div className="flex items-center gap-2">
+        <ThemeToggle className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--_border)] text-[var(--_fg)] transition-colors hover:border-[var(--_primary)] hover:text-[var(--_primary)]" />
+        <ShareButton />
+      </div>
     </div>
   )
 }

@@ -23,6 +23,31 @@ class WizardChatResponse(BaseModel):
     config_patch: dict[str, Any] = {}
     ready_to_generate: bool = False
     summary: str | None = None
+    # True when `chips` represents a multi-value field (e.g. travel themes)
+    # that the user should be able to pick several of before continuing,
+    # rather than a single-choice field where any click submits immediately.
+    # Computed deterministically server-side (see `_is_multi_select_chips`)
+    # instead of relying on the frontend guessing from free-text chip labels.
+    multi_select: bool = False
+
+
+# Keywords that identify a multi-value field's chip options (themes today;
+# extend this list if other multi-select fields grow chip UIs later).
+_MULTI_SELECT_CHIP_KEYWORDS = [
+    "culture", "nature", "food", "adventure", "shopping", "photography",
+    "nightlife", "sports", "wellness", "religious", "vegetarian",
+]
+
+
+def _is_multi_select_chips(chips: list[str]) -> bool:
+    """True if every chip looks like a travel-theme option, meaning the user
+    should be able to select several before continuing."""
+    if len(chips) < 2:
+        return False
+    return all(
+        any(keyword in chip.lower() for keyword in _MULTI_SELECT_CHIP_KEYWORDS)
+        for chip in chips
+    )
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────
@@ -841,6 +866,7 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             config_patch=patch,
             ready_to_generate=ready,
             summary=data.get("summary") if ready else None,
+            multi_select=_is_multi_select_chips(chips_list),
         )
     except Exception:
         # JSON parse failed — LLM returned plain text (no JSON).
@@ -887,7 +913,13 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # leaked `",` or dangling `}`/`]`) from a truncated response before
         # ever showing it to the user.
         clean_raw = _strip_trailing_json_artifacts(clean_raw)
-        return WizardChatResponse(reply=clean_raw or "I'm on it! Just a moment…", chips=extracted_chips, config_patch={}, ready_to_generate=False)
+        return WizardChatResponse(
+            reply=clean_raw or "I'm on it! Just a moment…",
+            chips=extracted_chips,
+            config_patch={},
+            ready_to_generate=False,
+            multi_select=_is_multi_select_chips(extracted_chips),
+        )
 
 
 # ── Mock fallback ─────────────────────────────────────────────────────────────

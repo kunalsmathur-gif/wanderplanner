@@ -71,6 +71,10 @@ export interface WizardChatResponse {
   config_patch: Partial<TripConfig>
   ready_to_generate: boolean
   summary: string | null
+  // True when `chips` is a multi-value field (e.g. travel themes) the user
+  // should be able to pick several of before continuing. Computed
+  // deterministically server-side — do not re-derive this on the frontend.
+  multi_select: boolean
 }
 
 export async function wizardChat(
