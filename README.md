@@ -41,13 +41,13 @@ WanderPlanner uses conversational AI to help you plan trips through a natural ch
 
 | Feature | Description |
 |---|---|
-| **🤖 LLM-Powered Anya Wizard** | Gemini 2.5 Flash drives the wizard — natural freeform conversation in English or Hinglish. One message fills multiple fields. Smart extraction: "yaar Bali trip 7 days, budget 1.5 lakh types" sets destination + dates + budget at once. Assistant history is replayed as structured JSON, invalid/truncated wizard responses are retried automatically, leaked schema/JSON tails are stripped before fallback text is shown, Stage-2 optional follow-ups stay interactive until the backend explicitly signals readiness, and theme chips support multi-select submission when the field is multi-value. |
+| **🤖 LLM-Powered Anya Wizard** | Gemini 2.5 Flash drives the wizard — natural freeform conversation in English or Hinglish. One message fills multiple fields. Smart extraction: "yaar Bali trip 7 days, budget 1.5 lakh types" sets destination + dates + budget at once. Naming several places (e.g. "Colombo, Mirissa, and Yala") splits into a primary destination + hops; naming a whole country resolves to real cities the moment they're proposed/confirmed. Assistant history is replayed as structured JSON, invalid/truncated wizard responses are retried automatically, leaked schema/JSON tails are stripped before fallback text is shown, Stage-2 optional follow-ups stay interactive until the backend explicitly signals readiness, and theme chips reliably support multi-select submission via an explicit backend signal (not frontend guesswork). Reopening the wizard via "Edit Trip" on an existing itinerary carries the current trip forward instead of restarting the conversation. |
 | **🎙️ Anya Voice Assistant** | Conversational AI with voice input/output. Talk naturally to plan your trip. Young Indian female voice (20-25 yrs). |
 | **💬 Persistent Anya Chat** | After itinerary generation, the floating Anya orb opens a slide-in chat panel. Ask questions, request changes — Anya patches config or offers to regenerate. |
 | **📱 Mobile-Responsive** | Bottom tab navigation on mobile (Itinerary · Overview · Map & Tips). Full desktop 3-column layout on larger screens. |
 | **🤖 AI Itinerary Engine** | Gemini 2.5 Flash generates day-by-day schedules with timestamped activities, routing, and budget allocation. 5-attempt retry + 3-tier RAG-powered fallback (cache → OSM skeleton → mock). RAG-grounded: hybrid BM25+semantic Qdrant retrieval (3 query variants w/ HyDE, RRF merge, cross-encoder rerank on the primary generation path) + time-decay + Jaccard dedup compressed to ~600 tokens. |
 | **🗺️ Interactive Maps** | OpenStreetMap with activity pins. Full-screen map mode with day-tab navigation. |
-| **🎴 Rich Activity Cards** | PolaroidCard components with Wikipedia photos, hover zoom, YouTube link overlay. |
+| **🎴 Rich Activity Cards** | Compact `PolaroidCard` components — small thumbnail + text side-by-side (Wikipedia photo or YouTube thumbnail with hover zoom and link overlay), with automatic thumbnail retry and gradient-placeholder fallback if a lookup or image fails. |
 | **🌐 Travel Tips** | Gemini-powered tips + Reddit highlights with YouTube thumbnails. |
 | **📊 Destination Comparison** | Side-by-side AI comparison across 10 parameters: budget, weather, visa, family fit, food, romance, etc. |
 | **🌤️ Best Time Widget** | Historical weather data, tourist seasons, local events. |
@@ -57,7 +57,7 @@ WanderPlanner uses conversational AI to help you plan trips through a natural ch
 | **🗂️ Booking Hub** | Track flights, hotels, activities, and transport — confirmation number, date, amount. Persists in localStorage. |
 | **💰 Budget Tracking** | Expense breakdown by category with currency conversion widget. |
 | **📄 PDF Export** | Download a colorful travel-journal PDF with per-day hero photos, booking link chips, transit warnings, and matching cards for essentials, visa/safety, cost breakdown, and packing checklist. |
-| **🎨 Design System** | Geometric gold W brand mark. Space Grotesk + DM Sans + JetBrains Mono. Full dark/light mode with CSS custom properties. |
+| **🎨 Design System** | Geometric gold W brand mark. Space Grotesk + DM Sans + JetBrains Mono. Full dark/light mode with CSS custom properties — the toggle is reachable from the itinerary dashboard header, the persistent Anya chat panel, and the shared read-only trip link. |
 
 ---
 
@@ -246,6 +246,17 @@ Open `http://localhost:3000`.
 ---
 
 ## Changelog
+
+### v5.4 — WanderPlanner Rebrand + Wizard/UI Reliability Fixes (July 2026)
+- ✅ **Rebrand: WanderPlan → WanderPlanner** across every UI string, backend module, doc, and asset — no functional change.
+- ✅ **FIXED: multi-city trips dropped by Anya** — naming several places in one message (e.g. "Colombo, Mirissa, and Yala National Park") now correctly splits into a primary destination + hops instead of silently keeping only the first city.
+- ✅ **FIXED: country-mode trips never resolved to a real city** — naming a whole country (e.g. "Italy") now resolves to concrete cities the instant Anya proposes or the user confirms them, instead of leaving budget/booking/travel-tips panels blank.
+- ✅ **FIXED: blank budget/booking/tips panels** for country-mode and Anya-driven trips — `Column1Metrics`/`Column3Sidebar` now fall back to the destination country and show a "City +N" label for multi-hop trips.
+- ✅ **REDESIGNED: activity cards** — `PolaroidCard` rebuilt from an oversized full-width 16:9 video hero into a compact horizontal thumbnail+text layout so the itinerary is scannable at a glance.
+- ✅ **FIXED: intermittent missing YouTube thumbnails** — retry up to 3x with backoff, only cache successful lookups (never poison a query on a transient failure), and gracefully fall back to a placeholder if an image later 404s.
+- ✅ **FIXED: theme multiselect regression** — chip multi-select is now driven by an explicit backend `multi_select` signal instead of a frontend keyword guess that could misfire when Gemini varied chip wording.
+- ✅ **NEW: dark/light toggle** on the itinerary dashboard and the persistent Anya chat panel (previously only on the shared trip link page).
+- ✅ **FIXED: "Edit Trip" losing all context** — reopening the wizard on an already-generated itinerary now carries the existing trip config forward and offers targeted "change X" chips instead of restarting the whole conversation.
 
 ### v5.3 — RAG Optimization Round 2 (July 2026)
 - ✅ **NEW: Hybrid BM25 + semantic search** — lexical BM25 (destination-scoped Qdrant scroll) fused with semantic cosine search via RRF on every retrieval call. Fixes proper-noun confusion (e.g. Tokyo vs Kyoto).

@@ -92,4 +92,22 @@ This document previously described the retired direction as if it were fully imp
 
 **Status:** Sky Blue + Orange system is the single source of truth. All components should reference `var(--color-*)` semantic tokens — no new hardcoded hex values for brand colors.
 
-**Last Updated:** July 1, 2026
+**Last Updated:** July 7, 2026
+
+---
+
+## 🧩 Component Updates (July 7, 2026)
+
+### Activity card redesign — `PolaroidCard.tsx`
+The itinerary activity card was rebuilt from an oversized full-width 16:9 hero-video layout to a **compact horizontal layout**: a small 80–96px square thumbnail (Wikipedia photo or YouTube thumbnail) sits beside the activity text instead of above it. The previous layout pushed the actual itinerary copy (title, time, description) below a large video embed, making the center column feel unpolished and hard to scan. The card also gained an `onError` handler on the thumbnail `<img>` — if a YouTube thumbnail URL later 404s (deleted/restricted video), it now falls back to the existing deterministic gradient placeholder (`pickGradient(title)`) instead of showing a broken-image icon.
+
+### Destination-aware widget gating — `Column1Metrics.tsx` / `Column3Sidebar.tsx`
+Trip Metrics (budget, expense breakdown, currency widget) and the right-rail (travel tips, map, booking links) previously went completely blank whenever a trip was still in country-mode (e.g. "Italy" without a resolved city) or driven by the Anya wizard, which doesn't populate the legacy `collectedLabels` used by the older step-based wizard. Both components now accept `destination_country` as a fallback display value and gate widget rendering on "has *any* destination signal" instead of requiring a resolved city specifically. `Column1Metrics` additionally renders a "City +N" label when a trip has multiple hops.
+
+### Dark/light mode reachability
+`ThemeToggle` (sun/moon icon button) previously only appeared on the shared, read-only `/t/[slug]` trip page — there was no way to switch appearance from the main itinerary dashboard or from an open Anya chat panel, which are the two surfaces most users actually spend time in. The component now accepts a `className` override so its look can be adapted to different chrome (bordered icon button on light/card backgrounds, borderless white-on-color icon in the Anya chat header) and is wired into:
+- `ThreeColumnLayout`'s title bar (next to `ShareButton`)
+- `ChatPanel`'s header (next to the close button)
+
+### Multi-select theme chips — reliability, not visuals
+No visual change here, but worth noting for UX consistency: theme chip groups (Culture 🎨 / Food 🍜 / Adventure 🏔️ / etc.) toggle-select with a "Continue ✓" action, same as before. What changed is *how reliably* the UI knows a chip group is multi-select — it's now an explicit signal from the backend (`multi_select: true`) instead of a frontend guess based on chip label keywords, which could silently misfire whenever Gemini phrased the chip text differently.

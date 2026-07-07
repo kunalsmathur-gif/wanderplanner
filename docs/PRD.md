@@ -3,7 +3,7 @@
 ## **1\. Document Control**
 
 * **Author:** Product Manager  
-* **Status:** Rev 6 — Updated ✅ (LLM Wizard · Mobile-Responsive · RAG)
+* **Status:** Rev 7 — Updated ✅ (Multi-City Reliability · Edit-in-Place · Dark Mode Everywhere)  
 * **Target Release:** Q4 2026  
 * **Platform:** Web Application — Desktop-first (1440x900, 1920x1080) with mobile-responsive support (v5.0+). Bottom tab navigation on mobile (`< lg` breakpoint). No standalone mobile PWA or native app scope.
 * **Language:** English only (no i18n or RTL support in Phase 1)
@@ -184,7 +184,9 @@ The application follows a **Three-Column Split Architecture** for its main dashb
 * **Back Navigation:** Navigating back from Step 2 or 3 to Step 1 fully restores all previously entered values. State is session-scoped — does not survive a tab close or hard refresh.
 * **Auto-Pace Rule:** If the group includes any child under 5 years old, the Pace slider automatically sets to Relaxed and displays: *"Pace set to Relaxed — recommended for groups with young children."*
 * **Validation:** "Generate Itinerary" CTA remains disabled (semi-transparent grey) until the backend confirms the conversational flow is actually ready to generate — this includes completion of any optional checkpoint follow-up prompt, not just raw required-field count.
-* **Multi-select Interests:** Chip groups representing array-style preferences (especially trip themes such as Culture, Food, Adventure, Photography) must support multi-select before the user advances the conversation.
+* **Multi-select Interests:** Chip groups representing array-style preferences (especially trip themes such as Culture, Food, Adventure, Photography) must support multi-select before the user advances the conversation. This is driven by an explicit `multi_select` signal from the backend per chip group (⭐ Rev 7) rather than inferred from chip label text on the frontend, so multiselect behavior stays correct regardless of how Anya phrases the options.
+* **Theme & Appearance:** A dark/light mode toggle is available everywhere the user can be — the itinerary dashboard header and the persistent Anya chat panel header, in addition to any shared read-only trip link (⭐ Rev 7).
+* **Activity Media:** YouTube video thumbnails on itinerary activity cards retry automatically on transient lookup failures and fall back to a gradient placeholder (never a broken-image icon) if a thumbnail is unavailable or a video has been removed (⭐ Rev 7).
 
   #### **B. The Live Comparison Matrix Screen**
 
@@ -591,3 +593,23 @@ Instead of typing a specific city, users can enter an **entire country** and let
 - New endpoint: `POST /api/recommend-cities`
 - Request: `{ country: string, trip_config: TripConfig }`
 - Response: `{ cities: [{ name: string, country: string, reason: string, lat: number, lon: number }] }`
+
+#### Conversational equivalent via Anya (⭐ Rev 7)
+Users don't have to go through the click-based Recommend Cities flow above to get multi-city/country behavior — Anya (the LLM wizard) now handles it directly in natural conversation:
+- Naming several explicit places in one message (e.g. "Colombo, Mirissa, and Yala National Park") is parsed as the first place becoming `destination` and the rest becoming `hops`, matching R14's multi-hop model.
+- Naming a whole country (e.g. "Italy") is treated as a momentary placeholder — the instant Anya proposes specific cities (or the user confirms them) in her own reply, `destination_mode` resolves from `"country"` to `"fixed"` with a real `destination` + `hops`, matching R15's intent without requiring the dedicated Recommend Cities UI. Fixes a prior bug where country-mode trips never resolved to a concrete city, leaving the budget/booking/travel-tips panels blank on generation.
+
+---
+
+### **R16 — Edit an Existing Trip Without Losing Context**
+Once an itinerary has been generated, users can click **"Edit Trip"** to make changes (destination, dates, budget, themes, etc.) without starting the conversation over.
+
+#### Behavior
+- Reopening the Anya wizard from "Edit Trip" detects that a complete trip config + generated itinerary already exists for the session and carries that config forward instead of restarting Stage 1 from scratch.
+- Anya greets with a one-line summary of the current trip (e.g. "Bali, Indonesia · 7 days · ₹1,00,000 · 2 adults · Relaxed") and offers "Change destination", "Change dates", "Change budget", "Add/change themes", or "Regenerate as-is" chips.
+- Saying "regenerate" / "update it" / confirming a change re-triggers itinerary generation with the updated config, without re-collecting fields that haven't changed.
+
+#### Rationale
+Previously, clicking "Edit Trip" opened a brand-new Anya conversation with no memory of the trip just generated — users had to re-answer purpose, destination, dates, budget, group, and pace from scratch to change even one field.
+
+---

@@ -1,7 +1,7 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 8.0 (Security Hardening — rate limiting, prompt-injection guard, SSRF fix, sanitized errors, structured logging, CORS hardening, dependency pinning)  
-**Last Updated:** July 2, 2026  
+**Version:** 10.2 (Brand Rename, Multi-City Reliability, Edit-in-Place, Dark Mode Everywhere)  
+**Last Updated:** July 7, 2026  
 **Status:** Production-ready MVP
 
 ---
@@ -806,7 +806,7 @@ LLM-powered Anya wizard — replaces the scripted `ConversationalWizard`. Featur
 
 - Chat bubbles (user + Anya) with typing indicator
 - Dynamic chip suggestions returned by the LLM on each turn
-- Theme chip groups are detected heuristically and rendered as toggleable multi-select chips with a dedicated **Continue** action; single-value chip groups still submit immediately
+- Theme chip groups (Culture/Food/Adventure/etc.) render as toggleable multi-select chips with a dedicated **Continue** action, driven by the backend's explicit `multi_select` flag (⭐ v10.2 — previously a fragile frontend keyword heuristic that silently broke when Gemini phrased chip labels differently); single-value chip groups still submit immediately
 - Field progress pills showing which of the 6 required fields are filled
 - Voice input (Web Speech API) + TTS output (Speech Synthesis API)
 - "Generate my itinerary" button appears only once the backend emits the explicit Stage-3 ready signal (`summary !== null`)
@@ -814,6 +814,7 @@ LLM-powered Anya wizard — replaces the scripted `ConversationalWizard`. Featur
 - Calls `POST /api/wizard-chat` on each message; merges `config_patch` into local state
 - Keeps the free-text input available during the Stage-2 optional follow-up round instead of hiding it as soon as the 6 required fields are filled
 - Replays assistant turns to Gemini as JSON-wrapped history with the real `config_patch` from each turn
+- **Edit mode (⭐ v10.2):** reopening the wizard via "Edit Trip" on an already-generated itinerary detects the existing complete config + itinerary and seeds `partialConfig` from it (with `_checkpoint_asked: true`) instead of starting a fresh conversation — greets with a one-line trip summary and "Change destination/dates/budget/themes" or "Regenerate as-is" chips
 - On generate: merges partial config into `tripConfigStore` → calls `streamItinerary`
 
 ### `ConversationalWizard.tsx` (legacy, kept for reference)
@@ -823,7 +824,7 @@ LLM-powered Anya wizard — replaces the scripted `ConversationalWizard`. Featur
 Persistent post-generation Anya chat. Triggered by `FloatingAnyaButton` (floating orb).
 
 Features:
-- Design token styles (full dark mode support)
+- Design token styles (full dark mode support); header includes a `ThemeToggle` (⭐ v10.2) so users can flip dark/light without closing the chat
 - Calls `POST /api/chat-refine` with current `tripConfig`
 - `patch_config` action: silently applies changes
 - `regenerate` action: shows confirmation dialog with "Yes, apply & reset" / "Just noting it"
@@ -842,8 +843,9 @@ Features:
 
 ### `PolaroidCard.tsx`
 Activity card with:
+- Compact horizontal layout (⭐ v10.2 redesign) — small 80–96px square thumbnail + text side-by-side, replacing the earlier full-width 16:9 hero-video layout that obscured the itinerary text on long activity lists
 - Real `imageSrc` prop (Wikipedia photo or YouTube thumbnail)
-- Gradient fallback via `pickGradient(title)` (deterministic hash)
+- Gradient fallback via `pickGradient(title)` (deterministic hash), including on `<img onError>` (⭐ v10.2) so a thumbnail URL that later 404s (deleted/restricted video) degrades gracefully instead of showing a broken-image icon
 - Hover zoom on real images
 - `videoHref` → image area becomes a link with play badge
 - Dark mode via CSS custom property tokens
@@ -866,9 +868,9 @@ In ThreeColumnLayout center header. Click flow:
 Three-column dashboard + full-screen map mode. **Now mobile-responsive.**
 
 Layout (desktop `lg+`):
-- **Left (25%)**: `Column1Metrics` → metrics, expenses, currency, `BookingHub`
-- **Center (flex-1)**: top-bar with destination + `ShareButton`, then `ItineraryTimeline` or `ComparisonPanel`
-- **Right (25%)**: map + "⤢ Full screen" toggle, then `Column3Sidebar`
+- **Left (25%)**: `Column1Metrics` → metrics, expenses, currency, `BookingHub` (falls back to `destination_country` and shows "City +N" when a trip resolves to a country/multi-hop rather than one fixed city — ⭐ v10.2)
+- **Center (flex-1)**: top-bar with destination, `ThemeToggle` (⭐ v10.2 — previously only present on the shared `/t/[slug]` page), and `ShareButton`, then `ItineraryTimeline` or `ComparisonPanel`
+- **Right (25%)**: map + "⤢ Full screen" toggle, then `Column3Sidebar` (same `destination_country` fallback for travel tips/booking links — ⭐ v10.2)
 
 Layout (mobile `< lg`):
 - **Bottom tab bar** with 3 tabs: Itinerary · Overview · Map & Tips
@@ -1014,7 +1016,23 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.2 Changes (July 2026) — Brand Rename, Multi-City Reliability, Edit-in-Place, Dark Mode Everywhere
+
+| Change | Detail |
+|---|---|
+| **REBRAND** WanderPlan → WanderPlanner | Every UI string, backend module, doc, and asset renamed across the codebase (55 tracked files), including `WanderplanLogo.tsx` → `WanderplannerLogo.tsx` and `docs/WanderPlan_PRD.pdf` → `docs/WanderPlanner_PRD.pdf` (regenerated). No functional change. |
+| **FIXED** `chains/wizard_chat_chain.py` — multi-city drop | Field 2 (destination) only had 3 cases (single city / country-flexible / exploring) — no case for the user naming several explicit places (e.g. "Colombo, Mirissa, and Yala"), so the LLM silently kept only the first and dropped the rest. Added **Case D**: multiple named places → first becomes `destination`, rest become `hops` (itinerary generation already fully supported `hops`; the bug was purely upstream in extraction). `_summarise_state()` now also surfaces `hops` back to the LLM. |
+| **FIXED** `chains/wizard_chat_chain.py` — country-mode never resolved to a real city | Naming a whole country (e.g. "Italy") set `destination_mode: "country"` but never resolved to a concrete `destination.city`, even after Anya proposed specific cities in her own reply — leaving budget/booking/travel-tips widgets blank downstream. Country mode is now framed as a momentary placeholder; the instant Anya proposes or the user confirms specific cities, `config_patch` resolves `destination_mode` to `"fixed"` with a real `destination` + `hops` (mirrors Case D). |
+| **FIXED** `components/dashboard/Column1Metrics.tsx` / `components/itinerary/Column3Sidebar.tsx` | Both gated rendering of budget/expense/currency/travel-tips/booking-links widgets strictly on `destination?.city`, so any trip still in country-mode (or driven by the Anya wizard, which never populates the legacy `collectedLabels`) showed a blank left/right rail. Both now fall back to `destination_country` and gate on `hasDestination` (city OR country); `Column1Metrics` shows a "City +N" label for multi-hop trips. |
+| **REDESIGNED** `components/itinerary/PolaroidCard.tsx` | Replaced the oversized full-width 16:9 hero-video card with a compact horizontal layout (small 80–96px thumbnail + text side-by-side) so the itinerary text is immediately scannable instead of being pushed below a huge video. Added an `onError` handler (`imgFailed` state) so a thumbnail URL that later 404s falls back to the gradient placeholder instead of a broken-image icon. |
+| **FIXED** YouTube thumbnail reliability | `app/api/youtube-thumbnail/route.ts` scrapes youtube.com search HTML (no official API key) and is inherently flaky — confirmed the *same query* failing then succeeding seconds later. Two client bugs turned rare blips into permanent blanks: the `useThumbnail` hook cached `null` on any failure (poisoning that query for the session) and had no retry. Fixed: only cache genuine hits, retry up to 3x with backoff (500ms/1000ms). Server route also pins `gl=US&hl=en&persist_gl=1` and pre-sends the EU consent cookie to avoid landing on a GDPR interstitial page with no embeddable `videoId`. |
+| **FIXED** theme multiselect regression | The wizard decided whether a chip group (Culture/Food/Adventure/etc.) was multi-select by pattern-matching chip text against a hardcoded keyword list on the frontend — fragile, since Gemini freely generates the exact chip wording each turn, so any phrasing drift silently degraded multiselect to submit-on-first-click. Backend now computes a `multi_select` boolean deterministically (`_is_multi_select_chips()`) and returns it explicitly in the `wizard-chat` response; the frontend trusts that flag (old heuristic kept only as a fallback for stale/cached messages). |
+| **ADDED** dark/light `ThemeToggle` on itinerary page + chat panel | `ThemeToggle` previously only existed on the shared `/t/[slug]` read-only page — there was no way to switch themes from the main dashboard or an open Anya chat. Component now accepts a `className` override and is wired into `ThreeColumnLayout`'s title bar and `ChatPanel`'s header. |
+| **FIXED** "Edit Trip" losing all context | The Column-1 "Edit Trip" button called `openWizard()` with no preload, so Anya restarted the entire conversation from scratch even though a complete config + generated itinerary already existed for the session. `LLMWizard.tsx` now detects edit mode (existing itinerary + fully populated config, no fresh preload) and seeds `partialConfig` from the current config (`_checkpoint_asked: true`), greeting with a trip summary and "Change destination/dates/budget/themes" / "Regenerate as-is" chips instead of re-asking everything. Backend Stage-3 generate-signal trigger phrases widened to recognize "regenerate"/"update it" wording natural to editing. |
+
+**Verification:** backend syntax-checked (`python -c "import chains.wizard_chat_chain"`) and live-curl-tested against a running instance for Case D, country-mode resolution, the `multi_select` flag (theme chips → `true`, single-choice chips → `false`), and the edit-mode "change budget → regenerate as-is" flow (`ready_to_generate: true` confirmed with realistic post-generation dates). Frontend `tsc --noEmit` clean after every change.
 
 ### v10.1 Changes (July 2026) — Wizard Reliability + Visual PDF Export
 
