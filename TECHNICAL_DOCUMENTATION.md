@@ -748,14 +748,14 @@ Tracked today:
 
 ### Cost tracking status
 
-The admin summary endpoint already has placeholders/aggregation fields for:
+The admin summary endpoint returns live-aggregated fields for:
 
-- `gemini_calls_30d`
+- `gemini_requests_30d`
 - `gemini_tokens_30d`
-- `gemini_estimated_cost_usd_30d`
+- `gemini_estimated_cost_inr_30d` (⭐ displayed in INR, not USD — see Section 6A/14 note on `usd_to_inr_rate`)
 - `pexels_calls_30d`
 
-However, the **Gemini token/cost event instrumentation itself is still in progress** in the verified backend code path. Document these as monitoring fields that the dashboard is preparing for, not as fully populated production metrics yet.
+Gemini token/cost event instrumentation (`core/llm_usage.py`, `core/llm_client.py`) is fully wired end-to-end and verified against real Gemini API calls — each request logs a `gemini_usage` event with real token counts and an internally-USD-computed cost, which the admin summary endpoint sums and converts to INR for display.
 
 ---
 

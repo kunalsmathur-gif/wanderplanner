@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.analytics import log_event
 from core.auth_dependency import get_current_admin_user
+from core.config import settings
 from db import get_db
 from db_models import Event, User
 
@@ -95,7 +96,10 @@ async def metrics_summary(
         "cost_usage": {
             "gemini_requests_30d": gemini_requests_30d,
             "gemini_tokens_30d": int(gemini_tokens_30d or 0),
-            "gemini_estimated_cost_usd_30d": round(float(gemini_cost_30d or 0.0), 4),
+            # Gemini list pricing is USD-denominated; costs are computed/stored
+            # internally in USD (see core/llm_client.py) and converted to INR
+            # here purely for admin-dashboard display.
+            "gemini_estimated_cost_inr_30d": round(float(gemini_cost_30d or 0.0) * settings.usd_to_inr_rate, 2),
             "pexels_calls_30d": int(pexels_calls_30d or 0),
         },
     }

@@ -15,7 +15,7 @@ export interface AdminSummary {
   cost_usage: {
     gemini_requests_30d: number
     gemini_tokens_30d: number
-    gemini_estimated_cost_usd_30d: number
+    gemini_estimated_cost_inr_30d: number
     pexels_calls_30d: number
   }
 }

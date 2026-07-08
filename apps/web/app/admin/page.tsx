@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Loader2, ShieldAlert, Users, LogIn, Sparkles, DollarSign, AlertTriangle } from 'lucide-react'
+import { Loader2, ShieldAlert, Users, LogIn, Sparkles, IndianRupee, AlertTriangle } from 'lucide-react'
 import {
   ResponsiveContainer,
   LineChart,
@@ -158,10 +158,10 @@ export default function AdminDashboardPage() {
 
             <h2 className="mt-8 text-base font-semibold text-[var(--_fg)]">Cost & usage metrics</h2>
             <div className="mt-3 grid grid-cols-2 gap-4 md:grid-cols-4">
-              <StatCard icon={<DollarSign size={16} />} label="Gemini requests (30d)" value={summary.cost_usage.gemini_requests_30d} />
-              <StatCard icon={<DollarSign size={16} />} label="Gemini tokens (30d)" value={summary.cost_usage.gemini_tokens_30d.toLocaleString()} />
-              <StatCard icon={<DollarSign size={16} />} label="Est. Gemini cost (30d)" value={`$${summary.cost_usage.gemini_estimated_cost_usd_30d.toFixed(4)}`} sub="Approximate — for monitoring only" />
-              <StatCard icon={<DollarSign size={16} />} label="Pexels calls (30d)" value={summary.cost_usage.pexels_calls_30d} sub="Free tier: 200 req/hour" />
+              <StatCard icon={<IndianRupee size={16} />} label="Gemini requests (30d)" value={summary.cost_usage.gemini_requests_30d} />
+              <StatCard icon={<IndianRupee size={16} />} label="Gemini tokens (30d)" value={summary.cost_usage.gemini_tokens_30d.toLocaleString()} />
+              <StatCard icon={<IndianRupee size={16} />} label="Est. Gemini cost (30d)" value={`₹${summary.cost_usage.gemini_estimated_cost_inr_30d.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} sub="Approximate — for monitoring only" />
+              <StatCard icon={<IndianRupee size={16} />} label="Pexels calls (30d)" value={summary.cost_usage.pexels_calls_30d} sub="Free tier: 200 req/hour" />
             </div>
 
             <h2 className="mt-8 text-base font-semibold text-[var(--_fg)]">Activity over time</h2>

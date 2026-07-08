@@ -73,6 +73,13 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    # Cost display currency conversion — Gemini list pricing is USD-denominated,
+    # so per-call costs are still computed/stored internally in USD; this rate
+    # is applied only at the admin-dashboard display layer to show INR instead.
+    # Update periodically to track the real USD/INR rate (approximate is fine —
+    # this is a directional cost signal, not accounting-grade billing).
+    usd_to_inr_rate: float = 87.0
+
     # Database (users, sessions, analytics events)
     database_url: str = "postgresql+asyncpg://wanderplanner:wanderplanner@localhost:5432/wanderplanner"
 
