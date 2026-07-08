@@ -275,6 +275,9 @@ Open `http://localhost:3000`.
 
 ## Changelog
 
+### v5.7 — Admin Console Entry Point (July 2026)
+- ✅ **FIXED: no way to reach the admin console from the UI** — `UserMenu`'s dropdown now shows an "Admin console" link (only for `is_admin` users) linking to `/admin`, right above "Log out".
+
 ### v5.6 — Local Testing Fixes: Auth Nav Indicator, Wizard Resume Race, Chip Backfill (July 2026)
 - ✅ **FIXED: no way to tell if you're signed in** — the home page had no login/signup CTA, no indicator of an active session, and no discoverable sign-out option outside of `/account`. Added a shared `UserMenu` component (Log in/Sign up when signed out; name/email + Log out dropdown when signed in), wired into the landing page nav, the itinerary dashboard title bar, and the top nav bar.
 - ✅ **FIXED: wizard losing/duplicating context after sign-in** — a mount-effect race in `LLMWizard.tsx` could inject a stray fresh greeting on top of a resumed generation right after completing signup mid-wizard. Fixed with a single shared snapshot of the pending-generation flag plus a resume idempotency guard.

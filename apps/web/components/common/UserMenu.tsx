@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { LogOut, User, ChevronDown } from 'lucide-react'
+import { LogOut, User, ChevronDown, ShieldCheck } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 
 /**
@@ -94,6 +94,17 @@ export function UserMenu({ inverted = false }: { inverted?: boolean }) {
           >
             Account settings
           </Link>
+          {user.is_admin && (
+            <Link
+              href="/admin"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2 px-3 py-2 text-sm text-[var(--_fg)] transition-colors hover:bg-[var(--_bg)]"
+            >
+              <ShieldCheck size={14} aria-hidden="true" />
+              Admin console
+            </Link>
+          )}
           <button
             type="button"
             role="menuitem"

@@ -1126,7 +1126,7 @@ In ThreeColumnLayout center header. Click flow:
 ### `UserMenu.tsx` ⭐ NEW
 Shared auth status control, rendered in `LandingHero`'s nav, `ThreeColumnLayout`'s title bar, and `TopNav`:
 - **Signed out**: renders "Log in" / "Sign up" links (`/login`, `/signup`)
-- **Signed in**: renders a pill button with the user's `display_name`/`email` → click opens a dropdown with "Account settings" (`/account`) and "Log out" (calls `authStore.logout()`, then routes home)
+- **Signed in**: renders a pill button with the user's `display_name`/`email` → click opens a dropdown with "Account settings" (`/account`), **"Admin console" (`/admin`, only rendered when `user.is_admin`)**, and "Log out" (calls `authStore.logout()`, then routes home)
 - Reads `authStore.status`/`user` directly, so it reflects the live session with no extra fetch; shows a skeleton pulse while `status === 'loading' | 'idle'`
 - Fixes a real bug: previously there was **no** login/signup CTA, no "you're signed in" indicator, and no way to sign out from the main app shell — `/account`'s danger-zone logout button was the only way to sign out, and it was undiscoverable without already knowing the URL
 
@@ -1351,6 +1351,10 @@ curl http://localhost:8000/health
 ---
 
 ## 14. Recent Changes (v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.5 Changes (July 2026) — Admin Console Entry Point
+
+There was no way to reach `/admin` from the UI at all — admins had to know the URL. `UserMenu.tsx`'s dropdown now conditionally renders an "Admin console" link (with a shield icon) right above "Log out", only when `authStore.user.is_admin` is true. Non-admin users never see it.
 
 ### v10.4 Changes (July 2026) — Local Testing Bug Fixes: Auth Nav, Wizard Resume Race, Chip Backfill
 
