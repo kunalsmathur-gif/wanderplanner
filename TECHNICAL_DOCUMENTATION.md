@@ -704,11 +704,26 @@ Admin-only daily event rollups for `7d` or `30d`.
 
 **Response:** `{ "range": "30d", "series": { "2026-07-07": { "signup": 4, "session_start": 17, ... } } }`
 
+### `POST /api/admin/requests` ⭐ NEW
+Any authenticated non-admin user requests admin access. Body: `{ "message": "optional reason" }`. Idempotent while pending; **400** if already admin. Emails every existing admin.
+
+### `GET /api/admin/requests/me` ⭐ NEW
+Caller's own most recent admin-access request (or `null`), for account-page status display.
+
+### `GET /api/admin/requests` ⭐ NEW
+Admin-only. Lists admin-access requests. **Query params:** `status=pending|approved|rejected|all` (default `pending`).
+
+### `POST /api/admin/requests/{request_id}/approve` ⭐ NEW
+Admin-only. Sets the target user's `is_admin=True`, marks the request `approved`, emails the requester. **400** if the request isn't currently `pending`.
+
+### `POST /api/admin/requests/{request_id}/reject` ⭐ NEW
+Admin-only. Marks the request `rejected` (target user's `is_admin` stays unchanged), emails the requester. **400** if the request isn't currently `pending`.
+
 ---
 
 ## 7A. Admin Analytics Dashboard
 
-The analytics backend is live even though the dedicated `/admin` frontend dashboard page is still in progress in the verified codebase.
+The analytics backend and the `/admin` frontend dashboard page are both live and verified end-to-end (see Section 14 changelog for verification notes).
 
 ### Data model
 
@@ -732,6 +747,32 @@ Admin access is enforced with `get_current_admin_user`:
 - authenticated admin caller → success
 
 That 403-vs-401 split is deliberate so the frontend can render the right UX.
+
+**Nobody becomes an admin automatically.** `SignupRequest` (`models/auth.py`) has no `is_admin` field at all, so it is structurally impossible for the signup payload to grant admin access; `User.is_admin` defaults to `False` at the DB layer (`db_models/user.py`). The only two ways `is_admin` is ever flipped to `True`:
+
+1. **Out-of-band DB seed** — used once, to create the very first admin, since no admin exists yet to approve one.
+2. **The admin-request approval workflow** (⭐ NEW — see below) — an existing admin explicitly reviews and approves a request.
+
+### Admin access requests (⭐ NEW)
+
+New `admin_requests` table (migration `0003_admin_requests`):
+
+| Column | Purpose |
+|---|---|
+| `user_id` | FK → `users.id`, `ON DELETE CASCADE` |
+| `status` | `"pending"` \| `"approved"` \| `"rejected"` |
+| `message` | Optional free-text reason from the requester |
+| `reviewed_by` | FK → `users.id`, `ON DELETE SET NULL` — which admin actioned it |
+| `reviewed_at` | Timestamp of the approve/reject decision |
+
+**Flow:**
+1. Any authenticated non-admin user calls `POST /api/admin/requests` (from `/account` → "Admin access" section). Idempotent — calling it again while a request is still pending returns the existing pending request rather than creating a duplicate. Already-admin users get a **400**.
+2. Every existing admin (`User.is_admin=true` with a non-null email) is emailed via `core/email.send_admin_request_notification` — best-effort, never blocks the request itself; in local dev without `RESEND_API_KEY` the notification is logged instead (same pattern as the password-reset dev-log fallback).
+3. Any admin sees all pending requests in the `/admin` console's "Admin access requests" panel (`GET /api/admin/requests?status=pending`), with the requester's name/email and optional message.
+4. The admin clicks **Approve** (`POST /api/admin/requests/{id}/approve`) or **Reject** (`POST /api/admin/requests/{id}/reject`). Approval sets the target user's `is_admin=True` and emails them a decision notification (`core/email.send_admin_request_decision_email`); rejection leaves `is_admin=False` and still notifies them. Both actions are idempotent-guarded — a request that's already `approved`/`rejected` returns **400** on a second review attempt.
+5. `GET /api/admin/requests/me` lets the requester's own `/account` page show "pending review" / "declined, request again" state without granting anything.
+
+All state-changing admin-request actions are logged as analytics events (`admin_request_created`, `admin_request_approved`, `admin_request_rejected`) for audit trail.
 
 ### Metrics currently exposed
 
@@ -1350,7 +1391,23 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.6 Changes (July 2026) — Admin Access Request/Approval Workflow
+
+Closes a compliance/security gap: previously there was no controlled way for a second admin to be added post-launch other than a direct DB write, and nothing prevented ambiguity about whether new users could ever become admins by accident (they couldn't — `SignupRequest` never accepted `is_admin` — but there was no *positive* workflow for legitimately escalating a trusted user).
+
+| Change | Detail |
+|---|---|
+| **NEW** `admin_requests` table | Migration `0003_admin_requests`. Tracks `user_id`, `status` (`pending`/`approved`/`rejected`), optional `message`, `reviewed_by`, `reviewed_at`. |
+| **NEW** `POST /api/admin/requests` | Any authenticated non-admin can request admin access (optional reason message). Idempotent while pending; 400 if already an admin. |
+| **NEW** `GET /api/admin/requests/me` | Requester's own latest request status, for account-page display. |
+| **NEW** `GET /api/admin/requests` (admin-only) | List requests by status (default `pending`) — powers the `/admin` console's new "Admin access requests" panel. |
+| **NEW** `POST /api/admin/requests/{id}/approve` \| `/reject` (admin-only) | Approve flips `is_admin=True` on the target user; reject leaves it unchanged. Both are one-shot (400 if the request was already reviewed) and both email the requester (`core/email.send_admin_request_decision_email`). |
+| **NEW** admin notification emails | `core/email.send_admin_request_notification` emails every existing admin the moment a new request is created — dev-only log fallback when `RESEND_API_KEY` is unset, same pattern as password-reset. |
+| **NEW** `/account` "Admin access" section | Shows a "Request admin access" button (hidden for existing admins), or "pending review" / "previously declined, request again" state, backed by `getMyAdminRequest()`/`requestAdminAccess()`. |
+| **NEW** `/admin` "Admin access requests" panel | Lists all pending requests with requester name/email/message and Approve/Reject buttons; removes a request from the list immediately on action. |
+| **Verified** | 8 new integration tests (`tests/integration/test_admin_requests.py`) covering creation, idempotent re-request, already-admin rejection, 401/403 gating, full approve→`is_admin=True`→admin-endpoint-access flow, reject→`is_admin` stays `False`, and double-review rejection. Full suite: 121 passed. Also live-curl-tested end-to-end against the running dev servers: signup → non-admin → request → visible to admin via `GET /admin/requests` → approve → confirmed `is_admin: true` on `/auth/me` → confirmed admin-endpoint access → cleaned up test user. |
 
 ### v10.5 Changes (July 2026) — Admin Console Entry Point
 

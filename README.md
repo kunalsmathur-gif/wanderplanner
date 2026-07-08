@@ -46,7 +46,8 @@ WanderPlanner uses conversational AI to help you plan trips through a natural ch
 | **🔑 Password Reset** | Forgot/reset password flow with single-use reset links delivered by Resend. Resetting a password invalidates all existing refresh-token sessions defensively. |
 | **✅ Consent + Legal Pages** | Signup requires a minimized consent checkbox linking to `/terms` and `/privacy`, with consent timestamped per account for DPDP-aligned recordkeeping. |
 | **🗑️ Self-Service Account Deletion** | `/account` includes a danger-zone flow that requires typing `DELETE` before permanently removing the account and revoking refresh-token sessions. |
-| **📈 Admin Analytics Dashboard** | Backend admin metrics endpoints summarize signups, sessions, logins, itinerary generation, and analytics events. Frontend dashboard UI is still in progress, but the backend data model and endpoints are live. |
+| **📈 Admin Analytics Dashboard** | Live `/admin` console (reachable from the account menu for approved admins) showing signups, sessions, logins, itinerary generation, Gemini token/cost usage (in ₹), and Pexels free-tier call counts, plus a bulk data-purge tool. |
+| **🛡️ Admin Access Requests** | No user is ever auto-admin. Any signed-in user can request admin access from `/account`; every existing admin is emailed and sees the request in a review panel on `/admin`, where they can approve (grants access, emails requester) or reject. |
 | **🎙️ Anya Voice Assistant** | Conversational AI with voice input/output. Talk naturally to plan your trip. Young Indian female voice (20-25 yrs). |
 | **💬 Persistent Anya Chat** | After itinerary generation, the floating Anya orb opens a slide-in chat panel. Ask questions, request changes — Anya patches config or offers to regenerate. |
 | **📱 Mobile-Responsive** | Bottom tab navigation on mobile (Itinerary · Overview · Map & Tips). Full desktop 3-column layout on larger screens. |
@@ -274,6 +275,12 @@ Open `http://localhost:3000`.
 ---
 
 ## Changelog
+
+### v5.8 — Admin Access Request/Approval Workflow (July 2026)
+- ✅ **NEW: no user can become admin without explicit approval.** Any signed-in user can now click "Request admin access" on `/account`; every existing admin gets emailed immediately and sees the request in a new "Admin access requests" panel at the top of `/admin`, with Approve/Reject buttons.
+- Approving flips the target user's `is_admin` to `true` and emails them the decision; rejecting leaves access unchanged and also emails the decision. Requests are idempotent while pending (no duplicate spam) and one-shot once reviewed.
+- New `admin_requests` table + migration `0003_admin_requests`, 5 new API endpoints, 8 new integration tests (121 backend tests passing total). Live end-to-end curl-verified against running dev servers.
+- Docs updated: `TECHNICAL_DOCUMENTATION.md` (§7A + v10.6 changelog), `docs/system-design.md` (§3C data flow + §8A schema + v10.6 changelog), `docs/PRD.md` (Clarification #13), `DESIGN_REVAMP_SUMMARY.md` (admin console + account page UI).
 
 ### v5.7 — Admin Console Entry Point (July 2026)
 - ✅ **FIXED: no way to reach the admin console from the UI** — `UserMenu`'s dropdown now shows an "Admin console" link (only for `is_admin` users) linking to `/admin`, right above "Log out".

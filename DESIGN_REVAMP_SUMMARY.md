@@ -97,7 +97,7 @@ This document previously described the retired direction as if it were fully imp
 - ✅ Auth/legal/account surfaces (`/signup`, `/login`, `/forgot-password`, `/reset-password`, `/terms`, `/privacy`, `/account`) reuse the same design tokens and shared `.btn` / `.input` primitives
 - 🟡 Admin dashboard surface is planned/in progress; when it lands, it must use the same tokens and primitives rather than introducing a separate admin design language
 
-**Last Updated:** July 7, 2026
+**Last Updated:** July 8, 2026 (added auth status indicator, admin console UI, and admin access request UI)
 
 ---
 
@@ -112,7 +112,7 @@ New full-page surfaces were added for authentication and compliance workflows:
 - `/terms`
 - `/privacy`
 - `/account`
-- `/admin` *(planned/in progress; backend metrics exist, frontend page not yet verified as shipped)*
+- `/admin` — **live and verified**, not a placeholder (superseded the earlier "planned/in progress" note below)
 
 These pages intentionally **reuse the existing design system**:
 - centered card shell and tokenized backgrounds
@@ -124,6 +124,29 @@ Shared auth-specific components:
 - `AuthLayout` — centered-card shell for auth pages
 - `GoogleSignInButton` — branded CTA that still inherits the app token system
 - `AuthHydrator` — non-visual bootstrap component that restores session state on app load and emits the `session_start` analytics beacon
+- `UserMenu` ⭐ **NEW** — auth-status nav control (see below)
+
+### Auth status indicator — `UserMenu.tsx` ⭐ NEW
+Prior to this, the main app shell had **no visible sign-in state at all**: no "Log in"/"Sign up" CTA on the landing page, no indicator anywhere that you were already signed in, and no way to sign out short of navigating directly to `/account`'s danger zone. `UserMenu` is a single shared component wired into three chrome locations — `LandingHero`'s sticky nav, `ThreeColumnLayout`'s itinerary title bar, and `TopNav` — that reads `authStore` directly:
+- **Signed out:** "Log in" text link + "Sign up" primary button, same visual weight as the existing "Plan a trip" CTA.
+- **Signed in:** a bordered pill button showing `display_name`/`email`, click-to-open dropdown with a click-outside-to-close listener. Dropdown items: "Account settings", **"Admin console"** (only rendered when `user.is_admin === true`, with a shield icon, positioned directly above), and "Log out" (destructive red text, signs out then routes home).
+- Skeleton-pulse placeholder while `authStore.status` is `loading`/`idle`, so the nav never flashes an incorrect state during the initial session-hydration fetch.
+- Accepts an `inverted` prop for use on dark/photo chrome (`TopNav`) vs. the light card-style default.
+
+### Admin console UI — `/admin` page ⭐ NEW
+Full-page dashboard, gated client-side on `user.is_admin` (with the same 401→"please log in" / non-admin→"not allowed" split as the backend) and reachable from `UserMenu`'s "Admin console" link:
+- **Stat cards** (4-up grid, responsive to 2-up on mobile): total users, sign-ups (30d), login success rate, itineraries generated (30d) — each using the existing `StatCard` primitive (icon + label + big number + optional sub-label), consistent with the rest of the app's card styling.
+- **Cost & usage metrics** row: Gemini request count, Gemini token count, **estimated Gemini cost in ₹ (INR, not USD)** with `IndianRupee` icon and `en-IN` locale number formatting, Pexels free-tier call count.
+- **Activity-over-time chart**: `recharts` line chart (sessions/signups/logins/itineraries) with a 7-day/30-day toggle.
+- **Admin access requests panel** ⭐ NEW — sits above the stat cards so it's the first thing an admin sees on load. Lists pending requests (requester name/email + optional reason message) with green "Approve" / outlined-red "Reject" buttons; a pill badge shows the pending count next to the panel heading. Approving/rejecting immediately removes the row from the list (optimistic-feeling, backed by a real API round-trip) rather than requiring a manual refresh.
+- **Danger zone**: bulk data-purge control, unchanged from the prior design (typed `DELETE ALL USERS` confirmation phrase).
+
+### Admin access request UI on `/account` ⭐ NEW
+A new "Admin access" section was added to the account-settings card, positioned between the identity block and the existing "Danger zone" — visible only to non-admin users (already-admin users don't need it, since they already have the console link in `UserMenu`):
+- Default state: short explanation + a "Request admin access" outline button.
+- After requesting: a "pending review" state with a clock icon, no way to re-request while pending (prevents spamming admins with duplicate emails — the backend is also idempotent here).
+- If a prior request was declined: the explanation copy updates to acknowledge that and re-offers the request button.
+- All state transitions are driven by `GET /api/admin/requests/me` on mount and the response of `POST /api/admin/requests`, no polling.
 
 ### Activity card redesign — `PolaroidCard.tsx`
 The itinerary activity card was rebuilt from an oversized full-width 16:9 hero-video layout to a **compact horizontal layout**: a small 80–96px square thumbnail (Wikipedia photo or YouTube thumbnail) sits beside the activity text instead of above it. The previous layout pushed the actual itinerary copy (title, time, description) below a large video embed, making the center column feel unpolished and hard to scan. The card also gained an `onError` handler on the thumbnail `<img>` — if a YouTube thumbnail URL later 404s (deleted/restricted video), it now falls back to the existing deterministic gradient placeholder (`pickGradient(title)`) instead of showing a broken-image icon.

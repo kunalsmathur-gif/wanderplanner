@@ -3,7 +3,7 @@
 ## **1\. Document Control**
 
 * **Author:** Product Manager  
-* **Status:** Rev 8 — Updated ✅ (Accounts · Auth Gate · Password Reset · Analytics)
+* **Status:** Rev 8 — Updated ✅ (Accounts · Auth Gate · Password Reset · Analytics · Admin Access Requests)
 * **Target Release:** Q4 2026  
 * **Platform:** Web Application — Desktop-first (1440x900, 1920x1080) with mobile-responsive support (v5.0+). Bottom tab navigation on mobile (`< lg` breakpoint). No standalone mobile PWA or native app scope.
 * **Language:** English only (no i18n or RTL support in Phase 1)
@@ -102,11 +102,12 @@ Authentication is now a product requirement, not a future enhancement. Users mus
 Supporting requirements:
 
 - **Gate timing:** users may browse the landing page and complete the conversational wizard while signed out, but the auth gate appears when they click **Generate Itinerary**.
-- **Dedicated full pages, not modals:** `/signup`, `/login`, `/forgot-password`, `/reset-password`, `/account`, `/terms`, `/privacy` (and a planned `/admin` dashboard surface).
+- **Dedicated full pages, not modals:** `/signup`, `/login`, `/forgot-password`, `/reset-password`, `/account`, `/terms`, `/privacy`, and `/admin` (live admin console, reachable from the account/nav menu for approved admins only).
 - **Pending-generation resume:** if a signed-out user reaches the gate after fully completing the wizard, the collected trip config must survive the signup/login/OAuth round-trip and auto-resume generation afterward.
 - **Password reset:** forgot-password flow must avoid account enumeration, use emailed single-use reset links, and revoke all existing sessions after a successful password reset.
 - **Consent capture:** signup requires a single checkbox linking to the full Terms of Service and Privacy Policy, with consent timestamp recorded server-side.
-- **Data rights:** users can self-delete from `/account`; admin-managed deletion/bulk-purge tools are planned for operational use.
+- **Data rights:** users can self-delete from `/account`; admin console provides both per-user deletion and bulk-purge tools for operational use.
+- **Admin escalation:** no user is ever auto-admin; becoming an admin requires an explicit request (from `/account`) and approval by an existing admin (from `/admin`), see Clarification #13.
 
   ### **Epic 2: Dynamic Curated Itinerary Engine & Social Media Layer**
 
@@ -199,7 +200,7 @@ The application follows a **Three-Column Split Architecture** for its main dashb
   * **Step 2 — Itinerary Overview:** Destination overview cards and day-summary blocks are presented. User confirms or adjusts destination and dates before proceeding.
   * **Step 3 — Detailed Itinerary:** Full 3-column layout with the complete timestamped schedule.
 * **Auth-gate placement:** The product does **not** force login on landing-page entry. Users can explore and complete the wizard signed out; the account requirement is enforced at the moment they click **Generate Itinerary**. If the user is not authenticated, the fully collected config is preserved and resumed after signup/login.
-* **Auth/legal page surfaces:** Use dedicated full pages — not modal auth — for `/signup`, `/login`, `/forgot-password`, `/reset-password`, `/terms`, `/privacy`, and `/account`. A dedicated `/admin` dashboard surface is planned/in progress for internal admin analytics.
+* **Auth/legal page surfaces:** Use dedicated full pages — not modal auth — for `/signup`, `/login`, `/forgot-password`, `/reset-password`, `/terms`, `/privacy`, `/account`, and `/admin` (live internal admin analytics + access-request review console, gated to approved admins).
 * **Interactive Transitions:** Selected choice chips transition from a light grey border to Horizon Blue fill with a checkmark animation. Persona dropdown shows colored tags for each selected persona.
 * **Back Navigation:** Navigating back from Step 2 or 3 to Step 1 fully restores all previously entered values. State is session-scoped — does not survive a tab close or hard refresh.
 * **Auto-Pace Rule:** If the group includes any child under 5 years old, the Pace slider automatically sets to Relaxed and displays: *"Pace set to Relaxed — recommended for groups with young children."*
@@ -481,6 +482,14 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 |---|---|
 | Should the main app (not just `/account`) show whether the user is signed in, and let them sign out from there? | **Yes.** Found during local manual testing that there was no login/signup CTA on the home page, no "you're signed in" indicator, and no discoverable sign-out option outside of navigating directly to `/account`. |
 | Fix | Added a shared `UserMenu` component: "Log in"/"Sign up" links when signed out; user's name/email in a dropdown with "Account settings" + "Log out" when signed in. Rendered in the landing page nav, the itinerary dashboard title bar, and the top nav bar. |
+
+### **Clarification #13 — Admin Escalation Policy ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Can a new sign-up ever become an admin automatically, and if not, how does anyone become a second/third admin post-launch? | **No new user is ever auto-admin.** `SignupRequest` has no `is_admin` field and the DB column defaults `false` — this was already structurally true. What was missing was a *formal, auditable path* to grant admin access to a trusted existing user. |
+| Fix | Added a request/approval workflow: any signed-in non-admin can submit a one-click "Request admin access" from `/account` (optional reason message). Every existing admin is emailed the moment a request is created (best-effort via Resend, dev-log fallback). The request also appears in a dedicated panel at the top of `/admin`, where any existing admin can Approve (flips `is_admin=true`, emails the requester) or Reject (no access change, emails the requester). Requests are idempotent while pending (no duplicate spam) and one-shot once reviewed (no re-approving/re-rejecting). |
+| Where documented | `TECHNICAL_DOCUMENTATION.md` §7A + v10.6 changelog, `docs/system-design.md` data-flow + DB schema, `DESIGN_REVAMP_SUMMARY.md` admin console UI section. |
 
 ---
 

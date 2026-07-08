@@ -13,6 +13,7 @@
 3. [Data Flow: Start Anywhere](#3-data-flow-start-anywhere)
 3A. [Data Flow: Authentication (Signup / Login / Google SSO / Password Reset)](#3a-data-flow-authentication-signup--login--google-sso--password-reset)
 3B. [Data Flow: Account Deletion & Data Purge](#3b-data-flow-account-deletion--data-purge)
+3C. [Data Flow: Admin Access Request & Approval](#3c-data-flow-admin-access-request--approval)
 4. [Data Flow: Itinerary Generation with RAG](#4-data-flow-itinerary-generation-with-rag)
 5. [Data Flow: Persistent Anya Chat](#5-data-flow-persistent-anya-chat)
 6. [Data Flow: Share Trip Link](#6-data-flow-share-trip-link)
@@ -306,10 +307,47 @@ flowchart TD
     G --> H["Aggregate analytics survive in anonymized form"]
     F --> I["Frontend clears auth state + returns to signed-out UX"]
 
-    P["Admin bulk purge"] --> Q["Planned/in-progress only"]
-    Q --> R["Intended backend: DELETE /admin/users/{user_id}<br/>POST /admin/users/purge-all with confirmation string"]
-    R --> S["Do not treat as shipped until verified end-to-end"]
+    P["Admin bulk purge"] --> Q["Shipped & verified — /admin console Danger Zone"]
+    Q --> R["Backend: DELETE /admin/users/{user_id}<br/>POST /admin/users/purge-all with confirmation string"]
+    R --> S["Covered by integration tests; live-verified against dev server"]
 ```
+
+---
+
+## 3C. Data Flow: Admin Access Request & Approval
+
+```mermaid
+flowchart TD
+    A["Signed-in non-admin opens /account"] --> B["Clicks 'Request admin access'<br/>(optional reason message)"]
+    B --> C["POST /api/admin/requests"]
+    C --> D{"Already admin?"}
+    D -->|Yes| D1["400 — no request created"]
+    D -->|No| E{"Existing pending request?"}
+    E -->|Yes| E1["Return existing request unchanged<br/>(idempotent, no duplicate email)"]
+    E -->|No| F["Create admin_requests row<br/>status = pending"]
+    F --> G["Email every current admin<br/>(core/email.send_admin_request_notification,<br/>Resend; dev-log fallback if unset)"]
+    G --> H["Requester sees 'pending review' on /account<br/>via GET /api/admin/requests/me"]
+
+    I["Existing admin opens /admin"] --> J["GET /api/admin/requests?status=pending"]
+    J --> K["Admin access requests panel<br/>lists name/email/message"]
+    K --> L{"Admin decision"}
+    L -->|Approve| M["POST /api/admin/requests/{id}/approve"]
+    M --> M1["Set target user.is_admin = true"]
+    M1 --> M2["status = approved, reviewed_by, reviewed_at"]
+    M2 --> N["Email requester: approved<br/>(send_admin_request_decision_email)"]
+    L -->|Reject| O["POST /api/admin/requests/{id}/reject"]
+    O --> O1["is_admin unchanged<br/>status = rejected"]
+    O1 --> N2["Email requester: rejected"]
+
+    M2 --> P["Requester's next GET /api/auth/me<br/>reflects is_admin: true<br/>UserMenu now shows 'Admin console' link"]
+```
+
+**Why this exists:** `SignupRequest` never accepted `is_admin` and the DB column defaults `false`, so nobody could become an admin *by accident*. What was missing was a formal, auditable, two-party workflow for legitimately granting admin access post-launch — this closes that gap without any weakening of the original guarantee.
+
+**Idempotency & one-shot guarantees:**
+- Creating a request while one is already `pending` returns the existing row instead of creating a duplicate (prevents notification spam on double-click/refresh).
+- Both `/approve` and `/reject` return 400 if the request's status is no longer `pending` (prevents double-review races).
+- All admin/requester emails are best-effort (same pattern as password reset) — a Resend outage never blocks the actual request/approval logic.
 
 ---
 
@@ -714,9 +752,24 @@ The generic `event_type + JSONB metadata` design intentionally avoids new migrat
 | `used_at` | Single-use marker |
 | `created_at` | Issued timestamp |
 
+### `admin_requests` (⭐ NEW)
+
+| Column | Notes |
+|---|---|
+| `id` | UUID primary key |
+| `user_id` | FK → `users.id`, `ON DELETE CASCADE` — the requester |
+| `status` | `pending` \| `approved` \| `rejected`; indexed |
+| `message` | Optional free-text reason from the requester |
+| `reviewed_by` | Nullable FK → `users.id`, `ON DELETE SET NULL` — the admin who approved/rejected |
+| `reviewed_at` | Timestamp of decision, null while pending |
+| `created_at` | Request creation timestamp |
+
+Enforces the "no auto-admin" policy: `is_admin` is only ever flipped `true` via the `/admin/requests/{id}/approve` endpoint (or an out-of-band DB seed for the very first admin) — never by the signup flow itself.
+
 Migrations:
 - `0001_auth_analytics`
 - `0002_password_reset`
+- `0003_admin_requests`
 
 ---
 
@@ -1205,6 +1258,19 @@ PEXELS_API_KEY missing / request fails / no result / 6s itinerary photo budget e
 ---
 
 ## 16. Change Log
+
+### v10.6 (July 2026) — Admin Access Request/Approval Workflow
+
+- **New `admin_requests` table** (migration `0003_admin_requests`) — tracks requester, status (`pending`/`approved`/`rejected`), optional message, reviewer, and timestamps.
+- **New endpoints**: `POST /api/admin/requests` (any non-admin, idempotent while pending), `GET /api/admin/requests/me`, `GET /api/admin/requests` (admin-only list), `POST /api/admin/requests/{id}/approve` and `/reject` (admin-only, one-shot).
+- **New emails**: every existing admin is notified the moment a request is created; the requester is notified of the approve/reject decision. Both best-effort via Resend with a dev-log fallback, same pattern as password reset.
+- **New UI**: `/account` gained a "Request admin access" section (hidden for existing admins); `/admin` gained an "Admin access requests" panel above the metrics cards for reviewing pending requests.
+- **Policy formalized**: `is_admin` was already impossible to set at signup (`SignupRequest` has no such field; DB defaults `false`) — this closes the gap by giving a formal, auditable, two-party path to grant it afterward. See §3C for the full data flow and §8A for the schema.
+- Verified: 8 new integration tests (121 total backend tests passing); `tsc --noEmit` clean; 36 frontend tests passing; live end-to-end curl-tested against the running dev servers (signup → request → admin sees & approves → `is_admin: true` confirmed on `/auth/me` → admin-endpoint access confirmed).
+
+### v10.5 (July 2026) — Admin Console Entry Point
+
+- Added a conditional "Admin console" link (shield icon) to `UserMenu.tsx`'s dropdown, shown only when `user.is_admin === true`, positioned above "Log out" — previously `/admin` had no in-app entry point and had to be navigated to directly by URL.
 
 ### v10.4 (July 2026) — Local Testing Fixes: Auth Nav Indicator, Wizard Resume Race, Chip Backfill, SQLite FK Cascade
 
