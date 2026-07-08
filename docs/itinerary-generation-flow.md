@@ -1,14 +1,21 @@
 # End-to-End Itinerary Generation Flow
 
-Traces the full path of a `/api/generate-itinerary` request, from the frontend wizard submission to the final SSE response, based on `apps/api/routers/itinerary.py`, `chains/itinerary_chain.py`, `services/search.py`, `services/hyde.py`, `services/itinerary_cache.py`, `services/rag_fallback.py`, `chains/safety.py`, `chains/scoring.py`, `core/rate_limit.py`, and `core/prompt_guard.py` (⭐ NEW v10.0 — security hardening, see `docs/scaling-tech-challenges.md` §1a).
+Traces the full path of a `/api/generate-itinerary` request, from the frontend wizard submission to the final SSE response, based on `apps/api/routers/itinerary.py`, `chains/itinerary_chain.py`, `services/search.py`, `services/hyde.py`, `services/itinerary_cache.py`, `services/rag_fallback.py`, `services/pexels.py`, `chains/safety.py`, `chains/scoring.py`, `core/rate_limit.py`, and `core/prompt_guard.py` (⭐ NEW v10.0 — security hardening, see `docs/scaling-tech-challenges.md` §1a).
 
 ```mermaid
 flowchart TD
-    A["User completes Wizard /\nsubmits TripConfig\n(destination, dates, pace,\npersonas, budget, group)"] --> B["Frontend: streamItinerary()\nPOST /api/generate-itinerary\n(fetch + SSE reader)"]
+    A["User completes Wizard /\nsubmits TripConfig\n(destination, dates, pace,\npersonas, budget, group)"] --> A1{"Authenticated\nsession present?"}
+    A1 -- "no" --> A2["Frontend saves pending TripConfig\n(sessionStorage via pendingGeneration.ts)\nredirects to /signup?returnTo=/"]
+    A2 --> A3["After signup/login/Google OAuth:\nAuthHydrator restores session\nLLMWizard auto-resumes generation"]
+    A3 --> B
+    A1 -- "yes" --> B["Frontend: streamItinerary()\nPOST /api/generate-itinerary\n(fetch + SSE reader with credentials)"]
 
     B --> RL{"slowapi rate limit\n(10/min per IP, ⭐ NEW v10.0)"}
     RL -- "exceeded" --> RL429["HTTP 429\nRate limit exceeded"]
-    RL -- "ok" --> C["Backend: generate_itinerary_endpoint\nreturns StreamingResponse (SSE)"]
+    RL -- "ok" --> AUTH{"Backend auth dependency:\nget_current_user"}
+    AUTH -- "missing/expired session" --> AUTH401["HTTP 401\nAUTH_REQUIRED"]
+    AUTH401 --> AUTHUX["Frontend redirects to signup/login\nusing the same pending-generation\nresume flow"]
+    AUTH -- "ok" --> C["Backend: generate_itinerary_endpoint\nreturns StreamingResponse (SSE)"]
     C --> C1["emit status: 'Analysing your preferences...' (1/4)"]
     C1 --> C2["emit status: 'Searching destination content...' (2/4)"]
     C2 --> D["generate_itinerary(trip_config)"]
@@ -76,7 +83,8 @@ flowchart TD
     Y --> Z1["apply_kid_safety_filter()\nstrip bar/nightclub/casino/\nextreme-sport items if\nhas_kids or has_infants"]
     Z1 --> Z2["inject_persona_modules()\nadd Work Block if digital_nomad\nadd Training Window if\nsports_fitness (safety net if\nLLM missed persona tags)"]
     Z2 --> Z3["calculate_alignment_score()\nper item: persona match (0.5) +\nbudget (0.3) + accessibility (0.2)\nminus social-keyword penalty\n(internal only, never shown to user)"]
-    Z3 --> Z4["Build ItineraryResponse\n(days, expense_breakdown)"]
+    Z3 --> P1["get_day_photos()\nbuild one query per day:\n'{destination city/country} {day theme}'\nasyncio.gather() over Pexels searches\n6s overall timeout, best-effort only"]
+    P1 --> Z4["Build ItineraryResponse\n(days, expense_breakdown,\noptional image_* attribution fields)"]
 
     Z4 --> C3["emit status: 'Finalising your\nschedule...' (4/4)"]
     C3 --> C4["emit data: ItineraryResponse\n(SSE 'data' event)"]
@@ -95,5 +103,9 @@ flowchart TD
 - **The fallback chain never lets a request hard-fail.** Even if the LLM call fails on all models/attempts, the user still gets *some* itinerary (cache → OSM skeleton → enhanced mock) — this is good resilience design, but it also means a "successful" response doesn't always mean an LLM actually generated it (worth surfacing `_from_fallback` in product analytics).
 - **Retry amplification risk.** In the worst case (all 3 Gemini models throttled), the happy path alone can issue up to `3 models × 5 attempts = 15` LLM calls before falling back — this is the retry-cost risk flagged in `scaling-tech-challenges.md` §4.
 - **Cache writes are best-effort and asynchronous-safe.** `store_itinerary()` never blocks or fails the user-facing response, but this also means the itinerary cache (used for Tier 1 fallback) is only as good as your steady-state success rate — a period of sustained LLM outages means Tier 1 cache also can't help new destination/pace combos not seen before the outage.
-- **Post-processing runs regardless of which path produced the itinerary.** Kid-safety filtering, persona injection, and alignment scoring apply uniformly to LLM output, cached output, RAG skeleton, and mock — ensuring consistent safety/quality guarantees no matter which tier served the response.
+- **Day-photo enrichment is best-effort and non-blocking.** After scoring, `services/pexels.py` searches one landscape image per day under a 6-second overall budget. Missing `PEXELS_API_KEY`, rate limits, empty results, or network failures simply leave `image_url` empty; the itinerary response still succeeds.
+- **Post-processing runs regardless of which path produced the itinerary.** Kid-safety filtering, persona injection, alignment scoring, and the optional photo enrichment pass apply uniformly to LLM output, cached output, RAG skeleton, and mock — ensuring consistent safety/quality guarantees no matter which tier served the response.
 - **Security hardening applied end-to-end (⭐ NEW v10.0).** Rate limiting (10/min per IP) gates entry to this whole flow; RAG-retrieved context and trip-config JSON are wrapped/neutralized via `core/prompt_guard.py` before prompt interpolation (defense against injected content from scraped Reddit/wiki/OSM sources); both timeout and unhandled-exception error paths route through `core/errors.py::sanitize_error()` so raw provider errors/stack traces never reach the client. See `docs/scaling-tech-challenges.md` §1a for the full remediation status.
+- **Authentication is now a first-class precondition.** Generation is gated twice: proactively in `LLMWizard.tsx` (before the request is sent) and server-side in `POST /api/generate-itinerary` via `get_current_user`. A backend 401 is surfaced to the frontend as `AUTH_REQUIRED`, which reuses the same sign-in redirect + auto-resume path.
+- **Generation analytics now extend beyond success/failure counts.** The backend/admin analytics layer is being prepared to log per-generation Gemini token totals and estimated USD cost alongside existing itinerary success/failure events. Treat token-cost tracking as **in progress** until the `gemini_call` instrumentation is fully populated end-to-end.
+- **Multi-city (`hops`) generation was already reliable here — the bug was upstream (⭐ v10.2).** `_gemini_itinerary()`/`_langchain_itinerary()` and the shared `SYSTEM_PROMPT` always fully supported distributing days proportionally across `TripConfig.hops` with "Travel Day" theme transitions. The reason multi-city trips (e.g. "Colombo, Mirissa, and Yala") sometimes produced single-city itineraries was that `wizard_chat_chain.py` never populated `hops` from natural language mentioning several places, or never resolved a whole-country request (`destination_mode: "country"`) down to concrete cities — both fixed in v10.2. This flow's `TripConfig` input contract did not change.

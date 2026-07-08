@@ -14,7 +14,7 @@ export function MobileWarningBanner() {
     >
       <AlertTriangle size={16} className="mt-0.5 shrink-0 text-[var(--_accent)]" aria-hidden="true" />
       <p className="flex-1">
-        WanderPlan is designed for desktop. For the best experience, open it on a laptop or desktop screen (1200px+).
+        WanderPlanner is designed for desktop. For the best experience, open it on a laptop or desktop screen (1200px+).
       </p>
       <button
         onClick={() => setDismissed(true)}

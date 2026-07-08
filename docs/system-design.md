@@ -1,7 +1,7 @@
-# WanderPlan — System Design Document
+# WanderPlanner — System Design Document
 
-**Version:** 8.1 (RAG v5.2 — Multi-query RRF · Time-decay · Paragraph chunking · Gemini RAG wired)  
-**Last Updated:** June 29, 2026  
+**Version:** 8.3 (Accounts · Auth Gate · Password Reset · Analytics)
+**Last Updated:** July 7, 2026  
 **Audience:** Engineering team and technical stakeholders
 
 ---
@@ -11,12 +11,17 @@
 1. [High-Level Architecture](#1-high-level-architecture)
 2. [Data Flow: LLM Anya Wizard](#2-data-flow-llm-anya-wizard)
 3. [Data Flow: Start Anywhere](#3-data-flow-start-anywhere)
+3A. [Data Flow: Authentication (Signup / Login / Google SSO / Password Reset)](#3a-data-flow-authentication-signup--login--google-sso--password-reset)
+3B. [Data Flow: Account Deletion & Data Purge](#3b-data-flow-account-deletion--data-purge)
+3C. [Data Flow: Admin Access Request & Approval](#3c-data-flow-admin-access-request--approval)
 4. [Data Flow: Itinerary Generation with RAG](#4-data-flow-itinerary-generation-with-rag)
 5. [Data Flow: Persistent Anya Chat](#5-data-flow-persistent-anya-chat)
 6. [Data Flow: Share Trip Link](#6-data-flow-share-trip-link)
 7. [Data Flow: Voice Interaction](#7-data-flow-voice-interaction)
 8. [API Contract](#8-api-contract)
+8A. [Database Schema](#8a-database-schema)
 9. [Qdrant Collection Schema](#9-qdrant-collection-schema)
+9A. [Admin Analytics & Cost Tracking](#9a-admin-analytics--cost-tracking)
 10. [Gemini Prompt Design & Temperature Settings](#10-gemini-prompt-design--temperature-settings)
 11. [Frontend State Architecture](#11-frontend-state-architecture)
 12. [Design System](#12-design-system)
@@ -79,6 +84,7 @@
 │                                                                            │
 │  POST /api/wizard-chat         → Anya LLM wizard (Gemini 2.5 Flash)  ⭐NEW  │
 │  POST /api/generate-itinerary  → Gemini 2.5 Flash (5× retry + fallback) │
+│  Photo enrichment              → Pexels hero-photo lookup (best-effort)   │
 │  POST /api/chat-refine         → Anya post-gen chat handler              │
 │  POST /api/recommend-cities    → City suggestions (Gemini)               │
 │  POST /api/extract-trip        → URL/text → trip fields (Gemini) ⭐NEW  │
@@ -113,6 +119,8 @@
 │  - wiki     │  │             │  │  • YouTube       — video thumbnails   │
 └─────────────┘  └─────────────┘  │  • Wikipedia API — destination photos │
                                    │    (frontend, free, no key, CORS-safe)│
+                                   │  • Pexels API    — optional itinerary  │
+                                   │    day hero photos + attribution       │
                                    └───────────────────────────────────────┘
 
 Embedding Model: sentence-transformers/all-MiniLM-L6-v2 (local, 384 dims)
@@ -124,7 +132,11 @@ Embedding Model: sentence-transformers/all-MiniLM-L6-v2 (local, 384 dims)
 
 ### 2.1 Overview
 
-The wizard is fully LLM-powered. Each user message is sent to `POST /api/wizard-chat` (Gemini 2.5 Flash, temp 0.4). Anya returns a conversational reply, optional chip suggestions, and a `config_patch` of newly extracted fields. The frontend merges patches into a local `partialConfig` state, tracks `_checkpoint_asked`, and shows progress pills for the 6 required fields. Assistant turns are JSON-wrapped with the real `config_patch` when replayed to Gemini so the model learns from the actual extraction history, not plain-text replies alone.
+The wizard is fully LLM-powered. Each user message is sent to `POST /api/wizard-chat` (Gemini 2.5 Flash, temp 0.4). Anya returns a conversational reply, optional chip suggestions, a `config_patch` of newly extracted fields, and a server-computed `multi_select` boolean (⭐ v10.2 — tells the frontend whether the current chip group, e.g. travel themes, should allow picking several before continuing; replaces a fragile frontend keyword-matching heuristic that silently broke whenever Gemini phrased chip labels differently). The frontend merges patches into a local `partialConfig` state, tracks `_checkpoint_asked`, and shows progress pills for the 6 required fields. Assistant turns are JSON-wrapped with the real `config_patch` when replayed to Gemini so the model learns from the actual extraction history, not plain-text replies alone. The frontend now treats the backend's Stage-3 `summary` / `ready_to_generate` signal as the single source of truth for showing the generate CTA, so Stage-2 optional follow-up questions never strand the user without an input box.
+
+Destination extraction now covers 4 cases in the system prompt (⭐ v10.2, was 3): single city, multiple explicitly-named places (**Case D** — first place becomes `destination`, the rest become `hops`), country-flexible (recommend me cities in a country, resolved to a real `destination`/`hops` the moment specific cities are named or confirmed — no longer left dangling in `destination_mode: "country"` with a blank city), and pure "surprise me" exploring mode.
+
+**Edit mode (⭐ v10.2).** Reopening the wizard via "Edit Trip" on an already-generated itinerary is detected on mount (existing itinerary + a fully populated trip config, no fresh preload) and seeds `partialConfig` from the current config with `_checkpoint_asked: true` already set, instead of restarting Stage 1 from scratch. Anya greets with a one-line summary of the existing trip and offers "Change destination/dates/budget/themes" or "Regenerate as-is" chips. Stage-3 generate-signal trigger phrases were widened to also recognize "regenerate"/"update it" wording, which naturally comes up when editing rather than starting fresh.
 
 ```
 openWizard() or openWizardWithPreload(preload)
@@ -146,9 +158,12 @@ wizard_chat_chain.py
   │    6 required fields, 3-stage flow, config_patch rules, concrete MUST examples
   ├─ CURRENT_STATE summary injected (shows status: all-6-collected or checkpoint-asked)
   ├─ Assistant history replayed as JSON with real config_patch per turn
-  ├─ Call Gemini 2.5 Flash (temp 0.4, max_tokens 800)
+  ├─ Call Gemini 2.5 Flash (temp 0.4, max_tokens 2048)
+  ├─ Validate full JSON via _looks_like_valid_json()
   ├─ Retry: 3 attempts with exponential backoff on 503/429/UNAVAILABLE
+  │         and on successfully returned-but-incomplete JSON
   ├─ Smart mock fallback reads partial_config and asks next missing field
+  ├─ Fallback reply cleanup: _strip_trailing_json_artifacts()
   └─ Parse JSON: { reply, chips, config_patch, ready_to_generate, summary }
          │
          ├─ Stage 1: ready_to_generate=false, missing fields → ask next question
@@ -158,7 +173,8 @@ wizard_chat_chain.py
          │    → Chips: "Just generate it!", "Add themes", "Add departure city"
          │
          └─ Stage 3: checkpoint done + user confirms → ready_to_generate=true
-              → show "Generate my itinerary" button
+              → frontend sees summary present and shows "Generate my itinerary" button
+              → reply text is also trimmed with _strip_leaked_schema_tail() if Gemini echoed schema keys inside it
               → User clicks → merge partialConfig → streamItinerary → SSE
 ```
 
@@ -185,6 +201,8 @@ wizard_chat_chain.py
 | `"yaar Bali trip 7 days mein karo, budget 1.5L types"` | `{destination: {city:"Bali",...}, dates: {flexible:true, duration_days:7}, budget: {amount:150000,...}}` |
 | `"araam se travel karna hai"` | `{pace: "relaxed"}` |
 | `"family ke saath 4 log"` | `{group: {adults: 4,...}}` |
+| `"Colombo, Mirissa, and Yala National Park"` (⭐ v10.2 Case D) | `{destination: {city:"Colombo",...}, hops: [{city:"Mirissa",...}, {city:"Yala National Park",...}]}` |
+| `"Italy"` → Anya proposes Rome/Florence/Venice, user confirms (⭐ v10.2) | `{destination_mode: "fixed", destination: {city:"Rome",...}, hops: [{city:"Florence",...}, {city:"Venice",...}]}` |
 
 ---
 
@@ -232,19 +250,133 @@ handleStartAnywhere()
 
 ---
 
+## 3A. Data Flow: Authentication (Signup / Login / Google SSO / Password Reset)
+
+```mermaid
+flowchart TD
+    A["User hits auth surface<br/>/signup • /login • /forgot-password"] --> B{"Which path?"}
+
+    B -->|Email signup| C["POST /api/auth/signup<br/>email + password + display_name + consent_accepted"]
+    C --> C1["Argon2id hash password<br/>store consent_accepted + consent_accepted_at"]
+    C1 --> C2["Set httpOnly cookies:<br/>wp_access_token + wp_refresh_token"]
+    C2 --> C3["Frontend authStore becomes authenticated"]
+
+    B -->|Email login| D["POST /api/auth/login"]
+    D --> D1["Verify Argon2id password hash"]
+    D1 --> C2
+
+    B -->|Google SSO| E["GET /api/auth/google/start"]
+    E --> E1["Sign stateless state param<br/>via itsdangerous serializer"]
+    E1 --> E2["Redirect to Google consent screen"]
+    E2 --> E3["GET /api/auth/google/callback?code=...&state=..."]
+    E3 --> E4["Exchange code for tokens<br/>fetch /userinfo via httpx"]
+    E4 --> E5["Upsert/find user by google_sub"]
+    E5 --> C2
+
+    B -->|Forgot password| F["POST /api/auth/password/forgot"]
+    F --> F1["Always return 200<br/>even if email does not exist"]
+    F1 --> F2["If account exists:<br/>create hashed single-use reset token<br/>send email via Resend"]
+    F2 --> F3["User opens /reset-password?token=..."]
+    F3 --> F4["POST /api/auth/password/reset"]
+    F4 --> F5["Validate token TTL (~30 min)<br/>update Argon2id password hash<br/>revoke all refresh tokens"]
+
+    C3 --> G["Future boot: AuthHydrator → GET /api/auth/me"]
+    G --> H{"Access token valid?"}
+    H -->|Yes| I["Hydrated session"]
+    H -->|No| J["POST /api/auth/refresh"]
+    J --> J1["Hash old opaque refresh token<br/>verify DB match<br/>rotate token pair"]
+    J1 --> I
+```
+
+**Consent note:** signup is blocked unless the user accepts the linked Terms of Service and Privacy Policy. The checkbox is intentionally minimal in-page; the full legal text lives on dedicated `/terms` and `/privacy` pages.
+
+**Nav auth indicator (⭐ NEW):** `components/common/UserMenu.tsx` renders "Log in"/"Sign up" when signed out, or the user's name/email + a "Log out" dropdown when signed in. Wired into `LandingHero`, `ThreeColumnLayout`, and `TopNav` — previously the app had no visible sign-in state anywhere outside `/account`.
+
+---
+
+## 3B. Data Flow: Account Deletion & Data Purge
+
+```mermaid
+flowchart TD
+    A["Authenticated user opens /account"] --> B["Danger Zone UI requires typing DELETE"]
+    B --> C["DELETE /api/auth/me"]
+    C --> D["Delete users row"]
+    D --> E["refresh_tokens.user_id ON DELETE CASCADE"]
+    D --> F["password_reset_tokens.user_id ON DELETE CASCADE"]
+    D --> G["events.user_id ON DELETE SET NULL"]
+    G --> H["Aggregate analytics survive in anonymized form"]
+    F --> I["Frontend clears auth state + returns to signed-out UX"]
+
+    P["Admin bulk purge"] --> Q["Shipped & verified — /admin console Danger Zone"]
+    Q --> R["Backend: DELETE /admin/users/{user_id}<br/>POST /admin/users/purge-all with confirmation string"]
+    R --> S["Covered by integration tests; live-verified against dev server"]
+```
+
+---
+
+## 3C. Data Flow: Admin Access Request & Approval
+
+```mermaid
+flowchart TD
+    A["Signed-in non-admin opens /account"] --> B["Clicks 'Request admin access'<br/>(optional reason message)"]
+    B --> C["POST /api/admin/requests"]
+    C --> D{"Already admin?"}
+    D -->|Yes| D1["400 — no request created"]
+    D -->|No| E{"Existing pending request?"}
+    E -->|Yes| E1["Return existing request unchanged<br/>(idempotent, no duplicate email)"]
+    E -->|No| F["Create admin_requests row<br/>status = pending"]
+    F --> G["Email every current admin<br/>(core/email.send_admin_request_notification,<br/>Resend; dev-log fallback if unset)"]
+    G --> H["Requester sees 'pending review' on /account<br/>via GET /api/admin/requests/me"]
+
+    I["Existing admin opens /admin"] --> J["GET /api/admin/requests?status=pending"]
+    J --> K["Admin access requests panel<br/>lists name/email/message"]
+    K --> L{"Admin decision"}
+    L -->|Approve| M["POST /api/admin/requests/{id}/approve"]
+    M --> M1["Set target user.is_admin = true"]
+    M1 --> M2["status = approved, reviewed_by, reviewed_at"]
+    M2 --> N["Email requester: approved<br/>(send_admin_request_decision_email)"]
+    L -->|Reject| O["POST /api/admin/requests/{id}/reject"]
+    O --> O1["is_admin unchanged<br/>status = rejected"]
+    O1 --> N2["Email requester: rejected"]
+
+    M2 --> P["Requester's next GET /api/auth/me<br/>reflects is_admin: true<br/>UserMenu now shows 'Admin console' link"]
+```
+
+**Why this exists:** `SignupRequest` never accepted `is_admin` and the DB column defaults `false`, so nobody could become an admin *by accident*. What was missing was a formal, auditable, two-party workflow for legitimately granting admin access post-launch — this closes that gap without any weakening of the original guarantee.
+
+**Idempotency & one-shot guarantees:**
+- Creating a request while one is already `pending` returns the existing row instead of creating a duplicate (prevents notification spam on double-click/refresh).
+- Both `/approve` and `/reject` return 400 if the request's status is no longer `pending` (prevents double-review races).
+- All admin/requester emails are best-effort (same pattern as password reset) — a Resend outage never blocks the actual request/approval logic.
+
+---
+
 ## 4. Data Flow: Itinerary Generation with RAG
 
 ```
 User clicks "Generate my itinerary 🚀" (LLMWizard)
          │
          ▼
-LLMWizard → merge partialConfig → tripConfigStore.updateConfig()
+LLMWizard → check authStore / pendingGeneration state
+         │
+         ├─ signed out → savePendingGeneration(fullConfig)
+         │              → redirect to /signup?returnTo=/
+         │              → after auth, restore pending config and resume
+         │
+         └─ signed in → merge partialConfig → tripConfigStore.updateConfig()
          │
          ▼
 streamItinerary(fullConfig, ...)
          │
          ▼
 POST /api/generate-itinerary { trip_config: TripConfig }
+         │
+         ▼
+Depends(get_current_user)
+         │
+         ├─ no valid session → HTTP 401 (frontend maps to AUTH_REQUIRED)
+         │
+         └─ authenticated user →
          │
          ▼
 itinerary_chain.py
@@ -313,6 +445,12 @@ itinerary_chain.py
          │
          ├─ On success → store_itinerary() caches result (best-effort, strips
          │    any "_"-prefixed fallback markers so degraded output can never be cached)
+         │
+         ├─ Photo enrichment (best-effort): build one query per day as
+         │    "{destination city or country} {day theme}" → services/pexels.py
+         │    runs concurrent lookups via get_day_photos() under a 6s overall timeout
+         │    and patches ItineraryDay.image_url, image_photographer,
+         │    image_photographer_url when available
          │
          ├─ On exception (all retries + Groq/Ollama exhausted) → _fallback_itinerary()
          │    3-tier chain: cache hit → OSM-grounded skeleton → RAG-tipped mock (see §15)
@@ -402,7 +540,7 @@ User clicks ShareButton (center column header)
          setShareUrl(url)  ← cache for subsequent clicks
          Button: "Link copied!" (green, 3s)
 
-Recipient opens https://wanderplan.app/t/a1b2c3d4
+Recipient opens https://wanderplanner.app/t/a1b2c3d4
          │
          ▼
 app/t/[slug]/page.tsx
@@ -486,7 +624,8 @@ ItineraryResponse:
 
 ItineraryDay:
   { day_number: int, date: string, theme: string,
-    items: ItineraryItem[], transit_warnings: TransitWarning[] }
+    items: ItineraryItem[], transit_warnings: TransitWarning[],
+    image_url?: string, image_photographer?: string, image_photographer_url?: string }
 
 ItineraryItem:
   { id, time_start, time_end, title, local_name?, description,
@@ -556,6 +695,81 @@ Cached: 1 hour per destination
 Response: { best_months: string[], weather_summary: string, avoid_months: string[],
             events: [{name, month, description}] }
 ```
+
+---
+
+## 8A. Database Schema
+
+The app now uses **Postgres** (Supabase in production) for user/auth/analytics state. This is separate from **Qdrant**, which remains the vector database for RAG retrieval.
+
+### `users`
+
+| Column | Notes |
+|---|---|
+| `id` | UUID primary key |
+| `email` | Unique email login identifier |
+| `password_hash` | Argon2id hash; nullable for Google-first accounts |
+| `display_name` | Optional profile name |
+| `auth_provider` | `password` or `google` |
+| `google_sub` | Unique Google subject for SSO accounts |
+| `is_admin` | Admin-dashboard access gate |
+| `consent_accepted` | Required signup consent flag |
+| `consent_accepted_at` | Timestamp of captured consent |
+| `created_at` | Account creation timestamp |
+
+### `refresh_tokens`
+
+| Column | Notes |
+|---|---|
+| `id` | UUID primary key |
+| `user_id` | FK → `users.id`, `ON DELETE CASCADE` |
+| `token_hash` | SHA-256 of opaque refresh token |
+| `expires_at` | Refresh-token expiry |
+| `created_at` | Issued timestamp |
+
+Refresh tokens rotate on every `/api/auth/refresh` call; only the hash is stored server-side.
+
+### `events`
+
+| Column | Notes |
+|---|---|
+| `id` | UUID primary key |
+| `event_type` | Generic analytics event name |
+| `event_metadata` | JSONB payload for event-specific detail |
+| `user_id` | Nullable FK → `users.id`, `ON DELETE SET NULL` |
+| `created_at` | Indexed event timestamp |
+
+The generic `event_type + JSONB metadata` design intentionally avoids new migrations for every analytics/cost-tracking addition.
+
+### `password_reset_tokens`
+
+| Column | Notes |
+|---|---|
+| `id` | UUID primary key |
+| `user_id` | FK → `users.id`, `ON DELETE CASCADE` |
+| `token_hash` | SHA-256 of raw reset token |
+| `expires_at` | ~30 minute TTL |
+| `used_at` | Single-use marker |
+| `created_at` | Issued timestamp |
+
+### `admin_requests` (⭐ NEW)
+
+| Column | Notes |
+|---|---|
+| `id` | UUID primary key |
+| `user_id` | FK → `users.id`, `ON DELETE CASCADE` — the requester |
+| `status` | `pending` \| `approved` \| `rejected`; indexed |
+| `message` | Optional free-text reason from the requester |
+| `reviewed_by` | Nullable FK → `users.id`, `ON DELETE SET NULL` — the admin who approved/rejected |
+| `reviewed_at` | Timestamp of decision, null while pending |
+| `created_at` | Request creation timestamp |
+
+Enforces the "no auto-admin" policy: `is_admin` is only ever flipped `true` via the `/admin/requests/{id}/approve` endpoint (or an out-of-band DB seed for the very first admin) — never by the signup flow itself.
+
+Migrations:
+- `0001_auth_analytics`
+- `0002_password_reset`
+- `0003_admin_requests`
 
 ---
 
@@ -636,13 +850,56 @@ Key: `embed(f"{destination} {duration_days}d {pace} {purpose} trip")`. Written b
 
 ---
 
+## 9A. Admin Analytics & Cost Tracking
+
+### Access-control model
+
+All admin metrics routes depend on `get_current_admin_user`:
+
+- unauthenticated caller → **401**
+- authenticated non-admin caller → **403**
+- authenticated admin caller → success
+
+The 403 branch is intentional so the frontend can distinguish "sign in first" from "you're signed in but not authorized."
+
+### Metrics endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/admin/metrics/summary` | Aggregate counts for users, signups, sessions, logins, itinerary outcomes, and cost/usage buckets |
+| `GET /api/admin/metrics/timeseries?range=7d|30d` | Daily event counts grouped by `event_type` |
+| `POST /api/analytics/client-event` | Browser-originated beacons such as `session_start` and YouTube-thumbnail events |
+
+### Event design
+
+The `events` table is append-only and generic. Current event families include:
+- `signup`
+- `login_success`
+- `login_failed`
+- `session_start`
+- `itinerary_generated`
+- `itinerary_failed`
+- allowlisted client-originated YouTube thumbnail events
+
+### Cost-tracking status
+
+The backend summary endpoint already exposes fields for:
+- Gemini call counts
+- Gemini token totals
+- Gemini estimated USD cost
+- Pexels call counts
+
+However, **Gemini token/cost event instrumentation is still in progress** in the verified backend code path. Document this as a prepared monitoring surface rather than a fully populated production dashboard today. The intended scope covers all Gemini call sites plus free-tier-aware tracking for Pexels and client-side YouTube thumbnail fetches.
+
+---
+
 ## 10. Gemini Prompt Design & Temperature Settings
 
 ### Model & Temperature Reference
 
 | Endpoint | Chain file | Model | Temperature | Max tokens |
 |---|---|---|---|---|
-| `POST /api/wizard-chat` | `wizard_chat_chain.py` | `gemini-2.5-flash` | **0.4** | 800 |
+| `POST /api/wizard-chat` | `wizard_chat_chain.py` | `gemini-2.5-flash` | **0.4** | 2048 |
 | `POST /api/chat-refine` | `chat_refine_chain.py` | `gemini-2.5-flash` | **0.5** | 1024 |
 | `POST /api/generate-itinerary` (attempts 1-3) | `itinerary_chain.py` | `gemini-2.5-flash` | **0.4** | 16384 |
 | `POST /api/generate-itinerary` (attempt 4) | `itinerary_chain.py` | `gemini-2.5-flash-lite` | **0.4** | — |
@@ -674,19 +931,20 @@ Temperature rationale:
 - **3-Stage Flow** — Stage 1: collect 6 fields → Stage 2: "anything else?" checkpoint → Stage 3: generate signal
 - **config_patch Rules** — "include every extracted field even if you think it is already known" and `config_patch` must never be empty when the user just supplied usable trip info
 - **JSON-Wrapped History** — assistant turns are replayed as JSON objects like `{"reply":"...","config_patch":{...}}` so Gemini learns from the real extraction history
-- **Retry Logic** — 3 attempts with exponential backoff on 503/429/UNAVAILABLE before fallback
+- **Retry Logic** — 3 attempts with exponential backoff on 503/429/UNAVAILABLE, plus parse-based retries when `_looks_like_valid_json()` detects a truncated/incomplete JSON body
+- **Fallback Text Sanitisation** — `_strip_trailing_json_artifacts()` removes dangling JSON punctuation from salvage text, while `_strip_leaked_schema_tail()` trims escaped schema-key echoes from the `reply` field itself
 - **Smart Mock Fallback** — reads `partial_config` and asks the next missing required field instead of returning a generic fallback
 - **Filled-State Consistency** — frontend `allFilled` is unified with `_isFieldFilled`, matching the progress pill logic
 - **Output Schema** — JSON only; `reply` is described as "what Anya says on a phone call — no field names, no system terms, no internal reasoning"
 
-The backend `_has_all_required()` server-validates `ready_to_generate`. Stage 2 checkpoint is tracked via `_checkpoint_asked` flag in `partialConfig` and surfaced to the LLM via `CURRENT_STATE`. Assistant history also includes raw-JSON leak guards (`or raw` → `or ""`) plus double-wrapped JSON detection before replay. A `_strip_leaked_reasoning()` function remains the last-resort safety net.
+The backend `_has_all_required()` server-validates `ready_to_generate`. Stage 2 checkpoint is tracked via `_checkpoint_asked` flag in `partialConfig` and surfaced to the LLM via `CURRENT_STATE`. Assistant history also includes raw-JSON leak guards (`or raw` → `or ""`) plus double-wrapped JSON detection before replay. A `_strip_leaked_reasoning()` function remains the last-resort safety net, but most user-visible truncation issues are now intercepted earlier by JSON completeness checks and the two cleanup helpers above.
 
 ---
 
 ### System Prompt 2 — Anya Post-Gen Chat (`chat_refine_chain.py`)
 
 ```
-You are Anya, WanderPlan's friendly AI travel assistant.
+You are Anya, WanderPlanner's friendly AI travel assistant.
 
 CURRENT TRIP CONFIG: {trip_config_json}
 
@@ -707,7 +965,7 @@ RESPONSE FORMAT:
 ### System Prompt 3 — Itinerary Generation (`itinerary_chain.py`)
 
 ```
-You are WanderPlan, an expert AI travel advisor.
+You are WanderPlanner, an expert AI travel advisor.
 Output ONLY valid JSON matching the schema.
 
 RULES:
@@ -757,6 +1015,8 @@ wizardChatStore
   ├── messages → rendered by LLMWizard (legacy: ConversationalWizard)
   ├── currentField → legacy field tracking
   └── collectedLabels → passed to shareTrip
+     readyToGenerate in the live wizard is derived from backend `summary` state,
+     not a frontend required-field counter, so Stage-2 follow-up turns stay interactive
 
 itineraryStore
   ├── days → consumed by: ThreeColumnLayout, ItineraryTimeline, MapWrapper, ShareButton
@@ -847,10 +1107,25 @@ Breaking any link in this chain prevents scrolling. `<main className="h-full">` 
 | `GEMINI_API_KEY` | — | ✅ | Google Gemini API key |
 | `LLM_PROVIDER` | `gemini` | — | `gemini` or `mock` (for testing) |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | — | Primary model ID |
+| `DATABASE_URL` | — | ✅ | Postgres connection string (local Postgres or Supabase) |
+| `JWT_SECRET` | — | ✅ | Secret for signing access tokens and auth state |
+| `ACCESS_TOKEN_TTL_MINUTES` | `15` | — | Access-token lifetime |
+| `REFRESH_TOKEN_TTL_DAYS` | `30` | — | Refresh-token lifetime |
+| `COOKIE_DOMAIN` | `""` | — | Optional cookie domain override |
+| `COOKIE_SECURE` | `true` | — | Must be `true` in production for cross-origin cookies |
+| `COOKIE_SAMESITE` | `lax` | — | Use `lax` locally, `none` in cross-origin production |
+| `GOOGLE_CLIENT_ID` | — | ✅ for SSO | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | — | ✅ for SSO | Google OAuth client secret |
+| `GOOGLE_REDIRECT_URI` | `http://localhost:8000/api/auth/google/callback` | ✅ for SSO | OAuth callback URI |
+| `FRONTEND_BASE_URL` | `http://localhost:3000` | ✅ | Redirect target after auth/password flows |
+| `RESEND_API_KEY` | — | ✅ for password reset | Resend HTTP API key |
+| `EMAIL_FROM_ADDRESS` | `Wanderplanner <no-reply@wanderplanner.app>` | — | Password-reset sender |
+| `PASSWORD_RESET_TOKEN_TTL_MINUTES` | `30` | — | Reset-link expiration |
 | `QDRANT_URL` | `:memory:` | — | Qdrant instance URL |
 | `ALLOWED_ORIGINS` | `["http://localhost:3000"]` | ✅ | CORS whitelist — **must be JSON-array format** (pydantic-settings list parsing), `"*"` is rejected by a validator (⭐ NEW v10.0) |
+| `PEXELS_API_KEY` | — | — | Optional Pexels API key for itinerary day hero photos; generation degrades gracefully without it |
 | `LOG_LEVEL` | `INFO` | — | Structured JSON logging level (⭐ NEW v10.0, `core/logging_config.py`) |
-| `NOMINATIM_USER_AGENT` | `wanderplan/1.0` | — | Nominatim ToS compliance |
+| `NOMINATIM_USER_AGENT` | `wanderplanner/1.0` | — | Nominatim ToS compliance |
 | `NOMINATIM_RATE_LIMIT` | `1` | — | Requests per second |
 
 ### Frontend (`apps/web/.env.local`)
@@ -888,6 +1163,16 @@ Breaking any link in this chain prevents scrolling. `<main className="h-full">` 
 
 Per-user cost: ~₹0.15–0.30
 
+### Cost observability
+
+In addition to static modeling, the new auth/analytics layer introduces an **events-backed cost monitoring path**:
+
+- admin summary fields for Gemini call count / token totals / estimated USD cost
+- Pexels call-volume tracking
+- client-side YouTube thumbnail beacon events for calls the FastAPI backend does not directly observe
+
+This is a **monitoring capability**, not a direct cost-reduction mechanism. The Gemini token/cost event instrumentation is still being completed end-to-end, so treat the dashboard fields as partly in progress rather than fully populated today.
+
 ### Caching Strategy
 
 | Resource | Cache Type | TTL |
@@ -897,6 +1182,7 @@ Per-user cost: ~₹0.15–0.30
 | Wikipedia images | Module-level Map (JS) | Session lifetime |
 | YouTube thumbnails | Module-level Map (JS) | Session lifetime |
 | Share slugs | In-memory dict (Python) | Server process lifetime |
+| Pexels day-photo searches | In-memory dict (Python, max 500 query keys) | Server process lifetime |
 
 ---
 
@@ -932,6 +1218,18 @@ All fail → return ExtractedTrip with all nulls + summary "Could not extract...
 Frontend fallback: openWizard() (plain, no preload)
 ```
 
+### Wizard Chat Resilience
+
+```
+Attempt 1-3: Gemini 2.5 Flash (max_output_tokens=2048)
+  → Transport error / 429 / 503 / timeout? retry with backoff
+  → Response arrived but _looks_like_valid_json() says incomplete/truncated? retry too
+All retries fail → smart mock fallback picks the next missing required field
+Any salvage text shown to users is first cleaned by _strip_trailing_json_artifacts()
+Valid JSON whose reply text contains an escaped schema echo is trimmed by
+_strip_leaked_schema_tail() before rendering
+```
+
 ### Wikipedia Image Resilience
 
 ```
@@ -948,9 +1246,66 @@ POST /api/chat-refine fails →
   Error banner shown in ChatPanel header
 ```
 
+### Pexels Photo Resilience
+
+```
+PEXELS_API_KEY missing / request fails / no result / 6s itinerary photo budget exceeded
+  → services/pexels.py returns None per query
+  → itinerary generation continues with image_* fields left empty
+  → PDF export simply omits the hero photo block for that day
+```
+
 ---
 
 ## 16. Change Log
+
+### v10.6 (July 2026) — Admin Access Request/Approval Workflow
+
+- **New `admin_requests` table** (migration `0003_admin_requests`) — tracks requester, status (`pending`/`approved`/`rejected`), optional message, reviewer, and timestamps.
+- **New endpoints**: `POST /api/admin/requests` (any non-admin, idempotent while pending), `GET /api/admin/requests/me`, `GET /api/admin/requests` (admin-only list), `POST /api/admin/requests/{id}/approve` and `/reject` (admin-only, one-shot).
+- **New emails**: every existing admin is notified the moment a request is created; the requester is notified of the approve/reject decision. Both best-effort via Resend with a dev-log fallback, same pattern as password reset.
+- **New UI**: `/account` gained a "Request admin access" section (hidden for existing admins); `/admin` gained an "Admin access requests" panel above the metrics cards for reviewing pending requests.
+- **Policy formalized**: `is_admin` was already impossible to set at signup (`SignupRequest` has no such field; DB defaults `false`) — this closes the gap by giving a formal, auditable, two-party path to grant it afterward. See §3C for the full data flow and §8A for the schema.
+- Verified: 8 new integration tests (121 total backend tests passing); `tsc --noEmit` clean; 36 frontend tests passing; live end-to-end curl-tested against the running dev servers (signup → request → admin sees & approves → `is_admin: true` confirmed on `/auth/me` → admin-endpoint access confirmed).
+
+### v10.5 (July 2026) — Admin Console Entry Point
+
+- Added a conditional "Admin console" link (shield icon) to `UserMenu.tsx`'s dropdown, shown only when `user.is_admin === true`, positioned above "Log out" — previously `/admin` had no in-app entry point and had to be navigated to directly by URL.
+
+### v10.4 (July 2026) — Local Testing Fixes: Auth Nav Indicator, Wizard Resume Race, Chip Backfill, SQLite FK Cascade
+
+- **Auth nav indicator**: added `UserMenu.tsx` (Log in/Sign up when signed out; name/email + Log out dropdown when signed in), wired into `LandingHero`, `ThreeColumnLayout`, and `TopNav` — closes a gap where the app had no visible sign-in state or logout affordance outside `/account`.
+- **Wizard resume race fix**: `LLMWizard.tsx`'s two mount effects (bootstrap + resume-after-auth) raced on the same mutable `pendingGeneration` sessionStorage flag, occasionally producing a duplicate/stale greeting after a signed-out user completed signup mid-wizard. Fixed via a single lazily-initialized snapshot shared by both effects plus a resume idempotency ref.
+- **Chip-backfill safety net**: the primary Gemini-backed `wizard_chat()` path now deterministically backfills the 6 standard purpose chips if the LLM's first-turn response omits them, matching the guarantee the offline mock path already had.
+- **SQLite FK cascade fix**: `apps/api/db.py` now sets `PRAGMA foreign_keys=ON` for SQLite connections only (local/dev), fixing silently no-op'd `ON DELETE CASCADE`/`SET NULL` behavior discovered during live local testing; zero effect on Postgres/prod. See `docs/scaling-tech-challenges.md` §7.
+- Verified: 113 backend tests + 36 frontend tests pass; `tsc --noEmit` clean; all four fixes additionally live-tested against running local dev servers.
+
+### v8.3 (July 2026) — Accounts, Auth Gate, Password Reset & Analytics
+
+- Added authentication/session architecture covering email/password signup, Google OAuth SSO, cookie-based JWT + rotating refresh tokens, and password reset via Resend.
+- Added data-flow documentation for auth, refresh rotation, pending-generation resume, and self-service account deletion.
+- Documented the new Postgres schema (`users`, `refresh_tokens`, `events`, `password_reset_tokens`) and Supabase as the production Postgres host.
+- Documented admin analytics endpoints plus the generic events table used for session/login/itinerary metrics and future Gemini/Pexels cost tracking.
+- Updated itinerary-generation flow and environment-variable reference for the new auth/database stack.
+
+### v10.2 (July 2026) — Brand Rename, Multi-City Reliability, Edit-in-Place, Dark Mode Everywhere
+
+- **Rebrand**: WanderPlan → WanderPlanner across all UI strings, backend modules, docs, and assets (55 tracked files) — no functional change.
+- **Multi-city wizard fix** (`chains/wizard_chat_chain.py`): added **Case D** — multiple explicitly-named places (e.g. "Colombo, Mirissa, and Yala") now correctly split into `destination` + `hops` instead of silently dropping all but the first city.
+- **Country-mode resolution fix** (`chains/wizard_chat_chain.py`): naming a whole country now resolves to a concrete `destination`/`hops` the moment Anya proposes or the user confirms specific cities, instead of staying stuck in `destination_mode: "country"` with no real city — this was leaving budget/booking/travel-tips widgets blank downstream.
+- **Frontend destination fallback** (`Column1Metrics.tsx`, `Column3Sidebar.tsx`): both now fall back to `destination_country` and gate widgets on "has a city OR a country" instead of requiring `destination.city` strictly, plus a "City +N" label for multi-hop trips.
+- **PolaroidCard redesign**: replaced the oversized full-width 16:9 hero-video activity card with a compact horizontal thumbnail+text layout; added `onError` fallback to the gradient placeholder for 404'ing thumbnail URLs.
+- **YouTube thumbnail reliability**: `useThumbnail` hook now only caches successful lookups (never caches misses) and retries up to 3x with backoff; `youtube-thumbnail` route pins `gl=US&hl=en` and pre-sends the EU consent cookie to reduce GDPR-interstitial scrape misses.
+- **Theme multiselect regression fix**: backend now computes a `multi_select` boolean deterministically (`_is_multi_select_chips()`) and returns it explicitly in the `wizard-chat` response, replacing a fragile frontend keyword-matching heuristic that broke whenever Gemini varied chip wording.
+- **Dark/light `ThemeToggle`** added to the itinerary page title bar and the Anya chat panel header — previously only present on the shared `/t/[slug]` page.
+- **"Edit Trip" context fix**: reopening the wizard from an already-generated itinerary now seeds the existing trip config (with checkpoint already marked asked) instead of restarting the conversation from scratch; Stage-3 generate-signal phrases widened to recognize "regenerate"/"update it".
+
+### v10.1 (July 2026) — Wizard Reliability + Visual PDF Export
+
+- **Wizard truncation/JSON-leak fixes** (`chains/wizard_chat_chain.py`): `max_output_tokens` raised 800 → 2048; `_looks_like_valid_json()` now gates every Gemini response, triggering a retry (up to 3 attempts) on incomplete/truncated JSON instead of immediately falling back to salvage text; new `_strip_trailing_json_artifacts()` and `_strip_leaked_schema_tail()` helpers clean stray JSON punctuation and escaped schema-key echoes from any text ultimately shown to the user.
+- **Wizard UX fixes** (`components/wizard/LLMWizard.tsx`): the "Generate my itinerary" CTA now derives from the backend's explicit Stage-3 signal (`summary !== null`) instead of a frontend required-field counter, so the text input stays available through Stage-2 optional follow-up questions (e.g. departure city); theme chip groups (Culture/Food/Adventure/etc.) are now multi-selectable via a toggle + "Continue" action instead of submitting on first click.
+- **Itinerary PDF redesign** (`components/pdf/ItineraryDocument.tsx`): replaced the dense single-color layout with a colorful travel-journal style — one pastel card per day (7-color cycling palette), bold-label bullets, booking-link preview chips, and matching card treatment for Trip Essentials/Visa & Safety/Cost Breakdown/Packing Checklist. Removed emoji/arrow/≈ characters that rendered as broken glyphs under react-pdf's base Helvetica font.
+- **Pexels photo enrichment** (new `services/pexels.py`): best-effort, non-blocking day-photo lookup added to `generate_itinerary()` — one landscape photo per day via `"{destination} {day theme}"` query, concurrent fetch, 6s timeout budget, in-memory query cache (500 entries), and required "Photo by X on Pexels" attribution rendered in the PDF. New optional `ItineraryDay` fields: `image_url`, `image_photographer`, `image_photographer_url`. New `PEXELS_API_KEY` env var (optional — app degrades gracefully without it).
 
 ### v10.0 (July 2026) — Security Hardening
 

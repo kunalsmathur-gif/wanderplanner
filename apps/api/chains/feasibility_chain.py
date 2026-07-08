@@ -5,6 +5,7 @@ import asyncio
 import json
 
 from core.config import settings
+from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize
 from models.feasibility import FeasibilityResponse, CostBreakdown, AlternativeDestination
 from models.trip import TripConfig
@@ -112,8 +113,8 @@ async def check_feasibility(trip_config: TripConfig) -> FeasibilityResponse:
         trip_config=neutralize(json.dumps(trip_summary, indent=2), context="trip summary")
     )
 
-    def _call_sync() -> str:
-        response = client.models.generate_content(
+    def _call_sync():
+        return client.models.generate_content(
             model=settings.gemini_model,
             contents=prompt,
             config=genai_types.GenerateContentConfig(
@@ -121,10 +122,11 @@ async def check_feasibility(trip_config: TripConfig) -> FeasibilityResponse:
                 response_mime_type="application/json",
             ),
         )
-        return response.text
 
     loop = asyncio.get_event_loop()
-    text = await loop.run_in_executor(None, _call_sync)
+    response = await loop.run_in_executor(None, _call_sync)
+    track_gemini_usage(response, model=settings.gemini_model, purpose="feasibility_check")
+    text = response.text
 
     # Parse response
     cleaned = text.strip()

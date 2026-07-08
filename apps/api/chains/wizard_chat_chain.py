@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from core.config import settings
+from core.llm_client import track_gemini_usage
 from models.chat import ChatMessage
 
 
@@ -23,6 +24,31 @@ class WizardChatResponse(BaseModel):
     config_patch: dict[str, Any] = {}
     ready_to_generate: bool = False
     summary: str | None = None
+    # True when `chips` represents a multi-value field (e.g. travel themes)
+    # that the user should be able to pick several of before continuing,
+    # rather than a single-choice field where any click submits immediately.
+    # Computed deterministically server-side (see `_is_multi_select_chips`)
+    # instead of relying on the frontend guessing from free-text chip labels.
+    multi_select: bool = False
+
+
+# Keywords that identify a multi-value field's chip options (themes today;
+# extend this list if other multi-select fields grow chip UIs later).
+_MULTI_SELECT_CHIP_KEYWORDS = [
+    "culture", "nature", "food", "adventure", "shopping", "photography",
+    "nightlife", "sports", "wellness", "religious", "vegetarian",
+]
+
+
+def _is_multi_select_chips(chips: list[str]) -> bool:
+    """True if every chip looks like a travel-theme option, meaning the user
+    should be able to select several before continuing."""
+    if len(chips) < 2:
+        return False
+    return all(
+        any(keyword in chip.lower() for keyword in _MULTI_SELECT_CHIP_KEYWORDS)
+        for chip in chips
+    )
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────
@@ -159,7 +185,7 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       solo -> solo_backpacking
     ALWAYS include chips when asking about purpose: ["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"]
 
-  Field 2 -- destination (JSON keys: "destination" OR "destination_mode" + "destination_country")
+  Field 2 -- destination (JSON keys: "destination" OR "destination_mode" + "destination_country"; optionally "hops")
     Where they want to go.
     Case A -- specific city/place:
       destination: {{"city": "Bali", "country": "Indonesia", "lat": 0, "lon": 0}}
@@ -169,6 +195,19 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       destination_country: "Thailand"
     Case C -- open to AI suggestions:
       destination_mode: "exploring"
+    Case D -- MULTIPLE specific cities/places named explicitly (multi-city / multi-hop trip):
+      When the user lists 2+ specific place names (not a whole country) — e.g. "Colombo,
+      Mirissa, and Yala National Park" or "Paris then Amsterdam" — put the FIRST place in
+      "destination" and ALL remaining places (in the order given) in "hops". Never drop any
+      named place; every place the user mentions must appear in either destination or hops.
+      destination_mode: "fixed"
+      destination: {{"city": "Colombo", "country": "Sri Lanka", "lat": 0, "lon": 0}}
+      hops: [
+        {{"city": "Mirissa", "country": "Sri Lanka", "lat": 0, "lon": 0}},
+        {{"city": "Yala National Park", "country": "Sri Lanka", "lat": 0, "lon": 0}}
+      ]
+      This applies any time the user updates the destination too — e.g. "actually add Kandy
+      as well" -> append {{"city": "Kandy", ...}} to the existing hops in config_patch.
     Map: "suggest me" / "not sure" / "anywhere" / "kuch bhi" / "you decide" -> Case C
 
     COUNTRY DESTINATIONS: If the user names a country (not a specific city), warmly name
@@ -179,6 +218,26 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
         or would you prefer to focus on one region?"
       User: "Japan" -> "Japan has so much to offer! Are you thinking Tokyo and Kyoto,
         or would you like to explore further — Osaka, Hiroshima, maybe Kyushu?"
+
+    CRITICAL — always resolve to concrete cities: "destination_mode": "country" is ONLY a
+    momentary placeholder for the single turn where you first ask which cities to cover.
+    The instant you name specific cities (in the very same reply — proposing them, not
+    waiting for confirmation) OR the user confirms/picks cities, you MUST immediately
+    switch to Case D/A in that SAME config_patch: set destination_mode: "fixed", destination
+    = the first named city, and hops = the rest, using country: "<the country the user named>"
+    for every one of them. Never leave a trip sitting at destination_mode "country" with no
+    concrete destination — the app cannot show budget, map, or travel-tips widgets without a
+    real city. Example — user says "Italy" and you reply proposing Rome, Florence, Venice:
+      config_patch: {{
+        "destination_mode": "fixed",
+        "destination": {{"city": "Rome", "country": "Italy", "lat": 0, "lon": 0}},
+        "hops": [
+          {{"city": "Florence", "country": "Italy", "lat": 0, "lon": 0}},
+          {{"city": "Venice", "country": "Italy", "lat": 0, "lon": 0}}
+        ]
+      }}
+    If the user later narrows it down to just one of those cities, replace destination with
+    that city and clear hops to [].
 
   Field 3 -- dates (JSON key: "dates")
     When and how long they want to travel.
@@ -283,7 +342,8 @@ Stage 3 -- Generate signal.
     a) All 6 fields are present in CURRENT_STATE, AND
     b) CURRENT_STATE shows "status: checkpoint-asked", AND
     c) User says "generate" / "start" / "let's go" / "just do it" / "chal" / "bas karo" /
-       "I'm ready" / clicks "Just generate it!" / provides optional preferences.
+       "I'm ready" / "regenerate" / "update it" / "update my itinerary" / "regenerate as-is" /
+       clicks "Just generate it!" or "Regenerate as-is" / provides optional preferences.
   When setting ready_to_generate: true, also set summary to a single human-readable line.
 
 GUARD: If user asks to generate but fields are missing -> refuse warmly, name exactly which
@@ -422,7 +482,12 @@ def _summarise_state(config: dict[str, Any]) -> str:
     elif mode == "country":
         lines.append(f"destination: exploring {config.get('destination_country', '?')}")
     elif dest and dest.get("city"):
-        lines.append(f"destination: {dest['city']}, {dest.get('country', '')}")
+        hops = config.get("hops") or []
+        if hops:
+            hop_names = ", ".join(h.get("city", "") for h in hops if h.get("city"))
+            lines.append(f"destination: {dest['city']}, {dest.get('country', '')} (multi-city, additional stops: {hop_names})")
+        else:
+            lines.append(f"destination: {dest['city']}, {dest.get('country', '')}")
 
     dates = config.get("dates", {})
     if dates.get("start") and dates.get("end"):
@@ -462,6 +527,31 @@ def _summarise_state(config: dict[str, Any]) -> str:
         lines.append("status: all-6-collected (move to Stage 2: ask the anything-else checkpoint)")
 
     return "\n".join(lines) if lines else "Nothing collected yet — this is the first message."
+
+
+def _strip_leaked_schema_tail(text: str) -> str:
+    """Strip a leaked copy of our own JSON schema keys from the end of the
+    reply text.
+
+    Occasionally Gemini emits *valid* JSON overall, but glitches while
+    writing the `reply` string value: it echoes the remaining schema keys
+    (chips/config_patch/ready_to_generate/summary) — properly escaped —
+    as literal trailing text inside the string itself, e.g.:
+      'Certainly! ...adventure?", "chips": [], "config_patch": {}, ...'
+    `json.loads` parses this fine (the quotes are escaped), so the
+    truncation/validity checks upstream never catch it. Cut the reply off
+    at the first sign of a leaked schema key.
+    """
+    import re as _re
+
+    tail_re = _re.compile(
+        r'"?\s*,?\s*"(?:chips|config_patch|ready_to_generate|summary|reply|assistant_reply|suggested_chips)"\s*:',
+        _re.IGNORECASE,
+    )
+    m = tail_re.search(text)
+    if m:
+        return text[: m.start()].rstrip().rstrip('",').rstrip()
+    return text
 
 
 def _strip_leaked_reasoning(text: str) -> str:
@@ -530,6 +620,44 @@ def _strip_leaked_reasoning(text: str) -> str:
     return text.strip() or text
 
 
+def _strip_trailing_json_artifacts(text: str) -> str:
+    """Remove stray JSON syntax left over when a truncated/malformed LLM
+    response is displayed on a best-effort basis (e.g. a leaked `",` or a
+    dangling `}` / `]` from a cut-off JSON string value)."""
+    import re as _re
+
+    if not text:
+        return text
+    cleaned = _re.sub(r'\s*["\',\]\}]+\s*$', '', text.rstrip())
+    return cleaned.rstrip() or text
+
+
+def _looks_like_valid_json(raw: str) -> bool:
+    """Best-effort check that Gemini's raw text is a complete, parseable
+    JSON object with a non-empty `reply` field — used to decide whether a
+    response was truncated by the token cap and should be retried instead
+    of shown to the user as-is."""
+    import re as _re
+
+    if not raw:
+        return False
+    cleaned = raw.strip()
+    fence_match = _re.search(r'```(?:json)?\s*([\s\S]*?)```', cleaned)
+    if fence_match:
+        cleaned = fence_match.group(1).strip()
+    json_match = _re.search(r'\{[\s\S]*\}', cleaned)
+    if json_match:
+        cleaned = json_match.group(0)
+    try:
+        data = json.loads(cleaned)
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    reply = data.get("reply") or data.get("assistant_reply")
+    return bool(reply and reply.strip())
+
+
 # ── Main chain function ───────────────────────────────────────────────────────
 
 async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
@@ -595,30 +723,32 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                 genai_types.Content(role="model", parts=[genai_types.Part(text=model_json)])
             )
 
-    def _call_sync() -> str:
-        response = client.models.generate_content(
+    def _call_sync():
+        return client.models.generate_content(
             model=settings.gemini_model,
             contents=contents,
             config=genai_types.GenerateContentConfig(
                 system_instruction=system_prompt,
                 temperature=0.4,
-                max_output_tokens=800,
+                max_output_tokens=2048,
             ),
         )
-        return response.text or ""
 
     import logging, time
     _log = logging.getLogger(__name__)
 
-    # Retry up to 3 times on transient errors (503, rate limit, timeout)
+    # Retry up to 3 times on transient API errors (503, rate limit, timeout)
+    # AND on malformed/truncated JSON responses — a response that arrives
+    # successfully but fails to parse is just as much a "try again" signal
+    # as a network hiccup, otherwise a truncated reply gets shown verbatim.
     raw = ""
     last_exc: Exception | None = None
     for attempt in range(3):
         try:
             loop = asyncio.get_event_loop()
-            raw = await loop.run_in_executor(None, _call_sync)
-            last_exc = None
-            break  # success
+            response = await loop.run_in_executor(None, _call_sync)
+            track_gemini_usage(response, model=settings.gemini_model, purpose="wizard_chat")
+            raw = response.text or ""
         except Exception as exc:
             last_exc = exc
             err_str = str(exc)
@@ -627,10 +757,22 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                 wait = 1.5 * (attempt + 1)
                 _log.warning("Gemini transient error (attempt %d/3): %s — retrying in %.1fs", attempt + 1, exc, wait)
                 await asyncio.sleep(wait)
+                continue
             else:
                 break  # Non-retryable error — give up immediately
 
-    if last_exc is not None:
+        # Response arrived — check it actually parses as valid JSON before
+        # accepting it. If not (truncated mid-generation), retry the call
+        # rather than falling straight to best-effort text extraction.
+        if _looks_like_valid_json(raw):
+            last_exc = None
+            break
+        last_exc = ValueError("Gemini response was not valid/complete JSON")
+        if attempt < 2:
+            _log.warning("Gemini JSON parse check failed (attempt %d/3) — retrying", attempt + 1)
+            await asyncio.sleep(0.5)
+
+    if last_exc is not None and not raw:
         _log.warning("Gemini API failed after retries: %s", last_exc)
         return _mock_wizard(request)
 
@@ -704,6 +846,8 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
 
         # Safety net: strip any reasoning the LLM leaked into the reply field
         reply_text = _strip_leaked_reasoning(reply_text)
+        # Safety net: strip a leaked copy of our own schema keys from the tail
+        reply_text = _strip_leaked_schema_tail(reply_text)
 
         # Merge config_patch into partial_config to check completeness
         merged = {**request.partial_config}
@@ -719,12 +863,22 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # Server-side override: only allow ready=true if all required fields present
         ready = data.get("ready_to_generate", False) and _has_all_required(merged)
 
+        # Safety net: the very first turn always asks about trip purpose (system
+        # prompt Section 4, Field 1 mandates chips here), but with almost no
+        # conversation context yet, the LLM occasionally omits them. Since this
+        # is the single highest-traffic touchpoint (every user's first message),
+        # deterministically backfill the standard purpose chips rather than
+        # leaving the opening question chip-less.
+        if not chips_list and not merged.get("purpose") and len(request.messages) <= 1:
+            chips_list = ["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"]
+
         return WizardChatResponse(
             reply=reply_text,
             chips=chips_list,
             config_patch=patch,
             ready_to_generate=ready,
             summary=data.get("summary") if ready else None,
+            multi_select=_is_multi_select_chips(chips_list),
         )
     except Exception:
         # JSON parse failed — LLM returned plain text (no JSON).
@@ -755,6 +909,7 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             clean_raw = clean_raw[:chips_match2.start()].strip()
 
         clean_raw = _strip_leaked_reasoning(clean_raw)
+        clean_raw = _strip_leaked_schema_tail(clean_raw)
         # Guard: if clean_raw still looks like raw JSON, try to extract reply from it
         if clean_raw and clean_raw.strip().startswith("{"):
             try:
@@ -765,7 +920,18 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                     clean_raw = ""
             except Exception:
                 clean_raw = ""  # Do not display raw JSON to user
-        return WizardChatResponse(reply=clean_raw or "I'm on it! Just a moment…", chips=extracted_chips, config_patch={}, ready_to_generate=False)
+
+        # Final safety net: strip any stray trailing JSON syntax (e.g. a
+        # leaked `",` or dangling `}`/`]`) from a truncated response before
+        # ever showing it to the user.
+        clean_raw = _strip_trailing_json_artifacts(clean_raw)
+        return WizardChatResponse(
+            reply=clean_raw or "I'm on it! Just a moment…",
+            chips=extracted_chips,
+            config_patch={},
+            ready_to_generate=False,
+            multi_select=_is_multi_select_chips(extracted_chips),
+        )
 
 
 # ── Mock fallback ─────────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import logging
 from google import genai as google_genai
 
 from core.config import settings
+from core.llm_client import track_gemini_usage
 from models.itinerary import ComparisonResponse, ComparisonParameter
 from models.trip import TripConfig, DestinationInput
 from services.geocode import geocode_city
@@ -139,11 +140,12 @@ async def _compare_qualitative(
         for model_name in models_to_try:
             for attempt in range(max_attempts):
                 try:
-                    def _call_sync(m: str = model_name) -> str:  # noqa: E731
-                        resp = client.models.generate_content(model=m, contents=prompt)
-                        return resp.text or ""
+                    def _call_sync(m: str = model_name):  # noqa: E731
+                        return client.models.generate_content(model=m, contents=prompt)
 
-                    raw = await asyncio.get_event_loop().run_in_executor(None, _call_sync)
+                    resp = await asyncio.get_event_loop().run_in_executor(None, _call_sync)
+                    track_gemini_usage(resp, model=model_name, purpose="comparison")
+                    raw = resp.text or ""
                     break  # success
                 except Exception as exc:
                     is_transient = any(kw in str(exc) for kw in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED"))

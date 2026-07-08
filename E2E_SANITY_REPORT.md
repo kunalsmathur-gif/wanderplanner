@@ -1,5 +1,5 @@
 # End-to-End Testing & Sanity Check Report
-## WanderPlan v2.1 - June 17, 2026
+## WanderPlanner v2.1 - June 17, 2026
 
 ---
 

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { Space_Grotesk, DM_Sans, JetBrains_Mono } from 'next/font/google'
 import { MobileWarningBanner } from '@/components/common/MobileWarningBanner'
+import { AuthHydrator } from '@/components/common/AuthHydrator'
 import './globals.css'
 
 const spaceGrotesk = Space_Grotesk({
@@ -20,16 +21,16 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const viewport: Viewport = { themeColor: '#0EA5E9' }
 
-const SITE_URL = 'https://wanderplan.app'
-const SITE_TITLE = 'Wanderplan — Free AI Travel Planner & Itinerary Generator'
+const SITE_URL = 'https://wanderplanner.app'
+const SITE_TITLE = 'Wanderplanner — Free AI Travel Planner & Itinerary Generator'
 const SITE_DESCRIPTION =
-  'Wanderplan is a free AI travel planner. Tell Anya — our AI concierge — your destination, budget, and group. Get a personalised day-by-day itinerary for Bali, Europe, Rajasthan, Dubai, and 190+ countries. No sign-up required.'
+  'Wanderplanner is a free AI travel planner. Tell Anya — our AI concierge — your destination, budget, and group. Get a personalised day-by-day itinerary for Bali, Europe, Rajasthan, Dubai, and 190+ countries. Free sign-up, no credit card required.'
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
     default: SITE_TITLE,
-    template: '%s | Wanderplan AI Travel Planner',
+    template: '%s | Wanderplanner AI Travel Planner',
   },
   description: SITE_DESCRIPTION,
   keywords: [
@@ -46,7 +47,7 @@ export const metadata: Metadata = {
     'day by day itinerary',
     'free travel planner',
     'AI vacation planner',
-    'Wanderplan',
+    'Wanderplanner',
     'Gemini travel AI',
     'personalized travel itinerary',
     'budget travel planner',
@@ -54,9 +55,9 @@ export const metadata: Metadata = {
     'honeymoon itinerary planner',
     'solo trip planner',
   ],
-  authors: [{ name: 'Wanderplan', url: SITE_URL }],
-  creator: 'Wanderplan',
-  publisher: 'Wanderplan',
+  authors: [{ name: 'Wanderplanner', url: SITE_URL }],
+  creator: 'Wanderplanner',
+  publisher: 'Wanderplanner',
   category: 'travel',
   robots: {
     index: true,
@@ -68,7 +69,7 @@ export const metadata: Metadata = {
     type: 'website',
     locale: 'en_IN',
     url: SITE_URL,
-    siteName: 'Wanderplan',
+    siteName: 'Wanderplanner',
     title: SITE_TITLE,
     description: SITE_DESCRIPTION,
     images: [
@@ -76,7 +77,7 @@ export const metadata: Metadata = {
         url: '/og-image.png',
         width: 1200,
         height: 630,
-        alt: 'Wanderplan — AI Travel Planner',
+        alt: 'Wanderplanner — AI Travel Planner',
       },
     ],
   },
@@ -85,7 +86,7 @@ export const metadata: Metadata = {
     title: SITE_TITLE,
     description: SITE_DESCRIPTION,
     images: ['/og-image.png'],
-    creator: '@wanderplanapp',
+    creator: '@wanderplannerapp',
   },
   verification: {
     google: 'YOUR_GOOGLE_SEARCH_CONSOLE_TOKEN',
@@ -99,7 +100,7 @@ const jsonLd = {
     {
       '@type': 'Organization',
       '@id': `${SITE_URL}/#organization`,
-      name: 'Wanderplan',
+      name: 'Wanderplanner',
       url: SITE_URL,
       description: 'Free AI-powered travel planning and itinerary generation',
     },
@@ -107,7 +108,7 @@ const jsonLd = {
       '@type': 'WebSite',
       '@id': `${SITE_URL}/#website`,
       url: SITE_URL,
-      name: 'Wanderplan',
+      name: 'Wanderplanner',
       description: SITE_DESCRIPTION,
       publisher: { '@id': `${SITE_URL}/#organization` },
       potentialAction: {
@@ -119,7 +120,7 @@ const jsonLd = {
     {
       '@type': 'WebApplication',
       '@id': `${SITE_URL}/#app`,
-      name: 'Wanderplan AI Travel Planner',
+      name: 'Wanderplanner AI Travel Planner',
       url: SITE_URL,
       applicationCategory: 'TravelApplication',
       operatingSystem: 'Web browser',
@@ -139,34 +140,34 @@ const jsonLd = {
       mainEntity: [
         {
           '@type': 'Question',
-          name: 'Is Wanderplan free to use?',
+          name: 'Is Wanderplanner free to use?',
           acceptedAnswer: {
             '@type': 'Answer',
-            text: 'Yes. Wanderplan is completely free. No sign-up, no credit card required.',
+            text: 'Yes. Wanderplanner is completely free. Just a free sign-up — no credit card required.',
           },
         },
         {
           '@type': 'Question',
-          name: 'How does Wanderplan generate itineraries?',
+          name: 'How does Wanderplanner generate itineraries?',
           acceptedAnswer: {
             '@type': 'Answer',
-            text: 'Wanderplan uses Google Gemini AI along with real traveller data from Reddit, Wikivoyage, and live weather to build personalised day-by-day travel plans.',
+            text: 'Wanderplanner uses Google Gemini AI along with real traveller data from Reddit, Wikivoyage, and live weather to build personalised day-by-day travel plans.',
           },
         },
         {
           '@type': 'Question',
-          name: 'Which destinations does Wanderplan support?',
+          name: 'Which destinations does Wanderplanner support?',
           acceptedAnswer: {
             '@type': 'Answer',
-            text: 'Wanderplan supports 190+ countries and thousands of cities including Bali, Paris, Dubai, Tokyo, Rajasthan, New York, and more.',
+            text: 'Wanderplanner supports 190+ countries and thousands of cities including Bali, Paris, Dubai, Tokyo, Rajasthan, New York, and more.',
           },
         },
         {
           '@type': 'Question',
-          name: 'Can Wanderplan plan group or family trips?',
+          name: 'Can Wanderplanner plan group or family trips?',
           acceptedAnswer: {
             '@type': 'Answer',
-            text: 'Yes. Wanderplan handles solo trips, couples, families with children, and large groups. Just tell Anya who is travelling and she tailors the itinerary accordingly.',
+            text: 'Yes. Wanderplanner handles solo trips, couples, families with children, and large groups. Just tell Anya who is travelling and she tailors the itinerary accordingly.',
           },
         },
       ],
@@ -207,6 +208,7 @@ export default function RootLayout({
         />
       </head>
       <body className="h-full min-w-[320px] antialiased">
+        <AuthHydrator />
         <MobileWarningBanner />
         {children}
       </body>

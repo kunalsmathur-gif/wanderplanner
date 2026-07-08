@@ -10,14 +10,16 @@ from models.trip import TripConfig
 from services.search import retrieve_context, summarise_context
 from services.itinerary_cache import get_cached_itinerary, store_itinerary
 from services.rag_fallback import rag_skeleton_itinerary
+from services.pexels import get_day_photos
 from chains.scoring import calculate_alignment_score
 from chains.safety import apply_kid_safety_filter, inject_persona_modules
 from core.prompt_guard import neutralize, wrap_untrusted
+from core.llm_client import track_gemini_usage
 
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
-You are WanderPlan, an expert AI travel advisor.
+You are WanderPlanner, an expert AI travel advisor.
 Generate a detailed, realistic day-by-day travel itinerary based on the trip
 configuration and destination research provided.
 
@@ -299,8 +301,8 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
     for model_name in models_to_try:
         for attempt in range(max_attempts):
             try:
-                def _call_sync(m: str = model_name) -> str:  # noqa: E731
-                    response = client.models.generate_content(
+                def _call_sync(m: str = model_name):  # noqa: E731
+                    return client.models.generate_content(
                         model=m,
                         contents=prompt,
                         config=genai_types.GenerateContentConfig(
@@ -308,9 +310,10 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
                             response_mime_type="application/json",
                         ),
                     )
-                    return response.text
 
-                text = await loop.run_in_executor(None, _call_sync)
+                response = await loop.run_in_executor(None, _call_sync)
+                track_gemini_usage(response, model=model_name, purpose="itinerary_generation")
+                text = response.text
 
                 # Strip markdown fences if Gemini adds them despite response_mime_type
                 cleaned = text.strip()
@@ -438,6 +441,25 @@ async def generate_itinerary(trip_config: TripConfig) -> ItineraryResponse:
         ]
         day.items = scored_items
         scored_days.append(day)
+
+    # Best-effort: attach one relevant hero photo per day (destination + theme).
+    # Never blocks/fails itinerary generation if Pexels is unavailable.
+    dest_label = (
+        trip_config.destination.city if trip_config.destination and trip_config.destination.city
+        else (trip_config.destination_country or "travel")
+    )
+    try:
+        photos = await asyncio.wait_for(
+            get_day_photos([f"{dest_label} {d.theme}" for d in scored_days]),
+            timeout=6.0,
+        )
+        for day, photo in zip(scored_days, photos):
+            if photo:
+                day.image_url = photo["url"]
+                day.image_photographer = photo["photographer"]
+                day.image_photographer_url = photo["photographer_url"]
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Day-photo fetch skipped: %s", exc)
 
     overall_score = (
         sum(i.alignment_score for d in scored_days for i in d.items)

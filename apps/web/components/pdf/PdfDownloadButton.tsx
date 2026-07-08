@@ -11,8 +11,8 @@ export function PdfDownloadButton() {
   const config = useTripConfigStore((s) => s.config)
 
   const fileName = config.destination?.city
-    ? `${config.destination.city.replace(/\s+/g, '_')}_WanderPlan.pdf`
-    : 'WanderPlan_Itinerary.pdf'
+    ? `${config.destination.city.replace(/\s+/g, '_')}_WanderPlanner.pdf`
+    : 'WanderPlanner_Itinerary.pdf'
 
   if (!days.length) return (
     <button

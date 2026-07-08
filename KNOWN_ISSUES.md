@@ -1,4 +1,4 @@
-# Known Issues & Future Improvements - WanderPlan
+# Known Issues & Future Improvements - WanderPlanner
 
 **Last Updated:** June 18, 2026, 09:40 IST  
 **Status:** ✅ Both issues RESOLVED (commit f57cbdd)

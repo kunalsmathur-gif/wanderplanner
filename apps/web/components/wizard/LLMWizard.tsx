@@ -1,15 +1,18 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Mic, MicOff, Send, Plane, X, CheckCircle2, Loader2 } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useWizardChatStore } from '@/store/wizardChatStore'
+import { useAuthStore } from '@/store/authStore'
 import { wizardChat } from '@/lib/api'
 import { streamItinerary } from '@/lib/api'
+import { savePendingGeneration, getPendingGeneration, clearPendingGeneration } from '@/lib/pendingGeneration'
 import type { TripConfig } from '@/types'
-import { WanderplanLogo } from '@/components/common/WanderplanLogo'
+import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -19,6 +22,7 @@ interface Message {
   content: string
   chips?: string[]
   config_patch?: Record<string, unknown>  // stored so backend can replay real patches in history
+  multiSelect?: boolean  // true when chips is a multi-value field (e.g. themes); server-computed
 }
 
 type Phase = 'chatting' | 'generating' | 'done'
@@ -63,6 +67,18 @@ const REQUIRED_LABELS: { key: string; label: string }[] = [
   { key: 'pace',        label: 'Pace'        },
 ]
 
+// Theme chips (Culture, Food, Adventure, ...) map to a multi-value array
+// field, so unlike every other chip group (purpose, pace, etc.) the user
+// should be able to pick several before submitting.
+const THEME_CHIP_KEYWORDS = [
+  'culture', 'nature', 'food', 'adventure', 'shopping', 'photography',
+  'nightlife', 'sports', 'wellness', 'religious', 'vegetarian',
+]
+
+function _isThemeChipGroup(chips: string[]): boolean {
+  return chips.length >= 2 && chips.every((c) => THEME_CHIP_KEYWORDS.some((k) => c.toLowerCase().includes(k)))
+}
+
 function _isFieldFilled(key: string, config: Partial<TripConfig>): boolean {
   switch (key) {
     case 'purpose':     return Boolean(config.purpose)
@@ -87,12 +103,14 @@ function _isFieldFilled(key: string, config: Partial<TripConfig>): boolean {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function LLMWizard() {
+  const router            = useRouter()
   const closeWizard       = useAppStore((s) => s.closeWizard)
   const wizardPreload     = useAppStore((s) => s.wizardPreload)
   const clearPreload      = useAppStore((s) => s.clearWizardPreload)
   const setDays           = useItineraryStore((s) => s.setDays)
   const updateConfig      = useTripConfigStore((s) => s.updateConfig)
   const wizardReset       = useWizardChatStore((s) => s.reset)
+  const authStatus        = useAuthStore((s) => s.status)
 
   const [messages, setMessages]       = useState<Message[]>([])
   const [input, setInput]             = useState('')
@@ -104,10 +122,24 @@ export function LLMWizard() {
   const [error, setError]             = useState('')
   const [voiceActive, setVoiceActive] = useState(false)
   const [isSpeaking, setIsSpeaking]   = useState(false)
+  // Per-message selection set, only used for multi-select theme chip groups
+  const [themeSelections, setThemeSelections] = useState<Record<string, Set<string>>>({})
 
   // Always-current ref so sendMessage never reads stale partialConfig
   const partialConfigRef = useRef<Partial<TripConfig>>({})
   partialConfigRef.current = partialConfig
+
+  // Snapshot any pending post-auth generation exactly once at mount (lazy
+  // useState initializer), rather than each effect independently re-reading
+  // sessionStorage. Both the resume-after-auth effect and the bootstrap
+  // effect below need to agree on whether a resume is in flight — reading
+  // fresh each time creates a race where the resume effect's own
+  // `clearPendingGeneration()` call makes the bootstrap effect's guard see
+  // "nothing pending" a moment later (since effects run in declaration
+  // order within the same commit), causing it to also fire and inject a
+  // brand-new "Hello, I'm Anya" greeting on top of the resumed generation.
+  const [pendingGeneration] = useState<TripConfig | null>(() => getPendingGeneration())
+  const hasResumedGenerationRef = useRef(false)
 
   const messagesEndRef  = useRef<HTMLDivElement>(null)
   const inputRef        = useRef<HTMLInputElement>(null)
@@ -117,9 +149,69 @@ export function LLMWizard() {
 
   // ── Bootstrap first Anya message ───────────────────────────────────────────
 
+  // Resume a generation that was interrupted by the sign-in gate — once the
+  // user authenticates (including via the full-page-reload Google SSO
+  // round-trip), pick the saved config back up and generate immediately
+  // instead of re-running the whole chat conversation.
   useEffect(() => {
+    if (authStatus !== 'authenticated') return
+    if (!pendingGeneration || hasResumedGenerationRef.current) return
+    hasResumedGenerationRef.current = true
+    clearPendingGeneration()
+    updateConfig(pendingGeneration)
+    startGeneration(pendingGeneration)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authStatus, pendingGeneration])
+
+  useEffect(() => {
+    // If a generation is pending resume (see effect above), skip the normal
+    // chat bootstrap entirely — it'll either auto-generate momentarily, or
+    // the user is still off completing sign-in. Uses the same mount-time
+    // snapshot as the resume effect above (not a fresh sessionStorage read)
+    // so the two effects can never disagree about whether a resume is in
+    // flight, regardless of effect execution order.
+    if (pendingGeneration) return
+
     const preload = wizardPreload
     const preloadLabel = preload ? `${preload.city}, ${preload.country}` : undefined
+
+    // ── Edit mode: reopening the wizard from "Edit Trip" on an already-
+    // generated itinerary should carry the existing config forward instead
+    // of starting a brand-new conversation from scratch.
+    const existingConfig = useTripConfigStore.getState().config
+    const hasExistingItinerary = useItineraryStore.getState().days.length > 0
+    const isEditMode = !preload && hasExistingItinerary
+      && REQUIRED_LABELS.every(({ key }) => _isFieldFilled(key, existingConfig))
+
+    if (isEditMode) {
+      setPartialConfig({ ...existingConfig, _checkpoint_asked: true } as Partial<TripConfig>)
+
+      const destLabel = existingConfig.destination_mode === 'country'
+        ? (existingConfig.destination_country ?? 'your destination')
+        : existingConfig.hops.length > 0
+          ? `${existingConfig.destination?.city} +${existingConfig.hops.length} more`
+          : (existingConfig.destination?.city ?? 'your destination')
+      const durationLabel = existingConfig.dates.duration_days
+        ? `${existingConfig.dates.duration_days} days`
+        : existingConfig.dates.start && existingConfig.dates.end
+          ? `${existingConfig.dates.start} – ${existingConfig.dates.end}`
+          : ''
+      const summaryLine = [
+        destLabel,
+        durationLabel,
+        `${existingConfig.budget.currency} ${existingConfig.budget.amount.toLocaleString()}`,
+        `${existingConfig.group.adults} adult${existingConfig.group.adults !== 1 ? 's' : ''}`,
+        existingConfig.pace,
+      ].filter(Boolean).join(' · ')
+
+      addMessage({
+        role: 'assistant',
+        content: `Welcome back! Here's your current trip: ${summaryLine}. What would you like to change — destination, dates, budget, or themes? Or tell me to regenerate it as-is.`,
+        chips: ['Change destination', 'Change dates', 'Change budget', 'Add/change themes', 'Regenerate as-is'],
+      })
+      setPhase('chatting')
+      return
+    }
 
     // Pre-fill destination in config if preloaded
     if (preload) {
@@ -278,6 +370,7 @@ export function LLMWizard() {
         content: res.reply,
         chips: res.chips.length > 0 ? res.chips : undefined,
         config_patch: Object.keys(res.config_patch ?? {}).length > 0 ? res.config_patch : undefined,
+        multiSelect: res.multi_select,
       }
       setMessages([...nextMessages, assistantMsg])
 
@@ -318,13 +411,7 @@ export function LLMWizard() {
 
   // ── Generate itinerary ─────────────────────────────────────────────────────
 
-  function handleGenerate() {
-    // Use ref to avoid stale closure (called from setTimeout or button click)
-    updateConfig(partialConfigRef.current as Partial<TripConfig>)
-
-    // Build a full TripConfig from the partialConfig + store defaults
-    const fullConfig = useTripConfigStore.getState().config
-
+  function startGeneration(fullConfig: TripConfig) {
     setPhase('generating')
     setProgress({ message: 'Starting up…', step: 0, total: 6 })
     wizardReset()
@@ -338,10 +425,36 @@ export function LLMWizard() {
         closeWizard()
       },
       (code, message, _retryable) => {
+        // Session expired mid-flow (or was never established) — save the
+        // fully-collected config and send the user to sign in, then resume
+        // generation automatically once they're back (see resume effect).
+        if (code === 'AUTH_REQUIRED') {
+          savePendingGeneration(fullConfig)
+          router.push(`/signup?returnTo=${encodeURIComponent('/')}`)
+          return
+        }
         setError(`Generation failed: ${message} (${code})`)
         setPhase('chatting')
       },
     )
+  }
+
+  function handleGenerate() {
+    // Use ref to avoid stale closure (called from setTimeout or button click)
+    updateConfig(partialConfigRef.current as Partial<TripConfig>)
+
+    // Build a full TripConfig from the partialConfig + store defaults
+    const fullConfig = useTripConfigStore.getState().config
+
+    // Require sign-in before generating — matches the itinerary-gate
+    // enforced server-side in /generate-itinerary.
+    if (useAuthStore.getState().status !== 'authenticated') {
+      savePendingGeneration(fullConfig)
+      router.push(`/signup?returnTo=${encodeURIComponent('/')}`)
+      return
+    }
+
+    startGeneration(fullConfig)
   }
 
   // ── Voice input ────────────────────────────────────────────────────────────
@@ -378,8 +491,12 @@ export function LLMWizard() {
 
   const filledCount = REQUIRED_LABELS.filter(({ key }) => _isFieldFilled(key, partialConfig)).length
   const progressPct = Math.round((filledCount / REQUIRED_LABELS.length) * 100)
-  // Show generate button when server confirms ready OR all fields locally filled
-  const readyToGenerate = filledCount === REQUIRED_LABELS.length || summary !== null
+  // Only show the "Generate" card once the server explicitly confirms
+  // ready_to_generate (reflected via `summary`). Using "all required fields
+  // filled" here was wrong: it hid the text input as soon as the 6 required
+  // fields were done, even while Anya was still asking optional follow-up
+  // questions (e.g. departure city) — leaving the user with no way to reply.
+  const readyToGenerate = summary !== null
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -395,7 +512,7 @@ export function LLMWizard() {
         {/* ── Header ──────────────────────────────────────────────────── */}
         <div className="flex shrink-0 items-center justify-between bg-[var(--_primary)] px-5 py-4 text-white">
           <div className="flex items-center gap-3">
-            <WanderplanLogo size="sm" inverted />
+            <WanderplannerLogo size="sm" inverted />
             <div>
               <p className="text-sm font-bold leading-tight">Anya</p>
               <p className="text-xs text-white/70">AI travel concierge</p>
@@ -470,23 +587,56 @@ export function LLMWizard() {
                       {msg.content}
                     </div>
                     {/* Chips */}
-                    {msg.chips && msg.chips.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {msg.chips
-                          .filter((chip) => !/generate/i.test(chip))
-                          .map((chip) => (
-                          <button
-                            key={chip}
-                            type="button"
-                            onClick={() => handleSubmit(chip)}
-                            disabled={isSending || phase !== 'chatting'}
-                            className="rounded-full border border-[var(--_primary)] px-3 py-1 text-xs font-medium text-[var(--_primary)] transition-colors hover:bg-[var(--_primary)] hover:text-white disabled:opacity-50"
-                          >
-                            {chip}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                    {msg.chips && msg.chips.length > 0 && (() => {
+                      const visibleChips = msg.chips.filter((chip) => !/generate/i.test(chip))
+                      // Prefer the server-computed flag (reliable); fall back to the
+                      // keyword heuristic only for older/cached messages that predate it.
+                      const isThemeGroup = msg.multiSelect ?? _isThemeChipGroup(visibleChips)
+                      const selected = themeSelections[msg.id] ?? new Set<string>()
+
+                      function toggleTheme(chip: string) {
+                        setThemeSelections((prev) => {
+                          const next = new Set(prev[msg.id] ?? [])
+                          if (next.has(chip)) next.delete(chip)
+                          else next.add(chip)
+                          return { ...prev, [msg.id]: next }
+                        })
+                      }
+
+                      return (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {visibleChips.map((chip) => {
+                            const isSelected = isThemeGroup && selected.has(chip)
+                            return (
+                              <button
+                                key={chip}
+                                type="button"
+                                onClick={() => (isThemeGroup ? toggleTheme(chip) : handleSubmit(chip))}
+                                disabled={isSending || phase !== 'chatting'}
+                                className={[
+                                  'rounded-full border border-[var(--_primary)] px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50',
+                                  isSelected
+                                    ? 'bg-[var(--_primary)] text-white'
+                                    : 'text-[var(--_primary)] hover:bg-[var(--_primary)] hover:text-white',
+                                ].join(' ')}
+                              >
+                                {chip}
+                              </button>
+                            )
+                          })}
+                          {isThemeGroup && selected.size > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleSubmit(Array.from(selected).join(', '))}
+                              disabled={isSending || phase !== 'chatting'}
+                              className="rounded-full bg-[var(--_primary)] px-3 py-1 text-xs font-semibold text-white transition-colors hover:opacity-90 disabled:opacity-50"
+                            >
+                              Continue ✓
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })()}
                   </div>
                 </div>
               ) : (

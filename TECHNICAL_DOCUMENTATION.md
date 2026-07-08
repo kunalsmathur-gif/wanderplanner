@@ -1,7 +1,7 @@
-# WanderPlan — Technical Documentation
+# WanderPlanner — Technical Documentation
 
-**Version:** 8.0 (Security Hardening — rate limiting, prompt-injection guard, SSRF fix, sanitized errors, structured logging, CORS hardening, dependency pinning)  
-**Last Updated:** July 2, 2026  
+**Version:** 10.3 (Accounts, Auth Gate, Password Reset, Analytics)
+**Last Updated:** July 7, 2026  
 **Status:** Production-ready MVP
 
 ---
@@ -14,22 +14,24 @@
 4. [Frontend Architecture](#4-frontend-architecture)
 5. [State Management (Zustand)](#5-state-management-zustand)
 6. [Backend Architecture](#6-backend-architecture)
+6A. [Authentication & Session Management](#6a-authentication--session-management)
 7. [API Reference](#7-api-reference)
+7A. [Admin Analytics Dashboard](#7a-admin-analytics-dashboard)
 8. [AI Models, Prompts & RAG](#8-ai-models-prompts--rag)
 9. [Key Frontend Components](#9-key-frontend-components)
 10. [Hooks & Utilities](#10-hooks--utilities)
 11. [Voice Features](#11-voice-features)
 12. [Data Flows](#12-data-flows)
 13. [Environment Setup](#13-environment-setup)
-14. [Recent Changes (v10.0, v9.0, v7.0, v6.0 & v5.0)](#14-recent-changes-v100-v90-v70-v60--v50)
+14. [Recent Changes (v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)](#14-recent-changes-v103-v102-v101-v100-v90-v70-v60--v50)
 
 ---
 
 ## 1. Overview
 
-WanderPlan is an AI-powered travel planning platform. Users interact with **Anya**, a conversational AI concierge, to produce a complete day-by-day itinerary. Key differentiators vs competitors (Mindtrip, TripIt, Travaa):
+WanderPlanner is an AI-powered travel planning platform. Users interact with **Anya**, a conversational AI concierge, to produce a complete day-by-day itinerary. Key differentiators vs competitors (Mindtrip, TripIt, Travaa):
 
-| Dimension | WanderPlan |
+| Dimension | WanderPlanner |
 |---|---|
 | Input method | Conversational wizard + voice + URL paste (Start Anywhere) |
 | Post-gen experience | Persistent Anya chat panel for real-time refinements |
@@ -52,6 +54,8 @@ WanderPlan is an AI-powered travel planning platform. Users interact with **Anya
 | **Zustand** | 5.x | State management (6 stores) |
 | **React Leaflet** | 4.x | Interactive maps (OpenStreetMap tiles) |
 | **Axios** | 1.x | HTTP client |
+| **Dedicated auth pages** | — | `/signup`, `/login`, `/forgot-password`, `/reset-password`, `/account`, `/terms`, `/privacy` |
+| **Session storage + cookies** | Native | Pending-generation resume across OAuth/full-page redirects; credentialed API calls |
 | **Web Speech API** | Native | Voice input (speech-to-text) |
 | **Speech Synthesis API** | Native | Voice output (text-to-speech) |
 | **Wikipedia REST API** | Free | Destination photos (no key, CORS-safe) |
@@ -64,11 +68,21 @@ WanderPlan is an AI-powered travel planning platform. Users interact with **Anya
 | **FastAPI** | 0.111+ | Async REST API |
 | **Uvicorn** | - | ASGI server |
 | **Pydantic** | 2.x | Data validation |
+| **PostgreSQL** | 16+ | Transactional data store for users, refresh tokens, password reset tokens, analytics events |
+| **Supabase** | Managed | Production Postgres hosting |
+| **SQLAlchemy 2.0** | Latest | Async ORM / session management |
+| **Alembic** | Latest | Schema migrations (`0001_auth_analytics`, `0002_password_reset`) |
+| **Argon2id** | Latest | Password hashing for email/password accounts |
+| **JWT + rotating refresh tokens** | Custom | Cookie-based auth sessions (`wp_access_token`, `wp_refresh_token`) |
+| **Google OAuth 2.0** | Latest | Stateless Authorization Code flow for Google SSO |
+| **itsdangerous** | Latest | Signed stateless Google OAuth `state` parameter |
+| **Resend** | Latest | Transactional email for password reset |
 | **Google Generative AI** | Latest | Gemini API client |
 | **Qdrant** | 1.x | Vector DB (in-memory mode) |
 | **sentence-transformers** | - | Embeddings (all-MiniLM-L6-v2, 384 dims) |
 | **httpx** | - | Async HTTP (URL fetch for Start Anywhere) |
 | **BeautifulSoup4** | - | HTML parsing |
+| **Pexels API** | Free tier | Optional destination/activity hero photos for itinerary days and PDF export |
 | **APScheduler** | - | Background jobs |
 
 ---
@@ -122,6 +136,13 @@ apps/web/
 ├── app/
 │   ├── layout.tsx          — Root layout, font loading, theme script
 │   ├── page.tsx            — Root page: LandingHero or ThreeColumnLayout + overlays
+│   ├── signup/page.tsx     — Email/password signup + consent + Google SSO
+│   ├── login/page.tsx      — Login + Google SSO
+│   ├── forgot-password/page.tsx — Forgot-password request page
+│   ├── reset-password/page.tsx  — Password reset completion page
+│   ├── account/page.tsx    — Authenticated profile + self-delete danger zone
+│   ├── terms/page.tsx      — Terms of Service
+│   ├── privacy/page.tsx    — Privacy Policy
 │   └── t/[slug]/page.tsx   — Shareable read-only trip view
 ├── components/
 │   ├── chat/
@@ -131,8 +152,11 @@ apps/web/
 │   ├── common/
 │   │   ├── LandingHero.tsx     — Landing: nav + hero + Start Anywhere + gallery + FAQ
 │   │   ├── FloatingAnyaButton.tsx — Orb: opens ChatPanel (itinerary) or wizard (landing)
+│   │   ├── AuthLayout.tsx      — Shared centered card shell for auth pages
+│   │   ├── GoogleSignInButton.tsx — Google OAuth CTA
+│   │   ├── AuthHydrator.tsx    — Session bootstrap + `session_start` analytics beacon
 │   │   ├── ShareButton.tsx     — Generates /t/[slug] link, copies to clipboard
-│   │   ├── WanderplanLogo.tsx  — SVG geometric gold W
+│   │   ├── WanderplannerLogo.tsx  — SVG geometric gold W
 │   │   └── ThemeToggle.tsx     — Dark/light toggle
 │   ├── dashboard/
 │   │   ├── Column1Metrics.tsx  — Left sidebar: metrics, expenses, currency, booking hub
@@ -146,6 +170,8 @@ apps/web/
 │   │   └── BookingLinksSection.tsx
 │   ├── layout/
 │   │   └── ThreeColumnLayout.tsx — Responsive: 3-col on desktop, bottom-tab on mobile
+│   ├── pdf/
+│   │   └── ItineraryDocument.tsx — @react-pdf/renderer export with scrapbook-style day cards
 │   └── wizard/
 │       ├── LLMWizard.tsx         — LLM-powered Anya wizard (replaces state machine)
 │       └── ConversationalWizard.tsx — Legacy scripted wizard (kept for reference)
@@ -153,7 +179,9 @@ apps/web/
 │   └── useWikiImage.ts     — Shared Wikipedia photo hook (cached, CORS-safe)
 ├── store/                  — See Section 5
 ├── lib/
-│   └── api.ts              — All backend API calls (typed)
+│   ├── api.ts              — Main backend API calls + credentialed itinerary SSE
+│   ├── authApi.ts          — Auth-specific axios client (`withCredentials: true`)
+│   └── pendingGeneration.ts — sessionStorage-backed pre-auth itinerary resume
 └── types/
     └── index.ts            — TripConfig, ItineraryDay, ItineraryItem, etc.
 ```
@@ -232,6 +260,24 @@ Chat message history + current wizard phase.
 }
 ```
 
+The live wizard CTA is now derived from the backend's explicit Stage-3 ready signal (`summary !== null` / `ready_to_generate=true`), not from a frontend count of required fields. This keeps the text input visible during Stage 2 follow-up prompts such as departure-city or theme refinement.
+
+### `authStore.ts`
+Cookie-backed auth/session state.
+
+```typescript
+{
+  user: AuthUser | null
+  status: 'idle' | 'loading' | 'authenticated' | 'unauthenticated'
+  hydrate(): Promise<void>
+  login(email, password): Promise<AuthUser>
+  signup(input): Promise<AuthUser>
+  logout(): Promise<void>
+}
+```
+
+`AuthHydrator.tsx` mounts in `app/layout.tsx`, calls `hydrate()` on boot, and emits a `session_start` analytics beacon. `LLMWizard.tsx` also reads this store before generation; if unauthenticated, it persists the fully collected config via `pendingGeneration.ts` so auth redirects (including a full Google OAuth page load) do not lose trip state.
+
 ### `itineraryStore.ts`
 Holds generated itinerary data.
 
@@ -264,7 +310,7 @@ Persistent post-generation Anya chat.
 ```
 
 ### `bookingStore.ts`
-Booking hub with `zustand/persist` (localStorage key: `wanderplan-bookings`).
+Booking hub with `zustand/persist` (localStorage key: `wanderplanner-bookings`).
 
 ```typescript
 {
@@ -286,10 +332,18 @@ type BookingType = 'Flight' | 'Hotel' | 'Activity' | 'Transport'
 apps/api/
 ├── main.py                   — FastAPI app, CORS (allow_credentials=False), rate-limit
 │                               middleware, structured logging setup, router registration
+├── db.py                     — Async SQLAlchemy engine/session setup for Postgres
+├── db_models/                — `users`, `refresh_tokens`, `events`, `password_reset_tokens`
+├── migrations/               — Alembic migrations (`0001_auth_analytics`, `0002_password_reset`)
 ├── core/
 │   ├── config.py             — Settings (env vars) — includes hybrid_search_enabled,
 │   │                           hyde_enabled, reranking_enabled, osm_*, itinerary_cache_*,
-│   │                           allowed_origins wildcard validator (⭐ NEW v10.0)
+│   │                           database/auth/email settings, pexels_api_key, allowed_origins
+│   │                           wildcard validator (⭐ NEW v10.0)
+│   ├── security.py           — Argon2id password hashing + JWT / opaque refresh-token helpers
+│   ├── auth_dependency.py    — `get_current_user`, `get_current_admin_user`, cookie names
+│   ├── analytics.py          — Generic event logging helper
+│   ├── email.py              — Resend HTTP API integration for password-reset mail
 │   ├── rate_limit.py         — ⭐ NEW (v10.0): slowapi Limiter (IP-keyed), 10/min LLM
 │   │                           endpoints, 30/min default
 │   ├── errors.py             — ⭐ NEW (v10.0): sanitize_error() — logs full exception
@@ -310,6 +364,9 @@ apps/api/
 │   ├── extract_trip_chain.py — URL/text → structured trip fields (Start Anywhere)
 │   └── ...
 ├── routers/
+│   ├── auth.py               — `/api/auth/*` signup/login/google/refresh/logout/me/password reset
+│   ├── admin.py              — `/api/admin/metrics/*` analytics summaries (admin-only)
+│   ├── analytics.py          — `/api/analytics/client-event` beacon sink
 │   ├── itinerary.py          — POST /api/generate-itinerary (SSE streaming)
 │   ├── chat_refine.py        — POST /api/chat-refine
 │   ├── wizard_chat.py        — POST /api/wizard-chat
@@ -329,7 +386,8 @@ apps/api/
 │   ├── hyde.py                — ⭐ NEW (v9.0): template-based hypothetical passage generator
 │   ├── itinerary_cache.py     — ⭐ NEW (v9.0): Tier-1 fallback — cache key, get/store cached itineraries
 │   ├── rag_fallback.py        — ⭐ NEW (v9.0): Tier-2 fallback — OSM-grounded itinerary skeleton
-│   └── geocode.py             — Nominatim proxy (1 req/s rate limit, LRU cache, is_country)
+│   ├── geocode.py             — Nominatim proxy (1 req/s rate limit, LRU cache, is_country)
+│   └── pexels.py              — Async Pexels client + in-memory query cache for itinerary day photos
 ├── scrapers/
 │   ├── reddit.py             — Reddit JSON scraper → Qdrant ingestion
 │   ├── wikivoyage.py         — Wikivoyage HTML scraper → Qdrant ingestion
@@ -339,7 +397,8 @@ apps/api/
 │   └── run_rag_eval.py        — Precision@k/Recall@k/MRR/nDCG@k against semantic_search()
 ├── load_test_rag.py           — ⭐ NEW (v9.0): concurrent-request throughput/latency load test
 └── models/
-    └── common.py              — GeocodeResponse (+ is_country: bool)
+    ├── common.py              — GeocodeResponse (+ is_country: bool)
+    └── itinerary.py           — ItineraryDay / ItineraryItem schemas (+ optional day image attribution fields)
 ```
 
 ### Country Detection (Geocode Service)
@@ -356,9 +415,152 @@ is_country = (
 )
 ```
 
+### Itinerary Day Photo Enrichment (Pexels)
+
+`apps/api/services/pexels.py` provides an async, fail-safe client for optional itinerary day hero images. The enrichment sits on the success path of `generate_itinerary()` *after* the itinerary days have been built/scored, but *before* the response is returned.
+
+**Architecture details:**
+- `get_day_photo(query)` issues a single landscape-photo search and returns `{ url, photographer, photographer_url }` or `None`.
+- Missing `PEXELS_API_KEY`, empty results, network failures, or parsing errors all degrade silently to `None` so photo lookup can never fail the itinerary request.
+- A module-level in-memory cache is keyed by the exact query string and capped at 500 entries to avoid repeated searches for common destination/theme combinations.
+- `get_day_photos(queries)` runs searches concurrently via `asyncio.gather()`.
+- `chains/itinerary_chain.py` builds queries as `"{destination city or country} {day theme}"`, applies a 6-second overall timeout budget, logs failures, and swallows them.
+- `models/itinerary.py` and `apps/web/types/index.ts` now expose `image_url`, `image_photographer`, and `image_photographer_url` on each `ItineraryDay`.
+
+---
+
+## 6A. Authentication & Session Management
+
+### Account creation & providers
+
+Authentication is brand new in this release. WanderPlanner now supports:
+
+- **Email + password** signup/login (`POST /api/auth/signup`, `POST /api/auth/login`)
+- **Google SSO** via a manual OAuth 2.0 Authorization Code flow (`GET /api/auth/google/start`, `GET /api/auth/google/callback`)
+- **Password reset** via Resend-delivered reset links
+
+The backend stores users in Postgres (`users` table) with:
+- `email`
+- `password_hash` (Argon2id; never plaintext)
+- `display_name`
+- `auth_provider` (`password` or `google`)
+- `google_sub`
+- `is_admin`
+- `consent_accepted` + `consent_accepted_at`
+
+**Hosting decision:** production uses **Supabase-managed Postgres** rather than self-hosted SQLite or file-backed storage. SQLite was rejected because concurrent multi-instance Railway deployments would introduce file-locking and durability issues; Neon and Railway Postgres were considered, but Supabase won on the team's free-tier / managed-ops tradeoff.
+
+**Google SSO design note:** the app does **not** use server-side session middleware for OAuth state. Instead, it signs a stateless `state` payload with `itsdangerous.URLSafeTimedSerializer`, exchanges the code with Google's token endpoint, then fetches profile data from `openidconnect.googleapis.com/v1/userinfo` via `httpx`.
+
+### Cookie-based session model
+
+Sessions are stored in **httpOnly cookies**, not localStorage:
+
+| Cookie | Purpose | Default TTL | Storage model |
+|---|---|---|---|
+| `wp_access_token` | Short-lived JWT for authenticated API access | ~15 minutes | Signed token |
+| `wp_refresh_token` | Long-lived opaque token for session renewal | ~30 days | Raw token only in cookie; SHA-256 hash stored in `refresh_tokens` |
+
+Refresh tokens rotate on every `POST /api/auth/refresh` call. The old token is revoked, a brand new token pair is issued, and only the hashed opaque refresh token is persisted. `refresh_tokens.user_id` uses `ON DELETE CASCADE`, so account deletion automatically revokes all remembered sessions.
+
+`COOKIE_SAMESITE` should stay **`lax` for local dev** but switch to **`none` with `COOKIE_SECURE=true` in production**, because the frontend and backend are typically deployed on different origins (Vercel + Railway).
+
+### Itinerary generation auth gate + frontend resume
+
+`POST /api/generate-itinerary` now depends on `get_current_user`. Unauthenticated requests return **401**, and the frontend maps this to the `AUTH_REQUIRED` error code.
+
+`LLMWizard.tsx` proactively checks `authStore` before calling `streamItinerary()`:
+
+1. If the user is signed out, it serializes the fully collected trip config into `sessionStorage` via `pendingGeneration.ts`.
+2. It redirects to `/signup?returnTo=/`.
+3. After signup/login/Google OAuth completes, `AuthHydrator` restores the session.
+4. An effect in `LLMWizard.tsx` detects both **authenticated user + pending config** and auto-resumes generation without re-asking the wizard questions.
+
+This design preserves intent even across a full-page Google OAuth round-trip that would otherwise destroy in-memory SPA state.
+
+### Password reset flow
+
+`POST /api/auth/password/forgot` always returns **200** even when an email does not exist, preventing account enumeration. Reset links are backed by the `password_reset_tokens` table:
+
+- hashed token only (never raw token at rest)
+- single-use
+- ~30 minute TTL (`PASSWORD_RESET_TOKEN_TTL_MINUTES`)
+- `user_id` with `ON DELETE CASCADE`
+
+`POST /api/auth/password/reset` verifies the token, updates the Argon2id password hash, and invalidates **all** of that user's existing refresh tokens as a defensive measure.
+
+### Consent capture, legal pages, and erasure
+
+Signup requires a single minimized consent checkbox linking to `/terms` and `/privacy`, mirroring common Indian travel-product patterns. The full legal text lives on dedicated pages and is drafted around DPDP Act-aligned concepts such as purpose limitation, named processors, grievance redressal, and deletion rights.
+
+Self-service erasure is live via `DELETE /api/auth/me` and the `/account` page's danger zone. Deleting a user:
+
+- cascades `refresh_tokens` via `ON DELETE CASCADE`
+- cascades `password_reset_tokens` via `ON DELETE CASCADE`
+- nulls `events.user_id` via `ON DELETE SET NULL` so aggregate analytics survive in anonymized form
+
+**Admin bulk purge:** planned/in progress only. The documented admin bulk-delete endpoints/UI are **not** fully shipped in the current verified codepath.
+
+### Auth status in the nav (⭐ NEW)
+
+`UserMenu.tsx` is the single source of truth for session-aware UI across the app shell — see Section 9 for details. Before this, the main app had zero visible sign-in state: no "Log in / Sign up" CTA, no indicator when already authenticated, and no discoverable logout affordance outside of `/account`.
+
+### Local dev note: SQLite foreign-key enforcement
+
+Production runs on Postgres, where `ON DELETE CASCADE` / `ON DELETE SET NULL` are enforced by the DB engine unconditionally. When testing locally against SQLite (`apps/api/dev.db`), foreign keys are **off by default** — cascades silently no-op unless `PRAGMA foreign_keys=ON` is set per connection. `apps/api/db.py` now does this automatically via a SQLite-only `event.listens_for(engine.sync_engine, "connect")` hook (guarded by `engine.url.get_backend_name() == "sqlite"`), so local cascade-delete behavior now matches production. No effect on Postgres.
+
 ---
 
 ## 7. API Reference
+
+### `POST /api/auth/signup`
+Creates a new account with email/password + consent capture. Public endpoint.
+
+**Request:**
+```json
+{
+  "email": "traveller@example.com",
+  "password": "strong password",
+  "display_name": "Anya Fan",
+  "consent_accepted": true
+}
+```
+
+**Response:** `UserResponse` + sets `wp_access_token` and `wp_refresh_token` cookies.
+
+### `POST /api/auth/login`
+Email/password sign-in. Public endpoint.
+
+**Request:** `{ "email": "traveller@example.com", "password": "..." }`
+**Response:** `UserResponse` + fresh auth cookies
+
+### `GET /api/auth/google/start`
+Starts the Google OAuth flow. Public endpoint. Redirects the browser to Google's consent screen with a signed stateless `state` payload.
+
+### `GET /api/auth/google/callback`
+Completes the Google OAuth flow. Public endpoint. Exchanges the auth code, upserts/finds the user, sets auth cookies, and redirects back to the frontend.
+
+### `POST /api/auth/refresh`
+Rotates the opaque refresh token and issues a fresh access token. Requires the `wp_refresh_token` cookie.
+
+### `POST /api/auth/logout`
+Clears auth cookies and revokes the current refresh token session.
+
+### `GET /api/auth/me`
+Returns the current signed-in user. Requires auth.
+
+### `DELETE /api/auth/me`
+Self-service account deletion. Requires auth. Permanently deletes the user row, cascades refresh/password-reset tokens, and anonymizes analytics events by nulling `events.user_id`.
+
+### `POST /api/auth/password/forgot`
+Starts the password-reset flow. Public endpoint. Always returns 200 regardless of whether the email exists.
+
+**Request:** `{ "email": "traveller@example.com" }`
+
+### `POST /api/auth/password/reset`
+Completes the password reset with a single-use token. Public endpoint.
+
+**Request:** `{ "token": "raw reset token", "new_password": "..." }`
 
 ### `POST /api/wizard-chat` ⭐ NEW (v5.0)
 LLM-powered Anya wizard. Collects TripConfig fields through natural conversation.
@@ -382,13 +584,17 @@ LLM-powered Anya wizard. Collects TripConfig fields through natural conversation
 }
 ```
 
-`ready_to_generate` is `true` only when all 6 required fields are present (server-side validated). `summary` is populated when ready.
+`ready_to_generate` is `true` only when all 6 required fields are present *and* the Stage-2 checkpoint has completed (server-side validated). `summary` is populated when ready and is the frontend's source of truth for showing the generate CTA.
+
+Wizard replies also go through a reliability pass in `wizard_chat_chain.py`: Gemini now runs with `max_output_tokens=2048`, every response is checked with `_looks_like_valid_json()` before being accepted, `_strip_trailing_json_artifacts()` cleans fallback text before display, and `_strip_leaked_schema_tail()` trims cases where the `reply` string itself accidentally contains an escaped echo of the remaining response schema.
 
 ### `POST /api/generate-itinerary`
-Streaming SSE. Generates day-by-day itinerary from `TripConfig`.
+Streaming SSE. Generates day-by-day itinerary from `TripConfig`. **Requires auth**; unauthenticated callers receive HTTP 401, which the frontend maps to `AUTH_REQUIRED` and uses to trigger the sign-in redirect + auto-resume flow.
 
 **Request:** `{ trip_config: TripConfig }`  
 **Response:** Server-Sent Events → final `ItineraryResponse`
+
+Each `ItineraryDay` may now also include optional `image_url`, `image_photographer`, and `image_photographer_url` fields populated by the best-effort Pexels enrichment pass.
 
 ### `POST /api/chat-refine`
 Persistent Anya chat handler (used by `ChatPanel`).
@@ -475,6 +681,123 @@ Open-Meteo historical weather + season metadata.
 ### `GET /health`
 `{ "status": "ready", "version": "1.0.0" }`
 
+### `POST /api/analytics/client-event`
+Lightweight client-side analytics beacon sink. Accepts only allowlisted event types such as `session_start`, `youtube_thumbnail_call`, and `youtube_thumbnail_failed`. Optional auth; anonymous session starts are allowed.
+
+**Request:** `{ "event_type": "session_start", "metadata": { ... } }`
+
+### `GET /api/admin/metrics/summary`
+Admin-only summary metrics. Requires `is_admin=true`; authenticated non-admins receive **403** (not 401) so the frontend can distinguish "not allowed" from "not signed in".
+
+**Current buckets:**
+- total users
+- signups (today / 7d / 30d)
+- sessions (`session_start`)
+- login success/failure
+- itinerary generated/failed
+- `cost_usage` summary (Gemini/Pexels counters; Gemini token-cost instrumentation is partially in progress)
+
+### `GET /api/admin/metrics/timeseries`
+Admin-only daily event rollups for `7d` or `30d`.
+
+**Query params:** `range=7d|30d`
+
+**Response:** `{ "range": "30d", "series": { "2026-07-07": { "signup": 4, "session_start": 17, ... } } }`
+
+### `POST /api/admin/requests` ⭐ NEW
+Any authenticated non-admin user requests admin access. Body: `{ "message": "optional reason" }`. Idempotent while pending; **400** if already admin. Emails every existing admin.
+
+### `GET /api/admin/requests/me` ⭐ NEW
+Caller's own most recent admin-access request (or `null`), for account-page status display.
+
+### `GET /api/admin/requests` ⭐ NEW
+Admin-only. Lists admin-access requests. **Query params:** `status=pending|approved|rejected|all` (default `pending`).
+
+### `POST /api/admin/requests/{request_id}/approve` ⭐ NEW
+Admin-only. Sets the target user's `is_admin=True`, marks the request `approved`, emails the requester. **400** if the request isn't currently `pending`.
+
+### `POST /api/admin/requests/{request_id}/reject` ⭐ NEW
+Admin-only. Marks the request `rejected` (target user's `is_admin` stays unchanged), emails the requester. **400** if the request isn't currently `pending`.
+
+---
+
+## 7A. Admin Analytics Dashboard
+
+The analytics backend and the `/admin` frontend dashboard page are both live and verified end-to-end (see Section 14 changelog for verification notes).
+
+### Data model
+
+The `events` table is intentionally generic:
+
+| Column | Purpose |
+|---|---|
+| `event_type` | String identifier (`signup`, `login_success`, `session_start`, `itinerary_generated`, etc.) |
+| `event_metadata` | JSONB blob for event-specific detail without forcing schema migrations |
+| `user_id` | Nullable FK to `users.id` with `ON DELETE SET NULL` |
+| `created_at` | Indexed event timestamp |
+
+This lets WanderPlanner add new analytics classes — especially model-usage and cost events — without churning migrations every time a new metric is introduced.
+
+### Access control
+
+Admin access is enforced with `get_current_admin_user`:
+
+- unauthenticated caller → **401**
+- authenticated non-admin caller → **403**
+- authenticated admin caller → success
+
+That 403-vs-401 split is deliberate so the frontend can render the right UX.
+
+**Nobody becomes an admin automatically.** `SignupRequest` (`models/auth.py`) has no `is_admin` field at all, so it is structurally impossible for the signup payload to grant admin access; `User.is_admin` defaults to `False` at the DB layer (`db_models/user.py`). The only two ways `is_admin` is ever flipped to `True`:
+
+1. **Out-of-band DB seed** — used once, to create the very first admin, since no admin exists yet to approve one.
+2. **The admin-request approval workflow** (⭐ NEW — see below) — an existing admin explicitly reviews and approves a request.
+
+### Admin access requests (⭐ NEW)
+
+New `admin_requests` table (migration `0003_admin_requests`):
+
+| Column | Purpose |
+|---|---|
+| `user_id` | FK → `users.id`, `ON DELETE CASCADE` |
+| `status` | `"pending"` \| `"approved"` \| `"rejected"` |
+| `message` | Optional free-text reason from the requester |
+| `reviewed_by` | FK → `users.id`, `ON DELETE SET NULL` — which admin actioned it |
+| `reviewed_at` | Timestamp of the approve/reject decision |
+
+**Flow:**
+1. Any authenticated non-admin user calls `POST /api/admin/requests` (from `/account` → "Admin access" section). Idempotent — calling it again while a request is still pending returns the existing pending request rather than creating a duplicate. Already-admin users get a **400**.
+2. Every existing admin (`User.is_admin=true` with a non-null email) is emailed via `core/email.send_admin_request_notification` — best-effort, never blocks the request itself; in local dev without `RESEND_API_KEY` the notification is logged instead (same pattern as the password-reset dev-log fallback).
+3. Any admin sees all pending requests in the `/admin` console's "Admin access requests" panel (`GET /api/admin/requests?status=pending`), with the requester's name/email and optional message.
+4. The admin clicks **Approve** (`POST /api/admin/requests/{id}/approve`) or **Reject** (`POST /api/admin/requests/{id}/reject`). Approval sets the target user's `is_admin=True` and emails them a decision notification (`core/email.send_admin_request_decision_email`); rejection leaves `is_admin=False` and still notifies them. Both actions are idempotent-guarded — a request that's already `approved`/`rejected` returns **400** on a second review attempt.
+5. `GET /api/admin/requests/me` lets the requester's own `/account` page show "pending review" / "declined, request again" state without granting anything.
+
+All state-changing admin-request actions are logged as analytics events (`admin_request_created`, `admin_request_approved`, `admin_request_rejected`) for audit trail.
+
+### Metrics currently exposed
+
+- `GET /api/admin/metrics/summary`
+- `GET /api/admin/metrics/timeseries`
+- `POST /api/analytics/client-event` for browser-originated events the backend would not otherwise see
+
+Tracked today:
+- signups
+- session starts
+- login success/failure
+- itinerary generation success/failure
+- Pexels call volume
+
+### Cost tracking status
+
+The admin summary endpoint returns live-aggregated fields for:
+
+- `gemini_requests_30d`
+- `gemini_tokens_30d`
+- `gemini_estimated_cost_inr_30d` (⭐ displayed in INR, not USD — see Section 6A/14 note on `usd_to_inr_rate`)
+- `pexels_calls_30d`
+
+Gemini token/cost event instrumentation (`core/llm_usage.py`, `core/llm_client.py`) is fully wired end-to-end and verified against real Gemini API calls — each request logs a `gemini_usage` event with real token counts and an internally-USD-computed cost, which the admin summary endpoint sums and converts to INR for display.
+
 ---
 
 ## 8. AI Models, Prompts & RAG
@@ -492,7 +815,7 @@ All LLM tasks use Gemini 2.5 Flash with task-specific temperature settings:
 | Itinerary generation (attempt 3) | 0.4 | 16384 | Retry — same settings |
 | Itinerary generation (attempt 4) | 0.4 | — | Fallback: `gemini-2.5-flash-lite` |
 | Itinerary generation (attempt 5) | 0.4 | — | Fallback: `gemini-1.5-flash` |
-| **Anya wizard chat** (`/api/wizard-chat`) | **0.4** | **800** | Conversational, friendlier but more deterministic extraction |
+| **Anya wizard chat** (`/api/wizard-chat`) | **0.4** | **2048** | Conversational, friendlier but more deterministic extraction; larger budget reduces mid-JSON truncation |
 | **Anya post-gen chat** (`/api/chat-refine`) | **0.5** | **1024** | Semi-deterministic refinements |
 | City recommendations | 0.4 | 1024 | Structured JSON output |
 | Destination comparison | — | — | 10-param scoring |
@@ -502,7 +825,7 @@ All LLM tasks use Gemini 2.5 Flash with task-specific temperature settings:
 
 ### RAG Architecture (Retrieval-Augmented Generation)
 
-WanderPlan uses RAG to inject real traveller knowledge from Reddit, Wikivoyage, and (new) OpenStreetMap into Gemini's itinerary generation prompt. As of v9.0, retrieval is hybrid (BM25 + semantic), augmented with HyDE, optionally reranked with a cross-encoder for the primary generation path, and backed by a 3-tier RAG-powered fallback chain for LLM outages.
+WanderPlanner uses RAG to inject real traveller knowledge from Reddit, Wikivoyage, and (new) OpenStreetMap into Gemini's itinerary generation prompt. As of v9.0, retrieval is hybrid (BM25 + semantic), augmented with HyDE, optionally reranked with a cross-encoder for the primary generation path, and backed by a 3-tier RAG-powered fallback chain for LLM outages.
 
 #### How It Works
 
@@ -654,7 +977,7 @@ context = "No pre-fetched research available — use your own knowledge of the d
 ### System Prompt 1: Anya Wizard (`/api/wizard-chat`)
 
 **File:** `apps/api/chains/wizard_chat_chain.py`  
-**Temperature:** 0.4 · **Max tokens:** 800  
+**Temperature:** 0.4 · **Max tokens:** 2048  
 **Version:** v5 (June 2026) — JSON history replay, stricter extraction, smart fallback
 
 **Key sections:**
@@ -669,12 +992,14 @@ context = "No pre-fetched research available — use your own knowledge of the d
 - **3-Stage Flow** — Stage 1: collect 6 fields → Stage 2: "anything else?" checkpoint → Stage 3: generate signal
 - **config_patch Rules** — "include every extracted field even if you think it is already known" and never return an empty patch when the user just supplied usable trip details
 - **JSON-Wrapped History** — assistant messages are replayed to Gemini as JSON containing the actual `reply` and `config_patch` from that turn, improving extraction consistency
-- **Retry Logic** — 3 attempts with exponential backoff on 503/429/UNAVAILABLE before fallback
+- **Retry Logic** — 3 attempts with exponential backoff on 503/429/UNAVAILABLE *and* on successfully returned-but-invalid JSON detected by `_looks_like_valid_json()`
+- **Fallback Text Cleanup** — `_strip_trailing_json_artifacts()` removes stray trailing `",`, `}` or `]` fragments before salvage text is shown to the user
+- **Schema-Echo Cleanup** — `_strip_leaked_schema_tail()` trims rare cases where the `reply` string itself contains an escaped literal echo of `chips`, `config_patch`, `ready_to_generate`, or `summary`
 - **Smart Mock Fallback** — reads `partial_config` and asks the next missing required-field question
 - **Filled-State Consistency** — frontend `allFilled` now uses the same `_isFieldFilled` logic as the progress pills
 - **Output Schema** — JSON only; `reply` is "what Anya says on a phone call — no field names, no system terms, no reasoning"
 
-The backend `_has_all_required()` server-validates `ready_to_generate`. Stage 2 checkpoint is tracked via `_checkpoint_asked` flag in `partialConfig` and surfaced to the LLM via `CURRENT_STATE`. Assistant history replay now uses raw-JSON leak guards and double-wrapped JSON detection before the final `_strip_leaked_reasoning()` safety net.
+The backend `_has_all_required()` server-validates `ready_to_generate`. Stage 2 checkpoint is tracked via `_checkpoint_asked` flag in `partialConfig` and surfaced to the LLM via `CURRENT_STATE`. Assistant history replay now uses raw-JSON leak guards and double-wrapped JSON detection before the final `_strip_leaked_reasoning()` safety net. The parser now treats incomplete-but-successful Gemini responses as retryable failures rather than immediately surfacing salvage text.
 
 ---
 
@@ -685,7 +1010,7 @@ The backend `_has_all_required()` server-validates `ready_to_generate`. Stage 2 
 **History:** Last 10 messages
 
 ```
-You are Anya, WanderPlan's friendly AI travel assistant.
+You are Anya, WanderPlanner's friendly AI travel assistant.
 
 ROLE: Help refine the user's active trip plan. You can:
 1. Answer travel questions factually.
@@ -716,7 +1041,7 @@ GUARDRAILS:
 - Keep replies concise and friendly
 
 Non-travel response:
-  "I'm Anya, WanderPlan's travel assistant — I can only help with travel questions! 🌍"
+  "I'm Anya, WanderPlanner's travel assistant — I can only help with travel questions! 🌍"
 ```
 
 ---
@@ -727,7 +1052,7 @@ Non-travel response:
 **Temperature:** 0.4 · **Max tokens:** 16384
 
 ```
-You are WanderPlan, an expert AI travel advisor.
+You are WanderPlanner, an expert AI travel advisor.
 Generate a detailed, realistic day-by-day travel itinerary based on the trip
 configuration and destination research provided.
 
@@ -781,12 +1106,15 @@ LLM-powered Anya wizard — replaces the scripted `ConversationalWizard`. Featur
 
 - Chat bubbles (user + Anya) with typing indicator
 - Dynamic chip suggestions returned by the LLM on each turn
+- Theme chip groups (Culture/Food/Adventure/etc.) render as toggleable multi-select chips with a dedicated **Continue** action, driven by the backend's explicit `multi_select` flag (⭐ v10.2 — previously a fragile frontend keyword heuristic that silently broke when Gemini phrased chip labels differently); single-value chip groups still submit immediately
 - Field progress pills showing which of the 6 required fields are filled
 - Voice input (Web Speech API) + TTS output (Speech Synthesis API)
-- "Generate my itinerary" button appears once `ready_to_generate=true`
+- "Generate my itinerary" button appears only once the backend emits the explicit Stage-3 ready signal (`summary !== null`)
 - Mobile-first: bottom-sheet on mobile, centered modal on desktop
 - Calls `POST /api/wizard-chat` on each message; merges `config_patch` into local state
+- Keeps the free-text input available during the Stage-2 optional follow-up round instead of hiding it as soon as the 6 required fields are filled
 - Replays assistant turns to Gemini as JSON-wrapped history with the real `config_patch` from each turn
+- **Edit mode (⭐ v10.2):** reopening the wizard via "Edit Trip" on an already-generated itinerary detects the existing complete config + itinerary and seeds `partialConfig` from it (with `_checkpoint_asked: true`) instead of starting a fresh conversation — greets with a one-line trip summary and "Change destination/dates/budget/themes" or "Regenerate as-is" chips
 - On generate: merges partial config into `tripConfigStore` → calls `streamItinerary`
 
 ### `ConversationalWizard.tsx` (legacy, kept for reference)
@@ -796,17 +1124,28 @@ LLM-powered Anya wizard — replaces the scripted `ConversationalWizard`. Featur
 Persistent post-generation Anya chat. Triggered by `FloatingAnyaButton` (floating orb).
 
 Features:
-- Design token styles (full dark mode support)
+- Design token styles (full dark mode support); header includes a `ThemeToggle` (⭐ v10.2) so users can flip dark/light without closing the chat
 - Calls `POST /api/chat-refine` with current `tripConfig`
 - `patch_config` action: silently applies changes
 - `regenerate` action: shows confirmation dialog with "Yes, apply & reset" / "Just noting it"
 - Typing indicator (3 bouncing dots)
 - Persists message history in `chatStore` for the session
 
+### `ItineraryDocument.tsx`
+`@react-pdf/renderer` export component for the downloadable itinerary PDF.
+
+Features:
+- Scrapbook / travel-journal visual system: one rounded pastel card per day, cycling through a 7-color palette with darker matching accents
+- Optional day hero photo at the top of each card, sourced from `ItineraryDay.image_url`, with required attribution text (`Photo by {photographer} on Pexels`)
+- Bold-label bullet formatting for itinerary items, link-preview-style booking chips, and compact inline transit-warning boxes
+- The same colorful card treatment is reused for Trip Essentials, Visa & Safety, Cost Breakdown, and Packing Checklist sections
+- ASCII-safe typography replacements for symbols that render poorly in base Helvetica (`->`, `^`, `~`, no emoji) to avoid tofu glyphs in `react-pdf`
+
 ### `PolaroidCard.tsx`
 Activity card with:
+- Compact horizontal layout (⭐ v10.2 redesign) — small 80–96px square thumbnail + text side-by-side, replacing the earlier full-width 16:9 hero-video layout that obscured the itinerary text on long activity lists
 - Real `imageSrc` prop (Wikipedia photo or YouTube thumbnail)
-- Gradient fallback via `pickGradient(title)` (deterministic hash)
+- Gradient fallback via `pickGradient(title)` (deterministic hash), including on `<img onError>` (⭐ v10.2) so a thumbnail URL that later 404s (deleted/restricted video) degrades gracefully instead of showing a broken-image icon
 - Hover zoom on real images
 - `videoHref` → image area becomes a link with play badge
 - Dark mode via CSS custom property tokens
@@ -825,13 +1164,20 @@ In ThreeColumnLayout center header. Click flow:
 2. Subsequent clicks: copies cached URL (no re-request)
 3. States: idle → loading → copied (green, 3s) / error (red, 2s)
 
+### `UserMenu.tsx` ⭐ NEW
+Shared auth status control, rendered in `LandingHero`'s nav, `ThreeColumnLayout`'s title bar, and `TopNav`:
+- **Signed out**: renders "Log in" / "Sign up" links (`/login`, `/signup`)
+- **Signed in**: renders a pill button with the user's `display_name`/`email` → click opens a dropdown with "Account settings" (`/account`), **"Admin console" (`/admin`, only rendered when `user.is_admin`)**, and "Log out" (calls `authStore.logout()`, then routes home)
+- Reads `authStore.status`/`user` directly, so it reflects the live session with no extra fetch; shows a skeleton pulse while `status === 'loading' | 'idle'`
+- Fixes a real bug: previously there was **no** login/signup CTA, no "you're signed in" indicator, and no way to sign out from the main app shell — `/account`'s danger-zone logout button was the only way to sign out, and it was undiscoverable without already knowing the URL
+
 ### `ThreeColumnLayout.tsx`
 Three-column dashboard + full-screen map mode. **Now mobile-responsive.**
 
 Layout (desktop `lg+`):
-- **Left (25%)**: `Column1Metrics` → metrics, expenses, currency, `BookingHub`
-- **Center (flex-1)**: top-bar with destination + `ShareButton`, then `ItineraryTimeline` or `ComparisonPanel`
-- **Right (25%)**: map + "⤢ Full screen" toggle, then `Column3Sidebar`
+- **Left (25%)**: `Column1Metrics` → metrics, expenses, currency, `BookingHub` (falls back to `destination_country` and shows "City +N" when a trip resolves to a country/multi-hop rather than one fixed city — ⭐ v10.2)
+- **Center (flex-1)**: top-bar with destination, `ThemeToggle` (⭐ v10.2 — previously only present on the shared `/t/[slug]` page), and `ShareButton`, then `ItineraryTimeline` or `ComparisonPanel`
+- **Right (25%)**: map + "⤢ Full screen" toggle, then `Column3Sidebar` (same `destination_country` fallback for travel tips/booking links — ⭐ v10.2)
 
 Layout (mobile `< lg`):
 - **Bottom tab bar** with 3 tabs: Itinerary · Overview · Map & Tips
@@ -878,6 +1224,56 @@ getSharedTrip(slug: string): Promise<SharedTripData>
 ---
 
 ## 12. Data Flows
+
+### Authentication + Pending-Generation Resume Flow (new)
+
+```
+User completes wizard while signed out
+  → LLMWizard sees authStore.status !== authenticated
+  → savePendingGeneration(fullTripConfig) to sessionStorage
+  → redirect to /signup?returnTo=/
+
+User signs up / logs in / returns from Google OAuth
+  → AuthHydrator calls GET /api/auth/me
+  → authStore.user becomes available
+  → LLMWizard effect sees (authenticated + pendingGeneration exists)
+  → restore config from sessionStorage
+  → clearPendingGeneration()
+  → streamItinerary(config) without re-asking questions
+```
+
+### Password Reset Flow (new)
+
+```
+/forgot-password
+  → POST /api/auth/password/forgot { email }
+  → always returns 200 (no email enumeration)
+  → Resend sends reset link if account exists
+
+/reset-password?token=...
+  → POST /api/auth/password/reset { token, new_password }
+  → backend verifies hashed single-use token + TTL
+  → password hash updated
+  → all refresh tokens for that user revoked
+```
+
+### Itinerary Generation Auth Gate (updated)
+
+```
+User clicks "Generate my itinerary"
+  → frontend checks authStore
+  ├─ signed in:
+  │    → POST /api/generate-itinerary
+  │    → backend get_current_user passes
+  │    → normal SSE itinerary stream
+  └─ signed out:
+       → no API call yet; save pending config + redirect to auth page
+
+If an unauthenticated request still reaches the backend:
+  → POST /api/generate-itinerary returns 401
+  → lib/api.ts maps it to AUTH_REQUIRED
+  → frontend falls back to the same redirect + auto-resume flow
+```
 
 ### Start Anywhere Flow (new)
 
@@ -946,12 +1342,31 @@ User clicks ShareButton
 GEMINI_API_KEY=your_key_here
 LLM_PROVIDER=gemini
 GEMINI_MODEL=gemini-2.5-flash
+DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/wanderplanner
+JWT_SECRET=replace-with-a-long-random-secret
+ACCESS_TOKEN_TTL_MINUTES=15
+REFRESH_TOKEN_TTL_DAYS=30
+COOKIE_DOMAIN=
+COOKIE_SECURE=false
+COOKIE_SAMESITE=lax
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=http://localhost:8000/api/auth/google/callback
+FRONTEND_BASE_URL=http://localhost:3000
+RESEND_API_KEY=
+EMAIL_FROM_ADDRESS=Wanderplanner <no-reply@wanderplanner.app>
+PASSWORD_RESET_TOKEN_TTL_MINUTES=30
 QDRANT_URL=:memory:
+PEXELS_API_KEY=                            # optional — itinerary still works without day photos
 ALLOWED_ORIGINS=["http://localhost:3000"]   # JSON-array format required; "*" is rejected
 LOG_LEVEL=INFO                              # structured JSON logging (⭐ NEW v10.0)
-NOMINATIM_USER_AGENT=wanderplan/1.0
+NOMINATIM_USER_AGENT=wanderplanner/1.0
 NOMINATIM_RATE_LIMIT=1
 ```
+
+Local development can point `DATABASE_URL` at either:
+- a local Postgres instance, or
+- the same Supabase Postgres used by a dev/staging environment.
 
 ### Frontend (`apps/web/.env.local`)
 
@@ -976,7 +1391,82 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.6 Changes (July 2026) — Admin Access Request/Approval Workflow
+
+Closes a compliance/security gap: previously there was no controlled way for a second admin to be added post-launch other than a direct DB write, and nothing prevented ambiguity about whether new users could ever become admins by accident (they couldn't — `SignupRequest` never accepted `is_admin` — but there was no *positive* workflow for legitimately escalating a trusted user).
+
+| Change | Detail |
+|---|---|
+| **NEW** `admin_requests` table | Migration `0003_admin_requests`. Tracks `user_id`, `status` (`pending`/`approved`/`rejected`), optional `message`, `reviewed_by`, `reviewed_at`. |
+| **NEW** `POST /api/admin/requests` | Any authenticated non-admin can request admin access (optional reason message). Idempotent while pending; 400 if already an admin. |
+| **NEW** `GET /api/admin/requests/me` | Requester's own latest request status, for account-page display. |
+| **NEW** `GET /api/admin/requests` (admin-only) | List requests by status (default `pending`) — powers the `/admin` console's new "Admin access requests" panel. |
+| **NEW** `POST /api/admin/requests/{id}/approve` \| `/reject` (admin-only) | Approve flips `is_admin=True` on the target user; reject leaves it unchanged. Both are one-shot (400 if the request was already reviewed) and both email the requester (`core/email.send_admin_request_decision_email`). |
+| **NEW** admin notification emails | `core/email.send_admin_request_notification` emails every existing admin the moment a new request is created — dev-only log fallback when `RESEND_API_KEY` is unset, same pattern as password-reset. |
+| **NEW** `/account` "Admin access" section | Shows a "Request admin access" button (hidden for existing admins), or "pending review" / "previously declined, request again" state, backed by `getMyAdminRequest()`/`requestAdminAccess()`. |
+| **NEW** `/admin` "Admin access requests" panel | Lists all pending requests with requester name/email/message and Approve/Reject buttons; removes a request from the list immediately on action. |
+| **Verified** | 8 new integration tests (`tests/integration/test_admin_requests.py`) covering creation, idempotent re-request, already-admin rejection, 401/403 gating, full approve→`is_admin=True`→admin-endpoint-access flow, reject→`is_admin` stays `False`, and double-review rejection. Full suite: 121 passed. Also live-curl-tested end-to-end against the running dev servers: signup → non-admin → request → visible to admin via `GET /admin/requests` → approve → confirmed `is_admin: true` on `/auth/me` → confirmed admin-endpoint access → cleaned up test user. |
+
+### v10.5 Changes (July 2026) — Admin Console Entry Point
+
+There was no way to reach `/admin` from the UI at all — admins had to know the URL. `UserMenu.tsx`'s dropdown now conditionally renders an "Admin console" link (with a shield icon) right above "Log out", only when `authStore.user.is_admin` is true. Non-admin users never see it.
+
+### v10.4 Changes (July 2026) — Local Testing Bug Fixes: Auth Nav, Wizard Resume Race, Chip Backfill
+
+Found and fixed during a full local manual-testing pass (real browser clicks + real Gemini API calls against `apps/api/dev.db`, not just automated fixtures):
+
+| Change | Detail |
+|---|---|
+| **FIXED** no auth indicator in the app shell | There was no "Log in / Sign up" CTA on the home page, no way to tell if you were already signed in, and no way to sign out except by navigating directly to `/account`. Added `components/common/UserMenu.tsx` — an auth-aware nav control wired into `LandingHero`'s sticky nav, `ThreeColumnLayout`'s title bar, and `TopNav`. Shows "Log in"/"Sign up" when signed out; shows the user's name/email in a dropdown with "Account settings" + "Log out" when signed in. |
+| **FIXED** wizard losing/duplicating context after auth redirect | `LLMWizard.tsx` had two mount-time `useEffect`s racing on the same `sessionStorage`-backed `pendingGeneration` flag — the "resume after auth" effect cleared the flag as a side effect, which broke the "bootstrap" effect's own guard check, causing both to fire and inject a stray fresh greeting on top of the resumed generation. Fixed by snapshotting `pendingGeneration` **once** via a lazy `useState` initializer shared by both effects, plus a `hasResumedGenerationRef` idempotency guard. |
+| **FIXED** missing purpose chips on the very first wizard message | The Gemini-backed `wizard_chat()` path had no deterministic guarantee of chips on turn 1 (only the offline `_mock_wizard()` fallback did) — occasionally the LLM's first response omitted the mandated purpose chips (Leisure/Adventure/Honeymoon/etc.) despite the system prompt instructing "ALWAYS include chips when asking about purpose." Added a server-side safety net in `chains/wizard_chat_chain.py`: if `chips` is empty, `purpose` is still unfilled, and it's the first turn (`len(request.messages) <= 1`), deterministically backfill the standard 6 purpose chips. |
+| **FIXED** SQLite FK cascade no-op during local testing | `apps/api/db.py` now sets `PRAGMA foreign_keys=ON` per-connection for SQLite only (no-op on Postgres/prod) — see Section 6A and `docs/scaling-tech-challenges.md` §7 for the full gotcha writeup. |
+| **DEV-ONLY** password-reset link now logged locally | `apps/api/core/email.py` logs the actual reset URL when `RESEND_API_KEY` is unset, so the forgot-password flow can be tested end-to-end locally without a real email provider configured. Unreachable branch in prod (where `RESEND_API_KEY` is always set). |
+
+**Verification:** `pytest -q` 113 passed / 6 skipped (backend, after both the SQLite and wizard-chain fixes); `tsc --noEmit` clean and `vitest run` 36 passed (frontend, after both the `UserMenu` and `LLMWizard` fixes); all fixes additionally live-tested against the running local dev servers (real signup/login/logout clicks, real `/api/wizard-chat` calls confirming chips now populate consistently across repeated first-turn calls).
+
+### v10.3 Changes (July 2026) — Accounts, Auth Gate, Password Reset & Analytics
+
+| Change | Detail |
+|---|---|
+| **NEW** Postgres auth/analytics foundation | Added async SQLAlchemy 2.0 ORM + Alembic migrations (`0001_auth_analytics`, `0002_password_reset`) and four core tables: `users`, `refresh_tokens`, `events`, `password_reset_tokens`. Production Postgres host is **Supabase**; local dev can use local Postgres or Supabase directly. |
+| **NEW** authentication stack | Added email/password auth (Argon2id), Google OAuth 2.0 SSO, JWT access cookies, rotating opaque refresh cookies, `/api/auth/me`, logout, and self-delete. `POST /api/generate-itinerary` is now server-side gated by `get_current_user`. |
+| **NEW** pending-generation resume | `LLMWizard.tsx` now persists the fully collected trip config to `sessionStorage` before redirecting signed-out users to `/signup`, then auto-resumes itinerary generation after signup/login/Google OAuth returns. |
+| **NEW** password reset | Added `POST /api/auth/password/forgot` (always-200 anti-enumeration behavior), `POST /api/auth/password/reset`, hashed single-use reset tokens, and Resend-based delivery. Password reset revokes all existing refresh tokens for that user. |
+| **NEW** consent + legal surface | Added `/terms`, `/privacy`, consent capture at signup, DPDP-aligned legal language, and `/account` self-delete UI with the "type DELETE to confirm" pattern. |
+| **NEW** admin analytics backend | Added generic `events` table, `/api/admin/metrics/summary`, `/api/admin/metrics/timeseries`, and `/api/analytics/client-event`. Admin frontend dashboard remains in progress; Gemini token/cost tracking fields are scaffolded but the instrumentation is still being wired end-to-end. |
+
+### v10.2 Changes (July 2026) — Brand Rename, Multi-City Reliability, Edit-in-Place, Dark Mode Everywhere
+
+| Change | Detail |
+|---|---|
+| **REBRAND** WanderPlan → WanderPlanner | Every UI string, backend module, doc, and asset renamed across the codebase (55 tracked files), including `WanderplanLogo.tsx` → `WanderplannerLogo.tsx` and `docs/WanderPlan_PRD.pdf` → `docs/WanderPlanner_PRD.pdf` (regenerated). No functional change. |
+| **FIXED** `chains/wizard_chat_chain.py` — multi-city drop | Field 2 (destination) only had 3 cases (single city / country-flexible / exploring) — no case for the user naming several explicit places (e.g. "Colombo, Mirissa, and Yala"), so the LLM silently kept only the first and dropped the rest. Added **Case D**: multiple named places → first becomes `destination`, rest become `hops` (itinerary generation already fully supported `hops`; the bug was purely upstream in extraction). `_summarise_state()` now also surfaces `hops` back to the LLM. |
+| **FIXED** `chains/wizard_chat_chain.py` — country-mode never resolved to a real city | Naming a whole country (e.g. "Italy") set `destination_mode: "country"` but never resolved to a concrete `destination.city`, even after Anya proposed specific cities in her own reply — leaving budget/booking/travel-tips widgets blank downstream. Country mode is now framed as a momentary placeholder; the instant Anya proposes or the user confirms specific cities, `config_patch` resolves `destination_mode` to `"fixed"` with a real `destination` + `hops` (mirrors Case D). |
+| **FIXED** `components/dashboard/Column1Metrics.tsx` / `components/itinerary/Column3Sidebar.tsx` | Both gated rendering of budget/expense/currency/travel-tips/booking-links widgets strictly on `destination?.city`, so any trip still in country-mode (or driven by the Anya wizard, which never populates the legacy `collectedLabels`) showed a blank left/right rail. Both now fall back to `destination_country` and gate on `hasDestination` (city OR country); `Column1Metrics` shows a "City +N" label for multi-hop trips. |
+| **REDESIGNED** `components/itinerary/PolaroidCard.tsx` | Replaced the oversized full-width 16:9 hero-video card with a compact horizontal layout (small 80–96px thumbnail + text side-by-side) so the itinerary text is immediately scannable instead of being pushed below a huge video. Added an `onError` handler (`imgFailed` state) so a thumbnail URL that later 404s falls back to the gradient placeholder instead of a broken-image icon. |
+| **FIXED** YouTube thumbnail reliability | `app/api/youtube-thumbnail/route.ts` scrapes youtube.com search HTML (no official API key) and is inherently flaky — confirmed the *same query* failing then succeeding seconds later. Two client bugs turned rare blips into permanent blanks: the `useThumbnail` hook cached `null` on any failure (poisoning that query for the session) and had no retry. Fixed: only cache genuine hits, retry up to 3x with backoff (500ms/1000ms). Server route also pins `gl=US&hl=en&persist_gl=1` and pre-sends the EU consent cookie to avoid landing on a GDPR interstitial page with no embeddable `videoId`. |
+| **FIXED** theme multiselect regression | The wizard decided whether a chip group (Culture/Food/Adventure/etc.) was multi-select by pattern-matching chip text against a hardcoded keyword list on the frontend — fragile, since Gemini freely generates the exact chip wording each turn, so any phrasing drift silently degraded multiselect to submit-on-first-click. Backend now computes a `multi_select` boolean deterministically (`_is_multi_select_chips()`) and returns it explicitly in the `wizard-chat` response; the frontend trusts that flag (old heuristic kept only as a fallback for stale/cached messages). |
+| **ADDED** dark/light `ThemeToggle` on itinerary page + chat panel | `ThemeToggle` previously only existed on the shared `/t/[slug]` read-only page — there was no way to switch themes from the main dashboard or an open Anya chat. Component now accepts a `className` override and is wired into `ThreeColumnLayout`'s title bar and `ChatPanel`'s header. |
+| **FIXED** "Edit Trip" losing all context | The Column-1 "Edit Trip" button called `openWizard()` with no preload, so Anya restarted the entire conversation from scratch even though a complete config + generated itinerary already existed for the session. `LLMWizard.tsx` now detects edit mode (existing itinerary + fully populated config, no fresh preload) and seeds `partialConfig` from the current config (`_checkpoint_asked: true`), greeting with a trip summary and "Change destination/dates/budget/themes" / "Regenerate as-is" chips instead of re-asking everything. Backend Stage-3 generate-signal trigger phrases widened to recognize "regenerate"/"update it" wording natural to editing. |
+
+**Verification:** backend syntax-checked (`python -c "import chains.wizard_chat_chain"`) and live-curl-tested against a running instance for Case D, country-mode resolution, the `multi_select` flag (theme chips → `true`, single-choice chips → `false`), and the edit-mode "change budget → regenerate as-is" flow (`ready_to_generate: true` confirmed with realistic post-generation dates). Frontend `tsc --noEmit` clean after every change.
+
+### v10.1 Changes (July 2026) — Wizard Reliability + Visual PDF Export
+
+| Change | Detail |
+|---|---|
+| **UPDATED** `chains/wizard_chat_chain.py` | `max_output_tokens` 800 → 2048 (was truncating longer replies mid-sentence); new `_looks_like_valid_json()` gate + retry loop (up to 3 attempts) on incomplete/truncated Gemini JSON instead of falling straight to salvage-text mode; new `_strip_trailing_json_artifacts()` (trims stray trailing JSON punctuation) and `_strip_leaked_schema_tail()` (strips cases where Gemini emits valid JSON but echoes the remaining schema keys, e.g. `"chips": [], "config_patch": {}...`, literally inside the `reply` string) — both applied on the happy path and the fallback path. |
+| **UPDATED** `components/wizard/LLMWizard.tsx` | `readyToGenerate` now derives solely from the backend's explicit `summary !== null` signal instead of a local required-field counter, so the chat input stays visible through Stage-2 optional follow-ups (e.g. "add departure city") instead of disappearing once the 6 required fields are filled. Added `THEME_CHIP_KEYWORDS` heuristic + `_isThemeChipGroup()` so theme chip groups (Culture/Food/Adventure/etc.) toggle multi-select with a "Continue ✓" button instead of submitting on the first click; other chip groups still submit instantly. |
+| **REWRITTEN** `components/pdf/ItineraryDocument.tsx` | Itinerary PDF export redesigned to a colorful travel-journal "scrapbook" layout (per user-supplied reference PDF): 7-color pastel palette cycling per day card, breadcrumb + bold day titles, bold-label bullets, booking-link preview chips, transit-warning boxes; matching card treatment for Trip Essentials / Visa & Safety / Cost Breakdown / Packing Checklist. Emoji, arrows (→/↑), and ≈ replaced with ASCII-safe equivalents — react-pdf's base Helvetica font has no glyphs for them. |
+| **NEW** `services/pexels.py` | Async Pexels API client — `get_day_photo()` / `get_day_photos()`, in-memory query cache (500 entries), fully best-effort (missing key / network failure / timeout / empty results all degrade silently to `None`). |
+| **UPDATED** `chains/itinerary_chain.py` | After day scoring, concurrently fetches one Pexels photo per day (`"{destination} {day theme}"` query) with a 6s total timeout budget before building the `ItineraryResponse`; failures never block itinerary generation. |
+| **UPDATED** `models/itinerary.py` / `apps/web/types/index.ts` | `ItineraryDay` gains optional `image_url`, `image_photographer`, `image_photographer_url` fields, rendered as a hero photo + attribution in the PDF. |
+| **NEW** `core/config.py` setting / `.env.example` | `pexels_api_key: str = ""` / `PEXELS_API_KEY=` — optional; app runs normally without it (no photos, no errors). |
+
+**Verification:** backend syntax-checked and live-curl-tested against a running instance for each fix (confirmed clean departure-city reply, confirmed `ready_to_generate` stays `false` through Stage 2); frontend `tsc --noEmit` clean; live Pexels API call tested directly; full test PDFs rendered (`@react-pdf/renderer` → PNG via PyMuPDF) and visually compared against the reference layout.
 
 ### v10.0 Changes (July 2026) — Security Hardening
 
