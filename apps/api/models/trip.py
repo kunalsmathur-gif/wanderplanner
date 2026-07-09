@@ -83,6 +83,11 @@ class TripConfig(BaseModel):
     # Values from: "accommodation" | "food" | "activities" | "shopping" | "local_transport"
     splurge_categories: list[str] = Field(default_factory=list)
     save_categories: list[str] = Field(default_factory=list)
+    # Already-paid flight/accommodation costs (⭐ NEW — user explicitly states
+    # they've already booked these; the real amount replaces our heuristic
+    # estimate for that cost component in budget recommendations/feasibility).
+    prebooked_flights_inr: int | None = None
+    prebooked_accommodation_inr: int | None = None
 
     def effective_pace(self) -> str:
         """Auto-apply Relaxed if any kid is under 5."""

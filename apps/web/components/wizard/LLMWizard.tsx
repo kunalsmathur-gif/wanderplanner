@@ -9,7 +9,7 @@ import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useWizardChatStore } from '@/store/wizardChatStore'
 import { useAuthStore } from '@/store/authStore'
 import { wizardChat } from '@/lib/api'
-import { streamItinerary } from '@/lib/api'
+import { streamItinerary, checkFeasibility } from '@/lib/api'
 import { savePendingGeneration, getPendingGeneration, clearPendingGeneration } from '@/lib/pendingGeneration'
 import type { TripConfig } from '@/types'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
@@ -333,36 +333,33 @@ export function LLMWizard() {
         preloadLabel ?? (wizardPreload ? `${wizardPreload.city}, ${wizardPreload.country}` : undefined),
       )
 
-      // Merge config_patch into partialConfig
-      setPartialConfig((prev) => {
-        const merged = { ...prev }
-        // Apply any LLM-extracted patches
-        if (res.config_patch && Object.keys(res.config_patch).length > 0) {
-          for (const [k, v] of Object.entries(res.config_patch)) {
-            if (typeof v === 'object' && v !== null && !Array.isArray(v) && typeof merged[k as keyof TripConfig] === 'object') {
-              merged[k as keyof TripConfig] = { ...(merged[k as keyof TripConfig] as object), ...v } as never
-            } else {
-              merged[k as keyof TripConfig] = v as never
-            }
+      // Merge config_patch into partialConfig (computed once so we can reuse
+      // the merged shape for the feasibility gate below, since React state
+      // updates aren't synchronously readable via partialConfigRef here).
+      const mergedPartial: Partial<TripConfig> = { ...partialConfigRef.current }
+      if (res.config_patch && Object.keys(res.config_patch).length > 0) {
+        for (const [k, v] of Object.entries(res.config_patch)) {
+          if (typeof v === 'object' && v !== null && !Array.isArray(v) && typeof mergedPartial[k as keyof TripConfig] === 'object') {
+            mergedPartial[k as keyof TripConfig] = { ...(mergedPartial[k as keyof TripConfig] as object), ...v } as never
+          } else {
+            mergedPartial[k as keyof TripConfig] = v as never
           }
         }
-        // Coerce group.kids from plain integers to KidAge objects (LLM may emit [3, 6])
-        const g = merged.group as Record<string, unknown> | undefined
-        if (g && Array.isArray(g.kids)) {
-          g.kids = (g.kids as unknown[]).map((k) =>
-            typeof k === 'number' ? { age: k } : k
-          )
-        }
-        // Track that the "anything else?" checkpoint has been shown
-        // once all 6 fields are filled, so the LLM doesn't re-ask next turn
-        // Use the same logic as the tab indicators so _checkpoint_asked is only set
-        // when all 6 fields pass the exact same checks shown in the UI
-        const allFilled = REQUIRED_LABELS.every(({ key }) => _isFieldFilled(key, merged))
-        if (allFilled && !(merged as Record<string, unknown>)._checkpoint_asked) {
-          (merged as Record<string, unknown>)._checkpoint_asked = true
-        }
-        return merged
-      })
+      }
+      // Coerce group.kids from plain integers to KidAge objects (LLM may emit [3, 6])
+      const gCoerce = mergedPartial.group as Record<string, unknown> | undefined
+      if (gCoerce && Array.isArray(gCoerce.kids)) {
+        gCoerce.kids = (gCoerce.kids as unknown[]).map((k) =>
+          typeof k === 'number' ? { age: k } : k
+        )
+      }
+      // Track that the "anything else?" checkpoint has been shown
+      // once all 6 fields are filled, so the LLM doesn't re-ask next turn
+      const allFilledCheck = REQUIRED_LABELS.every(({ key }) => _isFieldFilled(key, mergedPartial))
+      if (allFilledCheck && !(mergedPartial as Record<string, unknown>)._checkpoint_asked) {
+        (mergedPartial as Record<string, unknown>)._checkpoint_asked = true
+      }
+      setPartialConfig(mergedPartial)
 
       const assistantMsg: Message = {
         id: nextId(),
@@ -378,10 +375,14 @@ export function LLMWizard() {
 
       if (res.ready_to_generate) {
         setSummary(res.summary)
-        // Auto-trigger generation after a short delay so the user sees Anya's final message
-        setTimeout(() => {
-          handleGenerate()
-        }, 1200)
+        // Budget feasibility gate (⭐ NEW): before auto-generating, verify the
+        // collected budget can actually cover the trip (real deterministic
+        // floor + LLM cost estimate — see chains/feasibility_chain.py). If
+        // it's short, pause and let the user increase the budget, change
+        // destination, or explicitly proceed anyway rather than silently
+        // generating an itinerary the stated budget can't realistically cover.
+        const configForCheck = { ...useTripConfigStore.getState().config, ...mergedPartial } as TripConfig
+        runFeasibilityGate(configForCheck)
       }
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string }; status?: number } }
@@ -400,11 +401,47 @@ export function LLMWizard() {
     }
   }
 
+  // ── Budget feasibility gate ─────────────────────────────────────────────────
+  const PROCEED_ANYWAY_CHIP = 'Proceed anyway 🚀'
+
+  async function runFeasibilityGate(fullConfig: TripConfig) {
+    try {
+      const result = await checkFeasibility(fullConfig)
+      if (result.feasible) {
+        setTimeout(() => handleGenerate(), 1200)
+        return
+      }
+      // Infeasible — surface the real shortfall + a real suggested minimum
+      // (never silently generate against a budget that can't cover the trip).
+      const minBudget = result.bare_minimum_inr ?? result.breakdown.total_estimated_inr
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: nextId(),
+          role: 'assistant',
+          content: `${result.verdict} This covers flights + stay + food as a bare minimum (activities/shopping extra). Want to increase your budget, or shall I go ahead with what you have?`,
+          chips: [`Set budget to ₹${minBudget.toLocaleString('en-IN')}`, PROCEED_ANYWAY_CHIP, 'Let me adjust something else'],
+        },
+      ])
+    } catch {
+      // Feasibility check itself failed (network/server) — don't block the
+      // user's trip on an infra hiccup, fall back to the original behaviour.
+      setTimeout(() => handleGenerate(), 1200)
+    }
+  }
+
   // ── User submits a message ─────────────────────────────────────────────────
 
   async function handleSubmit(text?: string) {
     const value = (text ?? input).trim()
     if (!value || isSending || phase !== 'chatting') return
+    if (value === PROCEED_ANYWAY_CHIP) {
+      // Bypass the chat round-trip entirely — the user has explicitly
+      // confirmed they want to proceed despite the flagged shortfall.
+      setMessages((prev) => [...prev, { id: nextId(), role: 'user', content: value }])
+      handleGenerate()
+      return
+    }
     setInput('')
     await sendMessage(value)
   }

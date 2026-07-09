@@ -68,6 +68,8 @@ export interface TripConfig {
   budget: Budget
   splurge_categories: string[]
   save_categories: string[]
+  prebooked_flights_inr: number | null
+  prebooked_accommodation_inr: number | null
 }
 
 // Itinerary types
@@ -156,6 +158,7 @@ export interface FeasibilityResponse {
   breakdown: CostBreakdown
   shortfall_inr: number
   buffer_inr: number
+  bare_minimum_inr: number | null
   alternatives: AlternativeDestination[]
   disclaimer: string
 }

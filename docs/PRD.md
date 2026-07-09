@@ -544,6 +544,8 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 - If `budget ≥ estimated_minimum_cost`, show a **Feasibility Green Badge**: *"Budget looks sufficient ✓"*
 - All estimates are clearly labelled as approximations.
 
+> **Implementation status (v10.8):** `estimated_minimum_cost` above is no longer a pure Gemini guess — `core/budget_estimator.py` computes it deterministically (free tools only, no paid pricing API) from destination cost tier + season + group composition + duration + traveller comfort level, and `feasibility_chain.py` takes `max(llm_estimate, deterministic_floor)` so the floor always wins if the LLM under-estimates. This check now also runs inside the **LLM chat wizard** (`LLMWizard.tsx`), not just the older structured form — previously it was silently skipped there, so a stated budget could sail straight into itinerary generation unchecked. If a user hasn't stated a budget at all, the wizard now asks a clarifying question (group size, then comfort level) before quoting any number — it never reuses the flat Section-2 "budget tiers" parsing table as a recommendation. If a user mentions already-booked flights/accommodation, those real amounts replace the corresponding estimated component rather than being ignored.
+
 ---
 
 ### **R6 — Persistent Back Navigation**

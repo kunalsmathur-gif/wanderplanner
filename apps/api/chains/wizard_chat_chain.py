@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from core.budget_estimator import budget_estimate_prompt_hint
 from core.config import settings
 from core.llm_client import track_gemini_usage
 from models.chat import ChatMessage
@@ -266,6 +267,18 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
     Format: {{"amount": 100000, "currency": "INR"}}
     Always convert shorthand using the currency rules in Section 2.
 
+    RECOMMENDING A BUDGET (user asks you to suggest/recommend one instead of giving their own number):
+      Never invent a number yourself and never use the Section 2 "Budget tiers" shorthand table for this —
+      that table is only for parsing the user's OWN stated amount (e.g. "a budget trip" -> 40000), not for
+      generating a recommendation.
+      Follow {budget_estimate_hint} below exactly:
+        - If it tells you group size is unknown, ask for group composition FIRST (this may jump ahead of
+          the normal field order) and do NOT quote any number until you have it.
+        - Once it gives you a computed estimate, present it in your own words, ALWAYS stating both the
+          TOTAL and the PER-PERSON figure, and mention it covers flights + stay + food as a bare minimum
+          (activities/shopping/local transport are extra). Briefly mention any flagged assumptions
+          (trip length, comfort level, season) so the user can correct them.
+
   Field 5 -- group (JSON key: "group")
     Who is travelling.
     Format: {{"adults": 2, "kids": [], "seniors": 0, "infants": 0, "pets": 0}}
@@ -310,6 +323,14 @@ Extract if the user mentions them. Never ask for them directly (the checkpoint i
     Chip suggestion (offer once, only after all 6 required fields + budget are known):
       "Want to splurge on anything? 💰" -> chips ["Nice Hotel 🏨", "Great Food 🍽️", "Top Activities 🎟️", "No preference"]
       A user picking "Nice Hotel" -> splurge_categories: ["accommodation"]. "No preference" -> leave both arrays empty and move on.
+  prebooked_flights_inr: integer (INR) — ONLY if the user explicitly says they've already booked/paid for flights
+    (e.g. "I already booked my tickets for 50k", "flights are done, cost 30000").
+    ALWAYS ask for the actual amount paid rather than guessing: "Got it — how much did the flights cost in total?"
+  prebooked_accommodation_inr: integer (INR) — ONLY if the user explicitly says they've already booked/paid for
+    a hotel/stay (e.g. "hotel is already booked for 20k", "accommodation sorted, paid 15000").
+    ALWAYS ask for the actual amount paid rather than guessing.
+    These feed directly into budget recommendations and the feasibility check — once known, the real paid
+    amount replaces the heuristic estimate for that cost component so the remaining-budget math is accurate.
 
 ---
 
@@ -429,6 +450,9 @@ This object is injected by the application and represents exactly what has been 
 Treat it as ground truth. Only ask for keys that are null or absent here.
 
 {collected_state}
+
+## BUDGET RECOMMENDATION HINT (only relevant if the user is asking you to suggest/recommend a budget)
+{budget_estimate_hint}
 
 ## PRELOADED DESTINATION
 {preloaded_destination}
@@ -684,9 +708,20 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
 
     client = google_genai.Client(api_key=settings.gemini_api_key)
 
+    # Last user message text, used only to detect an explicit economical/
+    # premium preference for the budget-recommendation hint below.
+    last_user_text = next(
+        (m.content for m in reversed(request.messages) if m.role == "user"), None
+    )
+    try:
+        budget_hint = budget_estimate_prompt_hint(request.partial_config, last_user_text)
+    except Exception:
+        budget_hint = ""
+
     system_prompt = WIZARD_SYSTEM_PROMPT.format(
         preloaded_destination=request.preloaded_destination or "None",
         collected_state=_summarise_state(request.partial_config),
+        budget_estimate_hint=budget_hint or "(not applicable this turn)",
     )
 
     # Last 20 messages as conversation history

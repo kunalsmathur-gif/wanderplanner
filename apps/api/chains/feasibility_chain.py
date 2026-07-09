@@ -7,6 +7,7 @@ import json
 from core.config import settings
 from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize
+from core.budget_estimator import estimate_bare_minimum_budget
 from core.budget_tiers import budget_tier_prompt_hint
 from core.cost_grounding import flight_cost_grounding_hint, accommodation_cost_grounding_hint
 from models.feasibility import FeasibilityResponse, CostBreakdown, AlternativeDestination
@@ -160,17 +161,59 @@ async def check_feasibility(trip_config: TripConfig) -> FeasibilityResponse:
         cleaned = "\n".join(cleaned.split("\n")[:-1])
 
     data = json.loads(cleaned)
-    return _build_response(data, budget_inr)
+    bare_minimum = _safe_bare_minimum(trip_config)
+    return _build_response(data, budget_inr, bare_minimum, trip_config)
 
 
-def _build_response(data: dict, budget_inr: int) -> FeasibilityResponse:
+def _safe_bare_minimum(trip_config: TripConfig) -> dict | None:
+    """Best-effort deterministic bare-minimum estimate (flights+stay+food) used
+    as a floor against the LLM's own cost guess — never blocks the feasibility
+    check if it fails for any reason (e.g. group size still unknown)."""
+    try:
+        return estimate_bare_minimum_budget(trip_config.model_dump())
+    except Exception:
+        return None
+
+
+def _build_response(
+    data: dict,
+    budget_inr: int,
+    bare_minimum: dict | None = None,
+    trip_config: TripConfig | None = None,
+) -> FeasibilityResponse:
+    llm_flights = int(data.get("flights_inr", 0))
+    llm_accommodation = int(data.get("accommodation_inr", 0))
     total = int(data.get("total_estimated_inr", 0))
+
+    # Already-booked flights/accommodation (⭐ NEW): swap the LLM's guessed
+    # component for the user's real paid amount, since that's a sunk cost
+    # already covered, not something still owed against the stated budget.
+    prebooked_flights = getattr(trip_config, "prebooked_flights_inr", None) if trip_config else None
+    prebooked_accommodation = getattr(trip_config, "prebooked_accommodation_inr", None) if trip_config else None
+    if prebooked_flights is not None:
+        total = total - llm_flights + prebooked_flights
+        llm_flights = prebooked_flights
+    if prebooked_accommodation is not None:
+        total = total - llm_accommodation + prebooked_accommodation
+        llm_accommodation = prebooked_accommodation
+
+    # Deterministic free-tools floor (⭐ NEW): the LLM's cost guess can
+    # occasionally undershoot for an unusual destination/group combo. Our
+    # hand-authored bare-minimum estimate (flights+stay+food only) acts as a
+    # floor — if the LLM total falls short of it, use the floor instead so
+    # "feasible" never means "feasible according to an optimistic guess".
+    floor_used = False
+    bare_minimum_inr = bare_minimum["total_inr"] if bare_minimum else None
+    if bare_minimum_inr is not None and bare_minimum_inr > total:
+        total = bare_minimum_inr
+        floor_used = True
+
     feasible = total <= budget_inr
 
     breakdown = CostBreakdown(
-        flights_inr=int(data.get("flights_inr", 0)),
+        flights_inr=llm_flights,
         visa_inr=int(data.get("visa_inr", 0)),
-        accommodation_inr=int(data.get("accommodation_inr", 0)),
+        accommodation_inr=llm_accommodation,
         daily_expenses_inr=int(data.get("daily_expenses_inr", 0)),
         total_estimated_inr=total,
     )
@@ -193,7 +236,8 @@ def _build_response(data: dict, budget_inr: int) -> FeasibilityResponse:
     else:
         shortfall = total - budget_inr
         buffer = 0
-        verdict = f"⚠️ Budget may be short by ₹{shortfall:,}. Estimated minimum is ₹{total:,}."
+        floor_note = " (based on our bare-minimum flights+stay+food floor)" if floor_used else ""
+        verdict = f"⚠️ Budget may be short by ₹{shortfall:,}. Estimated minimum is ₹{total:,}{floor_note}."
 
     return FeasibilityResponse(
         feasible=feasible,
@@ -202,6 +246,7 @@ def _build_response(data: dict, budget_inr: int) -> FeasibilityResponse:
         breakdown=breakdown,
         shortfall_inr=shortfall,
         buffer_inr=buffer,
+        bare_minimum_inr=bare_minimum_inr,
         alternatives=alternatives,
     )
 

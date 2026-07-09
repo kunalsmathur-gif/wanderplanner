@@ -28,6 +28,8 @@ const DEFAULT_CONFIG: TripConfig = {
   budget: { amount: 0, currency: 'INR' },
   splurge_categories: [],
   save_categories: [],
+  prebooked_flights_inr: null,
+  prebooked_accommodation_inr: null,
 }
 
 interface TripConfigStore {
