@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from core.budget_estimator import budget_estimate_prompt_hint
+from core.currency_convert import TOP_10_CURRENCIES, currency_conversion_prompt_hint
 from core.config import settings
 from core.llm_client import track_gemini_usage
 from models.chat import ChatMessage
@@ -263,9 +264,20 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
     -> start: "2026-12-01", end: "2026-12-31", flexible: true).
 
   Field 4 -- budget (JSON key: "budget")
-    Total trip budget in INR.
+    Total trip budget in INR. **INR (₹) is always the canonical/stored currency — say so explicitly the
+    first time you ask for budget**, e.g. "What's your approximate budget in ₹ (INR)? If you'd rather
+    tell me in USD, EUR, GBP, AED, SGD, AUD, CAD, JPY, THB, or CHF, that's fine too — I'll convert it."
     Format: {{"amount": 100000, "currency": "INR"}}
     Always convert shorthand using the currency rules in Section 2.
+
+    FOREIGN CURRENCY STATED BY THE USER (e.g. "$2000", "1500 euros", "AED 5000"):
+      Never do this conversion math yourself — it is computed deterministically server-side.
+      Check {currency_conversion_hint} below: if it is non-empty, it already contains the exact
+      converted INR figure — use that exact number for config_patch.budget.amount (currency always
+      "INR"), and mention BOTH the original stated amount and the converted ₹ figure + rate in your
+      reply for transparency (e.g. "Got it, $2000 is about ₹1,73,000 at today's rate."). If a currency
+      is mentioned that ISN'T one of the 10 supported ones above, tell the user you currently only
+      support INR + those 10 currencies and ask them to restate in one of those (or in ₹).
 
     RECOMMENDING A BUDGET (user asks you to suggest/recommend one instead of giving their own number):
       Never invent a number yourself and never use the Section 2 "Budget tiers" shorthand table for this —
@@ -453,6 +465,9 @@ Treat it as ground truth. Only ask for keys that are null or absent here.
 
 ## BUDGET RECOMMENDATION HINT (only relevant if the user is asking you to suggest/recommend a budget)
 {budget_estimate_hint}
+
+## FOREIGN CURRENCY CONVERSION HINT (only relevant if the user's latest message stated a budget in a non-INR currency)
+{currency_conversion_hint}
 
 ## PRELOADED DESTINATION
 {preloaded_destination}
@@ -717,11 +732,16 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         budget_hint = budget_estimate_prompt_hint(request.partial_config, last_user_text)
     except Exception:
         budget_hint = ""
+    try:
+        currency_hint = currency_conversion_prompt_hint(last_user_text)
+    except Exception:
+        currency_hint = ""
 
     system_prompt = WIZARD_SYSTEM_PROMPT.format(
         preloaded_destination=request.preloaded_destination or "None",
         collected_state=_summarise_state(request.partial_config),
         budget_estimate_hint=budget_hint or "(not applicable this turn)",
+        currency_conversion_hint=currency_hint or "(not applicable this turn — user has not stated a foreign-currency amount)",
     )
 
     # Last 20 messages as conversation history
@@ -1017,7 +1037,10 @@ def _mock_wizard(request: WizardChatRequest) -> WizardChatResponse:
     if not (dates.get("start") and dates.get("end")):
         return WizardChatResponse(reply="When are you planning to travel, and for how many days?", chips=[], config_patch={}, ready_to_generate=False)
     if not (config.get("budget", {}).get("amount", 0) > 0):
-        return WizardChatResponse(reply="What's your approximate budget for this trip?", chips=[], config_patch={}, ready_to_generate=False)
+        return WizardChatResponse(
+            reply=f"What's your approximate budget in ₹ (INR)? (Or tell me in {', '.join(TOP_10_CURRENCIES)} — I'll convert.)",
+            chips=[], config_patch={}, ready_to_generate=False,
+        )
     if not (config.get("group", {}).get("adults", 0) >= 1):
         return WizardChatResponse(reply="Who will be joining you — travelling solo, as a couple, or with family?", chips=["Solo 🧳", "Couple ❤️", "Family 👨‍👩‍👧", "Friends 🎉"], config_patch={}, ready_to_generate=False)
     if not config.get("pace"):

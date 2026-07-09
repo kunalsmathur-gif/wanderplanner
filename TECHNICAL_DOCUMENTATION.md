@@ -1391,7 +1391,18 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.9 Changes (July 2026) — Foreign-Currency Budget Input
+
+Fixes an implicit, never-stated assumption: budget numbers were always treated as INR with no way for a user to state it in their own currency. This pass makes the INR assumption explicit and adds deterministic support for 10 common foreign currencies.
+
+| Change | Detail |
+|---|---|
+| **NEW** `core/currency_convert.py` | `detect_foreign_currency(text)` — regex-based detection of an amount in one of `TOP_10_CURRENCIES = [USD, EUR, GBP, AED, SGD, AUD, CAD, JPY, THB, CHF]` (symbols like `$`/`€`/`£`/`¥` and keywords like "dollars"/"euros"/"dirhams", plus "2k" shorthand), explicitly excluding INR/₹/lakh/crore phrasing (handled by existing Section-2 rules). `get_conversion_rate(currency)` calls the free, keyless Frankfurter.app API (`GET /latest?from={cur}&to=INR`), cached 6 hours in-memory, falling back to a hardcoded approximate rate table on any failure. `convert_to_inr()` combines both into a full result dict. `currency_conversion_prompt_hint(text)` renders a ready-to-use, already-computed instruction for the wizard prompt — the LLM only phrases the conversion, never computes it (same architectural pattern as `core/budget_estimator.py`'s hints). |
+| **CHANGED** `chains/wizard_chat_chain.py` | Field 4 (budget) now explicitly states "in ₹ (INR)" the first time it asks for budget, and names the 10 supported alternative currencies. A new `{currency_conversion_hint}` prompt section (injected every turn via `currency_conversion_prompt_hint(last_user_text)`) instructs Anya to use the exact deterministic conversion when present, storing `config_patch.budget.amount` in the converted INR figure and mentioning both the original and converted amounts + rate transparently. Mock/fallback budget-ask message updated to match. |
+| **Verified** | Full backend suite: 121 passed, 6 skipped, no regressions. Frontend `tsc --noEmit` clean — no frontend changes were needed (purely backend/prompt logic; the currency conversion happens once at the point of user input, so INR remains the sole canonical currency everywhere downstream — feasibility check, budget estimator, itinerary generation, scoring). Live curl-verified: `"my budget is around $2000"` → `config_patch: {"budget": {"amount": 173000, "currency": "INR"}}`, reply states both `$2,000` and `₹1,73,000` + the rate; unrecognized currencies and INR-shorthand phrasing (`"1.5 lakh"`, `"₹50000"`) correctly do NOT trigger foreign-currency conversion. |
+| **Not built this pass** | A currency-selector UI control (deliberately kept conversational/chat-based, consistent with the rest of the wizard — no new frontend component needed); support beyond the top 10 currencies (user is asked to restate in ₹ or a supported currency if an unrecognized one is mentioned). |
 
 ### v10.8 Changes (July 2026) — Real Deterministic Budget Estimator + Pre-Generation Feasibility Gate
 

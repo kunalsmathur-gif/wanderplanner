@@ -529,6 +529,8 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 - Shown in the Trip Metrics panel: *"₹2,50,000 ≈ USD 3,000"*
 - The Gemini prompt receives budget in both INR and destination currency so it can make accurate activity cost decisions.
 
+> **Implementation status (v10.9 — Foreign-currency budget input):** the wizard now **explicitly states INR is assumed** the first time it asks for budget (previously this was only an implicit, undocumented assumption). If a user states their budget in one of 10 supported foreign currencies (USD, EUR, GBP, AED, SGD, AUD, CAD, JPY, THB, CHF), `core/currency_convert.py` deterministically detects the amount + currency (regex, no LLM math) and converts it to INR via the free, keyless Frankfurter.app API (same provider already used by the dashboard's `CurrencyWidget`), with a 6-hour in-memory cache and a hardcoded fallback rate table if the live call fails. The converted INR figure — never an LLM guess — is what gets stored in `config_patch.budget.amount`; Anya's reply transparently states both the original and converted figures plus the rate used (e.g. *"Got it, $2,000 is about ₹1,73,000 at today's rate."*). An unsupported currency prompts the user to restate in one of the 10 supported currencies or in ₹.
+
 ---
 
 ### **R5 — Budget Feasibility Check**
