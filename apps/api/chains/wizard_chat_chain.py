@@ -934,6 +934,14 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # leaked `",` or dangling `}`/`]`) from a truncated response before
         # ever showing it to the user.
         clean_raw = _strip_trailing_json_artifacts(clean_raw)
+
+        # Same first-turn purpose-chip safety net as the JSON-success path
+        # above: a plain-text (non-JSON) greeting response on the very first
+        # turn should still offer the standard purpose chips rather than
+        # leaving the user with no way to respond except free text.
+        if not extracted_chips and not request.partial_config.get("purpose") and len(request.messages) <= 1:
+            extracted_chips = ["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"]
+
         return WizardChatResponse(
             reply=clean_raw or "I'm on it! Just a moment…",
             chips=extracted_chips,
