@@ -1391,7 +1391,23 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.7 Changes (July 2026) — Free-Tools Budget Curation (Phase 1)
+
+Addresses two long-standing gaps called out in an internal design memo (`docs/rag-strategy.md` §9-12 roadmap): (1) `personas`/`purpose` had almost no code-level effect on the itinerary beyond a handful of hardcoded safety rules, and (2) budget had **zero real math** — costs were pure single-shot LLM guesses, and `scoring.py`'s `budget_score` was dead code hardcoded to `1.0`. This pass implements Phase 1 of the roadmap using **free tools only** (no paid pricing APIs) — Phases 2-5 (itinerary corpus scraping, real flight/hotel pricing APIs, a budget optimizer, and an agentic tool-calling router) remain a documented but unbuilt future roadmap.
+
+| Change | Detail |
+|---|---|
+| **NEW** `core/budget_tiers.py` | Hand-authored persona/purpose → budget-tier lookup table (no ML). `luxury_traveller`/`budget_backpacker`/`senior_traveller` personas and `honeymoon`/`family_vacation`/`business_leisure`/`solo_backpacking`/`group_holiday`/`adventure` purposes each map to an accommodation-style + dining-weighting tier (persona takes priority over purpose). `resolve_budget_tier()` always returns a tier; `budget_tier_prompt_hint()` renders it (plus any splurge/save categories) as prompt-ready guidance text. |
+| **NEW** `core/cost_grounding.py` | Free-tools-only cost grounding for the two most date-sensitive line items: (1) a haversine-distance-based flight cost **range** heuristic (5 distance bands, INR round-trip-economy ranges) using the trip's existing origin/destination lat/lon — no API call; (2) community-reported nightly-rate/price snippets pulled from the **already-ingested** `wiki`/`reddit` Qdrant collections via the existing `services.search.semantic_search()` — zero new scrapers or infra. Both are best-effort and degrade to an empty hint on any failure. |
+| **CHANGED** `TripConfig` | Added optional `splurge_categories`/`save_categories: list[str]` fields (values from `["accommodation", "food", "activities", "shopping", "local_transport"]`), settable via the wizard or advanced UI, consumed by both prompt hints and scoring. |
+| **CHANGED** `chains/feasibility_chain.py`, `chains/itinerary_chain.py` | Both prompts now inject a persona/purpose budget-tier hint and (itinerary chain only) flight/accommodation cost-grounding hints, computed via `asyncio.gather` with try/except fallback to an empty string so a RAG/lookup failure never blocks generation. |
+| **FIXED** `chains/scoring.py` dead `budget_score` | Replaced the hardcoded `budget_score = 1.0` with a real `_budget_fit()` function: resolves the trip's budget tier, tags each candidate item against budget-leaning/premium-leaning vocabularies, and applies tier-fit and splurge/save-category bonuses/penalties (still a **tag-based proxy**, since `ItineraryItem` has no per-item cost field — real per-item cost scoring is a Phase 3+ item once real pricing data exists). |
+| **NEW** persona/occasion query-expansion in `services/search.py` | `retrieve_context()`'s 3 RAG query variants are now biased with concrete persona/purpose keywords (e.g. `digital_nomad` → "coworking wifi cafe remote work", `honeymoon` → "romantic scenic couples sunset") so the *existing* wiki/reddit collections surface more persona-relevant content — no new Qdrant collection or payload schema needed (that's the unimplemented §11 unified metadata schema, still future work). |
+| **NEW** wizard splurge/save chip | `wizard_chat_chain.py`'s optional-fields section adds a one-off "Want to splurge on anything? 💰" chip (Nice Hotel / Great Food / Top Activities / No preference) offered once all required fields + budget are known, writing to `splurge_categories`/`save_categories`. Non-blocking — never re-asked, never required. |
+| **Verified** | Full backend suite: 121 passed, 6 skipped (no regressions in `test_scoring.py`/`test_rag.py` or elsewhere). Frontend `types/index.ts`/`tripConfigStore.ts` updated in lockstep (new fields + defaults) — confirmed type-safe (pre-existing, unrelated `next.config.ts`/module-resolution build issues in this environment are untouched by this change). |
+| **Not built this pass (documented future roadmap)** | Itinerary corpus scraping (Phase 2), Amadeus flight pricing / Booking.com affiliate accommodation pricing (Phase 3), a "keep structure, swap tiers" budget optimizer + generated-itinerary learning flywheel (Phase 4), and an agentic tool-calling router for persona-verified venue selection (Phase 5) — see the design memo referenced in `docs/rag-strategy.md`. |
 
 ### v10.6 Changes (July 2026) — Admin Access Request/Approval Workflow
 

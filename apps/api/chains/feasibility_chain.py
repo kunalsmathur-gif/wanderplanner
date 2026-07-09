@@ -7,6 +7,8 @@ import json
 from core.config import settings
 from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize
+from core.budget_tiers import budget_tier_prompt_hint
+from core.cost_grounding import flight_cost_grounding_hint, accommodation_cost_grounding_hint
 from models.feasibility import FeasibilityResponse, CostBreakdown, AlternativeDestination
 from models.trip import TripConfig
 
@@ -18,6 +20,10 @@ Provide cost estimates based on average market rates. Be conservative (lean slig
 
 TRIP DETAILS:
 {trip_config}
+
+{budget_tier_hint}
+
+{cost_grounding_hint}
 
 OUTPUT SCHEMA (valid JSON only, no markdown):
 {{
@@ -40,7 +46,8 @@ OUTPUT SCHEMA (valid JSON only, no markdown):
 RULES:
 - Convert all costs to INR.
 - Use average economy class fares from major Indian airports.
-- For accommodation, use the style specified (hostel/budget/boutique/luxury).
+- For accommodation, use the style specified (hostel/budget/boutique/luxury), and the BUDGET TIER GUIDANCE above.
+- If a FLIGHT COST GROUNDING or COMMUNITY-REPORTED rate range is given above, treat it as a strong sanity check — do not stray far from it without good reason.
 - If budget is clearly insufficient, suggest 2-3 cheaper alternatives that offer similar experiences.
 - If budget is sufficient, still suggest 1-2 alternative destinations for variety.
 - Keep alternatives realistic for Indian passport holders.
@@ -108,9 +115,26 @@ async def check_feasibility(trip_config: TripConfig) -> FeasibilityResponse:
     if not settings.gemini_api_key:
         raise RuntimeError("GEMINI_API_KEY is not set.")
 
+    # Free-tools-only budget curation (⭐ NEW): persona/purpose budget-tier
+    # guidance + a real-distance flight heuristic + community-reported price
+    # mentions pulled from the existing free RAG collections. Best-effort —
+    # a retrieval hiccup degrades to "no extra grounding", never blocks the
+    # feasibility check.
+    budget_tier_hint = budget_tier_prompt_hint(trip_config)
+    try:
+        flight_hint, accommodation_hint = await asyncio.gather(
+            flight_cost_grounding_hint(trip_config),
+            accommodation_cost_grounding_hint(trip_config),
+        )
+    except Exception:
+        flight_hint, accommodation_hint = "", ""
+    cost_grounding_hint = "\n\n".join(h for h in (flight_hint, accommodation_hint) if h)
+
     client = google_genai.Client(api_key=settings.gemini_api_key)
     prompt = FEASIBILITY_PROMPT.format(
-        trip_config=neutralize(json.dumps(trip_summary, indent=2), context="trip summary")
+        trip_config=neutralize(json.dumps(trip_summary, indent=2), context="trip summary"),
+        budget_tier_hint=neutralize(budget_tier_hint, context="budget tier guidance"),
+        cost_grounding_hint=neutralize(cost_grounding_hint, context="free-tools cost grounding") if cost_grounding_hint else "No community-reported price data available — rely on general market-rate knowledge.",
     )
 
     def _call_sync():

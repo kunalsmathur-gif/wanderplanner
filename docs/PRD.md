@@ -305,6 +305,8 @@ $$Score\_{Final} \= (W\_p \\cdot P\_{match}) \+ (W\_b \\cdot B\_{match}) \+ (W\_
 
   > **Visibility:** The alignment score is an **internal ranking signal only** — it is never displayed to the user in the UI.
 
+  > **Implementation status (v10.7):** `ItineraryItem` has no per-item cost field today, so `B_match`/`budget_score` is implemented as a **tag-based proxy** (`chains/scoring.py::_budget_fit()`) rather than the literal cost-vs-limit formula below: it resolves a persona/purpose **budget tier** (`core/budget_tiers.py`) and scores each item against budget-leaning/premium-leaning tag vocabularies, plus splurge/save-category bonuses. The formula below remains the target design once real per-item pricing exists (see Phase 3 of the budget-accuracy roadmap in `docs/rag-strategy.md`).
+
   Python
 
 ```

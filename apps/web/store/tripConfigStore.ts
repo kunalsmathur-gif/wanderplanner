@@ -26,6 +26,8 @@ const DEFAULT_CONFIG: TripConfig = {
   accommodation: DEFAULT_ACCOMMODATION,
   pace: 'moderate',
   budget: { amount: 0, currency: 'INR' },
+  splurge_categories: [],
+  save_categories: [],
 }
 
 interface TripConfigStore {

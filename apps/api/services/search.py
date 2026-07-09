@@ -13,6 +13,27 @@ from services.hyde import generate_hypothetical_passage
 from models.common import SearchResult
 from models.trip import TripConfig
 
+# Persona/occasion -> extra query keywords used to bias retrieval toward
+# relevant content in the existing free wiki/reddit collections (design memo
+# Part 1.3 "Mechanism A"). Hand-authored, no ML/infra required.
+_PERSONA_QUERY_EXPANSION: dict[str, str] = {
+    "digital_nomad": "coworking wifi cafe remote work",
+    "sports_fitness": "gym trail running fitness training",
+    "pet_parent": "dog-friendly pet-friendly park",
+    "luxury_traveller": "luxury premium fine dining upscale",
+    "budget_backpacker": "budget cheap hostel free street food",
+    "senior_traveller": "accessible relaxed comfortable senior-friendly",
+}
+
+_PURPOSE_QUERY_EXPANSION: dict[str, str] = {
+    "honeymoon": "romantic scenic couples sunset",
+    "family_vacation": "kid-friendly family activities",
+    "solo_backpacking": "solo traveller budget hostel",
+    "business_leisure": "convenient efficient wifi",
+    "adventure": "adventure outdoor trekking hiking",
+    "group_holiday": "group friends nightlife",
+}
+
 
 # ---------------------------------------------------------------------------
 # Hybrid lexical pass: BM25 over destination-filtered corpus (docs §3D)
@@ -253,11 +274,22 @@ async def retrieve_context(trip_config: TripConfig, enable_reranking: bool | Non
     purpose = getattr(trip_config, "purpose", "") or ""
     pace = getattr(trip_config, "pace", "") or ""
 
+    # Persona/occasion-filtered retrieval (⭐ NEW, free-tools mechanism —
+    # design memo Part 1.3 "Mechanism A"): the existing wiki/reddit
+    # collections have no persona/attraction_type payload field to filter
+    # on (that's the unimplemented §11 unified metadata schema), so instead
+    # we bias retrieval toward persona/occasion-relevant content by
+    # expanding the query text itself with concrete keywords a persona- or
+    # occasion-relevant document would actually contain. Zero infra cost —
+    # just better query construction over the same free collections.
+    persona_keywords = " ".join(_PERSONA_QUERY_EXPANSION.get(p, "") for p in trip_config.personas).strip()
+    purpose_keywords = _PURPOSE_QUERY_EXPANSION.get(purpose.strip().lower(), "")
+
     raw_queries = [
-        # Query 1 — config-oriented: persona + core nouns
-        f"{dest} travel {personas} highlights activities food",
-        # Query 2 — purpose/vibe: what kind of trip
-        f"things to do in {dest} {purpose} {pace} trip hidden gems local tips",
+        # Query 1 — config-oriented: persona + core nouns (+ persona keyword expansion)
+        f"{dest} travel {personas} {persona_keywords} highlights activities food".strip(),
+        # Query 2 — purpose/vibe: what kind of trip (+ occasion keyword expansion)
+        f"things to do in {dest} {purpose} {purpose_keywords} {pace} trip hidden gems local tips".strip(),
         # Query 3 — practical: logistics, advice, warnings
         f"{dest} best restaurants sightseeing transport safety advice",
     ]

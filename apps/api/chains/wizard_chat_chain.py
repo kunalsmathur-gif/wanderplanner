@@ -301,6 +301,15 @@ Extract if the user mentions them. Never ask for them directly (the checkpoint i
                     "wheelchair_accessible": false, "pet_friendly": false}}
   personas: array from ["digital_nomad", "sports_fitness", "pet_parent",
                           "luxury_traveller", "budget_backpacker", "senior_traveller"]
+  splurge_categories: array from ["accommodation", "food", "activities", "shopping", "local_transport"]
+  save_categories: array from ["accommodation", "food", "activities", "shopping", "local_transport"]
+    Only extract if the user explicitly says something like "splurge on hotels but keep food cheap",
+    "I don't care about shopping, save there", "nice hotel is a priority", "we want to eat well but save on transport".
+    Never ask for these directly — Stage 2's optional checkpoint may offer them as a one-off suggestion
+    (see chip below), but do not block the required-fields flow on it.
+    Chip suggestion (offer once, only after all 6 required fields + budget are known):
+      "Want to splurge on anything? 💰" -> chips ["Nice Hotel 🏨", "Great Food 🍽️", "Top Activities 🎟️", "No preference"]
+      A user picking "Nice Hotel" -> splurge_categories: ["accommodation"]. "No preference" -> leave both arrays empty and move on.
 
 ---
 

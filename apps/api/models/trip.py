@@ -79,6 +79,10 @@ class TripConfig(BaseModel):
     accommodation: AccommodationPrefs = Field(default_factory=AccommodationPrefs)
     pace: str = "moderate"  # "relaxed" | "moderate" | "packed"
     budget: Budget = Field(default_factory=lambda: Budget(amount=0, currency="USD"))
+    # Optional per-category budget steering (⭐ NEW — budget curation).
+    # Values from: "accommodation" | "food" | "activities" | "shopping" | "local_transport"
+    splurge_categories: list[str] = Field(default_factory=list)
+    save_categories: list[str] = Field(default_factory=list)
 
     def effective_pace(self) -> str:
         """Auto-apply Relaxed if any kid is under 5."""

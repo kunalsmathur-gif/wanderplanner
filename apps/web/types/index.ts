@@ -66,6 +66,8 @@ export interface TripConfig {
   accommodation: AccommodationPrefs
   pace: Pace
   budget: Budget
+  splurge_categories: string[]
+  save_categories: string[]
 }
 
 // Itinerary types

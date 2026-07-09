@@ -15,8 +15,27 @@ from chains.scoring import calculate_alignment_score
 from chains.safety import apply_kid_safety_filter, inject_persona_modules
 from core.prompt_guard import neutralize, wrap_untrusted
 from core.llm_client import track_gemini_usage
+from core.budget_tiers import budget_tier_prompt_hint
+from core.cost_grounding import flight_cost_grounding_hint, accommodation_cost_grounding_hint
 
 logger = logging.getLogger(__name__)
+
+
+async def _budget_guidance_block(trip_config: TripConfig) -> str:
+    """Assemble the persona/purpose budget-tier hint + free-tools cost
+    grounding (flight distance heuristic + community-reported price
+    mentions) into one prompt-ready block. Best-effort — any retrieval
+    failure degrades to just the tier hint, never blocks generation."""
+    tier_hint = budget_tier_prompt_hint(trip_config)
+    try:
+        flight_hint, accommodation_hint = await asyncio.gather(
+            flight_cost_grounding_hint(trip_config),
+            accommodation_cost_grounding_hint(trip_config),
+        )
+    except Exception:
+        flight_hint, accommodation_hint = "", ""
+    parts = [tier_hint] + [h for h in (flight_hint, accommodation_hint) if h]
+    return "\n\n".join(parts)
 
 SYSTEM_PROMPT = """\
 You are WanderPlanner, an expert AI travel advisor.
@@ -38,6 +57,7 @@ RULES:
 - For youtube_search_query: generate a short, specific search phrase travelers would use (e.g. "Senso-ji Temple Tokyo travel guide").
 - For expense_breakdown: provide realistic INR estimates for all 8 cost categories. Base on actual market rates for the destination year and accommodation style specified.
 - MULTI-HOP TRIPS: If trip_config.hops is non-empty, the trip visits multiple cities. Distribute days proportionally across all stops (destination + hops). Use the day theme to indicate city transitions (e.g. "Travel Day: Paris → Amsterdam"). Aggregate expense_breakdown across all stops.
+- BUDGET GUIDANCE (below): apply the stated budget tier to accommodation/dining choices and expense_breakdown figures. If a flight-cost or accommodation-cost grounding range is given, treat it as a strong sanity check for those expense_breakdown line items.
 
 USING DESTINATION RESEARCH (below):
 - The DESTINATION RESEARCH section contains real, retrieved traveler content (guides, forum tips, local advice). Treat it as more current and specific than your own training knowledge.
@@ -90,6 +110,8 @@ OUTPUT SCHEMA:
 
 DESTINATION RESEARCH:
 {context}
+
+{budget_guidance}
 
 TRIP CONFIGURATION:
 {trip_config}
@@ -288,6 +310,9 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
 
     prompt = SYSTEM_PROMPT.format(
         context=context_text,
+        budget_guidance=neutralize(
+            await _budget_guidance_block(trip_config), context="budget tier + cost grounding guidance"
+        ),
         trip_config=neutralize(trip_json, context="trip configuration"),
     )
 
@@ -378,7 +403,10 @@ async def _langchain_itinerary(trip_config: TripConfig) -> dict:
     llm = _build_llm()
     parser = JsonOutputParser()
     chain = prompt | llm | parser
-    return await chain.ainvoke({"context": context_text, "trip_config": trip_json})
+    budget_guidance = neutralize(
+        await _budget_guidance_block(trip_config), context="budget tier + cost grounding guidance"
+    )
+    return await chain.ainvoke({"context": context_text, "budget_guidance": budget_guidance, "trip_config": trip_json})
 
 
 async def _fallback_itinerary(trip_config: TripConfig, error: Exception) -> dict:

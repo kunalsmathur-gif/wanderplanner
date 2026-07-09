@@ -84,6 +84,8 @@ Now returns properly destination-tagged posts thanks to the fixed `_extract_dest
 3. **No visa/entry-rules collection** — not yet ingested
 4. **No `itinerary_corpus` / `generated_itineraries` learning flywheel** — described in §9/§10 below, not yet built
 
+**v10.7 update:** persona/occasion-filtered retrieval (§9's "Mechanism A" from the budget/curation design memo) is now implemented — `services/search.py::retrieve_context()` biases its 3 query variants with persona/purpose keyword expansions (e.g. `digital_nomad` → "coworking wifi cafe remote work", `honeymoon` → "romantic scenic couples sunset") over the *existing* `wiki`/`reddit` collections. This is a zero-infra query-construction improvement, not the full §11 unified metadata/payload-filtering schema — that remains unbuilt. `itinerary_corpus` and `generated_itineraries` (§9/§10 proper) also remain unbuilt.
+
 ---
 
 ## 3. Implemented Improvements (v5.2 → v5.3)
