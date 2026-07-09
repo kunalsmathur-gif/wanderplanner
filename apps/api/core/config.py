@@ -81,7 +81,14 @@ class Settings(BaseSettings):
     usd_to_inr_rate: float = 87.0
 
     # Database (users, sessions, analytics events)
-    database_url: str = "postgresql+asyncpg://wanderplanner:wanderplanner@localhost:5432/wanderplanner"
+    # Defaults to local SQLite (zero setup, free) -- override via .env for
+    # Postgres in production (e.g. Supabase free tier).
+    database_url: str = "sqlite+aiosqlite:///./dev.db"
+    # Supabase (and most managed Postgres hosts) require TLS on their direct
+    # connection port -- asyncpg does not negotiate SSL automatically, so this
+    # must be explicitly enabled for those hosts (set DATABASE_SSL_REQUIRE=true).
+    # Leave false for local SQLite / local Postgres without TLS.
+    database_ssl_require: bool = False
 
     # Auth / sessions
     jwt_secret: str = "change-me-in-production"

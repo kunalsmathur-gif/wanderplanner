@@ -1391,7 +1391,22 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.10 Changes (July 2026) — Docker/Env Template Refresh + Supabase Production Runbook
+
+Infra housekeeping pass covering the `docker-env-updates` and `db-hosting-config` roadmap items — no paid services introduced, everything uses each provider's free tier.
+
+| Change | Detail |
+|---|---|
+| **CHANGED** `apps/api/.env.example` | Was missing ~25 settings `core/config.py` had grown to support since it was last updated (DB, JWT/auth, Google SSO, Resend email, OSM/retrieval flags, Reddit ingestion). Rewritten to document every setting with free-tier notes inline. |
+| **FIXED** `core/config.py::database_url` default | Previously a non-functional placeholder Postgres string; now defaults to local SQLite (`sqlite+aiosqlite:///./dev.db`), matching how local dev actually runs — zero setup. |
+| **NEW** `core/config.py::database_ssl_require` + `db.py` wiring | Supabase (and most managed Postgres) require TLS that `asyncpg` won't negotiate automatically from a bare connection string alone — previously undocumented. New boolean setting conditionally passes `connect_args={"ssl": True}` to the async engine. |
+| **FIXED** cross-environment migration bug | `alembic upgrade head` against a brand-new SQLite database crashed on migration `0001` — `events.event_metadata` used a hardcoded Postgres-only `postgresql.JSONB()` with no SQLite fallback, while the ORM model (`db_models/event.py`) already had one (`JSONB().with_variant(JSON(), "sqlite")`). Fixed the migration to match. Verified: `alembic upgrade head` now runs `0001 → 0002 → 0003` cleanly end-to-end on a fresh SQLite file. |
+| **FIXED** missing auto-migration on Railway deploy | `railway.toml`'s `startCommand` only ran `uvicorn` — a freshly provisioned Supabase database would have deployed with **zero tables** until someone manually ran migrations. Now `alembic upgrade head && uvicorn ...`. |
+| **CHANGED** `docker-compose.yml` | Added an optional, profile-gated `postgres` service (`docker compose --profile postgres up`) for local Postgres-parity testing, without changing the SQLite-by-default path for everyone else. |
+| **NEW** Supabase production setup runbook | `docs/system-design.md` §8A now documents: using the pooled connection string (port 6543, PgBouncer) instead of the direct one to avoid exhausting the free tier's 60-connection cap; the two required env vars; and the free-tier auto-pause-after-7-days-idle caveat. |
+| **Verified** | Full backend suite: 121 passed, 6 skipped, no regressions. `alembic upgrade head` tested clean on a fresh SQLite file (previously broken). `docker-compose.yml` validated as syntactically correct YAML. |
 
 ### v10.9 Changes (July 2026) — Foreign-Currency Budget Input
 
