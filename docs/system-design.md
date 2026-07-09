@@ -1329,6 +1329,18 @@ PEXELS_API_KEY missing / request fails / no result / 6s itinerary photo budget e
 
 ## 16. Change Log
 
+### v10.11 (July 2026) — Itinerary Corpus Scrapers (raw fetch stage, docs/rag-strategy.md §9)
+
+- **New `apps/api/scrapers/itinerary_corpus.py`** — first implementation step of the free-tier "Itinerary Corpus" pipeline. Fetches raw, itinerary-shaped content from four free/keyless sources and returns plain dicts (`source`, `source_name`, `source_url`, `title`, `raw_text`, `published_date`) — no LLM structuring, no embeddings, no Qdrant writes yet.
+  - Travel blog RSS (Nomadic Matt, Planet D) via `feedparser` + BeautifulSoup full-page fetch, filtered to itinerary-shaped titles.
+  - Wikivoyage itinerary articles via the **official Wikimedia `action=parse` API** (not raw HTML scraping) — a curated seed list of dedicated itinerary articles (Golden Triangle, Grand Tour of Europe, Trans-Siberian Railway, etc.).
+  - Reddit trip-report self-posts — reuses the existing keyless direct public-JSON pattern (no PRAW/OAuth credentials needed), searching itinerary-focused subreddits for itinerary-shaped posts.
+  - YouTube caption transcripts via `youtube_transcript_api` (no API key) for a curated seed list of video IDs — live video *discovery* would require the paid/keyed YouTube Data API, so intentionally out of scope here.
+- **New dependencies**: `feedparser==6.0.12`, `youtube-transcript-api==1.2.4` (both free/open-source).
+- **New tests**: `tests/unit/test_itinerary_corpus_scraper.py`, 16 fully offline/mocked tests.
+- **Scope boundary**: structuring raw text into the `ItineraryCorpusDoc` schema and populating a new `itinerary_corpus` Qdrant collection is the separate, still-pending `itinerary-corpus-extraction` roadmap item — this pass only covers raw content collection.
+- Verified: 137 backend tests passing (121 existing + 16 new), no regressions.
+
 ### v10.10 (July 2026) — Docker/Env Template Refresh + Supabase Production Runbook (infra housekeeping)
 
 - **`.env.example` (backend)**: was badly stale — missing ~25 settings that `core/config.py` had grown to support (DB, JWT/auth, Google SSO, Resend email, OSM/retrieval feature flags, Reddit ingestion). Rewritten to cover every setting with free-tier guidance inline.

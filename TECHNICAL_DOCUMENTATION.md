@@ -1391,7 +1391,19 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.11 Changes (July 2026) — Itinerary Corpus Scrapers (Phase 2, raw fetch only)
+
+First step of the `itinerary-corpus-scrapers` roadmap item (docs/rag-strategy.md §9). Scope is deliberately limited to fetching raw, itinerary-shaped content from four free/keyless sources — no LLM structuring, no embeddings, no Qdrant writes yet (that's the separate downstream `itinerary-corpus-extraction` todo).
+
+| Change | Detail |
+|---|---|
+| **NEW** `apps/api/scrapers/itinerary_corpus.py` | Four independent scraper functions, all free/keyless: (1) `scrape_travel_blog_feed` — Nomadic Matt + Planet D RSS via `feedparser`, full post body via BeautifulSoup, filtered to itinerary-shaped titles ("7 Day...", "...Itinerary", "...Trip Report"); (2) `scrape_wikivoyage_itinerary` — official Wikimedia `action=parse` API (not raw HTML scraping) against a curated list of dedicated Wikivoyage itinerary articles; (3) `scrape_reddit_trip_reports` — reuses the existing keyless direct public-JSON Reddit pattern (no PRAW/OAuth), searching itinerary-focused subreddits for itinerary-shaped self-posts; (4) `fetch_youtube_transcript` — `youtube_transcript_api` caption fetch for a curated seed list of video IDs (live video *discovery* would require the paid/keyed YouTube Data API, so kept out of scope). `collect_itinerary_corpus_raw()` orchestrates all four, tolerating individual source failures. |
+| **NEW** dependencies | `feedparser==6.0.12`, `youtube-transcript-api==1.2.4` — both free, open-source, no API key. |
+| **NEW** `apps/api/tests/unit/test_itinerary_corpus_scraper.py` | 16 fully offline tests (all HTTP/feedparser/YouTube calls mocked) covering title-shape filtering, per-source success/failure/edge cases, and orchestrator partial-failure tolerance. |
+| **Scope note** | This module intentionally does not call any LLM or write to a vector store — see `itinerary-corpus-extraction` (next roadmap item) for structuring scraped text into the `ItineraryCorpusDoc` schema and populating the new `itinerary_corpus` Qdrant collection. |
+| **Verified** | Full backend suite: 137 passed (121 existing + 16 new), 6 skipped, no regressions. |
 
 ### v10.10 Changes (July 2026) — Docker/Env Template Refresh + Supabase Production Runbook
 

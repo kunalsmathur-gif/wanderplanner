@@ -524,6 +524,8 @@ User trip config
 
 ## 9. Web-Scraped Itinerary Corpus Pipeline
 
+**v10.11 update:** the *raw fetching* half of this pipeline (Phase v0 sources) is now implemented in `scrapers/itinerary_corpus.py` — travel blog RSS (Nomadic Matt, Planet D), Wikivoyage itinerary articles (official Wikimedia API), Reddit trip-report self-posts (keyless direct-JSON search), and YouTube caption transcripts (curated video-ID seed list, no API key). This module deliberately stops at raw text + source metadata — it does **not** call an LLM to structure it into `ItineraryCorpusDoc`, and does **not** embed/write to Qdrant yet. Those two steps remain the separate, still-pending `itinerary-corpus-extraction` follow-up (structuring chain + new `itinerary_corpus` collection described below).
+
 ### Concept
 
 Scrape real, human-authored itineraries from travel blogs, forums, and social media. Extract them into a structured format, embed them, and store in a new `itinerary_corpus` Qdrant collection. When a user asks for a Tokyo 7-day trip, the LLM receives 2–3 real itineraries from other travellers as grounding — the output is built on patterns that actually worked, not just training data.
@@ -533,6 +535,7 @@ This is fundamentally different from the existing wiki/reddit collections:
 - **Itinerary corpus** → structured day-by-day plans ("Day 1: Senso-ji → Akihabara → Shibuya crossing")
 
 ### Data Sources & Scraping Strategy
+
 
 **Phase v0 — Free, friction-free sources (build the pipeline first):**
 
@@ -1025,15 +1028,15 @@ More context signal, fewer tokens, better output.
 | P1 | Cross-encoder reranker | 1 day | ✅ Done — scoped to itinerary generation only (§3J) |
 | P1 | Golden dataset + automated retrieval eval | 4 hrs | ✅ Done — `eval/golden_dataset.json` + `eval/run_rag_eval.py` |
 | P1 | `generated_itineraries` collection + store on generate | 4 hrs | ❌ Pending — learning flywheel not yet started |
-| P2 | Travel blog scraper — `feedparser` + BeautifulSoup (Nomadic Matt, Planet D, Lonely Planet) | 1 day | ❌ Pending — itinerary_corpus seeded with authoritative content |
-| P2 | Reddit PRAW ingester (replace direct JSON feed) — flair:trip-report filter, top 5 comments per post | 4 hrs | ❌ Pending — high-volume, properly tagged community itineraries |
-| P2 | YouTube `youtube-transcript-api` scraper (no API key) | 4 hrs | ❌ Pending — video-native itinerary patterns, free |
+| P2 | Travel blog scraper — `feedparser` + BeautifulSoup (Nomadic Matt, Planet D) | 1 day | ✅ Done (v10.11) — `scrapers/itinerary_corpus.py::scrape_travel_blog_feed`, raw fetch only |
+| P2 | Reddit trip-report ingester — direct public-JSON search (`q=itinerary`), itinerary-shaped title filter | 4 hrs | ✅ Done (v10.11) — `scrapers/itinerary_corpus.py::scrape_reddit_trip_reports`; kept the existing keyless direct-JSON approach instead of adding PRAW OAuth (no new required credentials) |
+| P2 | YouTube `youtube-transcript-api` scraper (no API key) | 4 hrs | ✅ Done (v10.11) — `scrapers/itinerary_corpus.py::fetch_youtube_transcript`; video-ID discovery stays out of scope (would need the paid/keyed YouTube Data API), so a curated seed list of video IDs is used instead of live search |
 | P2 | Unified metadata schema normalisation across all scrapers | 3 hrs | ❌ Pending — consistent filters; `attraction_type` precision retrieval |
 | P2 | Quality score background task (session signals) | 4 hrs | ❌ Pending — enables persona-based re-ranking |
 | P2 | Visa info collection | 3 hrs | ❌ Pending — entry requirements surfaced in wizard |
 | P2 | Time-decay scoring in reranker | 2 hrs | ✅ Done — 18-month half-life, floor 40% |
 | P2 | Semantic chunking (by section headers / Reddit comments) | 3 hrs | ✅ Done |
-| P3 | Wikimedia API ingestion (replace Wikivoyage scraper) | 2 hrs | ❌ Pending — more stable than HTML scraping |
+| P3 | Wikimedia API ingestion (replace Wikivoyage scraper) | 2 hrs | ✅ Done (v10.11, scoped to itinerary corpus) — `scrapers/itinerary_corpus.py::scrape_wikivoyage_itinerary` uses the official `action=parse` Wikimedia API for a curated list of dedicated Wikivoyage itinerary articles (Golden Triangle, Grand Tour of Europe, Trans-Siberian Railway, etc.); the original `scrapers/wikivoyage.py` (general destination guide sections) is unchanged |
 | P3 | TripAdvisor via Apify/Bright Data (v1 premium) | 2 days | ❌ Pending — current ratings and reviews |
 | P3 | `yt-dlp` + Whisper STT for non-captioned YouTube videos (v1) | 1 day | ❌ Pending — niche travel vlogger content |
 | P3 | Instagram/TikTok via Octolens or Prowlo (v1) | 2 days | ❌ Pending — trending visual content, geotag-based retrieval |
