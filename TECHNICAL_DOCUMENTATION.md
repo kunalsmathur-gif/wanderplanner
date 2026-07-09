@@ -1391,7 +1391,20 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.12 Changes (July 2026) — Itinerary Corpus Extraction Chain + `itinerary_corpus` Qdrant Collection
+
+Second half of the `itinerary-corpus-scrapers`/`itinerary-corpus-extraction` roadmap items (docs/rag-strategy.md §9). Turns the raw content fetched in v10.11 into structured, retrievable documents. Retrieval (using this in the generation prompt) is still a separate, pending follow-up (`itinerary-corpus-retrieval`).
+
+| Change | Detail |
+|---|---|
+| **NEW** `apps/api/chains/itinerary_corpus_extraction_chain.py` | `extract_itinerary_doc()` — one small Gemini call (`gemini-2.5-flash`, same JSON-extraction pattern as `chains/extract_trip_chain.py`) per raw document, returning a structured `ItineraryCorpusDoc` (destination/country/duration/pace/purpose/budget_tier/group_type/published_month/days) or `None` if the LLM determines the text isn't actually a day-by-day itinerary — fail-closed, never fabricates. `compute_quality_score()` maps source type + Reddit score to a 0–1 quality weight per the documented source-tier table (authoritative blogs/Wikivoyage 0.90, high-karma Reddit 0.85, standard Reddit 0.65, low-signal Reddit 0.40, YouTube 0.55). `ingest_itinerary_corpus()` orchestrates: fetch raw → extract → embed (config text + content text, two separate embeddings) → upsert. |
+| **NEW** `itinerary_corpus` Qdrant collection | Uses **two named vectors per point** (`config` — destination+duration+pace+purpose+group_type text, matched against a user's trip config; `content` — full day-by-day text, matched by semantic similarity) rather than one, per the dual-embedding retrieval strategy in the design doc. `core/qdrant.py::_ensure_collections()` now creates it automatically alongside the existing single-vector collections. |
+| **NEW** `core/config.py::qdrant_collection_itinerary_corpus` + `itinerary_corpus_refresh_days` (default 30) | New collection name setting + monthly ingestion cadence, matching the "Monthly: blog scrapers" cadence documented for this pipeline. |
+| **NEW** scheduler job | `core/scheduler.py::_refresh_itinerary_corpus` — wired into `start_scheduler()` on a 30-day interval, tolerant of individual source/document failures (never crashes the scheduler thread). |
+| **NEW** `apps/api/tests/unit/test_itinerary_corpus_extraction.py` | 17 fully offline tests (Gemini client, embeddings, and Qdrant all mocked) covering extraction success/failure/malformed-JSON/markdown-fence-stripping, quality scoring across all source tiers, config/content text construction, and full-pipeline orchestration. |
+| **Verified** | Full backend suite: 154 passed (137 existing + 17 new), 6 skipped, no regressions. Manually verified the new Qdrant collection actually creates with the correct two-named-vector schema via an in-memory Qdrant client. |
 
 ### v10.11 Changes (July 2026) — Itinerary Corpus Scrapers (Phase 2, raw fetch only)
 

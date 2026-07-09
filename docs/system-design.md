@@ -1329,6 +1329,14 @@ PEXELS_API_KEY missing / request fails / no result / 6s itinerary photo budget e
 
 ## 16. Change Log
 
+### v10.12 (July 2026) — Itinerary Corpus Extraction Chain + `itinerary_corpus` Qdrant Collection
+
+- **New `apps/api/chains/itinerary_corpus_extraction_chain.py`** — small Gemini call per raw scraped document (reuses the JSON-extraction pattern from `chains/extract_trip_chain.py`) turning it into a structured `ItineraryCorpusDoc` (destination/country/duration/pace/purpose/budget_tier/group_type/days), or `None` if the LLM decides it isn't actually a real itinerary. Computes a `quality_score` (0.90 authoritative blogs/Wikivoyage, 0.85 high-karma Reddit, 0.65 standard Reddit, 0.40 low-signal Reddit, 0.55 YouTube) per the source-tier table in docs/rag-strategy.md §9.
+- **New `itinerary_corpus` Qdrant collection** with **two named vectors** per point (`config` + `content`), created automatically by `core/qdrant.py::_ensure_collections()`. The `config` vector embeds a short string like "5 day moderate cultural couple trip Kyoto Japan November" (matched against a user's trip config at retrieval time); the `content` vector embeds the full day-by-day text (matched by semantic similarity) — exactly the dual-embedding strategy documented in §9.
+- **New scheduler job** (`core/scheduler.py::_refresh_itinerary_corpus`) — runs monthly (`ITINERARY_CORPUS_REFRESH_DAYS`, default 30), tolerant of individual source/document failures.
+- **Scope note**: this only *ingests* — wiring the collection into the itinerary generation prompt as few-shot grounding is the separate, still-pending `itinerary-corpus-retrieval` roadmap item.
+- Verified: 154 backend tests passing (137 existing + 17 new), no regressions; manually confirmed the new Qdrant collection creates with the correct two-named-vector schema.
+
 ### v10.11 (July 2026) — Itinerary Corpus Scrapers (raw fetch stage, docs/rag-strategy.md §9)
 
 - **New `apps/api/scrapers/itinerary_corpus.py`** — first implementation step of the free-tier "Itinerary Corpus" pipeline. Fetches raw, itinerary-shaped content from four free/keyless sources and returns plain dicts (`source`, `source_name`, `source_url`, `title`, `raw_text`, `published_date`) — no LLM structuring, no embeddings, no Qdrant writes yet.

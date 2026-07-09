@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     qdrant_collection_reddit: str = "reddit"
     qdrant_collection_osm: str = "osm_pois"
     qdrant_collection_itinerary_cache: str = "itinerary_cache"
+    qdrant_collection_itinerary_corpus: str = "itinerary_corpus"
 
     # Embeddings
     embedding_model: str = "all-MiniLM-L6-v2"
@@ -70,6 +71,8 @@ class Settings(BaseSettings):
 
     osm_refresh_days: int = 7
     osm_ingest_delay_seconds: float = 2.0  # be polite to the free Overpass API between destinations
+
+    itinerary_corpus_refresh_days: int = 30  # monthly cadence (docs §9 ingestion pipeline)
 
     log_level: str = "INFO"
 
