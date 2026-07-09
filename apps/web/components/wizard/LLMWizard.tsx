@@ -33,8 +33,20 @@ interface ItineraryProgress {
   total: number
 }
 
-let _msgId = 0
-const nextId = () => `llm-msg-${++_msgId}`
+// A plain incrementing counter here would collide across Next.js Fast
+// Refresh module re-evaluations in dev (the counter resets to 0 while the
+// component's already-rendered message list — which survives Fast Refresh —
+// keeps its old ids), producing duplicate React keys like "llm-msg-2" and
+// the "two children with the same key" warnings/render glitches that come
+// with it. crypto.randomUUID() (broadly supported) sidesteps this since it
+// never depends on any module-level state.
+const nextId = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `llm-msg-${crypto.randomUUID()}`
+  }
+  // Fallback for environments without crypto.randomUUID (very old browsers).
+  return `llm-msg-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
 
 // ── Voice helpers ─────────────────────────────────────────────────────────────
 
@@ -146,6 +158,13 @@ export function LLMWizard() {
   const recognitionRef  = useRef<RecognitionInstance | null>(null)
   const synthRef        = useRef<SpeechSynthesisUtterance | null>(null)
   const cancelStreamRef = useRef<(() => void) | null>(null)
+  // Watchdog for the generate-itinerary SSE stream: guards against the UI
+  // getting stuck on "generating" forever if the stream silently dies with
+  // no error event — e.g. a dropped connection, or (in dev) a Fast Refresh
+  // remount aborting the underlying fetch, which the stream helper treats
+  // as an intentional cancel and never reports as an error. Reset on every
+  // status/data/error event; if it ever fires, that means total silence.
+  const generationWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // ── Bootstrap first Anya message ───────────────────────────────────────────
 
@@ -254,6 +273,7 @@ export function LLMWizard() {
   useEffect(() => {
     return () => {
       cancelStreamRef.current?.()
+      clearGenerationWatchdog()
       window.speechSynthesis?.cancel()
     }
   }, [])
@@ -448,20 +468,47 @@ export function LLMWizard() {
 
   // ── Generate itinerary ─────────────────────────────────────────────────────
 
+  function clearGenerationWatchdog() {
+    if (generationWatchdogRef.current !== null) {
+      clearTimeout(generationWatchdogRef.current)
+      generationWatchdogRef.current = null
+    }
+  }
+
+  // (Re)arms the stuck-generation watchdog. Called on start and after every
+  // status update, so it only ever fires on total silence, never mid-progress.
+  function armGenerationWatchdog() {
+    clearGenerationWatchdog()
+    generationWatchdogRef.current = setTimeout(() => {
+      cancelStreamRef.current?.()
+      setError('Generation is taking much longer than expected and may have stalled. Please try again.')
+      setPhase('chatting')
+    }, 60_000) // user-facing cap — shorter than backend's own 90s LLM_TIMEOUT_SECONDS
+               // ceiling is fine: it just means a genuinely-slow-but-still-working
+               // generation gets cut off client-side with a retry prompt instead
+               // of the user waiting in silence.
+  }
+
   function startGeneration(fullConfig: TripConfig) {
     setPhase('generating')
     setProgress({ message: 'Starting up…', step: 0, total: 6 })
     wizardReset()
+    armGenerationWatchdog()
 
     cancelStreamRef.current = streamItinerary(
       fullConfig,
-      (msg, step, total) => setProgress({ message: msg, step, total }),
+      (msg, step, total) => {
+        armGenerationWatchdog()
+        setProgress({ message: msg, step, total })
+      },
       (result) => {
+        clearGenerationWatchdog()
         setDays(result.days, result.alignment_score, result.expense_breakdown)
         setPhase('done')
         closeWizard()
       },
       (code, message, _retryable) => {
+        clearGenerationWatchdog()
         // Session expired mid-flow (or was never established) — save the
         // fully-collected config and send the user to sign in, then resume
         // generation automatically once they're back (see resume effect).

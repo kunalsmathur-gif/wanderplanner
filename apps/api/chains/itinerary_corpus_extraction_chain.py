@@ -237,8 +237,11 @@ async def ingest_itinerary_corpus() -> int:
 
     config_texts = [_config_text(doc) for _, doc in extracted]
     content_texts = [_content_text(doc) for _, doc in extracted]
-    config_vectors = embed(config_texts)
-    content_vectors = embed(content_texts)
+    # Offload the CPU-bound embed() calls to a worker thread so this
+    # background ingestion coroutine doesn't block the event loop for
+    # concurrent requests (e.g. signup, login) while models run.
+    config_vectors = await asyncio.to_thread(embed, config_texts)
+    content_vectors = await asyncio.to_thread(embed, content_texts)
 
     client = get_qdrant()
     points = []

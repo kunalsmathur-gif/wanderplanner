@@ -495,6 +495,24 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 
 ---
 
+### **Clarification #14 — Signup Error Message vs. Account-Enumeration Resistance ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Should signup tell a user *why* it failed (e.g. "this email is already registered") or keep a generic message to resist account enumeration? | **Be specific.** Found during local testing that a generic `"Unable to sign up with these details."` message left users confused about whether to retry, check their email, or try logging in instead. |
+| Fix | `POST /api/auth/signup` now returns `"An account with this email already exists. Try logging in instead."` when the email is already registered. Login's error message remains the deliberately combined `"Incorrect email or password."`, which still avoids confirming whether a given email is registered at *login* time — the enumeration trade-off was accepted specifically for signup, not login. |
+| Where documented | `docs/system-design.md` §3A, `TECHNICAL_DOCUMENTATION.md` §14 v10.13 changelog. |
+
+### **Clarification #15 — Hiding Unconfigured Google SSO ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Should the "Continue with Google" button always be shown, even where Google OAuth isn't configured (e.g. local dev)? | **No — hide it until configured.** Found during local testing that clicking it always failed with a raw `{"detail":"Google sign-in is not configured."}` error, which looks broken rather than "not applicable here." |
+| Fix | New `GET /api/auth/config` endpoint reports whether Google SSO is configured (`bool(settings.google_client_id)`); the frontend's `GoogleSsoSection` component only renders the button + divider when true, failing closed (hidden) on load or on any fetch error. |
+| Where documented | `docs/system-design.md` §3A, `DESIGN_REVAMP_SUMMARY.md` (July 9, 2026 component updates), `TECHNICAL_DOCUMENTATION.md` §14 v10.13 changelog. |
+
+---
+
 ## **Rev 5 — Phase 1B Requirements** *(Updated: 2026-06-15)*
 
 ---
@@ -547,6 +565,8 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 - All estimates are clearly labelled as approximations.
 
 > **Implementation status (v10.8):** `estimated_minimum_cost` above is no longer a pure Gemini guess — `core/budget_estimator.py` computes it deterministically (free tools only, no paid pricing API) from destination cost tier + season + group composition + duration + traveller comfort level, and `feasibility_chain.py` takes `max(llm_estimate, deterministic_floor)` so the floor always wins if the LLM under-estimates. This check now also runs inside the **LLM chat wizard** (`LLMWizard.tsx`), not just the older structured form — previously it was silently skipped there, so a stated budget could sail straight into itinerary generation unchecked. If a user hasn't stated a budget at all, the wizard now asks a clarifying question (group size, then comfort level) before quoting any number — it never reuses the flat Section-2 "budget tiers" parsing table as a recommendation. If a user mentions already-booked flights/accommodation, those real amounts replace the corresponding estimated component rather than being ignored.
+
+> **Further implementation status (v10.13):** the v10.8 gate above covers the pre-generation `/api/feasibility-check` call. Separately, Anya's live chat conversation (`chains/wizard_chat_chain.py`) previously didn't apply the same scrutiny when a user *stated or lowered* their own budget mid-conversation — the deterministic bare-minimum hint was scoped to "only relevant if user asks for a recommendation," so the LLM had no instruction to compare a user-declared figure against it. Fixed by adding an explicit "FEASIBILITY CHECK" instruction so Anya now proactively flags a shortfall the moment a user states or reduces their budget, not just at the final pre-generation gate.
 
 ---
 

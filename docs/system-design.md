@@ -351,6 +351,10 @@ flowchart TD
 
 **Nav auth indicator (⭐ NEW):** `components/common/UserMenu.tsx` renders "Log in"/"Sign up" when signed out, or the user's name/email + a "Log out" dropdown when signed in. Wired into `LandingHero`, `ThreeColumnLayout`, and `TopNav` — previously the app had no visible sign-in state anywhere outside `/account`.
 
+**Google SSO gating (⭐ NEW, v10.13):** in local/dev environments (and any deployment without `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` set), Google sign-in previously showed a "Continue with Google" button that always failed with `{"detail":"Google sign-in is not configured."}` on click. `GET /api/auth/config` now returns `{"google_sso_enabled": bool(settings.google_client_id)}`; the frontend's new `components/common/GoogleSsoSection.tsx` fetches this once and only renders the Google button + divider when true (fails closed — hidden on load/error). `/signup` and `/login` both use this component instead of the raw button.
+
+**Signup/login error message specificity (⭐ CHANGED, v10.13):** `POST /api/auth/signup` now returns `"An account with this email already exists. Try logging in instead."` instead of a generic message when the email is already registered — an explicit product decision trading a small amount of account-enumeration resistance for a clearer signup UX. Login's error remains the deliberately combined `"Incorrect email or password."` (does not reveal whether the email itself is registered).
+
 ---
 
 ## 3B. Data Flow: Account Deletion & Data Purge
@@ -1298,6 +1302,42 @@ All retries fail → smart mock fallback picks the next missing required field
 Any salvage text shown to users is first cleaned by _strip_trailing_json_artifacts()
 Valid JSON whose reply text contains an escaped schema echo is trimmed by
 _strip_leaked_schema_tail() before rendering
+Literal \uXXXX escapes surviving the plain-text fallback path (e.g. \u20b9 → ₹)
+are decoded by _decode_stray_unicode_escapes() (⭐ NEW, v10.13) before display
+```
+
+### Itinerary Generation Watchdog (⭐ NEW, v10.13)
+
+```
+Frontend: startGeneration() arms a 60s client-side watchdog timer, re-armed on
+every SSE `status` event received. If the stream ever goes fully silent for
+60s (dropped connection, or — in dev — a Fast Refresh remount aborting the
+underlying fetch, which streamItinerary() otherwise treats as an intentional
+cancel and never reports as an error) the watchdog fires: cancels the stream,
+shows "Generation is taking much longer than expected and may have stalled.
+Please try again.", and returns the user to the chat phase. Previously a fully
+silent stream death left the UI frozen on "Starting up…" indefinitely, since
+AbortError is deliberately swallowed by the stream helper's catch handler to
+avoid showing false errors on a normal wizard-close.
+```
+
+### Blocking Call / Event-Loop Hang Prevention (⭐ NEW, v10.13)
+
+```
+core/embeddings.py's embed()/rerank_scores() are CPU-bound (sentence-
+transformers / cross-encoder) and MUST be offloaded via asyncio.to_thread(...)
+at every call site — calling them inline inside an async handler (or a
+background asyncio.create_task, e.g. startup Reddit seeding) blocks the
+single-threaded event loop for the call's full duration, freezing every
+concurrent request app-wide, including signup/login. Confirmed correct at:
+services/search.py (original reference pattern), scrapers/reddit.py,
+routers/reddit_highlights.py, scrapers/wikivoyage.py, scrapers/osm.py,
+chains/itinerary_corpus_extraction_chain.py.
+
+Caveat: asyncio.to_thread() alone is not sufficient on Apple Silicon — PyTorch's
+MPS (Metal GPU) backend is not thread-safe when invoked off the main thread and
+will crash the process intermittently. core/embeddings.py forces device="cpu"
+explicitly in both get_embedder() and get_reranker() to avoid this.
 ```
 
 ### Wikipedia Image Resilience
@@ -1325,9 +1365,31 @@ PEXELS_API_KEY missing / request fails / no result / 6s itinerary photo budget e
   → PDF export simply omits the hero photo block for that day
 ```
 
+### Frontend Request Timeouts (⭐ CHANGED, v10.13)
+
+```
+lib/api.ts shared axios client: 25s default timeout for lightweight endpoints.
+wizardChat() and extractTrip() override to 45s per-call — both share the same
+backend 3-attempt Gemini retry-with-backoff pattern, which can legitimately
+exceed 25s in the worst case, previously racing the frontend timeout and
+surfacing a false "Connection error" on an otherwise still-working request.
+```
+
 ---
 
 ## 16. Change Log
+
+### v10.13 (July 2026) — Local Testing Bug Fixes: Event-Loop Hangs, Budget Feasibility, Google SSO Gating, Duplicate Keys, Generation Watchdog
+
+- **Fixed** signup/all-requests hang caused by synchronous `embed()`/`rerank_scores()` calls blocking the asyncio event loop — wrapped in `asyncio.to_thread(...)` at every call site.
+- **Fixed** intermittent backend crash from the above fix (PyTorch MPS not thread-safe off the main thread) by forcing `device="cpu"` in `core/embeddings.py`.
+- **Fixed** Anya not flagging an infeasible budget the user *lowers* mid-conversation — added an explicit "FEASIBILITY CHECK" instruction block to the wizard system prompt referencing the already-computed deterministic bare-minimum estimate.
+- **Fixed** literal `\u20b9` (₹) escapes leaking into chat replies on the plain-text JSON-fallback path — new `_decode_stray_unicode_escapes()` helper.
+- **New** `GET /api/auth/config` + conditional `GoogleSsoSection.tsx` — hides "Continue with Google" until OAuth is actually configured, instead of showing a button that always fails locally.
+- **Changed** signup error message to `"An account with this email already exists. Try logging in instead."` (was a generic message) — explicit product decision, see §3A.
+- **Fixed** false-positive "Connection error" on `/api/wizard-chat`/`/api/extract-trip` — frontend timeout bumped to 45s for these two endpoints to match backend retry-with-backoff worst case.
+- **Fixed** duplicate React key warnings (`llm-msg-N`) in the wizard chat — replaced a module-level id counter (which resets across Next.js Fast Refresh while component state persists) with `crypto.randomUUID()`.
+- **New** 60s client-side generation-stall watchdog — previously a silently-dead SSE stream (dropped connection, or a dev Fast Refresh remount aborting the fetch) left the UI frozen on "Starting up…" forever with no recovery path.
 
 ### v10.12 (July 2026) — Itinerary Corpus Extraction Chain + `itinerary_corpus` Qdrant Collection
 

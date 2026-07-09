@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any
 
 from pydantic import BaseModel
@@ -291,6 +292,24 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
           (activities/shopping/local transport are extra). Briefly mention any flagged assumptions
           (trip length, comfort level, season) so the user can correct them.
 
+    FEASIBILITY CHECK (user states/proposes their OWN number — as the initial figure, in response to
+    "is X feasible?", or by asking to lower a previously discussed budget):
+      Never silently accept a number without checking it. Compare the user's stated total (or per-person
+      figure x headcount) against the computed bare-minimum total in {budget_estimate_hint} above (this
+      requires group size to be known — if it isn't, record the number as given and ask for group size
+      next as usual; feasibility can only be judged once headcount is known).
+        - If the user's number is AT OR ABOVE the bare-minimum total: confirm it's workable, optionally
+          noting it's tight/comfortable relative to the estimate.
+        - If the user's number is BELOW the bare-minimum total (this includes when the user asks to
+          *reduce* an already-quoted budget to a figure under the minimum): do NOT just say "Understood"
+          and move on. Say so plainly — e.g. "That's below the bare-minimum I'd estimate for flights +
+          stay + food alone (₹{{total}} for {{headcount}}, ~₹{{per_person}}/person) — it may mean a much
+          tighter trip (hostel-style stay, budget flights, street food) or cutting the destination/duration/
+          group. Want to adjust the budget, shorten the trip, or should I plan around this tighter number
+          and flag the trade-offs?" Still record whatever number the user ultimately confirms into
+          config_patch.budget — this is a transparency check, not a hard block — but never accept a
+          below-minimum figure without surfacing the gap first.
+
   Field 5 -- group (JSON key: "group")
     Who is travelling.
     Format: {{"adults": 2, "kids": [], "seniors": 0, "infants": 0, "pets": 0}}
@@ -463,7 +482,7 @@ Treat it as ground truth. Only ask for keys that are null or absent here.
 
 {collected_state}
 
-## BUDGET RECOMMENDATION HINT (only relevant if the user is asking you to suggest/recommend a budget)
+## BUDGET GUIDANCE HINT (a computed bare-minimum estimate for this trip — use it in TWO situations)
 {budget_estimate_hint}
 
 ## FOREIGN CURRENCY CONVERSION HINT (only relevant if the user's latest message stated a budget in a non-INR currency)
@@ -680,6 +699,22 @@ def _strip_trailing_json_artifacts(text: str) -> str:
     return cleaned.rstrip() or text
 
 
+def _decode_stray_unicode_escapes(text: str) -> str:
+    """Decode literal `\\uXXXX` JSON-style escape sequences (e.g. `\\u20b9`
+    for ₹) that leak into the plain-text fallback path below. This happens
+    when Gemini's response fails the full JSON parse (so `json.loads` never
+    runs to decode them) but the text itself still contains raw JSON string
+    escapes — otherwise the user sees literal "\\u20b9" instead of "₹"."""
+    if not text or "\\u" not in text:
+        return text
+    try:
+        return re.sub(
+            r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), text
+        )
+    except Exception:
+        return text
+
+
 def _looks_like_valid_json(raw: str) -> bool:
     """Best-effort check that Gemini's raw text is a complete, parseable
     JSON object with a non-empty `reply` field — used to decide whether a
@@ -871,6 +906,11 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                     reply_text = inner["reply"]
             except Exception:
                 pass
+        # Defensive: decode any literal `\uXXXX` escapes that survived a
+        # double-escaped JSON string value (e.g. "\u20b9" left un-decoded
+        # because the LLM emitted a doubly-escaped backslash) — no-op on
+        # already-correct text.
+        reply_text = _decode_stray_unicode_escapes(reply_text)
         chips_list = (
             data.get("chips")
             or data.get("suggested_chips")
@@ -989,6 +1029,10 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # leaked `",` or dangling `}`/`]`) from a truncated response before
         # ever showing it to the user.
         clean_raw = _strip_trailing_json_artifacts(clean_raw)
+
+        # Decode any literal JSON `\uXXXX` escapes (e.g. `\u20b9` -> ₹) left
+        # over because this text never went through json.loads on this path.
+        clean_raw = _decode_stray_unicode_escapes(clean_raw)
 
         # Same first-turn purpose-chip safety net as the JSON-success path
         # above: a plain-text (non-JSON) greeting response on the very first

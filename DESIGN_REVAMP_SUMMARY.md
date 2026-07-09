@@ -97,7 +97,7 @@ This document previously described the retired direction as if it were fully imp
 - ✅ Auth/legal/account surfaces (`/signup`, `/login`, `/forgot-password`, `/reset-password`, `/terms`, `/privacy`, `/account`) reuse the same design tokens and shared `.btn` / `.input` primitives
 - 🟡 Admin dashboard surface is planned/in progress; when it lands, it must use the same tokens and primitives rather than introducing a separate admin design language
 
-**Last Updated:** July 8, 2026 (added auth status indicator, admin console UI, and admin access request UI)
+**Last Updated:** July 9, 2026 (added conditional Google SSO gating, actionable signup error messages, generation-stall watchdog, duplicate-key fix)
 
 ---
 
@@ -161,3 +161,19 @@ Trip Metrics (budget, expense breakdown, currency widget) and the right-rail (tr
 
 ### Multi-select theme chips — reliability, not visuals
 No visual change here, but worth noting for UX consistency: theme chip groups (Culture 🎨 / Food 🍜 / Adventure 🏔️ / etc.) toggle-select with a "Continue ✓" action, same as before. What changed is *how reliably* the UI knows a chip group is multi-select — it's now an explicit signal from the backend (`multi_select: true`) instead of a frontend guess based on chip label keywords, which could silently misfire whenever Gemini phrased the chip text differently.
+
+---
+
+## 🧩 Component Updates (July 9, 2026) — Local Testing Bug Fixes
+
+### Conditional Google SSO button — `GoogleSsoSection.tsx` ⭐ NEW
+`/signup` and `/login` previously always showed a "Continue with Google" button + "or" divider, even in environments where Google OAuth isn't configured (e.g. local dev with blank `GOOGLE_CLIENT_ID`/`SECRET`) — clicking it always failed with a confusing `{"detail":"Google sign-in is not configured."}` error. New `components/common/GoogleSsoSection.tsx` fetches `GET /api/auth/config` once on mount and only renders the button + divider when `google_sso_enabled` is true; fails closed (hidden) on load or on any fetch error. Both auth pages now use this component in place of the raw `GoogleSignInButton` + manual divider markup.
+
+### Actionable signup error message
+Signup with an already-registered email previously showed a deliberately generic `"Unable to sign up with these details."` (an account-enumeration mitigation). Per explicit product direction, this now reads `"An account with this email already exists. Try logging in instead."` — a clearer, more actionable message at a small cost to enumeration resistance. No frontend change was needed: both `/signup` and `/login` already surface the backend's `detail` string verbatim via `authErrorMessage()`.
+
+### Generation-stall recovery — wizard chat
+Previously, if the itinerary-generation SSE stream ever died in total silence (dropped connection, or in dev, a Fast Refresh page remount aborting the request mid-flight), the wizard's "generating" overlay stayed frozen on the initial "Starting up…" copy indefinitely — no error, no retry option, just a dead UI. `LLMWizard.tsx` now arms a 60-second watchdog (re-armed on every progress update) that, on total silence, surfaces `"Generation is taking much longer than expected and may have stalled. Please try again."` and returns the user to the chat so they can immediately retry.
+
+### Duplicate-key render glitches in the wizard chat
+Devtools previously showed a growing count of "Encountered two children with the same key" React warnings (up to 44 in one session) in the Anya chat message list, occasionally alongside visibly duplicated/misordered messages. Root cause: message ids were generated from a module-level counter that resets across a Next.js Fast Refresh reload in dev, while the component's message list (preserved across the reload) kept its old ids — new messages after any hot-reload collided with existing ones. Now uses `crypto.randomUUID()`, which can never collide regardless of reloads.
