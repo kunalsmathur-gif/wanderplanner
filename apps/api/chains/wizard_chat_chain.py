@@ -42,15 +42,28 @@ _MULTI_SELECT_CHIP_KEYWORDS = [
     "nightlife", "sports", "wellness", "religious", "vegetarian",
 ]
 
+# Generic catch-all chips (e.g. "No preference") that can appear alongside a
+# theme-chip group without being a theme themselves. They must NOT break the
+# "every chip looks like a theme" check below, or the whole group silently
+# falls back to single-select — which was the actual bug: the themes prompt
+# always appends one of these, so multi-select was never detected.
+_GENERIC_CHIP_KEYWORDS = ["no preference", "none", "skip", "any", "no thanks", "not sure"]
+
 
 def _is_multi_select_chips(chips: list[str]) -> bool:
-    """True if every chip looks like a travel-theme option, meaning the user
-    should be able to select several before continuing."""
+    """True if every non-generic chip looks like a travel-theme option,
+    meaning the user should be able to select several before continuing."""
     if len(chips) < 2:
+        return False
+    theme_chips = [
+        chip for chip in chips
+        if not any(g in chip.lower() for g in _GENERIC_CHIP_KEYWORDS)
+    ]
+    if not theme_chips:
         return False
     return all(
         any(keyword in chip.lower() for keyword in _MULTI_SELECT_CHIP_KEYWORDS)
-        for chip in chips
+        for chip in theme_chips
     )
 
 
@@ -404,11 +417,30 @@ Stage 3 -- Generate signal.
     b) CURRENT_STATE shows "status: checkpoint-asked", AND
     c) User says "generate" / "start" / "let's go" / "just do it" / "chal" / "bas karo" /
        "I'm ready" / "regenerate" / "update it" / "update my itinerary" / "regenerate as-is" /
-       clicks "Just generate it!" or "Regenerate as-is" / provides optional preferences.
+       clicks "Just generate it!" or "Regenerate as-is" / provides optional preferences, OR
+       your OWN immediately-previous message asked something like "shall I go ahead and
+       generate it?" / "are you ready for me to generate your itinerary?" and the user replies
+       with any simple affirmative -- "yes", "yeah", "yep", "sure", "ok", "okay", "go ahead",
+       "please do", "confirm", "sounds good", "haan" -- even though that word alone isn't in
+       the list above. A plain "yes" answering YOUR OWN generate question always counts.
   When setting ready_to_generate: true, also set summary to a single human-readable line.
 
 GUARD: If user asks to generate but fields are missing -> refuse warmly, name exactly which
 fields are missing, ask for them in one combined question. Set ready_to_generate: false.
+
+CRITICAL -- NEVER HALLUCINATE GENERATION STATUS:
+  You have NO visibility into whether an itinerary has actually been generated -- only the
+  application does that, as a real action taken AFTER you set ready_to_generate: true in this
+  same turn. You must NEVER say things like "Generating your itinerary now", "Your itinerary
+  is ready", or answer "yes, it's ready" to a user asking whether it's done -- even if it feels
+  like the natural conversational answer. If the user asks whether their itinerary is ready
+  and you are not this turn setting ready_to_generate: true, say you can't check that from
+  here and that the app screen will show progress/the result directly.
+  Also double-check CURRENT_STATE literally has all 6 fields filled before ever asking "are you
+  ready to generate?" -- do not ask that question, or claim generation, based on something you
+  merely mentioned/inferred in your own reply text (e.g. calling it a "family trip" in prose
+  does NOT mean purpose was actually recorded -- it only counts if it's in CURRENT_STATE or in
+  config_patch this turn).
 
 ---
 
@@ -533,6 +565,56 @@ def _has_all_required(config: dict[str, Any]) -> bool:
         return False
 
     return True
+
+
+# Phrases that falsely imply generation has started/finished — used as a
+# safety net to catch the LLM narrating success in `reply` text without the
+# backing `ready_to_generate` flag actually being true this turn (a real
+# observed failure mode: the model says "Generating your itinerary now" or
+# "Yes, it's ready!" purely as conversational text, with no actual action
+# behind it, leaving the user stuck with no loader/CTA and no itinerary).
+_HALLUCINATED_GENERATION_RE = re.compile(
+    r"\bgenerat(?:ing|ed)\b.{0,40}\b(?:itinerary|trip)\b"  # "generating"/"generated" (gerund/past — an
+                                                            # in-progress-or-done claim), NOT bare "generate"
+                                                            # (used in legitimate questions like "shall I
+                                                            # generate your itinerary?")
+    r"|\bis\s+(?:now\s+)?ready\b"      # "itinerary is (now) ready" / "it is ready" — an assertion, not the
+                                        # interrogative "are you ready" (different verb form: are, not is)
+    r"|\bit'?s\s+ready\b",              # "it's ready" contraction form of the same assertion
+    re.IGNORECASE,
+)
+
+
+def _next_missing_field_prompt(config: dict[str, Any]) -> tuple[str, list[str]]:
+    """Returns (reply, chips) for the next required field still missing from
+    config, in field order. Used as the honest fallback whenever the model
+    claims (or implies) the trip is ready/generating without the fields to
+    back it up — see _HALLUCINATED_GENERATION_RE — so the user always gets a
+    real next step instead of a dead-end success claim."""
+    if not config.get("purpose"):
+        return (
+            "Just need one more thing — what's the main purpose of this trip?",
+            ["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"],
+        )
+    dest = config.get("destination")
+    mode = config.get("destination_mode", "fixed")
+    has_dest = (mode == "exploring") or (mode == "country" and config.get("destination_country")) or (mode == "fixed" and dest and dest.get("city"))
+    if not has_dest:
+        return ("Where are you thinking of going?", ["Suggest me! 🌍", "I have a destination in mind"])
+    dates = config.get("dates") or {}
+    if not (dates.get("start") and dates.get("end")):
+        return ("When are you planning to travel, and for how many days?", [])
+    if not (config.get("budget", {}).get("amount", 0) > 0):
+        return (f"What's your approximate budget in ₹ (INR)? (Or tell me in {', '.join(TOP_10_CURRENCIES)} — I'll convert.)", [])
+    if not (config.get("group", {}).get("adults", 0) >= 1):
+        return ("Who will be joining you — travelling solo, as a couple, or with family?", ["Solo 🧳", "Couple ❤️", "Family 👨‍👩‍👧", "Friends 🎉"])
+    if not config.get("pace"):
+        return ("What pace works for you?", ["Relaxed 🧘", "Moderate 🚶", "Packed 🏃"])
+    # All fields are actually present — the false claim likely came from a
+    # non-triggering confirmation (e.g. the checkpoint wasn't asked yet, or
+    # `ready_to_generate` genuinely wasn't set this turn). Nudge forward
+    # honestly rather than repeat a claim we can't back up.
+    return ("Everything's noted! Want me to go ahead and generate your itinerary now?", ["Just generate it! 🚀"])
 
 
 def _summarise_state(config: dict[str, Any]) -> str:
@@ -967,6 +1049,14 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # Server-side override: only allow ready=true if all required fields present
         ready = data.get("ready_to_generate", False) and _has_all_required(merged)
 
+        # Anti-hallucination safety net: if the model's own reply text falsely
+        # implies generation is happening/done while `ready` is False this
+        # turn, the user is left stuck with a confident-sounding lie and no
+        # real next step (no loader, no CTA, nothing generated). Override
+        # with an honest prompt for whatever's actually still missing.
+        if not ready and _HALLUCINATED_GENERATION_RE.search(reply_text):
+            reply_text, chips_list = _next_missing_field_prompt(merged)
+
         # Safety net: the very first turn always asks about trip purpose (system
         # prompt Section 4, Field 1 mandates chips here), but with almost no
         # conversation context yet, the LLM occasionally omits them. Since this
@@ -975,6 +1065,20 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # leaving the opening question chip-less.
         if not chips_list and not merged.get("purpose") and len(request.messages) <= 1:
             chips_list = ["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"]
+
+        # Safety net (general, any turn): the same "LLM asks the right
+        # question but drops the chips" failure mode observed above for the
+        # opening purpose question also happens later in the conversation —
+        # e.g. asking about pace/group in plain text with no chips (seen in
+        # the wild: "would you prefer a relaxed pace, moderate, or packed?"
+        # with an empty chips array). Fields with a fixed enum always have a
+        # canonical chip set (see _next_missing_field_prompt); if chips are
+        # still empty and the next actually-missing field is one of those,
+        # backfill just the chips — the LLM's own wording is left untouched.
+        if not chips_list and not ready:
+            _, fallback_chips = _next_missing_field_prompt(merged)
+            if fallback_chips and fallback_chips != ["Just generate it! 🚀"]:
+                chips_list = fallback_chips
 
         return WizardChatResponse(
             reply=reply_text,
@@ -1040,6 +1144,23 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # leaving the user with no way to respond except free text.
         if not extracted_chips and not request.partial_config.get("purpose") and len(request.messages) <= 1:
             extracted_chips = ["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"]
+
+        # General any-turn chip backfill — same rationale as the JSON-success
+        # path above (this fallback fires whenever the LLM's raw response
+        # wasn't valid JSON at all, so it never had a `chips` field to begin
+        # with; the fixed-enum fields still deserve their canonical chips).
+        if not extracted_chips:
+            _, fallback_chips = _next_missing_field_prompt(request.partial_config)
+            if fallback_chips and fallback_chips != ["Just generate it! 🚀"]:
+                extracted_chips = fallback_chips
+
+        # Anti-hallucination safety net (see the JSON-success path above for
+        # full rationale) — this plain-text fallback path ALWAYS returns
+        # ready_to_generate=False, so a falsely-confident "it's ready!" here
+        # would be even more misleading since there's no backing config_patch
+        # either.
+        if clean_raw and _HALLUCINATED_GENERATION_RE.search(clean_raw):
+            clean_raw, extracted_chips = _next_missing_field_prompt(request.partial_config)
 
         return WizardChatResponse(
             reply=clean_raw or "I'm on it! Just a moment…",

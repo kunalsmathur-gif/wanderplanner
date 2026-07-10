@@ -87,8 +87,18 @@ const THEME_CHIP_KEYWORDS = [
   'nightlife', 'sports', 'wellness', 'religious', 'vegetarian',
 ]
 
+// Generic catch-all chips (e.g. "No preference") that can legitimately sit
+// alongside a theme-chip group without being a theme themselves. They must
+// be excluded before the "every chip looks like a theme" check below, or the
+// whole group silently falls back to single-select — this was the actual
+// bug, since the themes prompt always appends one of these.
+const GENERIC_CHIP_KEYWORDS = ['no preference', 'none', 'skip', 'any', 'no thanks', 'not sure']
+
 function _isThemeChipGroup(chips: string[]): boolean {
-  return chips.length >= 2 && chips.every((c) => THEME_CHIP_KEYWORDS.some((k) => c.toLowerCase().includes(k)))
+  if (chips.length < 2) return false
+  const themeChips = chips.filter((c) => !GENERIC_CHIP_KEYWORDS.some((g) => c.toLowerCase().includes(g)))
+  if (themeChips.length === 0) return false
+  return themeChips.every((c) => THEME_CHIP_KEYWORDS.some((k) => c.toLowerCase().includes(k)))
 }
 
 function _isFieldFilled(key: string, config: Partial<TripConfig>): boolean {
@@ -433,13 +443,27 @@ export function LLMWizard() {
       }
       // Infeasible — surface the real shortfall + a real suggested minimum
       // (never silently generate against a budget that can't cover the trip).
-      const minBudget = result.bare_minimum_inr ?? result.breakdown.total_estimated_inr
+      // IMPORTANT: always suggest the SAME total the verdict/shortfall was
+      // computed against (breakdown.total_estimated_inr, which already
+      // folds in the deterministic floor when it's the binding constraint —
+      // see chains/feasibility_chain.py::_build_response). Do NOT use
+      // bare_minimum_inr here: it's a separate, often-lower reference figure
+      // that can disagree with the verdict, which produced a confusing
+      // "Set budget to ₹X" suggestion that didn't match the stated shortfall.
+      const minBudget = result.breakdown.total_estimated_inr
+      const b = result.breakdown
+      const breakdownText = [
+        b.flights_inr > 0 ? `flights ₹${b.flights_inr.toLocaleString('en-IN')}` : null,
+        b.visa_inr > 0 ? `visa ₹${b.visa_inr.toLocaleString('en-IN')}` : null,
+        b.accommodation_inr > 0 ? `stay ₹${b.accommodation_inr.toLocaleString('en-IN')}` : null,
+        b.daily_expenses_inr > 0 ? `food/local transport ₹${b.daily_expenses_inr.toLocaleString('en-IN')}` : null,
+      ].filter(Boolean).join(', ')
       setMessages((prev) => [
         ...prev,
         {
           id: nextId(),
           role: 'assistant',
-          content: `${result.verdict} This covers flights + stay + food as a bare minimum (activities/shopping extra). Want to increase your budget, or shall I go ahead with what you have?`,
+          content: `${result.verdict} Breakdown: ${breakdownText}. This is a bare-minimum estimate (activities/shopping extra). Want to increase your budget to around ₹${minBudget.toLocaleString('en-IN')}, or shall I go ahead with what you have?`,
           chips: [`Set budget to ₹${minBudget.toLocaleString('en-IN')}`, PROCEED_ANYWAY_CHIP, 'Let me adjust something else'],
         },
       ])
@@ -589,7 +613,7 @@ export function LLMWizard() {
       role="dialog"
       aria-modal="true"
       aria-label="Anya — AI Trip Planner"
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-sm sm:items-center"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-white/30 backdrop-blur-md sm:items-center dark:bg-black/30"
     >
       <div className="flex w-full max-h-screen flex-col overflow-hidden bg-[var(--_card)] sm:mx-4 sm:max-h-[90vh] sm:max-w-lg sm:rounded-2xl rounded-t-2xl shadow-2xl">
 
@@ -809,7 +833,10 @@ export function LLMWizard() {
         )}
 
         {/* ── Input bar ───────────────────────────────────────────────── */}
-        {phase === 'chatting' && !readyToGenerate && (
+        {/* Always available while chatting — even once ready-to-generate,
+            so the user can still ask a question or push back (e.g. on a
+            feasibility warning) instead of only having quick-reply chips. */}
+        {phase === 'chatting' && (
           <div className="shrink-0 border-t border-[var(--_border)] bg-[var(--_card)] px-3 py-3">
             <div className="flex items-center gap-2">
               <input

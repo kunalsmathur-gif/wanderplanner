@@ -1,6 +1,7 @@
 'use client'
 
 import { useItineraryStore } from '@/store/itineraryStore'
+import { useAppStore } from '@/store/appStore'
 import { PolaroidCard } from '@/components/itinerary/PolaroidCard'
 import type { ItineraryItem } from '@/types'
 import { useEffect, useState } from 'react'
@@ -71,10 +72,11 @@ function useThumbnail(query?: string, fallbackVideoId?: string) {
   return { thumbnailUrl, videoId }
 }
 
-function ActivityCard({ item, isActive, onHover }: {
+function ActivityCard({ item, isActive, onHover, onSelect }: {
   item: ItineraryItem
   isActive: boolean
   onHover: (id: string | null) => void
+  onSelect: (id: string) => void
 }) {
   const { thumbnailUrl, videoId } = useThumbnail(
     item.youtube_search_query,
@@ -91,7 +93,17 @@ function ActivityCard({ item, isActive, onHover }: {
   const category = item.tags[0]?.replace(/_/g, ' ') ?? undefined
 
   return (
-    <div onMouseEnter={() => onHover(item.id)} onMouseLeave={() => onHover(null)}>
+    <div
+      onMouseEnter={() => onHover(item.id)}
+      onMouseLeave={() => onHover(null)}
+      onClick={() => onSelect(item.id)}
+      role="button"
+      tabIndex={0}
+      aria-label={`Show ${item.title} on the map`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(item.id) }
+      }}
+    >
       <PolaroidCard
         time={`${item.time_start} → ${item.time_end}`}
         title={item.title}
@@ -131,7 +143,18 @@ function ActivityCard({ item, isActive, onHover }: {
 
 export function ItineraryTimeline() {
   const { days, activeDay, hoveredItemId, setActiveDay, setHoveredItem } = useItineraryStore()
+  const setMobileTab = useAppStore((state) => state.setMobileTab)
   const day = days[activeDay]
+
+  // Selecting an activity (tap/click/Enter) both highlights its marker on
+  // the map (existing hover-highlight mechanism, reused as "selected") and
+  // — critically for mobile, where itinerary/map are separate tabs and
+  // touch has no hover state — jumps straight to the Map & Tips tab instead
+  // of leaving the user to find it manually via the bottom nav.
+  function handleSelectItem(id: string) {
+    setHoveredItem(id)
+    setMobileTab('map')
+  }
 
   if (!day) {
     return (
@@ -176,6 +199,7 @@ export function ItineraryTimeline() {
               item={item}
               isActive={item.id === hoveredItemId}
               onHover={setHoveredItem}
+              onSelect={handleSelectItem}
             />
           ))}
         </div>

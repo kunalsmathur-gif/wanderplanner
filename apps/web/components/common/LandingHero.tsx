@@ -148,9 +148,15 @@ export function LandingHero() {
 
       {/* ── Site nav ─────────────────────────────────────────────── */}
       <header className="sticky top-0 z-10 border-b border-[var(--_border)] bg-[var(--_bg)]/90 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
-          <WanderplannerLogo size="md" wordmark />
-          <nav className="flex items-center gap-4" aria-label="Site navigation">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-3 py-2.5 sm:px-6 sm:py-3">
+          {/* Icon-only on mobile (no wordmark clutter), full logo+wordmark from sm+ */}
+          <span className="sm:hidden">
+            <WanderplannerLogo size="sm" wordmark={false} />
+          </span>
+          <span className="hidden sm:inline-flex">
+            <WanderplannerLogo size="md" wordmark />
+          </span>
+          <nav className="flex min-w-0 items-center gap-1 sm:gap-4" aria-label="Site navigation">
             <a
               href="#inspiration"
               className="hidden text-sm font-medium text-[var(--_muted-fg)] transition-colors hover:text-[var(--_primary)] sm:block"
@@ -168,10 +174,11 @@ export function LandingHero() {
             <button
               type="button"
               onClick={openWizard}
-              className="btn btn-primary gap-2 rounded-xl px-4 py-2"
+              aria-label="Plan a trip"
+              className="btn btn-primary gap-2 rounded-xl px-3 py-2 sm:px-4"
             >
-              <Plane size={14} />
-              Plan a trip
+              <Plane size={14} aria-hidden="true" />
+              <span className="hidden sm:inline">Plan a trip</span>
             </button>
             <span className="hidden h-4 w-px bg-[var(--_border)] sm:block" aria-hidden="true" />
             <UserMenu />
@@ -183,7 +190,7 @@ export function LandingHero() {
       <main id="main-content">
         <section
           aria-labelledby="hero-heading"
-          className="flex flex-col items-center px-6 pb-10 pt-14 text-center"
+          className="flex flex-col items-center px-4 pb-10 pt-10 text-center sm:px-6 sm:pt-14"
         >
           {/* SEO eyebrow — crawlable brand + keyword signal */}
           <p className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-[var(--_primary)] [font-family:var(--font-dm-sans)]">
@@ -193,7 +200,7 @@ export function LandingHero() {
           {/* Primary H1 — above-fold, keyword-rich */}
           <h1
             id="hero-heading"
-            className="font-display mx-auto max-w-3xl text-5xl font-black leading-[1.05] tracking-tight text-[var(--_fg)] lg:text-6xl"
+            className="font-display mx-auto max-w-3xl text-4xl font-black leading-[1.05] tracking-tight text-[var(--_fg)] sm:text-5xl lg:text-6xl"
           >
             Plan any trip in{' '}
             <span className="text-[var(--_primary)]">minutes,</span>

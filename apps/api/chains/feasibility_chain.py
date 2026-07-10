@@ -165,12 +165,25 @@ async def check_feasibility(trip_config: TripConfig) -> FeasibilityResponse:
     return _build_response(data, budget_inr, bare_minimum, trip_config)
 
 
+def _traveller_level_hint_text(trip_config: TripConfig) -> str:
+    """Synthesises a hint string from structured tier signals already on the
+    trip config (personas, accommodation style) so the deterministic floor
+    picks up a premium/economical preference even when we don't have the
+    user's raw chat text at this call site (unlike budget_estimate_prompt_hint,
+    which runs during the chat turn itself). Without this, the floor always
+    assumed mid-range, which could sit far below — and look inconsistent
+    with — a premium-aware LLM cost estimate."""
+    parts = list(trip_config.personas) + list(trip_config.accommodation.style) + list(trip_config.splurge_categories)
+    return " ".join(parts)
+
+
 def _safe_bare_minimum(trip_config: TripConfig) -> dict | None:
     """Best-effort deterministic bare-minimum estimate (flights+stay+food) used
     as a floor against the LLM's own cost guess — never blocks the feasibility
     check if it fails for any reason (e.g. group size still unknown)."""
     try:
-        return estimate_bare_minimum_budget(trip_config.model_dump())
+        hint_text = _traveller_level_hint_text(trip_config)
+        return estimate_bare_minimum_budget(trip_config.model_dump(), hint_text)
     except Exception:
         return None
 

@@ -177,3 +177,41 @@ Previously, if the itinerary-generation SSE stream ever died in total silence (d
 
 ### Duplicate-key render glitches in the wizard chat
 Devtools previously showed a growing count of "Encountered two children with the same key" React warnings (up to 44 in one session) in the Anya chat message list, occasionally alongside visibly duplicated/misordered messages. Root cause: message ids were generated from a module-level counter that resets across a Next.js Fast Refresh reload in dev, while the component's message list (preserved across the reload) kept its old ids — new messages after any hot-reload collided with existing ones. Now uses `crypto.randomUUID()`, which can never collide regardless of reloads.
+
+---
+
+## 🧩 Component Updates (July 10, 2026) — Mobile Responsiveness Overhaul + Chat/Feasibility Bug Fixes
+
+A large chunk of WanderPlanner's target audience tests/uses the product on mobile devices. This pass (via the `ui-ux-pro-max` skill) fixes real overflow/usability bugs found by manually testing at a 375px viewport, retires the old "desktop only" positioning, and fixes a batch of Anya wizard-chat bugs found in the same testing session.
+
+### Removed `MobileWarningBanner` — mobile is now a first-class target, not tolerated
+The banner telling mobile users "this experience is best viewed on desktop" directly contradicted the new goal of genuine mobile support, so it's been deleted entirely (`components/common/MobileWarningBanner.tsx`, plus its import/usage in `app/layout.tsx`). Added a defensive `overflow-x-hidden` on `<body>` to guard against any remaining horizontal-scroll regressions.
+
+### Responsive header — `LandingHero.tsx` / `UserMenu.tsx`
+The header previously overflowed a 375px viewport: full wordmark + tagline + a full-width "Plan a trip" button all forced onto one row, requiring horizontal scrolling to reach the login/signup controls. Now: icon-only logo and icon-only "Plan a trip" CTA below `sm:` (full wordmark/tagline/button text return at `sm:` and up), tighter padding/gaps, and a smaller hero heading on mobile. `UserMenu.tsx`'s "Log in" text link (redundant with "Sign up" for new visitors, and a common source of crowding) is now hidden below `sm:`, keeping only the compact "Sign up" button with `whitespace-nowrap`.
+
+### Auth pages — footer link below the fold — `AuthLayout.tsx`
+On a 375×667 viewport (iPhone SE, the smallest common target), the "Already have an account? Log in" footer link on `/signup` (and the equivalent on `/login`) was pushed below the fold, meaning existing users landing on signup by mistake might not notice they could just log in instead. Reduced mobile-only vertical spacing (card padding, section margins, title size) across `AuthLayout.tsx` (shared by signup/login/forgot-password/reset-password) so the footer link fits without scrolling — verified `scrollHeight === clientHeight` (667px = 667px) via Playwright.
+
+### Frosted-glass wizard modal backdrop — `LLMWizard.tsx`
+The Anya chat modal's backdrop was a flat, bland solid overlay (`bg-black/50` in dark mode, effectively fully white in light mode) — jarring and visually dead. Changed to a frosted-glass effect (`bg-white/30 backdrop-blur-md dark:bg-black/30`) so the blurred homepage remains subtly visible behind the chat in both light and dark mode. (Note: `ConversationalWizard.tsx` has the same old pattern but is confirmed dead/unused code, not rendered anywhere — left untouched.)
+
+### Floating Anya button overlapping bottom mobile nav — `FloatingAnyaButton.tsx`
+On the itinerary dashboard, the floating chat-launcher button sat at a fixed `bottom-6`, which overlapped the mobile bottom tab bar (Timeline/Map/Tips). Repositioned to `bottom-24` on mobile, keeping `lg:bottom-6` unchanged on desktop where there's no bottom nav to collide with.
+
+### Full Map View "✕ Close" button unreachable — `ThreeColumnLayout.tsx`
+The Full Map View toolbar packed the "Day view" label, a scrollable row of day-tabs, and the "✕ Close" button into a single row — with enough day-tabs (multi-day trips), Close could be pushed off-screen with no way to scroll back to it, trapping the user in full-screen map view. Restructured into two rows: label + Close always visible on the first row; day-tabs independently horizontally scrollable on the second.
+
+### Map/day/venue selection made intuitive — `ItineraryTimeline.tsx`, `MapWrapper.tsx`, `ItineraryMap.tsx`, `appStore.ts`
+Previously, viewing a specific activity's location on the map required manually switching to the Map tab and hunting for the matching pin — non-intuitive, especially on mobile where the map isn't visible alongside the timeline. `ActivityCard` is now clickable/keyboard-accessible: selecting an activity calls the existing `setHoveredItem()` (drives map highlight/fly-to) **and** a new `setMobileTab('map')` action (state lifted from a local `useState` into shared `appStore.ts` so both the timeline and the layout can drive/read it), jumping the mobile bottom-nav straight to the Map tab. Separately, the full-screen map was centering on a random Indian town ("Warud") instead of the actual destination for multi-city/country-mode trips, because `destination.lat/lon` is frequently `0/0` for these trips (never resolved at the top level) — `MapWrapper.tsx` now prefers the first itinerary item's real resolved coordinates for centering. Also added a `RecenterOnChange` effect component in `ItineraryMap.tsx`, since react-leaflet's `<MapContainer center>` prop only applies at initial mount — day switches previously left the map stuck on its first-rendered center.
+
+### Anya wizard-chat bugs — budget, theme chips, pace chips, feasibility, generation hang
+Found via live testing of the budget/theme/pace/feasibility conversation flow:
+- **Luxury budget not recalculating**: asking for a "luxury stay" didn't raise the recommended budget — `core/budget_estimator.py`'s premium/economical keyword lists now substring-match (e.g. "luxur" catches "luxurious") instead of requiring an exact keyword.
+- **Theme chips only single-select**: theme groups (Culture/Food/Adventure/etc.) are conceptually multi-select, but the UI only let one chip be picked — multi-select detection (both frontend and backend) now excludes generic "No preference"-style chips before evaluating, fixing false negatives.
+- **Pace chips missing entirely**: asking about trip pace sometimes rendered zero chips (the LLM dropped them mid-turn) — the existing chip-backfill safety net previously only covered the very first "purpose" question; now applies to any turn where chips are missing and the wizard isn't ready yet.
+- **Feasibility check too late, no explanation, confusingly worded fix**: the infeasible-budget warning only appeared right before generation (not as soon as pace/theme choices raised the estimate), gave no reason for the shortfall, and suggested an oddly-phrased absolute number instead of framing it as "increase your budget by ₹X." The deterministic bare-minimum floor is now traveller-tier-aware and the messaging is clearer.
+- **Stuck at "Generate itinerary" with no CTA/progress indicator**: the LLM was hallucinating success/completion text without the `ready_to_generate` flag ever actually becoming true (the `purpose` field was never really captured) — added a regex guard (`_HALLUCINATED_GENERATION_RE`) and a `_next_missing_field_prompt()` helper to redirect the conversation back to the real next missing field instead of stalling silently.
+
+### Progressively engaging generation loader
+Previously the loading screen went completely silent for the 30–90s LLM call after only 2 status messages, giving no sense that anything was happening. `routers/itinerary.py` now runs generation as a background task while polling every 3s and streaming rotating filler status messages ("Planning day 1...", "Fetching local tips...", "Balancing your budget...", etc.) until the real result is ready.

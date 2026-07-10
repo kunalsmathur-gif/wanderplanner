@@ -511,6 +511,22 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 | Fix | New `GET /api/auth/config` endpoint reports whether Google SSO is configured (`bool(settings.google_client_id)`); the frontend's `GoogleSsoSection` component only renders the button + divider when true, failing closed (hidden) on load or on any fetch error. |
 | Where documented | `docs/system-design.md` §3A, `DESIGN_REVAMP_SUMMARY.md` (July 9, 2026 component updates), `TECHNICAL_DOCUMENTATION.md` §14 v10.13 changelog. |
 
+### **Clarification #16 — Mobile Is a First-Class Target, Not "Best Viewed on Desktop" ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| A large share of the target audience will use WanderPlanner primarily on mobile devices. Should the product keep warning mobile users it's "best viewed on desktop," or actually be designed for mobile? | **Actually be designed for mobile.** The old `MobileWarningBanner` contradicted this and has been removed. Live testing at a 375px viewport surfaced real overflow/usability bugs (header controls forced off-screen, footer links below the fold, floating chat button overlapping the bottom nav, full-screen map's Close button unreachable, map/day/venue selection requiring manual tab-hopping) — all fixed this pass. |
+| Fix | Header (`LandingHero.tsx`, `UserMenu.tsx`) made icon-only/compact below `sm:`; `AuthLayout.tsx` mobile spacing tightened so the login/signup footer link is always above the fold; `FloatingAnyaButton` repositioned above the bottom tab bar; Full Map View toolbar restructured so Close is always reachable; tapping an itinerary activity now auto-switches to the Map tab and highlights/flies-to it; full-screen map now centers on real itinerary coordinates instead of an unresolved `0/0` destination fallback; Anya's wizard modal backdrop changed from a flat black/white overlay to a frosted-glass blur of the homepage. |
+| Where documented | `docs/system-design.md` §16 v10.14, `TECHNICAL_DOCUMENTATION.md` §14 v10.14, `DESIGN_REVAMP_SUMMARY.md` (July 10, 2026 component updates). |
+
+### **Clarification #17 — Anya Chat: Budget/Theme/Pace/Feasibility Bugs Found in Live Testing ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Live testing of the budget → theme → pace → feasibility conversation surfaced several real bugs: luxury-stay requests weren't recalculating budget; theme chips only allowed single-select; pace chips sometimes didn't render at all; the infeasible-budget warning appeared too late with no explanation and an oddly-phrased suggested number; and the wizard could hang at "Generate itinerary" with no CTA or progress indicator. Fix each, or accept as known limitations? | **Fix all of them.** These are genuine product bugs, not intentional behavior. |
+| Fix | `core/budget_estimator.py` keyword matching broadened to substring-match (catches "luxurious", etc.). Multi-select chip detection (frontend + backend) now excludes generic "No preference" chips before evaluating, fixing theme chips. A general any-turn deterministic chip-backfill safety net (previously scoped only to the first "purpose" question) now covers any field, fixing missing pace chips. `feasibility_chain.py`'s deterministic bare-minimum floor is now traveller-tier-aware, with earlier and clearer shortfall messaging. A regex hallucination guard (`_HALLUCINATED_GENERATION_RE`) plus `_next_missing_field_prompt()` redirects the conversation back to the real next missing field instead of letting the wizard stall on hallucinated success text. Separately, the generation loading screen (previously silent for 30–90s after only 2 status messages) now streams rotating "in progress" filler messages every 3 seconds until the real result is ready. |
+| Where documented | `docs/system-design.md` §16 v10.14, `TECHNICAL_DOCUMENTATION.md` §14 v10.14, `docs/itinerary-generation-flow.md` (generation-loader notes), `DESIGN_REVAMP_SUMMARY.md` (July 10, 2026 component updates). |
+
 ---
 
 ## **Rev 5 — Phase 1B Requirements** *(Updated: 2026-06-15)*

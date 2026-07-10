@@ -146,8 +146,13 @@ _PEAK_SEASON_MULTIPLIER = 1.25  # applied to flight + stay only, not food
 _DOMESTIC_FLIGHT_DISCOUNT = 0.5
 
 
-ECONOMICAL_KEYWORDS = ["economical", "budget", "cheap", "affordable", "backpack", "shoestring", "low cost", "save money", "frugal"]
-PREMIUM_KEYWORDS = ["premium", "luxury", "splurge", "high-end", "high end", "five star", "5 star", "indulgent", "lavish", "no expense"]
+ECONOMICAL_KEYWORDS = ["economical", "budget", "cheap", "affordable", "backpack", "shoestring", "low cost", "low-cost", "save money", "frugal", "no frills", "bare minimum", "economy"]
+PREMIUM_KEYWORDS = ["premium", "luxur", "splurge", "high-end", "high end", "five star", "5 star", "indulgent", "lavish", "no expense", "opulent", "upscale", "posh", "fancier", "top-notch", "top notch"]
+# NOTE: "luxur" (not "luxury") is intentional — it substring-matches "luxury",
+# "luxurious", and "luxuriously" in one go instead of missing common word
+# forms the user actually types (this was a real bug: "a bit more luxurious
+# stay" wasn't recognised as a premium signal because only the exact word
+# "luxury" was in the list).
 
 
 def parse_traveller_level(text: str | None) -> str | None:
