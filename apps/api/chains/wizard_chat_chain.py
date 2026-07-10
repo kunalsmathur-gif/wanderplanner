@@ -226,6 +226,25 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       as well" -> append {{"city": "Kandy", ...}} to the existing hops in config_patch.
     Map: "suggest me" / "not sure" / "anywhere" / "kuch bhi" / "you decide" -> Case C
 
+    CRITICAL — never strand a trip in "exploring" mode while collecting other fields.
+    A budget can't be estimated and dates/group questions feel pointless if the user doesn't
+    even know where they're going yet. So the moment destination_mode becomes "exploring",
+    treat naming actual places as the URGENT next step — prioritize it over dates, budget,
+    or group size:
+      - If you already know the purpose (or any other stated preference — beaches, culture,
+        nightlife, kid-friendly, budget level, etc.), propose 2-3 concrete destinations with a
+        one-line reason for each IN THAT SAME REPLY, and ask the user to pick one (or say
+        "you choose"). Do NOT ask about dates/budget/group in this reply.
+      - If you don't yet know the purpose either, ask for purpose AND make clear a destination
+        suggestion is coming right after — do not silently move past destination toward budget
+        or group size while it is still unresolved.
+      - Once the user picks a place (or says "you choose"/"surprise me"), immediately set
+        destination_mode: "fixed" with that destination in config_patch that same turn, THEN
+        continue collecting the remaining fields (dates, budget, group, pace).
+      - Never leave destination_mode: "exploring" set for more than the single turn where you
+        first ask about destination preferences — the very next assistant turn must either name
+        concrete candidates or lock in the chosen one.
+
     COUNTRY DESTINATIONS: If the user names a country (not a specific city), warmly name
     the key cities/regions you plan to explore and ask if they have a preference or are happy
     to visit all. For example:
@@ -583,6 +602,36 @@ _HALLUCINATED_GENERATION_RE = re.compile(
     r"|\bit'?s\s+ready\b",              # "it's ready" contraction form of the same assertion
     re.IGNORECASE,
 )
+
+
+# Canonical chip sets keyed by the field they belong to, used to detect a
+# reply that has moved on to a later question but still carries a STALE chip
+# set from an earlier, already-answered field (see _is_stale_chips below).
+_FIELD_CHIP_SETS: dict[str, frozenset[str]] = {
+    "purpose": frozenset({"Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"}),
+    "destination": frozenset({"Suggest me! 🌍", "I have a destination in mind"}),
+    "group": frozenset({"Solo 🧳", "Couple ❤️", "Family 👨‍👩‍👧", "Friends 🎉"}),
+    "pace": frozenset({"Relaxed 🧘", "Moderate 🚶", "Packed 🏃"}),
+}
+
+
+def _is_stale_chips(chips: list[str], config: dict[str, Any]) -> bool:
+    """True if `chips` matches a field's canonical set but CURRENT_STATE says
+    that field is already filled — i.e. the model echoed an old question's
+    chips instead of the one it's actually asking now."""
+    chip_set = frozenset(chips)
+    dest = config.get("destination")
+    mode = config.get("destination_mode", "fixed")
+    filled = {
+        "purpose": bool(config.get("purpose")),
+        "destination": (mode == "exploring") or (mode == "country" and config.get("destination_country")) or (mode == "fixed" and dest and dest.get("city")),
+        "group": (config.get("group", {}).get("adults", 0) >= 1),
+        "pace": bool(config.get("pace")),
+    }
+    for field, canonical in _FIELD_CHIP_SETS.items():
+        if chip_set == canonical and filled.get(field):
+            return True
+    return False
 
 
 def _next_missing_field_prompt(config: dict[str, Any]) -> tuple[str, list[str]]:
@@ -1065,6 +1114,17 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # leaving the opening question chip-less.
         if not chips_list and not merged.get("purpose") and len(request.messages) <= 1:
             chips_list = ["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"]
+
+        # Safety net: the model sometimes echoes a PREVIOUS turn's chip set
+        # instead of the one for the field it's actually asking about this
+        # turn — observed in the wild as the purpose chips (Leisure/Adventure/
+        # ...) reappearing under a reply that had already moved on to asking
+        # about destination. Detect chips that belong to a field CURRENT_STATE
+        # says is already filled, and replace them with the chips for whatever
+        # is genuinely still missing.
+        if chips_list and _is_stale_chips(chips_list, merged):
+            _, fresh_chips = _next_missing_field_prompt(merged)
+            chips_list = fresh_chips
 
         # Safety net (general, any turn): the same "LLM asks the right
         # question but drops the chips" failure mode observed above for the

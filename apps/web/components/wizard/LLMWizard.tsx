@@ -175,6 +175,15 @@ export function LLMWizard() {
   // as an intentional cancel and never reports as an error. Reset on every
   // status/data/error event; if it ever fires, that means total silence.
   const generationWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Synchronous lock for in-flight sends. `isSending` (React state) only
+  // takes effect on the NEXT render, so two click events dispatched in the
+  // same tick (e.g. a duplicate click/touch event some browsers/devices
+  // fire for a single tap, or a fast double-click on a chip) both read
+  // `isSending` as false and both call sendMessage — the exact "every
+  // question comes twice" symptom observed: the same chip answer submitted
+  // twice, each getting its own real LLM round trip and reply. This ref is
+  // set the instant a send starts, closing that window immediately.
+  const sendingLockRef = useRef(false)
 
   // ── Bootstrap first Anya message ───────────────────────────────────────────
 
@@ -330,6 +339,12 @@ export function LLMWizard() {
     currentMessages: Message[] = messages,
     preloadLabel?: string,
   ) {
+    // Synchronous re-entrancy guard — see sendingLockRef declaration for why
+    // the `isSending` state check alone isn't enough to stop a duplicate
+    // send from the same tick.
+    if (sendingLockRef.current) return
+    sendingLockRef.current = true
+
     const isBootstrap = text === '__START__'
     const displayText = isBootstrap ? '' : text
 
@@ -428,6 +443,7 @@ export function LLMWizard() {
       console.error('[LLMWizard] sendMessage error:', err)
     } finally {
       setIsSending(false)
+      sendingLockRef.current = false
     }
   }
 
@@ -478,7 +494,7 @@ export function LLMWizard() {
 
   async function handleSubmit(text?: string) {
     const value = (text ?? input).trim()
-    if (!value || isSending || phase !== 'chatting') return
+    if (!value || isSending || sendingLockRef.current || phase !== 'chatting') return
     if (value === PROCEED_ANYWAY_CHIP) {
       // Bypass the chat round-trip entirely — the user has explicitly
       // confirmed they want to proceed despite the flagged shortfall.
