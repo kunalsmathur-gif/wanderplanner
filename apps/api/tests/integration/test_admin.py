@@ -89,12 +89,14 @@ async def test_admin_metrics_summary_and_timeseries_return_expected_data(
     assert summary["logins"]["failed_30d"] == 1
     assert summary["logins"]["success_rate_30d"] == pytest.approx(2 / 3)
     assert summary["itineraries"] == {"generated_30d": 1, "failed_30d": 1}
-    assert summary["cost_usage"] == {
-        "gemini_requests_30d": 1,
-        "gemini_tokens_30d": 321,
-        "gemini_estimated_cost_usd_30d": 0.1234,
-        "pexels_calls_30d": 2,
-    }
+    from core.config import settings as _settings
+
+    assert summary["cost_usage"]["gemini_requests_30d"] == 1
+    assert summary["cost_usage"]["gemini_tokens_30d"] == 321
+    assert summary["cost_usage"]["gemini_estimated_cost_inr_30d"] == pytest.approx(
+        round(0.1234 * _settings.usd_to_inr_rate, 2)
+    )
+    assert summary["cost_usage"]["pexels_calls_30d"] == 2
 
     today_key = datetime.now(timezone.utc).date().isoformat()
     timeseries = timeseries_response.json()
