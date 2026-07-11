@@ -1,6 +1,7 @@
 // Shared TypeScript types — mirrors Pydantic models in apps/api/models/
 
 export type Pace = 'relaxed' | 'moderate' | 'packed'
+export type CrowdPreference = 'touristy' | 'balanced' | 'offbeat'
 export type TripScope = 'local' | 'domestic' | 'international'
 export type DestinationMode = 'fixed' | 'exploring' | 'country'
 
@@ -65,6 +66,7 @@ export interface TripConfig {
   group: GroupComposition
   accommodation: AccommodationPrefs
   pace: Pace
+  crowd_preference: CrowdPreference   // hidden-gem curation dial
   budget: Budget
   splurge_categories: string[]
   save_categories: string[]
