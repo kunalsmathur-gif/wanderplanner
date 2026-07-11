@@ -1,7 +1,7 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.3 (Accounts, Auth Gate, Password Reset, Analytics)
-**Last Updated:** July 7, 2026  
+**Version:** 10.15 (Itinerary-Corpus Few-Shot Retrieval + Strategy Docs)
+**Last Updated:** July 11, 2026  
 **Status:** Production-ready MVP
 
 ---
@@ -23,7 +23,7 @@
 11. [Voice Features](#11-voice-features)
 12. [Data Flows](#12-data-flows)
 13. [Environment Setup](#13-environment-setup)
-14. [Recent Changes (v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)](#14-recent-changes-v103-v102-v101-v100-v90-v70-v60--v50)
+14. [Recent Changes (v10.15 → v5.0)](#14-recent-changes-v1015-v1014-v1013-v1012-v1011-v1010-v109-v108-v107-v106-v105-v104-v103-v102-v101-v100-v90-v70-v60--v50)
 
 ---
 
@@ -903,13 +903,38 @@ WanderPlanner uses RAG to inject real traveller knowledge from Reddit, Wikivoyag
    │
    └─ Truncate at 2400 chars (~600 tokens, 12× reduction vs old 7500)
 
+3B. CORPUS FEW-SHOT RETRIEVAL ⭐ NEW (v10.15, docs/rag-strategy.md §9)
+   services/search.py → retrieve_itinerary_examples(trip_config)
+   │    (called best-effort via itinerary_chain.py::_itinerary_examples_block;
+   │     gated by settings.itinerary_corpus_retrieval_enabled, default True)
+   │
+   ├─ Config-style query mirroring the ingest-side _config_text():
+   │    "{duration} day {pace} {purpose} {group_type} trip {city} {country}"
+   │
+   ├─ Searches BOTH named vectors of `itinerary_corpus` (config + content)
+   │    with a destination payload filter; unfiltered fallback with
+   │    case-insensitive client-side city match (extraction LLM writes
+   │    free-form destination strings — never inject another city's trip)
+   │
+   ├─ Weighted merge 60% config / 40% content (per §9 embedding strategy),
+   │    × (0.5 + 0.5 × quality_score) source-authority weighting,
+   │    relevance floor 0.45
+   │
+   └─ Top ≤3 formatted as "[Source: … — 5 days, moderate, cultural, couple]
+        Day 1: … Places: …" and wrap_untrusted()'d for prompt injection
+
 4. AUGMENTATION (itinerary_chain.py)
    context_text = summarise_context(context_docs, max_chars=2400)
    prompt = SYSTEM_PROMPT.format(
        context=context_text,          # ← real traveller data
+       itinerary_examples=...,        # ← ≤3 real traveller itineraries ⭐ NEW (v10.15)
        trip_config=trip_config_json
    )
-   → Gemini generates itinerary grounded in real traveller data
+   → Gemini generates itinerary grounded in real traveller data; the
+     REAL TRAVELLER ITINERARIES FOR REFERENCE section grounds pacing,
+     day sequencing, and realistic same-day place groupings (the prompt
+     instructs "inspiration, not verbatim"; degraded sentinel is
+     "No reference itineraries available." when the corpus has no match)
 
 5. FALLBACK ⭐ NEW (v9.0) — if all LLM attempts fail:
    Tier 1: itinerary_cache lookup (services/itinerary_cache.py, cosine ≥ 0.88) → instant hit
@@ -1391,7 +1416,21 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.15 Changes (July 2026) — Itinerary-Corpus Few-Shot Retrieval + Strategy Docs (GTM / Startup Re-Evaluation)
+
+Completes the `itinerary-corpus-retrieval` roadmap item — the `itinerary_corpus` Qdrant collection (built in v10.12, ingest-only until now) is finally consumed at generation time: real traveller itineraries matching the user's trip shape are injected into the LLM prompt as few-shot grounding. Also lands the strategy documentation pass triggered by the first user-feedback interviews (July 2026): a new GTM strategy doc and a dated re-evaluation addendum correcting stale claims in the original startup evaluation.
+
+| Change | Detail |
+|---|---|
+| **NEW** `services/search.py::retrieve_itinerary_examples()` | Retrieves up to 3 real traveller itineraries from `itinerary_corpus` per docs/rag-strategy.md §9: config-style query mirroring the ingest-side `_config_text()` embedding ("5 day moderate cultural couple trip Kyoto Japan"), searches **both named vectors** (`config` + `content`) with a destination payload filter plus a case-insensitive unfiltered fallback (the extraction LLM writes free-form destination strings; wrong-city docs are rejected client-side), merges 60% config / 40% content, weights by source-authority `quality_score` (× 0.5 + 0.5q), applies a 0.45 relevance floor, and formats each hit as `[Source: … — 5 days, moderate, cultural, couple]` + day-by-day lines. Helpers: `_corpus_config_query`, `_corpus_group_type` (GroupComposition → solo/couple/family/group), `_corpus_duration_days`, `_format_corpus_days_brief`. |
+| **UPDATED** `chains/itinerary_chain.py` | New `_itinerary_examples_block()` (best-effort — any retrieval failure logs and degrades to the `"No reference itineraries available."` sentinel, never blocks generation; output `wrap_untrusted()`'d). `SYSTEM_PROMPT` gains a `REAL TRAVELLER ITINERARIES FOR REFERENCE` section + a `USING REAL TRAVELLER ITINERARIES` rules block (grounding for pacing/sequencing/same-day place groupings — "inspiration, not verbatim"). Injected in **both** the Gemini and LangChain (Groq/Ollama) paths. |
+| **NEW** `core/config.py::itinerary_corpus_retrieval_enabled` (default `true`) | Feature gate; also added to `apps/api/.env.example` as `ITINERARY_CORPUS_RETRIEVAL_ENABLED`. |
+| **NEW** `tests/unit/test_itinerary_corpus_retrieval.py` | 13 fully offline tests (embed + Qdrant mocked): config-query mirroring, group-type/duration mapping, 60/40 weighted-merge ordering, quality-score reranking at equal similarity, relevance-floor cutoff, disabled-flag and no-destination early exits, unfiltered-fallback wrong-city rejection, empty-days skip. Full unit suite green (133 passed). |
+| **NEW** `docs/GTM_STRATEGY.md` | Full go-to-market plan + product roadmap: three product bets (crowd-aware "hidden gems" planning, refinement hard-constraints/"Harry Potter test", grounded inverse-plannable budgets), verified market landscape (Mindtrip acquired Thatch 2025; Sembark/TravClan prove Indian agents pay for software but aren't AI-native), GTM verdicts (offline travel agents = primary revenue engine; no creator marketplace), and a 3-phase roadmap with explicit kill/go criteria. |
+| **UPDATED** `docs/STARTUP_EVALUATION.md` | Dated addendum (2026-07-11): corrections table for claims made stale by the auth-gate commits (accounts now mandatory → the central monetization blocker is gone; Booking Hub DPDP concern moot — localStorage only), first user-feedback findings, market updates, revised score 5/10 → 6/10 conditional. |
+| **UPDATED** docs | `docs/rag-strategy.md` (v10.13 §9 retrieval-implemented note), `docs/system-design.md` (v8.4: §4 corpus few-shot retrieval block, §13 env var), `docs/itinerary-generation-flow.md` (corpus retrieval in the generation flow), extraction-chain docstring no longer says retrieval is pending. |
 
 ### v10.14 Changes (July 2026) — Mobile Responsiveness Overhaul + Anya Chat/Feasibility Bug Fixes + Generation Progress Streaming
 
@@ -1719,7 +1758,7 @@ Tracked backlog items not yet implemented. All are believed achievable with free
 
 | ID | Item | Description | Status |
 |---|---|---|---|
-| `itinerary-corpus-retrieval` | Wire itinerary corpus into generation prompt | Retrieve 2–3 matching real itineraries from the new `itinerary_corpus` Qdrant collection (built in v10.12) and inject them as few-shot grounding examples in `chains/itinerary_chain.py`'s system prompt. Depends on `itinerary-corpus-extraction` (done). | Pending |
+| `itinerary-corpus-retrieval` | Wire itinerary corpus into generation prompt | Retrieve 2–3 matching real itineraries from the new `itinerary_corpus` Qdrant collection (built in v10.12) and inject them as few-shot grounding examples in `chains/itinerary_chain.py`'s system prompt. Depends on `itinerary-corpus-extraction` (done). | ✅ Done (v10.15) — `services/search.py::retrieve_itinerary_examples()` |
 | `corpus-source-attribution-ui` | Source-attribution UI | Once corpus grounding is live, show a small "Inspired by trip reports from r/solotravel and Nomadic Matt"-style attribution note in the itinerary UI — a key differentiation/marketing signal for "curated, not generic" positioning. Depends on `itinerary-corpus-retrieval`. | Pending |
 | `agentic-router-tool-calling` | Lightweight agentic router / tool-calling layer | Per docs/rag-strategy.md §12: introduce tool-calling for persona-specific verified venue selection (dog-friendly, coworking, romantic dining), reusing the free OSM Overpass API already used elsewhere. Also becomes the primitive the budget optimizer (below) uses for line-item swaps. | Pending |
 | `budget-optimizer-pass` | Keep-structure budget optimizer pass | Tool-calling-based optimizer that re-scores existing itinerary line items (accommodation/activities/dining) against cheaper/pricier alternatives within the same theme/day-structure, instead of a full regeneration. Add a budget-slider UI showing a diff of what changed. Depends on `agentic-router-tool-calling`. | Pending |

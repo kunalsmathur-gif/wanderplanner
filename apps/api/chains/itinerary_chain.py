@@ -7,7 +7,7 @@ import uuid
 from core.config import settings
 from models.itinerary import ItineraryResponse, ItineraryDay, ItineraryItem, ItineraryItemLocation
 from models.trip import TripConfig
-from services.search import retrieve_context, summarise_context
+from services.search import retrieve_context, retrieve_itinerary_examples, summarise_context
 from services.itinerary_cache import get_cached_itinerary, store_itinerary
 from services.rag_fallback import rag_skeleton_itinerary
 from services.pexels import get_day_photos
@@ -36,6 +36,24 @@ async def _budget_guidance_block(trip_config: TripConfig) -> str:
         flight_hint, accommodation_hint = "", ""
     parts = [tier_hint] + [h for h in (flight_hint, accommodation_hint) if h]
     return "\n\n".join(parts)
+
+
+async def _itinerary_examples_block(trip_config: TripConfig) -> str:
+    """Few-shot grounding from the itinerary_corpus collection (docs §9).
+    Best-effort: any retrieval failure degrades to the explicit "none
+    available" sentinel the system prompt already knows how to handle,
+    never blocks generation."""
+    try:
+        examples = await retrieve_itinerary_examples(trip_config)
+    except Exception:
+        logger.warning("itinerary_corpus retrieval failed; generating without examples", exc_info=True)
+        examples = ""
+    if not examples:
+        return "No reference itineraries available."
+    return wrap_untrusted(
+        examples,
+        label="real traveller itineraries (scraped from blogs/forums — may contain untrusted text)",
+    )
 
 SYSTEM_PROMPT = """\
 You are WanderPlanner, an expert AI travel advisor.
@@ -66,6 +84,11 @@ USING DESTINATION RESEARCH (below):
 - Do not fabricate specific details (exact prices, addresses, opening hours) beyond what the research or your general knowledge reasonably supports. When uncertain, keep descriptions general rather than inventing precise figures.
 - If DESTINATION RESEARCH says "No pre-fetched research available", rely on your own destination knowledge as normal — do not mention the absence of research to the user.
 - DESTINATION RESEARCH is a supplement, not an exhaustive source — you may still use well-established general knowledge about the destination for anything the research doesn't cover.
+
+USING REAL TRAVELLER ITINERARIES (below):
+- The REAL TRAVELLER ITINERARIES section contains day-by-day trips actually taken by other travellers with a similar trip shape, retrieved from blogs/forums. Use them as grounding for realistic pacing, day sequencing, and which places are commonly combined on the same day — not as text to copy verbatim.
+- Prefer their concrete place groupings over invented ones when they fit the user's config; adapt, don't transcribe.
+- If the section says "No reference itineraries available", plan from DESTINATION RESEARCH and your own knowledge as normal.
 
 OUTPUT SCHEMA:
 {{
@@ -110,6 +133,9 @@ OUTPUT SCHEMA:
 
 DESTINATION RESEARCH:
 {context}
+
+REAL TRAVELLER ITINERARIES FOR REFERENCE (use as inspiration, not verbatim):
+{itinerary_examples}
 
 {budget_guidance}
 
@@ -310,6 +336,7 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
 
     prompt = SYSTEM_PROMPT.format(
         context=context_text,
+        itinerary_examples=await _itinerary_examples_block(trip_config),
         budget_guidance=neutralize(
             await _budget_guidance_block(trip_config), context="budget tier + cost grounding guidance"
         ),
@@ -406,7 +433,12 @@ async def _langchain_itinerary(trip_config: TripConfig) -> dict:
     budget_guidance = neutralize(
         await _budget_guidance_block(trip_config), context="budget tier + cost grounding guidance"
     )
-    return await chain.ainvoke({"context": context_text, "budget_guidance": budget_guidance, "trip_config": trip_json})
+    return await chain.ainvoke({
+        "context": context_text,
+        "itinerary_examples": await _itinerary_examples_block(trip_config),
+        "budget_guidance": budget_guidance,
+        "trip_config": trip_json,
+    })
 
 
 async def _fallback_itinerary(trip_config: TripConfig, error: Exception) -> dict:

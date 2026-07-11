@@ -1,7 +1,7 @@
 # WanderPlanner — System Design Document
 
-**Version:** 8.3 (Accounts · Auth Gate · Password Reset · Analytics)
-**Last Updated:** July 7, 2026  
+**Version:** 8.4 (Itinerary-Corpus Few-Shot Retrieval)
+**Last Updated:** July 11, 2026  
 **Audience:** Engineering team and technical stakeholders
 
 ---
@@ -479,6 +479,29 @@ itinerary_chain.py
          │         cross-encoder pass adds real latency (~23.6 → ~7 req/s @ concurrency=50
          │         when enabled globally) — scoping it here keeps other RAG callers fast.
          │
+         ├─ CORPUS FEW-SHOT RETRIEVAL (⭐ NEW v8.4, docs/rag-strategy.md §9) ──
+         │    services/search.py → retrieve_itinerary_examples(trip_config)
+         │    │    (best-effort via chains/itinerary_chain.py::_itinerary_examples_block —
+         │    │     any failure degrades to "No reference itineraries available.",
+         │    │     never blocks generation; gated by
+         │    │     settings.itinerary_corpus_retrieval_enabled, default True)
+         │    │
+         │    ├─ Build config-style query mirroring the ingest-side embedding text:
+         │    │    "{duration} day {pace} {purpose} {group_type} trip {city} {country}"
+         │    │
+         │    ├─ Search BOTH named vectors of the itinerary_corpus collection
+         │    │    (config + content) with destination payload filter; falls back
+         │    │    to an unfiltered search + case-insensitive client-side city match
+         │    │    (extraction LLM writes free-form destination strings)
+         │    │
+         │    ├─ Weighted merge: 60% config-similarity + 40% content-similarity,
+         │    │    then × (0.5 + 0.5 × quality_score) source-authority weighting;
+         │    │    relevance floor 0.45 — a weak match misleads more than it grounds
+         │    │
+         │    └─ Top ≤3 formatted as "[Source: …] Day 1: … Places: …" examples,
+         │         wrap_untrusted()'d, injected as REAL TRAVELLER ITINERARIES
+         │         FOR REFERENCE in both the Gemini and LangChain prompts
+         │
          ├─ RAG COMPRESSION ────────────────────────────────────────────
          │    summarise_context(context_docs, max_chars=2400)
          │    │
@@ -497,6 +520,7 @@ itinerary_chain.py
          ├─ Assemble Gemini prompt:
          │    SYSTEM_PROMPT.format(
          │      context = summarised RAG context (≤600 tokens),
+         │      itinerary_examples = ≤3 real traveller itineraries (⭐ NEW v8.4),
          │      trip_config = TripConfig JSON
          │    )
          │
@@ -1196,6 +1220,7 @@ Breaking any link in this chain prevents scrolling. `<main className="h-full">` 
 | `EMAIL_FROM_ADDRESS` | `Wanderplanner <no-reply@wanderplanner.app>` | — | Password-reset sender |
 | `PASSWORD_RESET_TOKEN_TTL_MINUTES` | `30` | — | Reset-link expiration |
 | `QDRANT_URL` | `:memory:` | — | Qdrant instance URL |
+| `ITINERARY_CORPUS_RETRIEVAL_ENABLED` | `true` | — | Few-shot grounding from real traveller itineraries in generation prompts (⭐ NEW v8.4, docs/rag-strategy.md §9) |
 | `ALLOWED_ORIGINS` | `["http://localhost:3000"]` | ✅ | CORS whitelist — **must be JSON-array format** (pydantic-settings list parsing), `"*"` is rejected by a validator (⭐ NEW v10.0) |
 | `PEXELS_API_KEY` | — | — | Optional Pexels API key for itinerary day hero photos; generation degrades gracefully without it |
 | `LOG_LEVEL` | `INFO` | — | Structured JSON logging level (⭐ NEW v10.0, `core/logging_config.py`) |
