@@ -35,6 +35,14 @@ _PURPOSE_QUERY_EXPANSION: dict[str, str] = {
     "group_holiday": "group friends nightlife",
 }
 
+# Crowd-dial retrieval bias (hidden-gem curation, docs/GTM_STRATEGY.md §2) —
+# same zero-infra query-expansion mechanism as the persona/purpose maps above.
+_CROWD_QUERY_EXPANSION: dict[str, str] = {
+    "offbeat": "hidden gems off the beaten path quiet local secret underrated",
+    "touristy": "top attractions iconic landmarks must-see famous",
+    "balanced": "",
+}
+
 
 # ---------------------------------------------------------------------------
 # Hybrid lexical pass: BM25 over destination-filtered corpus (docs §3D)
@@ -285,12 +293,15 @@ async def retrieve_context(trip_config: TripConfig, enable_reranking: bool | Non
     # just better query construction over the same free collections.
     persona_keywords = " ".join(_PERSONA_QUERY_EXPANSION.get(p, "") for p in trip_config.personas).strip()
     purpose_keywords = _PURPOSE_QUERY_EXPANSION.get(purpose.strip().lower(), "")
+    crowd_keywords = _CROWD_QUERY_EXPANSION.get(
+        getattr(trip_config, "crowd_preference", "balanced"), ""
+    )
 
     raw_queries = [
         # Query 1 — config-oriented: persona + core nouns (+ persona keyword expansion)
         f"{dest} travel {personas} {persona_keywords} highlights activities food".strip(),
-        # Query 2 — purpose/vibe: what kind of trip (+ occasion keyword expansion)
-        f"things to do in {dest} {purpose} {purpose_keywords} {pace} trip hidden gems local tips".strip(),
+        # Query 2 — purpose/vibe: what kind of trip (+ occasion & crowd-dial keyword expansion)
+        f"things to do in {dest} {purpose} {purpose_keywords} {crowd_keywords} {pace} trip hidden gems local tips".strip(),
         # Query 3 — practical: logistics, advice, warnings
         f"{dest} best restaurants sightseeing transport safety advice",
     ]

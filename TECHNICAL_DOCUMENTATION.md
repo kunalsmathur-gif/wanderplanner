@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.15 (Itinerary-Corpus Few-Shot Retrieval + Strategy Docs)
+**Version:** 10.16 (Hidden-Gem Scoring + Crowd Dial)
 **Last Updated:** July 11, 2026  
 **Status:** Production-ready MVP
 
@@ -1416,7 +1416,21 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.16 Changes (July 2026) — Hidden-Gem Scoring + Crowd Dial (GTM Phase 1, bet 1)
+
+Implements docs/GTM_STRATEGY.md §2 product bet 1: itineraries can now surface community-verified, less-crowded places instead of only top-10-list output — the #1 gap from the July 2026 user interviews. Deterministic and zero-LLM by design: scoring is lexicon math over the already-ingested `reddit` + `osm_pois` collections, cached per destination, so the feature adds no per-request corpus scan, no added model calls, and ≤~250 prompt tokens.
+
+| Change | Detail |
+|---|---|
+| **NEW** `services/gems.py` | `compute_gem_intel_sync()` — one bounded pass (≤300 POIs × ≤800 chunks) scoring OSM-verified POIs by Reddit community signal: mention count + Laplace-smoothed lexicon sentiment in a ±120-char window around each mention. Classification: 1–6 mentions + ≥0.55 sentiment → **hidden gem** (ranked by `sentiment / log2(2 + mentions)` — fewer mentions rank higher at equal praise); ≥12 mentions → **crowd favourite**; 0 mentions → excluded entirely (no community proof → never recommended; OSM presence alone is not a recommendation). Generic single-word names ("Park", "Beach") excluded from matching. `get_gem_intel()` — async wrapper with 24h in-process TTL cache + per-destination `asyncio.Lock` (stampede-safe under concurrency), compute offloaded via `asyncio.to_thread` per the v10.13 event-loop rule. `gem_prompt_block()` — dial-aware prompt formatting with provenance ("mentioned in N traveller post(s) on r/x, NN% positive sentiment"); returns "" for touristy/empty cases (zero token cost). |
+| **NEW** `TripConfig.crowd_preference` | `"touristy" \| "balanced" \| "offbeat"` (default balanced) — backend `models/trip.py` + frontend `types/index.ts`/`tripConfigStore.ts`. Flows through the wizard's generic `config_patch` merge with no extra plumbing. |
+| **UPDATED** `chains/itinerary_chain.py` | New `_gem_guidance_block()` (best-effort, `wrap_untrusted`-wrapped, empty for touristy/no-destination). `SYSTEM_PROMPT` gains a CROWD PREFERENCE rules block: offbeat builds days around gems (≤1-2 iconic anchors, avoids the CROWD-HEAVY list), balanced weaves in 1-2 gems, gems must use their provided OSM lat/lon, carry a `hidden_gem` tag, and include provenance in the description; the model may never invent a "hidden gem" not in the list. The three guidance blocks (itinerary examples, gems, budget) are now fetched via one `asyncio.gather` in both LLM paths — prompt assembly costs one round-trip, not three. |
+| **UPDATED** `services/search.py` | `_CROWD_QUERY_EXPANSION` — the crowd dial now biases `retrieve_context()`'s vibe query (offbeat → "hidden gems off the beaten path quiet local secret underrated"; touristy → "top attractions iconic landmarks must-see famous"), same zero-infra mechanism as the persona/purpose expansions. |
+| **UPDATED** `chains/wizard_chat_chain.py` | Anya now extracts `crowd_preference` as an optional field, with Hinglish-aware mappings ("hidden gems"/"less crowded"/"bheed nahi chahiye" → offbeat; "iconic places"/"must-see" → touristy) and a one-off Stage-2 checkpoint chip ("Crowd style? 🧭" → Iconic Spots 🗼 / Mix of Both ⚖️ / Hidden Gems 💎). **Live-verified** against the running Gemini-backed API: "less crowded hidden gems and peaceful places" → `config_patch.crowd_preference: "offbeat"`. |
+| **UPDATED** frontend | `ItineraryTimeline.tsx`: `hidden_gem` tag renders as a violet 💎 badge (light+dark variants). `PaceBudgetSection.tsx` gains a 3-button crowd-style selector — note this section belongs to `WizardForm.tsx`, which is currently **not mounted anywhere** (legacy structured wizard; `LLMWizard` is the live path) — kept for parity if the form wizard is revived. |
+| **NEW** `tests/unit/test_gems.py` | 15 fully offline tests (Qdrant scrolls mocked): gem/crowd/zero-mention/negative-sentiment classification, generic-name exclusion, fewer-mentions-rank-higher ordering, sentiment windowing, dial-aware prompt block (touristy empty, offbeat includes CROWD-HEAVY de-prioritisation), cache hit/expiry. Full unit suite green (148 passed); `tsc --noEmit` clean. |
 
 ### v10.15 Changes (July 2026) — Itinerary-Corpus Few-Shot Retrieval + Strategy Docs (GTM / Startup Re-Evaluation)
 

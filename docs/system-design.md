@@ -1,6 +1,6 @@
 # WanderPlanner — System Design Document
 
-**Version:** 8.4 (Itinerary-Corpus Few-Shot Retrieval)
+**Version:** 8.5 (Hidden-Gem Scoring + Crowd Dial)
 **Last Updated:** July 11, 2026  
 **Audience:** Engineering team and technical stakeholders
 
@@ -502,6 +502,26 @@ itinerary_chain.py
          │         wrap_untrusted()'d, injected as REAL TRAVELLER ITINERARIES
          │         FOR REFERENCE in both the Gemini and LangChain prompts
          │
+         ├─ GEM GUIDANCE (⭐ NEW v8.5, docs/GTM_STRATEGY.md §2 bet 1) ────
+         │    services/gems.py → get_gem_intel(destination) via
+         │    chains/itinerary_chain.py::_gem_guidance_block (best-effort)
+         │    │
+         │    ├─ Deterministic, zero-LLM: OSM-verified POIs scored by Reddit
+         │    │    community signal (mentions + lexicon sentiment ±120 chars).
+         │    │    1-6 mentions & sentiment ≥0.55 → hidden gem;
+         │    │    ≥12 mentions → crowd favourite; 0 mentions → excluded
+         │    │    (no community proof = never recommended)
+         │    │
+         │    ├─ Cached 24h per destination (in-process TTL + per-destination
+         │    │    asyncio.Lock, stampede-safe); compute bounded to
+         │    │    ≤300 POIs × ≤800 chunks in a worker thread
+         │    │
+         │    └─ trip_config.crowd_preference drives injection:
+         │         touristy → no block (0 tokens) | balanced → top 5 gems |
+         │         offbeat → top 8 gems + CROWD-HEAVY de-prioritisation list.
+         │         Gems carry OSM lat/lon + provenance; LLM must tag them
+         │         "hidden_gem" and may never invent unlisted gems
+         │
          ├─ RAG COMPRESSION ────────────────────────────────────────────
          │    summarise_context(context_docs, max_chars=2400)
          │    │
@@ -517,10 +537,12 @@ itinerary_chain.py
          │    └─ Truncate at 2400 chars (~600 tokens)
          │         was: ~30,000 chars (7,500 tokens) — 12× reduction
          │
-         ├─ Assemble Gemini prompt:
+         ├─ Assemble Gemini prompt (guidance blocks fetched concurrently
+         │    via one asyncio.gather — one round-trip, not three ⭐ v8.5):
          │    SYSTEM_PROMPT.format(
          │      context = summarised RAG context (≤600 tokens),
          │      itinerary_examples = ≤3 real traveller itineraries (⭐ NEW v8.4),
+         │      gem_guidance = crowd-dial hidden-gem candidates (⭐ NEW v8.5),
          │      trip_config = TripConfig JSON
          │    )
          │

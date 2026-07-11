@@ -3,7 +3,7 @@
 ## **1\. Document Control**
 
 * **Author:** Product Manager  
-* **Status:** Rev 9 — Updated ✅ (Real-Traveller Itinerary Corpus Grounding · GTM Strategy Companion)
+* **Status:** Rev 10 — Updated ✅ (Crowd-Style Preference · Hidden-Gem Curation · Real-Traveller Itinerary Corpus Grounding)
 * **Strategy companions:** [GTM_STRATEGY.md](GTM_STRATEGY.md) (go-to-market plan, product bets, phased roadmap with kill/go criteria) and [STARTUP_EVALUATION.md](STARTUP_EVALUATION.md) (+ 2026-07-11 re-evaluation addendum) — forward-looking positioning/monetization decisions live there, not in this PRD
 * **Target Release:** Q4 2026  
 * **Platform:** Web Application — Desktop-first (1440x900, 1920x1080) with mobile-responsive support (v5.0+). Bottom tab navigation on mobile (`< lg` breakpoint). No standalone mobile PWA or native app scope.
@@ -19,6 +19,8 @@ WanderPlanner is an all-in-one desktop web application designed to solve the fri
 Users can explore the landing experience freely, but **a free account is now required before itinerary generation**. Sign-in options are email/password or Google SSO, and the product intentionally gates auth at the moment the user clicks **Generate** rather than forcing login on first page load.
 
 The application pairs traditional third-party travel APIs with an AI data layer to deliver granular, timestamped travel schedules tailored to complex group dynamics, pet constraints, accessibility limits, corporate/remote work needs, and budget boundaries. Recommendations are dynamically enhanced by real-time social signals (Reddit, YouTube, Instagram) to capture authentic, trending, on-the-ground user insights rather than static commercial itineraries. As of Rev 9, generation is additionally grounded in a **real-traveller itinerary corpus**: day-by-day trips scraped from travel blogs, Wikivoyage, Reddit trip reports, and YouTube transcripts are structured, quality-scored, and — when they match the user's trip shape (destination, duration, pace, purpose, group type) — injected into the generation prompt as few-shot examples, so pacing and same-day place groupings are built on patterns that actually worked for real travellers rather than model priors alone.
+
+As of Rev 10, users also control a **crowd-style preference** (Iconic Spots · Mix of Both · Hidden Gems — captured conversationally by Anya, including Hinglish phrasing like "bheed nahi chahiye"). In Hidden Gems mode, itineraries are built around **community-verified, less-crowded places**: OpenStreetMap-verified POIs ranked by high praise but low mention volume in traveller forums, each carrying visible provenance ("mentioned in N traveller posts on r/x") and a 💎 badge — directly addressing the "itineraries only show major touristy places" gap from the July 2026 user interviews. A place with zero community mentions is never recommended as a gem, so recommendations stay checkable, not invented.
 
 ## **3\. User Personas & Core Traits**
 

@@ -83,13 +83,13 @@ An agent copilot that turns a WhatsApp-style Hinglish conversation into a **bran
 
 ### Phase 1 — Prove the wedge (months 0–3)
 
-| # | Item | Notes |
-|---|---|---|
-| 1 | **Wire `itinerary_corpus` retrieval into generation** | The biggest pending unlock; ingestion already ships |
-| 2 | Hidden-gem scoring + crowd dial | Reddit signal × OSM verification |
-| 3 | Refinement hard-constraints + visible diff UI | Interest→entity→verify→pin pipeline |
-| 4 | Refinement-fidelity eval suite; publish vs-ChatGPT results | Builds on `docs/eval-set.csv` |
-| 5 | Turn on affiliate tracking on existing deep-links | Viator / GetYourGuide / Skyscanner |
+| # | Item | Notes | Status |
+|---|---|---|---|
+| 1 | **Wire `itinerary_corpus` retrieval into generation** | The biggest pending unlock; ingestion already ships | ✅ Done (v10.15, 2026-07-11) |
+| 2 | Hidden-gem scoring + crowd dial | Reddit signal × OSM verification | ✅ Done (v10.16, 2026-07-11) — BestTime live-crowd layer deferred (paid API) |
+| 3 | Refinement hard-constraints + visible diff UI | Interest→entity→verify→pin pipeline | Pending — next up (see docs/NEXT_SESSION_TODO.md) |
+| 4 | Refinement-fidelity eval suite; publish vs-ChatGPT results | Builds on `docs/eval-set.csv` | Pending |
+| 5 | Turn on affiliate tracking on existing deep-links | Viator / GetYourGuide / Skyscanner | Pending — blocked on founder affiliate-program registrations |
 
 **Kill criterion:** if the fidelity evals can't measurably beat ChatGPT, the consumer differentiation story is dead → go pure B2B tooling.
 
