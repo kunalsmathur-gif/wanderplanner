@@ -6,10 +6,11 @@ import json
 
 from core.config import settings
 from core.prompt_guard import neutralize
+from core.llm_client import track_gemini_usage
 from models.chat import ChatMessage, ChatRequest
 
 GUARDRAIL_SYSTEM_PROMPT = """\
-You are WanderPlan Assistant, an expert travel advisor chatbot.
+You are WanderPlanner Assistant, an expert travel advisor chatbot.
 
 YOUR ROLE:
 - Help users plan trips: destinations, itineraries, budgets, accommodation, food, safety, visas, packing
@@ -28,7 +29,7 @@ STRICT GUARDRAILS:
 
 OUT-OF-SCOPE RESPONSE:
 If a user asks something unrelated to travel, respond with:
-"I'm WanderPlan's travel assistant — I can only help with travel-related questions like destinations, itineraries, visas, budgets, or packing tips. What travel question can I help you with? 🌍"
+"I'm WanderPlanner's travel assistant — I can only help with travel-related questions like destinations, itineraries, visas, budgets, or packing tips. What travel question can I help you with? 🌍"
 
 CONTEXT:
 - All users are traveling from India
@@ -74,8 +75,8 @@ async def chat(request: ChatRequest) -> str:
         role = "user" if msg.role == "user" else "model"
         contents.append(genai_types.Content(role=role, parts=[genai_types.Part(text=neutralize(msg.content, context="chat message"))]))
 
-    def _call_sync() -> str:
-        response = client.models.generate_content(
+    def _call_sync():
+        return client.models.generate_content(
             model=settings.gemini_model,
             contents=contents,
             config=genai_types.GenerateContentConfig(
@@ -84,20 +85,21 @@ async def chat(request: ChatRequest) -> str:
                 max_output_tokens=1024,
             ),
         )
-        return response.text
 
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _call_sync)
+    response = await loop.run_in_executor(None, _call_sync)
+    track_gemini_usage(response, model=settings.gemini_model, purpose="chat")
+    return response.text
 
 
 def _mock_reply(user_msg: str) -> str:
     msg = user_msg.lower()
     if any(kw in msg for kw in ["hello", "hi", "hey"]):
-        return "Hi! I'm WanderPlan Assistant 🌍 How can I help you plan your next international trip?"
+        return "Hi! I'm WanderPlanner Assistant 🌍 How can I help you plan your next international trip?"
     if any(kw in msg for kw in ["visa", "passport"]):
         return "For Indian passport holders, visa requirements vary by destination. Popular visa-free countries include Thailand, Indonesia (Bali), Sri Lanka, Nepal, and many more. Where are you planning to go?"
     if any(kw in msg for kw in ["budget", "cost", "cheap", "affordable"]):
         return "Great question! Southeast Asia (Thailand, Vietnam, Bali) offers excellent value. Budget: ₹80,000–₹1,20,000 for 7 nights including flights. Would you like me to help narrow down options?"
     if any(kw in msg for kw in ["tokyo", "japan"]):
         return "Tokyo is fantastic! 🗼 Best time: March-April (cherry blossoms) or October-November. Budget for 7 days: ₹1.5–2.5L per person including flights. No visa required for stays up to 90 days (as of 2024)."
-    return "I'm WanderPlan Assistant — I can only help with travel-related questions like destinations, itineraries, visas, budgets, or packing tips. What travel question can I help you with? 🌍"
+    return "I'm WanderPlanner Assistant — I can only help with travel-related questions like destinations, itineraries, visas, budgets, or packing tips. What travel question can I help you with? 🌍"

@@ -1,5 +1,7 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+For local auth flows to work, run this app alongside the FastAPI backend and configure the backend's auth/database environment variables (`DATABASE_URL`, `JWT_SECRET`, Google OAuth/Resend settings, cookie settings, etc.). See the root [`README.md`](../README.md#environment-variables) for the full environment-variable reference.
+
 ## Getting Started
 
 First, run the development server:

@@ -1,4 +1,4 @@
-# End-to-End Testing Report - WanderPlan v2.1
+# End-to-End Testing Report - WanderPlanner v2.1
 
 **Test Date:** 2026-06-17 19:03 IST  
 **Tester:** Copilot CLI  
