@@ -1,5 +1,5 @@
 """
-Golden-dataset RAG retrieval evaluation for WanderPlan.
+Golden-dataset RAG retrieval evaluation for WanderPlanner.
 
 Seeds the curated corpus in `golden_dataset.json` into Qdrant, runs each golden
 query through the real `semantic_search()` retrieval path, and scores results

@@ -7,6 +7,7 @@ import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { chatRefine } from '@/lib/api'
 import { ChatMessage } from './ChatMessage'
+import { ThemeToggle } from '@/components/common/ThemeToggle'
 import type { ChatRefineResponse } from '@/types'
 
 const WELCOME =
@@ -98,13 +99,16 @@ export function ChatPanel() {
             <p className="text-xs text-white/70">Your AI travel concierge</p>
           </div>
         </div>
-        <button
-          onClick={close}
-          className="text-white/70 transition-colors hover:text-white"
-          aria-label="Close Anya chat"
-        >
-          <X size={18} />
-        </button>
+        <div className="flex items-center gap-1">
+          <ThemeToggle className="flex h-7 w-7 items-center justify-center rounded-lg text-white/70 transition-colors hover:text-white" />
+          <button
+            onClick={close}
+            className="text-white/70 transition-colors hover:text-white"
+            aria-label="Close Anya chat"
+          >
+            <X size={18} />
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
