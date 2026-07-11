@@ -377,6 +377,14 @@ Extract if the user mentions them. Never ask for them directly (the checkpoint i
                     "wheelchair_accessible": false, "pet_friendly": false}}
   personas: array from ["digital_nomad", "sports_fitness", "pet_parent",
                           "luxury_traveller", "budget_backpacker", "senior_traveller"]
+  crowd_preference: "touristy" | "balanced" | "offbeat" (default "balanced" — only set when the user signals it)
+    Mappings:
+      "hidden gems" / "less crowded" / "offbeat" / "off the beaten path" / "away from tourists" /
+      "local experiences" / "secret spots" / "bheed nahi chahiye" / "peaceful places" -> offbeat
+      "famous spots" / "main attractions" / "iconic places" / "must-see" / "first time, want the classics" -> touristy
+    Chip suggestion (offer once at the Stage 2 checkpoint, alongside other optional prefs):
+      "Crowd style? 🧭" -> chips ["Iconic Spots 🗼", "Mix of Both ⚖️", "Hidden Gems 💎"]
+      "Iconic Spots" -> touristy | "Mix of Both" -> balanced | "Hidden Gems" -> offbeat
   splurge_categories: array from ["accommodation", "food", "activities", "shopping", "local_transport"]
   save_categories: array from ["accommodation", "food", "activities", "shopping", "local_transport"]
     Only extract if the user explicitly says something like "splurge on hotels but keep food cheap",

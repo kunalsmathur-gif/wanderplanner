@@ -78,6 +78,10 @@ class TripConfig(BaseModel):
     group: GroupComposition = Field(default_factory=GroupComposition)
     accommodation: AccommodationPrefs = Field(default_factory=AccommodationPrefs)
     pace: str = "moderate"  # "relaxed" | "moderate" | "packed"
+    # Crowd dial (⭐ NEW — hidden-gem curation, docs/GTM_STRATEGY.md §2):
+    # "touristy" = iconic must-sees | "balanced" = mix | "offbeat" = prefer
+    # community-verified hidden gems, de-prioritise crowd-heavy spots.
+    crowd_preference: str = "balanced"  # "touristy" | "balanced" | "offbeat"
     budget: Budget = Field(default_factory=lambda: Budget(amount=0, currency="USD"))
     # Optional per-category budget steering (⭐ NEW — budget curation).
     # Values from: "accommodation" | "food" | "activities" | "shopping" | "local_transport"
