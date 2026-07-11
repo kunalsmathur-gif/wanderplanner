@@ -1,15 +1,23 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import { AuthLayout } from '@/components/common/AuthLayout'
-import { GoogleSignInButton } from '@/components/common/GoogleSignInButton'
+import { GoogleSsoSection } from '@/components/common/GoogleSsoSection'
 import { useAuthStore } from '@/store/authStore'
 import { authErrorMessage } from '@/lib/authApi'
 
 export default function SignupPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignupForm />
+    </Suspense>
+  )
+}
+
+function SignupForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const returnTo = searchParams.get('returnTo') || '/'
@@ -60,13 +68,7 @@ export default function SignupPage() {
         </>
       }
     >
-      <GoogleSignInButton returnTo={returnTo} />
-
-      <div className="my-5 flex items-center gap-3">
-        <div className="h-px flex-1 bg-[var(--_border)]" />
-        <span className="text-xs font-medium uppercase tracking-wide text-[var(--_muted-fg)]">or</span>
-        <div className="h-px flex-1 bg-[var(--_border)]" />
-      </div>
+      <GoogleSsoSection returnTo={returnTo} />
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>

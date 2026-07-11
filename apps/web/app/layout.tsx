@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from 'next'
 import { Space_Grotesk, DM_Sans, JetBrains_Mono } from 'next/font/google'
-import { MobileWarningBanner } from '@/components/common/MobileWarningBanner'
 import { AuthHydrator } from '@/components/common/AuthHydrator'
 import './globals.css'
 
@@ -207,9 +206,8 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
       </head>
-      <body className="h-full min-w-[320px] antialiased">
+      <body className="h-full min-w-[320px] overflow-x-hidden antialiased">
         <AuthHydrator />
-        <MobileWarningBanner />
         {children}
       </body>
     </html>

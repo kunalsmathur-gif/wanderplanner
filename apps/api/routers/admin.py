@@ -15,9 +15,12 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.analytics import log_event
-from core.auth_dependency import get_current_admin_user
+from core.auth_dependency import get_current_admin_user, get_current_user
+from core.config import settings
+from core.email import send_admin_request_decision_email, send_admin_request_notification
 from db import get_db
-from db_models import Event, User
+from db_models import AdminRequest, Event, User
+from models.auth import AdminAccessRequestCreate, AdminRequestResponse
 
 router = APIRouter()
 _log = logging.getLogger("wanderplanner.admin")
@@ -95,7 +98,10 @@ async def metrics_summary(
         "cost_usage": {
             "gemini_requests_30d": gemini_requests_30d,
             "gemini_tokens_30d": int(gemini_tokens_30d or 0),
-            "gemini_estimated_cost_usd_30d": round(float(gemini_cost_30d or 0.0), 4),
+            # Gemini list pricing is USD-denominated; costs are computed/stored
+            # internally in USD (see core/llm_client.py) and converted to INR
+            # here purely for admin-dashboard display.
+            "gemini_estimated_cost_inr_30d": round(float(gemini_cost_30d or 0.0) * settings.usd_to_inr_rate, 2),
             "pexels_calls_30d": int(pexels_calls_30d or 0),
         },
     }
@@ -193,3 +199,161 @@ async def purge_all_users(
     await log_event(db, "admin_purge_all", user_id=admin.id, metadata={"deleted_count": deleted_count})
     _log.warning("Admin %s bulk-purged %d user accounts", admin.id, deleted_count)
     return {"status": "purged", "deleted_count": deleted_count}
+
+
+# ── Admin access requests ────────────────────────────────────────────────
+#
+# Nobody becomes an admin automatically. Signup never accepts an `is_admin`
+# field (see models.auth.SignupRequest), so the *only* way a regular user's
+# `is_admin` flips to True is via an existing admin approving a request
+# created here. The very first admin is always seeded out-of-band (direct
+# DB write) since there's no admin yet to approve one.
+
+def _admin_request_to_response(req: AdminRequest, user: User) -> AdminRequestResponse:
+    return AdminRequestResponse(
+        id=str(req.id),
+        user_id=str(req.user_id),
+        user_email=user.email,
+        user_display_name=user.display_name,
+        status=req.status,
+        message=req.message,
+        created_at=req.created_at.isoformat(),
+        reviewed_at=req.reviewed_at.isoformat() if req.reviewed_at else None,
+    )
+
+
+@router.post("/admin/requests", response_model=AdminRequestResponse)
+async def create_admin_request(
+    body: AdminAccessRequestCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> AdminRequestResponse:
+    """Any authenticated (non-admin) user can ask to be considered for admin
+    access. This never grants access by itself — it only creates a pending
+    record that existing admins see in the console (and are emailed about)
+    and must explicitly approve."""
+    if user.is_admin:
+        raise HTTPException(status_code=400, detail="You already have admin access.")
+
+    existing = (
+        await db.execute(
+            select(AdminRequest).where(AdminRequest.user_id == user.id, AdminRequest.status == "pending")
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        # Idempotent — re-requesting while already pending just returns the
+        # existing request instead of creating a duplicate.
+        return _admin_request_to_response(existing, user)
+
+    req = AdminRequest(user_id=user.id, message=body.message, status="pending")
+    db.add(req)
+    await db.commit()
+    await db.refresh(req)
+
+    await log_event(db, "admin_request_created", user_id=user.id)
+
+    admin_emails = [
+        row[0]
+        for row in (
+            await db.execute(select(User.email).where(User.is_admin.is_(True), User.email.is_not(None)))
+        ).all()
+    ]
+    # Best-effort — email failure must never block the request itself.
+    await send_admin_request_notification(
+        admin_emails=admin_emails,
+        requester_email=user.email or "(no email)",
+        requester_name=user.display_name,
+        admin_console_url=f"{settings.frontend_base_url}/admin",
+    )
+
+    return _admin_request_to_response(req, user)
+
+
+@router.get("/admin/requests/me", response_model=Optional[AdminRequestResponse])
+async def my_admin_request(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Optional[AdminRequestResponse]:
+    """Lets the account-settings page show 'request pending / declined' UI
+    without granting anything — read-only lookup of the caller's own most
+    recent request."""
+    req = (
+        await db.execute(
+            select(AdminRequest).where(AdminRequest.user_id == user.id).order_by(AdminRequest.created_at.desc())
+        )
+    ).scalars().first()
+    if req is None:
+        return None
+    return _admin_request_to_response(req, user)
+
+
+@router.get("/admin/requests", response_model=list[AdminRequestResponse])
+async def list_admin_requests(
+    status_filter: str = Query(default="pending", alias="status", pattern="^(pending|approved|rejected|all)$"),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_admin_user),
+) -> list[AdminRequestResponse]:
+    stmt = select(AdminRequest, User).join(User, User.id == AdminRequest.user_id).order_by(AdminRequest.created_at.desc())
+    if status_filter != "all":
+        stmt = stmt.where(AdminRequest.status == status_filter)
+    rows = (await db.execute(stmt)).all()
+    return [_admin_request_to_response(req, user) for req, user in rows]
+
+
+@router.post("/admin/requests/{request_id}/approve", response_model=AdminRequestResponse)
+async def approve_admin_request(
+    request_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin_user),
+) -> AdminRequestResponse:
+    req = (await db.execute(select(AdminRequest).where(AdminRequest.id == request_id))).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status_code=404, detail="Admin request not found")
+    if req.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Request already {req.status}, cannot re-approve.")
+
+    target = (await db.execute(select(User).where(User.id == req.user_id))).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Requesting user no longer exists")
+
+    target.is_admin = True
+    req.status = "approved"
+    req.reviewed_by = admin.id
+    req.reviewed_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    await log_event(db, "admin_request_approved", user_id=admin.id, metadata={"target_user_id": str(target.id)})
+    _log.warning("Admin %s approved admin access for user %s", admin.id, target.id)
+
+    if target.email:
+        await send_admin_request_decision_email(to_email=target.email, approved=True)
+
+    return _admin_request_to_response(req, target)
+
+
+@router.post("/admin/requests/{request_id}/reject", response_model=AdminRequestResponse)
+async def reject_admin_request(
+    request_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin_user),
+) -> AdminRequestResponse:
+    req = (await db.execute(select(AdminRequest).where(AdminRequest.id == request_id))).scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status_code=404, detail="Admin request not found")
+    if req.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Request already {req.status}, cannot re-reject.")
+
+    target = (await db.execute(select(User).where(User.id == req.user_id))).scalar_one_or_none()
+
+    req.status = "rejected"
+    req.reviewed_by = admin.id
+    req.reviewed_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    await log_event(db, "admin_request_rejected", user_id=admin.id, metadata={"target_user_id": str(req.user_id)})
+    _log.info("Admin %s rejected admin access request for user %s", admin.id, req.user_id)
+
+    if target is not None and target.email:
+        await send_admin_request_decision_email(to_email=target.email, approved=False)
+
+    return _admin_request_to_response(req, target if target is not None else User(id=req.user_id))
