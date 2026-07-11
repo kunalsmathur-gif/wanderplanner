@@ -5,6 +5,7 @@ import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useWizardChatStore } from '@/store/wizardChatStore'
 import { getTravelTips, type TravelTip } from '@/lib/api'
+import { logClientEvent } from '@/lib/analyticsBeacon'
 import { MapWrapper } from '@/components/map/MapWrapper'
 import { BestTimeWidget } from '@/components/dashboard/BestTimeWidget'
 import { BookingLinksSection } from '@/components/itinerary/BookingLinksSection'
@@ -14,7 +15,11 @@ export function Column3Sidebar() {
   const activeDay = useItineraryStore((state) => state.activeDay)
   const collectedLabels = useWizardChatStore((state) => state.collectedLabels)
   const configDestination = useTripConfigStore((state) => state.config.destination?.city ?? '')
-  const destination = collectedLabels.destination ?? configDestination
+  const destinationCountry = useTripConfigStore((state) => state.config.destination_country ?? '')
+  // Fall back to the country name when the LLM hasn't resolved a concrete
+  // city yet — without this, country-wide trips (e.g. "Italy") would show
+  // no map context, tips, or booking links at all.
+  const destination = collectedLabels.destination || configDestination || destinationCountry
   const [tips, setTips] = useState<TravelTip[]>([])
   const [loadingTips, setLoadingTips] = useState(false)
 
@@ -42,8 +47,10 @@ export function Column3Sidebar() {
               const searchQuery = `${destination} ${tip.title.slice(0, 50)}`
               const res = await fetch(`/api/youtube-thumbnail?q=${encodeURIComponent(searchQuery)}`)
               const { thumbnailUrl } = await res.json()
+              logClientEvent('youtube_thumbnail_call', { found: Boolean(thumbnailUrl) })
               return { ...tip, thumbnailUrl }
             } catch {
+              logClientEvent('youtube_thumbnail_failed')
               return { ...tip, thumbnailUrl: null }
             }
           })

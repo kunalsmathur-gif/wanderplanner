@@ -456,7 +456,7 @@ export function ConversationalWizard() {
           { chips: PURPOSE_CHIPS }
         ))
       } else {
-        addMessage(botMessage("Hi! I'm Anya, your Wanderplan travel concierge 👋\n\nI'll help you build a personalised trip plan in just a few steps. Let's start!\n\nWhat's the main purpose of your trip?", { chips: PURPOSE_CHIPS }))
+        addMessage(botMessage("Hi! I'm Anya, your Wanderplanner travel concierge 👋\n\nI'll help you build a personalised trip plan in just a few steps. Let's start!\n\nWhat's the main purpose of your trip?", { chips: PURPOSE_CHIPS }))
       }
     }
   }, [addMessage, messages.length, phase, setPhase, tripConfig, wizardOpen])
@@ -1671,7 +1671,7 @@ export function ConversationalWizard() {
       <div className="card relative flex max-h-screen w-full flex-col overflow-hidden rounded-none bg-[var(--color-card)] shadow-2xl sm:mx-4 sm:max-h-[90vh] sm:max-w-lg sm:rounded-2xl border-[var(--color-border)]">
         <div className="flex items-start justify-between gap-4 bg-[var(--color-primary)] px-4 py-4 text-white sm:px-8">
           <div className="min-w-0">
-            <p className="text-xl font-bold leading-tight [font-family:var(--font-space-grotesk)]">Wanderplan</p>
+            <p className="text-xl font-bold leading-tight [font-family:var(--font-space-grotesk)]">Wanderplanner</p>
             <p className="mt-1 text-sm text-white/80 [font-family:var(--font-dm-sans)]">Anya · Your travel concierge</p>
           </div>
 

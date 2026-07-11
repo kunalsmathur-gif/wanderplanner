@@ -1,10 +1,12 @@
 'use client'
 
 import { useItineraryStore } from '@/store/itineraryStore'
+import { useAppStore } from '@/store/appStore'
 import { PolaroidCard } from '@/components/itinerary/PolaroidCard'
 import type { ItineraryItem } from '@/types'
 import { useEffect, useState } from 'react'
 import { isSafeExternalUrl } from '@/lib/url-safety'
+import { logClientEvent } from '@/lib/analyticsBeacon'
 
 const thumbnailCache = new Map<string, string | null>()
 const videoIdCache   = new Map<string, string | null>()
@@ -26,33 +28,55 @@ function useThumbnail(query?: string, fallbackVideoId?: string) {
       return
     }
     if (!query) { setVideoId(null); setThumbnailUrl(null); return }
+    // Only trust a cached HIT — a cached miss is never stored (see below),
+    // so a query that failed once (network blip, transient YouTube block)
+    // gets retried on next mount instead of being stuck blank forever.
     if (thumbnailCache.has(query)) {
       setThumbnailUrl(thumbnailCache.get(query) ?? null)
       setVideoId(videoIdCache.get(query) ?? null)
       return
     }
     let cancelled = false
-    fetch(`/api/youtube-thumbnail?q=${encodeURIComponent(query)}`)
-      .then((r) => r.json())
-      .then((d: { videoId: string | null; thumbnailUrl: string | null }) => {
+
+    // Retry with short backoff — the lookup is a live YouTube scrape and
+    // fails transiently fairly often (confirmed: the same query can fail
+    // then succeed seconds later), so a few retries clear up the vast
+    // majority of these without any user action.
+    async function fetchWithRetry(): Promise<{ videoId: string | null; thumbnailUrl: string | null }> {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const r = await fetch(`/api/youtube-thumbnail?q=${encodeURIComponent(query!)}`)
+          const d = await r.json()
+          logClientEvent('youtube_thumbnail_call', { attempt, found: Boolean(d.videoId) })
+          if (d.videoId) return d
+        } catch {
+          logClientEvent('youtube_thumbnail_failed', { attempt })
+        }
+        if (attempt < 2) await new Promise((res) => setTimeout(res, 500 * (attempt + 1)))
+      }
+      return { videoId: null, thumbnailUrl: null }
+    }
+
+    fetchWithRetry().then((d) => {
+      // Only cache genuine hits — leave misses uncached so future mounts
+      // (or navigating back to this day) get another chance.
+      if (d.videoId) {
         thumbnailCache.set(query, d.thumbnailUrl)
         videoIdCache.set(query, d.videoId)
-        if (!cancelled) { setThumbnailUrl(d.thumbnailUrl); setVideoId(d.videoId) }
-      })
-      .catch(() => {
-        thumbnailCache.set(query, null); videoIdCache.set(query, null)
-        if (!cancelled) { setThumbnailUrl(null); setVideoId(null) }
-      })
+      }
+      if (!cancelled) { setThumbnailUrl(d.thumbnailUrl); setVideoId(d.videoId) }
+    })
     return () => { cancelled = true }
   }, [fallbackVideoId, query])
 
   return { thumbnailUrl, videoId }
 }
 
-function ActivityCard({ item, isActive, onHover }: {
+function ActivityCard({ item, isActive, onHover, onSelect }: {
   item: ItineraryItem
   isActive: boolean
   onHover: (id: string | null) => void
+  onSelect: (id: string) => void
 }) {
   const { thumbnailUrl, videoId } = useThumbnail(
     item.youtube_search_query,
@@ -69,7 +93,17 @@ function ActivityCard({ item, isActive, onHover }: {
   const category = item.tags[0]?.replace(/_/g, ' ') ?? undefined
 
   return (
-    <div onMouseEnter={() => onHover(item.id)} onMouseLeave={() => onHover(null)}>
+    <div
+      onMouseEnter={() => onHover(item.id)}
+      onMouseLeave={() => onHover(null)}
+      onClick={() => onSelect(item.id)}
+      role="button"
+      tabIndex={0}
+      aria-label={`Show ${item.title} on the map`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(item.id) }
+      }}
+    >
       <PolaroidCard
         time={`${item.time_start} → ${item.time_end}`}
         title={item.title}
@@ -85,9 +119,13 @@ function ActivityCard({ item, isActive, onHover }: {
           {item.tags.slice(1).map((tag) => (
             <span
               key={tag}
-              className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+              className={
+                tag === 'hidden_gem'
+                  ? 'rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-900 dark:text-violet-300'
+                  : 'rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400'
+              }
             >
-              {tag === 'instaworthy' ? '📸 ' : ''}{tag.replace(/_/g, ' ')}
+              {tag === 'instaworthy' ? '📸 ' : tag === 'hidden_gem' ? '💎 ' : ''}{tag.replace(/_/g, ' ')}
             </span>
           ))}
           {isSafeExternalUrl(item.booking_url) && (
@@ -109,7 +147,18 @@ function ActivityCard({ item, isActive, onHover }: {
 
 export function ItineraryTimeline() {
   const { days, activeDay, hoveredItemId, setActiveDay, setHoveredItem } = useItineraryStore()
+  const setMobileTab = useAppStore((state) => state.setMobileTab)
   const day = days[activeDay]
+
+  // Selecting an activity (tap/click/Enter) both highlights its marker on
+  // the map (existing hover-highlight mechanism, reused as "selected") and
+  // — critically for mobile, where itinerary/map are separate tabs and
+  // touch has no hover state — jumps straight to the Map & Tips tab instead
+  // of leaving the user to find it manually via the bottom nav.
+  function handleSelectItem(id: string) {
+    setHoveredItem(id)
+    setMobileTab('map')
+  }
 
   if (!day) {
     return (
@@ -154,6 +203,7 @@ export function ItineraryTimeline() {
               item={item}
               isActive={item.id === hoveredItemId}
               onHover={setHoveredItem}
+              onSelect={handleSelectItem}
             />
           ))}
         </div>

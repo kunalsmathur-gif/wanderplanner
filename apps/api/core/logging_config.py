@@ -68,7 +68,7 @@ class JsonFormatter(logging.Formatter):
 def configure_logging() -> None:
     """Idempotent app-wide logging setup. Call once at process startup."""
     root = logging.getLogger()
-    if getattr(root, "_wanderplan_configured", False):
+    if getattr(root, "_wanderplanner_configured", False):
         return
 
     handler = logging.StreamHandler(sys.stdout)
@@ -77,4 +77,4 @@ def configure_logging() -> None:
 
     root.handlers = [handler]
     root.setLevel(settings.log_level.upper())
-    root._wanderplan_configured = True  # type: ignore[attr-defined]
+    root._wanderplanner_configured = True  # type: ignore[attr-defined]
