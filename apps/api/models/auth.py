@@ -36,3 +36,18 @@ class UserResponse(BaseModel):
 
 class GoogleCallbackError(BaseModel):
     detail: str
+
+
+class AdminAccessRequestCreate(BaseModel):
+    message: str | None = Field(default=None, max_length=500)
+
+
+class AdminRequestResponse(BaseModel):
+    id: str
+    user_id: str
+    user_email: str | None
+    user_display_name: str | None
+    status: str  # "pending" | "approved" | "rejected"
+    message: str | None
+    created_at: str
+    reviewed_at: str | None

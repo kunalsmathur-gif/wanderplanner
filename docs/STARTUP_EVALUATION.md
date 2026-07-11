@@ -5,6 +5,8 @@
 **Date:** 2026-07-03
 **Confidence:** Medium-High (competitor/market claims below verified via live research; see Sources)
 
+> **⚠️ Superseded in part — see [Addendum (2026-07-11)](#addendum--2026-07-11-re-evaluation) at the end of this doc.** A code audit, first user interviews, and fresh market research corrected several claims below (most importantly: accounts are now mandatory, removing the central monetization blocker). The forward plan now lives in [GTM_STRATEGY.md](GTM_STRATEGY.md).
+
 **Context captured for this evaluation:**
 - Target market: India-first, expanding globally later
 - Stage: Pre-launch — building/testing locally, no real users yet
@@ -131,3 +133,39 @@ Treat this as a **portfolio-quality technical showcase with a validated narrow n
 - DPDP Act 2023 context — widely documented in Indian legal/tech press; implementing Rules not yet notified as of mid-2026 — confirm current status with an Indian tech lawyer before wider release
 
 **Methodology note:** This evaluation was produced using the `startup-design` skill (fast-track mode: pre-flight check, competitive research, business model assessment, and go/no-go scorecard) sourced from [ferdinandobons/startup-skill](https://github.com/ferdinandobons/startup-skill), combined with direct review of the WanderPlanner codebase, README, and PRD.
+
+---
+
+## Addendum — 2026-07-11 Re-evaluation
+
+Based on: (a) a line-level audit of the codebase after 10 commits landed post-evaluation, (b) first real user feedback interviews, (c) fresh market research. Original text above is preserved unchanged for the record.
+
+### Corrections to the original evaluation
+
+| Original claim | Status as of 2026-07-11 | Evidence |
+|---|---|---|
+| "Fully free, no accounts, no payment infra, session-only state" — the central structural problem | **FALSE (stale).** Full auth now exists and is **mandatory**: JWT + rotating refresh cookies, Argon2, Google SSO, password reset, self-service deletion. `/generate-itinerary` requires a signed-in account. Trip data itself remains session-only (account-gated access, not account-tied storage). | `apps/api/routers/auth.py`; `apps/api/routers/itinerary.py:105-112`; PRD Rev 8 line 18 |
+| Freemium "conflicts with the no-login principle" | **No longer applies.** The principle was dropped. A paywall on top of the existing auth gate is now a product decision, not an architecture change. | Same as above |
+| Booking Hub needs a DPDP consent + delete-my-data flow | **Moot as built.** Booking data lives in browser localStorage only (Zustand `persist`), never touches the server. Re-evaluate only if server-side sync ships. | `apps/web/store/bookingStore.ts` |
+| "RAG-grounded" is an engineering hypothesis | **Half-true, refined.** Reddit + Wikivoyage retrieval is live in generation. The newer structured `itinerary_corpus` collection is **ingest-only — retrieval wiring is a pending roadmap item** (per its own module docstring). | `apps/api/services/search.py:126`; `apps/api/chains/itinerary_corpus_extraction_chain.py:19-21` |
+| Voice-first UX (Anya) as differentiator | **Confirmed real.** Web Speech API STT + TTS with Indian-female-voice preference heuristic, plus prompt-level spoken-number normalization. | `ConversationalWizard.tsx:646-667`; `wizard_chat_chain.py:167-173` |
+| No monetization code | **Still true.** No stripe/razorpay/billing anywhere. But the blocker moved from architecture to decision (see above). | Grep across `apps/` |
+
+### Market updates since 2026-07-03
+
+- **Mindtrip acquired Thatch (2025)** — the "creators sell itineraries" marketplace model is now owned by the best-funded direct competitor. Thatch had raised $5.2M and still needed to sell. A solo-founder marketplace clone is not viable. [PhocusWire, Crunchbase — verified]
+- **Global white-label B2B trip-planning is established** (mTrip: 300+ agencies/35 countries; Sygic; Simplified.Travel) but none are India-native. [Verified]
+- **Indian travel-agent SaaS proves willingness to pay** — Sembark (1,000+ travel businesses, template/drag-and-drop itinerary builder + CRM), TravClan (15,000+ agents, inventory-led). **Neither is AI-native.** This is the open wedge. [Verified]
+
+### User feedback findings (first interviews, July 2026)
+
+1. **"What's the moat? There are many travel planners."** — Differentiation is not yet legible to users.
+2. **Itineraries are touristy** — top-10-list output; no off-beat/less-crowded discovery despite the Reddit corpus containing exactly that signal.
+3. **Refinements don't bite** — e.g. "I'm a Harry Potter fan" should verifiably add WB Studio Tour / Bodleian to a UK itinerary; "less crowded beaches in Phuket" should surface verified hidden gems. Currently refinements are prompt nudges, not hard constraints.
+4. **Budget is the #1 planning primitive for Indian users** — the deterministic tier-based estimator is a good skeleton but not grounded in live prices and cannot plan *from* a budget.
+
+Root cause of 2–4: generation is prompt-led; the data that fixes it (`itinerary_corpus`, Reddit gem-signal, live price grounding) is built or buildable but not wired into the generation path.
+
+### Revised read
+
+**Score: 5/10 → 6/10 (conditional).** The single largest red flag (no path to monetization due to no-accounts principle) is resolved; technical quality is higher than the original desk review credited (production-grade retry/fallback hardening, deterministic budget skeleton). Remaining concerns — feature sprawl vs. a solo founder, unvalidated differentiation, distribution — are unchanged and now the binding constraints. The differentiation and distribution plan, including phased kill/go criteria, lives in **[GTM_STRATEGY.md](GTM_STRATEGY.md)**.

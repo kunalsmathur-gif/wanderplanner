@@ -9,6 +9,12 @@ const PACES = [
   { id: 'packed', label: '⚡ Packed', desc: '5–6 activities/day' },
 ] as const
 
+const CROWD_PREFS = [
+  { id: 'touristy', label: '🗼 Iconic Spots', desc: 'The classic must-sees' },
+  { id: 'balanced', label: '⚖️ Mix of Both', desc: 'Famous sights + a few gems' },
+  { id: 'offbeat', label: '💎 Hidden Gems', desc: 'Quiet, community-loved places' },
+] as const
+
 async function fetchConversion(amountInr: number): Promise<number | null> {
   if (!amountInr || amountInr <= 0) return null
   try {
@@ -78,6 +84,29 @@ export function PaceBudgetSection() {
             ✓ Pace overridden to Relaxed — group includes children under 5.
           </p>
         )}
+      </div>
+
+      <div>
+        <label className="block text-xs text-slate-500 mb-2">Crowd style</label>
+        <div className="flex gap-3">
+          {CROWD_PREFS.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => updateConfig({ crowd_preference: c.id })}
+              className={[
+                'flex-1 px-3 py-3 rounded-lg border text-center transition-all',
+                config.crowd_preference === c.id
+                  ? 'bg-[#1E40AF] border-[#1E40AF] text-white'
+                  : 'bg-white border-slate-300 text-slate-700 hover:border-[#1E40AF]',
+              ].join(' ')}
+            >
+              <div className="text-sm font-medium">{c.label}</div>
+              <div className={`text-xs mt-0.5 ${config.crowd_preference === c.id ? 'text-blue-200' : 'text-slate-400'}`}>
+                {c.desc}
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
 
       <div>
