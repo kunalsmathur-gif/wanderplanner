@@ -15,7 +15,7 @@ export interface AdminSummary {
   cost_usage: {
     gemini_requests_30d: number
     gemini_tokens_30d: number
-    gemini_estimated_cost_usd_30d: number
+    gemini_estimated_cost_inr_30d: number
     pexels_calls_30d: number
   }
 }
@@ -42,4 +42,47 @@ export async function deleteUser(userId: string): Promise<void> {
 export async function purgeAllUsers(confirm: string): Promise<{ deleted_count: number }> {
   const { data } = await adminApi.post('/api/admin/users/purge-all', { confirm })
   return data as { deleted_count: number }
+}
+
+// ── Admin access requests ────────────────────────────────────────────────
+
+export interface AdminRequest {
+  id: string
+  user_id: string
+  user_email: string | null
+  user_display_name: string | null
+  status: 'pending' | 'approved' | 'rejected'
+  message: string | null
+  created_at: string
+  reviewed_at: string | null
+}
+
+/** Any authenticated (non-admin) user can call this to ask for admin access.
+ * Never grants access itself — creates a pending request that existing
+ * admins see in the console and are emailed about. */
+export async function requestAdminAccess(message?: string): Promise<AdminRequest> {
+  const { data } = await adminApi.post('/api/admin/requests', { message: message || null })
+  return data as AdminRequest
+}
+
+/** Read-only lookup of the current user's own most recent admin request
+ * (used by the account page to show "pending" / "declined" state). */
+export async function getMyAdminRequest(): Promise<AdminRequest | null> {
+  const { data } = await adminApi.get('/api/admin/requests/me')
+  return data as AdminRequest | null
+}
+
+export async function listAdminRequests(status: 'pending' | 'approved' | 'rejected' | 'all' = 'pending'): Promise<AdminRequest[]> {
+  const { data } = await adminApi.get('/api/admin/requests', { params: { status } })
+  return data as AdminRequest[]
+}
+
+export async function approveAdminRequest(requestId: string): Promise<AdminRequest> {
+  const { data } = await adminApi.post(`/api/admin/requests/${requestId}/approve`)
+  return data as AdminRequest
+}
+
+export async function rejectAdminRequest(requestId: string): Promise<AdminRequest> {
+  const { data } = await adminApi.post(`/api/admin/requests/${requestId}/reject`)
+  return data as AdminRequest
 }

@@ -91,6 +91,15 @@ def _clear_session_cookies(response: Response) -> None:
         response.delete_cookie(name, domain=settings.cookie_domain or None, path="/")
 
 
+@router.get("/auth/config")
+async def auth_config() -> dict:
+    """Public, non-secret capability flags for the auth UI — lets the
+    frontend hide "Continue with Google" entirely when no OAuth client is
+    configured (e.g. local dev), instead of showing a button that always
+    fails with a 503."""
+    return {"google_sso_enabled": bool(settings.google_client_id)}
+
+
 @router.post("/auth/signup", response_model=UserResponse)
 @limiter.limit(AUTH_RATE_LIMIT)
 async def signup(request: Request, response: Response, body: SignupRequest, db: AsyncSession = Depends(get_db)) -> UserResponse:
@@ -99,9 +108,14 @@ async def signup(request: Request, response: Response, body: SignupRequest, db: 
 
     existing = await db.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none() is not None:
-        # Same generic message whether or not the email exists, to avoid
-        # account enumeration.
-        raise HTTPException(status_code=400, detail="Unable to sign up with these details.")
+        # Explicit, actionable message (product decision): tell the user the
+        # given email is already registered rather than a generic error, even
+        # though this trades off some resistance to account-enumeration
+        # probing for a clearer signup UX.
+        raise HTTPException(
+            status_code=400,
+            detail="An account with this email already exists. Try logging in instead.",
+        )
 
     user = User(
         email=body.email,

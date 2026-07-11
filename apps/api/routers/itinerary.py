@@ -22,23 +22,59 @@ from models.trip import TripConfig
 router = APIRouter()
 
 
+# Rotated during the actual (long) LLM call so the loader keeps showing
+# fresh, engaging progress instead of sitting static for 30-90s. These are
+# intentionally vague/varied (not tied to real internal steps) since the LLM
+# call itself is a single opaque request with no granular progress signal.
+_GENERATION_FILLER_MESSAGES = [
+    "Mapping out your days...",
+    "Matching activities to your pace...",
+    "Balancing everything within budget...",
+    "Adding a few local favourites...",
+    "Double-checking timings & logistics...",
+    "Putting the finishing touches on your plan...",
+]
+
+
 async def _stream_generation(trip_config: TripConfig, db: AsyncSession, user: User) -> AsyncGenerator[str, None]:
     async def send(event: str, data: dict) -> str:
         return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
     reset_usage()
-    yield await send("status", {"message": "Analysing your preferences...", "step": 1, "total_steps": 4})
+    total_steps = len(_GENERATION_FILLER_MESSAGES) + 3  # analysing + searching + fillers + finalising
+    yield await send("status", {"message": "Analysing your preferences...", "step": 1, "total_steps": total_steps})
     await asyncio.sleep(0)
 
-    yield await send("status", {"message": "Searching destination content...", "step": 2, "total_steps": 4})
+    yield await send("status", {"message": "Searching destination content...", "step": 2, "total_steps": total_steps})
     await asyncio.sleep(0)
 
     try:
-        result = await asyncio.wait_for(
-            generate_itinerary(trip_config),
-            timeout=settings.llm_timeout_seconds,
+        task = asyncio.ensure_future(
+            asyncio.wait_for(generate_itinerary(trip_config), timeout=settings.llm_timeout_seconds)
         )
-        yield await send("status", {"message": "Finalising your schedule...", "step": 4, "total_steps": 4})
+
+        # Poll the in-flight task every few seconds; each tick, emit the next
+        # rotating filler message so the UI shows continuous progress during
+        # the actual (opaque) LLM generation window.
+        step = 2
+        msg_idx = 0
+        while not task.done():
+            done, _pending = await asyncio.wait({task}, timeout=3.0)
+            if task in done:
+                break
+            step = min(step + 1, total_steps - 1)
+            yield await send(
+                "status",
+                {
+                    "message": _GENERATION_FILLER_MESSAGES[msg_idx % len(_GENERATION_FILLER_MESSAGES)],
+                    "step": step,
+                    "total_steps": total_steps,
+                },
+            )
+            msg_idx += 1
+
+        result = await task
+        yield await send("status", {"message": "Finalising your schedule...", "step": total_steps, "total_steps": total_steps})
         yield await send("data", result.model_dump())
         await log_event(
             db,
