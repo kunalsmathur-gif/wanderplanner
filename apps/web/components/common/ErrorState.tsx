@@ -21,7 +21,7 @@ const ERROR_META: Record<string, { icon: string; title: string; hint: string }> 
   NETWORK_ERROR: {
     icon: '📡',
     title: 'Connection lost',
-    hint: 'Could not reach the WanderPlan server. Check your internet connection and try again.',
+    hint: 'Could not reach the WanderPlanner server. Check your internet connection and try again.',
   },
   NO_RESULTS: {
     icon: '🔍',

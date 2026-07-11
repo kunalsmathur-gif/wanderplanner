@@ -10,7 +10,7 @@ from core.config import settings
 from core.logging_config import configure_logging
 from core.rate_limit import limiter
 from core.scheduler import start_scheduler, stop_scheduler
-from routers import itinerary, comparison, best_time, search, geocode, feasibility, chat, recommend_cities, chat_refine, reddit_highlights, travel_tips, extract_trip, share, wizard_chat
+from routers import itinerary, comparison, best_time, search, geocode, feasibility, chat, recommend_cities, chat_refine, reddit_highlights, travel_tips, extract_trip, share, wizard_chat, auth, admin, analytics
 
 configure_logging()
 
@@ -33,7 +33,7 @@ async def _seed_reddit():
 
 
 app = FastAPI(
-    title="WanderPlan API",
+    title="WanderPlanner API",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -45,11 +45,10 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
-    # No session cookies/credentialed requests exist yet (see fix #1 —
-    # auth — in docs/scaling-tech-challenges.md). Keep this disabled until
-    # real session cookies are introduced; re-enable together with auth,
-    # not before, per Security Vulnerabilities #7.
-    allow_credentials=False,
+    # Credentialed requests are now required for auth (httpOnly session
+    # cookies). `allowed_origins` is validated at startup to reject "*"
+    # (core/config.py), so this is safe — see Security Vulnerabilities #7.
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -68,6 +67,9 @@ app.include_router(travel_tips.router, prefix="/api")
 app.include_router(extract_trip.router, prefix="/api")
 app.include_router(share.router, prefix="/api")
 app.include_router(wizard_chat.router, prefix="/api")
+app.include_router(auth.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")
+app.include_router(analytics.router, prefix="/api")
 
 
 @app.get("/health")

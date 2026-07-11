@@ -35,6 +35,20 @@ function FlyToHovered({ items, hoveredId }: { items: ItineraryItem[]; hoveredId:
   return null
 }
 
+// react-leaflet's `center` prop on <MapContainer> only applies on first
+// mount — changing it afterwards (e.g. switching itinerary days, which
+// changes the computed centre) does nothing on its own. Without this, once
+// mounted the map would stay stuck wherever it first opened.
+function RecenterOnChange({ center, hoveredId }: { center: [number, number]; hoveredId: string | null }) {
+  const map = useMap()
+  useEffect(() => {
+    if (hoveredId) return // let FlyToHovered own the camera while something's selected
+    map.setView(center, 13, { animate: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [center[0], center[1]])
+  return null
+}
+
 interface Props {
   items: ItineraryItem[]
   hoveredId: string | null
@@ -71,6 +85,7 @@ export default function ItineraryMap({ items, hoveredId, center }: Props) {
         </Marker>
       ))}
       <FlyToHovered items={validItems} hoveredId={hoveredId} />
+      <RecenterOnChange center={center} hoveredId={hoveredId} />
     </MapContainer>
   )
 }

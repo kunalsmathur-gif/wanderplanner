@@ -1,4 +1,4 @@
-# WanderPlan Bug Fixes Summary
+# WanderPlanner Bug Fixes Summary
 
 ## Status: 1/5 Fixed, 4 Pending Investigation
 

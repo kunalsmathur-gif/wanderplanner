@@ -4,6 +4,10 @@ import type { TripConfig, ItineraryResponse, ComparisonResponse, DestinationInpu
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000',
   timeout: 25_000,
+  // The itinerary-generation endpoint now requires an authenticated session
+  // cookie (see /api/generate-itinerary auth gate) — credentials must be
+  // sent even though the frontend/backend are on different origins.
+  withCredentials: true,
 })
 
 // ── Geocode ───────────────────────────────────────────────────────────────
@@ -71,6 +75,10 @@ export interface WizardChatResponse {
   config_patch: Partial<TripConfig>
   ready_to_generate: boolean
   summary: string | null
+  // True when `chips` is a multi-value field (e.g. travel themes) the user
+  // should be able to pick several of before continuing. Computed
+  // deterministically server-side — do not re-derive this on the frontend.
+  multi_select: boolean
 }
 
 export async function wizardChat(
@@ -78,11 +86,20 @@ export async function wizardChat(
   partialConfig: Partial<TripConfig>,
   preloadedDestination?: string,
 ): Promise<WizardChatResponse> {
-  const { data } = await api.post('/api/wizard-chat', {
-    messages,
-    partial_config: partialConfig,
-    preloaded_destination: preloadedDestination ?? null,
-  })
+  const { data } = await api.post(
+    '/api/wizard-chat',
+    {
+      messages,
+      partial_config: partialConfig,
+      preloaded_destination: preloadedDestination ?? null,
+    },
+    // Longer timeout than the shared default: the backend retries up to 3x
+    // on transient Gemini errors AND on JSON-validity failures, and observed
+    // real-world latency for that worst case (5s + 7s + 13s+) can land right
+    // at or past the default 25s, surfacing as a spurious "Connection error"
+    // even though the backend eventually succeeds.
+    { timeout: 45_000 },
+  )
   return data as WizardChatResponse
 }
 
@@ -115,7 +132,10 @@ export interface ExtractedTrip {
 }
 
 export async function extractTrip(input: string): Promise<ExtractedTrip> {
-  const { data } = await api.post('/api/extract-trip', { input })
+  // Same rationale as wizardChat: this endpoint retries up to 3x on Gemini
+  // transient errors / JSON-validity failures, which can exceed the shared
+  // 25s default in the worst case.
+  const { data } = await api.post('/api/extract-trip', { input }, { timeout: 45_000 })
   return data as ExtractedTrip
 }
 
@@ -156,6 +176,9 @@ export function streamItinerary(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ trip_config: tripConfig }),
     signal: controller.signal,
+    // Required to send the httpOnly session cookie — generation now
+    // requires authentication (see /api/generate-itinerary auth gate).
+    credentials: 'include',
   })
     .then(async (res) => {
       // Handle non-2xx responses before trying to read SSE stream
@@ -175,7 +198,10 @@ export function streamItinerary(
             }
           }
         } catch { /* ignore parse errors */ }
-        onError('HTTP_ERROR', detail, res.status >= 500)
+        // Distinguish "please sign in" from other errors so callers (e.g.
+        // the wizard's generate action) can redirect to /signup instead of
+        // showing a generic retry-able error banner.
+        onError(res.status === 401 ? 'AUTH_REQUIRED' : 'HTTP_ERROR', detail, res.status >= 500)
         return
       }
 

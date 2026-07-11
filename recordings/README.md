@@ -1,4 +1,4 @@
-# WanderPlan Test Recordings
+# WanderPlanner Test Recordings
 
 Store your screen recordings here.
 

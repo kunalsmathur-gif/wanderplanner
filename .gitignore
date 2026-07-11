@@ -30,12 +30,22 @@ qdrant_storage/
 .DS_Store
 Thumbs.db
 
+# Local SQLite dev database
+apps/api/dev.db
+*.db-journal
+
 # Test coverage
 .coverage
 htmlcov/
 coverage/
 .pytest_cache/
 
+# Playwright
+apps/web/playwright-report/
+apps/web/test-results/
+
 # Logs
 *.log
 npm-debug.log*
+.vercel
+.env*

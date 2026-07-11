@@ -1,21 +1,26 @@
-# **WanderPlan (AI Travel Advisor) — Complete Product Requirements Document (PRD)**
+# **WanderPlanner (AI Travel Advisor) — Complete Product Requirements Document (PRD)**
 
 ## **1\. Document Control**
 
 * **Author:** Product Manager  
-* **Status:** Rev 6 — Updated ✅ (LLM Wizard · Mobile-Responsive · RAG)
+* **Status:** Rev 10 — Updated ✅ (Crowd-Style Preference · Hidden-Gem Curation · Real-Traveller Itinerary Corpus Grounding)
+* **Strategy companions:** [GTM_STRATEGY.md](GTM_STRATEGY.md) (go-to-market plan, product bets, phased roadmap with kill/go criteria) and [STARTUP_EVALUATION.md](STARTUP_EVALUATION.md) (+ 2026-07-11 re-evaluation addendum) — forward-looking positioning/monetization decisions live there, not in this PRD
 * **Target Release:** Q4 2026  
 * **Platform:** Web Application — Desktop-first (1440x900, 1920x1080) with mobile-responsive support (v5.0+). Bottom tab navigation on mobile (`< lg` breakpoint). No standalone mobile PWA or native app scope.
 * **Language:** English only (no i18n or RTL support in Phase 1)
 * **Monetization:** Free product — no paywalls, no feature gating
 * **Collaboration:** Single-user planning only — co-travelers cannot edit itineraries
-* **API Strategy:** No third-party API key dependencies in Phase 1 (see Section 6.1 for full stack)
+* **API Strategy:** Minimize paid/contracted travel-data dependencies in Phase 1; core travel data remains mostly free/no-contract, while accounts/auth use Google OAuth, Resend, and managed Postgres (see Section 6.1 for full stack)
 
   ## **2\. Executive Summary & Objective**
 
-WanderPlan is an all-in-one desktop web application designed to solve the friction of fragmented, multi-tab travel coordination. By consolidating maps, booking aggregators, spreadsheets, and travel blogs into a single interface, WanderPlan functions as a unified engine for destination discovery, side-by-side location comparisons, hyper-personalized itinerary building, and post-selection logistics planning.
+WanderPlanner is an all-in-one desktop web application designed to solve the friction of fragmented, multi-tab travel coordination. By consolidating maps, booking aggregators, spreadsheets, and travel blogs into a single interface, WanderPlanner functions as a unified engine for destination discovery, side-by-side location comparisons, hyper-personalized itinerary building, and post-selection logistics planning.
 
-The application pairs traditional third-party travel APIs with an AI data layer to deliver granular, timestamped travel schedules tailored to complex group dynamics, pet constraints, accessibility limits, corporate/remote work needs, and budget boundaries. Recommendations are dynamically enhanced by real-time social signals (Reddit, YouTube, Instagram) to capture authentic, trending, on-the-ground user insights rather than static commercial itineraries.
+Users can explore the landing experience freely, but **a free account is now required before itinerary generation**. Sign-in options are email/password or Google SSO, and the product intentionally gates auth at the moment the user clicks **Generate** rather than forcing login on first page load.
+
+The application pairs traditional third-party travel APIs with an AI data layer to deliver granular, timestamped travel schedules tailored to complex group dynamics, pet constraints, accessibility limits, corporate/remote work needs, and budget boundaries. Recommendations are dynamically enhanced by real-time social signals (Reddit, YouTube, Instagram) to capture authentic, trending, on-the-ground user insights rather than static commercial itineraries. As of Rev 9, generation is additionally grounded in a **real-traveller itinerary corpus**: day-by-day trips scraped from travel blogs, Wikivoyage, Reddit trip reports, and YouTube transcripts are structured, quality-scored, and — when they match the user's trip shape (destination, duration, pace, purpose, group type) — injected into the generation prompt as few-shot examples, so pacing and same-day place groupings are built on patterns that actually worked for real travellers rather than model priors alone.
+
+As of Rev 10, users also control a **crowd-style preference** (Iconic Spots · Mix of Both · Hidden Gems — captured conversationally by Anya, including Hinglish phrasing like "bheed nahi chahiye"). In Hidden Gems mode, itineraries are built around **community-verified, less-crowded places**: OpenStreetMap-verified POIs ranked by high praise but low mention volume in traveller forums, each carrying visible provenance ("mentioned in N traveller posts on r/x") and a 💎 badge — directly addressing the "itineraries only show major touristy places" gap from the July 2026 user interviews. A place with zero community mentions is never recommended as a gem, so recommendations stay checkable, not invented.
 
 ## **3\. User Personas & Core Traits**
 
@@ -53,7 +58,7 @@ The application pairs traditional third-party travel APIs with an AI data layer 
 
   ### **Epic 1: The LLM-Powered Anya Wizard (Onboarding Interface)**
 
-**Implementation (v5.0):** The wizard is now fully LLM-powered using Gemini 2.5 Flash. Anya engages in natural conversation to collect all trip planning fields. A single message can fill multiple fields simultaneously (e.g. *"just me and my wife for 7 days to Bali, budget ₹1 lakh, moderate pace"* sets group + destination + dates + budget + pace in one turn). Chip quick-replies are dynamically generated by the LLM based on context. The wizard signals completion (`ready_to_generate=true`) once all 6 required fields are collected, validated server-side. The wizard follows a 3-stage flow: (1) collect 6 required fields, (2) offer one round of optional preferences (departure city, themes, food requirements), (3) generate signal. The production wizard runs Gemini 2.5 Flash at temperature 0.4 for more consistent extraction while preserving the conversational feel. Indian cultural context is built-in: currency shorthand (25k, 1L), Hinglish understanding, family travel norms, and veg/Jain food preference handling.
+**Implementation (v5.0):** The wizard is now fully LLM-powered using Gemini 2.5 Flash. Anya engages in natural conversation to collect all trip planning fields. A single message can fill multiple fields simultaneously (e.g. *"just me and my wife for 7 days to Bali, budget ₹1 lakh, moderate pace"* sets group + destination + dates + budget + pace in one turn). Chip quick-replies are dynamically generated by the LLM based on context. The wizard signals completion (`ready_to_generate=true`) once all 6 required fields are collected, validated server-side. The wizard follows a 3-stage flow: (1) collect 6 required fields, (2) offer one round of optional preferences (departure city, themes, food requirements), (3) generate signal. The production wizard runs Gemini 2.5 Flash at temperature 0.4 for more consistent extraction while preserving the conversational feel. Indian cultural context is built-in: currency shorthand (25k, 1L), Hinglish understanding, family travel norms, and veg/Jain food preference handling. Recent UX hardening also keeps the text input available throughout the optional follow-up round, enables true multi-select theme chips before submission, and reduces visibly truncated/garbled Anya replies through stronger retry and response-cleanup behavior.
 
 **Required fields:** purpose · destination · dates · budget · group size · pace
 
@@ -63,7 +68,7 @@ Captures granular trip criteria through a conversational flow with a 6-field pro
 
 | Step | Label | Description |
 |---|---|---|
-| **Step 1** | Plan Your Trip | All input fields on a single scrollable screen. "Generate Itinerary" CTA activates once all required fields are filled. |
+| **Step 1** | Plan Your Trip | All input fields on a single scrollable screen. After the 6 required fields are collected, Anya can still ask one round of optional follow-up questions before the backend explicitly enables the "Generate Itinerary" CTA. |
 | **Step 2** | Itinerary Overview | AI-generated destination overview and day-by-day schedule summary. User reviews and confirms or adjusts destination and dates. |
 | **Step 3** | Detailed Itinerary | Full timestamped itinerary rendered after the user clicks "Finalize" on Step 2. This is the primary working view (3-column layout). |
 
@@ -90,6 +95,23 @@ All fields below are presented on one scrollable page, grouped into logical visu
 * 7\. **Accommodations & Properties:** Style filters (Hotel, BnB, Service Apartment, Resort) + property toggles (Minimum Bedrooms, Bathrooms, Private Pool, Kitchen, Wheelchair Accessibility, Pet Friendly).  
 * 8\. **Pace & Budget:** Pace slider (Relaxed, Moderate, Packed) + currency selector and **maximum total group budget** input (all-inclusive: accommodation, activities, local transport — international flights handled separately in Epic 5).
 
+  ### **Epic 1A: Authentication, Consent & Data Rights**
+
+Authentication is now a product requirement, not a future enhancement. Users must create a **free account** before itinerary generation, using either:
+
+- **Email + password**
+- **Google SSO**
+
+Supporting requirements:
+
+- **Gate timing:** users may browse the landing page and complete the conversational wizard while signed out, but the auth gate appears when they click **Generate Itinerary**.
+- **Dedicated full pages, not modals:** `/signup`, `/login`, `/forgot-password`, `/reset-password`, `/account`, `/terms`, `/privacy`, and `/admin` (live admin console, reachable from the account/nav menu for approved admins only).
+- **Pending-generation resume:** if a signed-out user reaches the gate after fully completing the wizard, the collected trip config must survive the signup/login/OAuth round-trip and auto-resume generation afterward.
+- **Password reset:** forgot-password flow must avoid account enumeration, use emailed single-use reset links, and revoke all existing sessions after a successful password reset.
+- **Consent capture:** signup requires a single checkbox linking to the full Terms of Service and Privacy Policy, with consent timestamp recorded server-side.
+- **Data rights:** users can self-delete from `/account`; admin console provides both per-user deletion and bulk-purge tools for operational use.
+- **Admin escalation:** no user is ever auto-admin; becoming an admin requires an explicit request (from `/account`) and approval by an existing admin (from `/admin`), see Clarification #13.
+
   ### **Epic 2: Dynamic Curated Itinerary Engine & Social Media Layer**
 
 Translates wizard inputs and semantic vector trends into a day-by-day, interactive schedule complete with timestamped routing.
@@ -99,7 +121,7 @@ Translates wizard inputs and semantic vector trends into a day-by-day, interacti
 * **Visual Highlights & Video Integration:** Flags highly photogenic spots with a prominent 📸 Instaworthy Photo Op badge and integrates high-resolution regional image galleries sourced from Unsplash (free tier, no API key required for non-commercial use) and Wikivoyage image assets.  
 * **Native YouTube Embeds:** Itinerary detail cards support inline video embedding via the YouTube oEmbed endpoint (no API key required). Users can watch neighborhood walk-throughs, food vlogs, or travel guides directly inside the itinerary timeline without breaking their planning flow.  
 * **Social Trend Factors:** Real-time recommendations ingest hot discussion topics from Reddit public JSON feeds (no OAuth required for read-only access) and contextual travel video embeds from YouTube. Instagram integration is **excluded from Phase 1** due to API restrictions on public hashtag access.  
-* **Session Persistence & PDF Export:** Itineraries are session-specific and are not persisted to a user account (no login required). Users are provided a prominent **"Download Itinerary as PDF"** CTA to save their plan locally. PDF is a styled branded document containing the full itinerary, visa advisory, packing checklist, currency rates, and booking deep-links — single continuous document with active hyperlinks and destination photos (no maps).
+* **Session Persistence & PDF Export:** Itineraries are now generated behind a free account and can survive authentication round-trips via pending-generation resume logic. Longer-term itinerary history persistence is still limited; the **"Download Itinerary as PDF"** export remains the primary user-controlled take-away artifact. PDF is a styled branded document containing the full itinerary, visa advisory, packing checklist, currency rates, and booking deep-links — single continuous document with active hyperlinks, colorful travel-journal card styling, and destination/day photography to make the export more visual and shareable (no maps).
 
   ### **Epic 3: Dual-Location Comparison Engine**
 
@@ -154,7 +176,7 @@ The application follows a **Three-Column Split Architecture** for its main dashb
 
 ```
 +---------------------------------------------------------------------------------------------------------+
-| [W] WanderPlan  |  Trip: BLR to KUL + LGK (Nov 13-19, 2026)  |  12 Pax (4 Kids, 0 Pets)  |  Budget: Active |
+| [W] WanderPlanner  |  Trip: BLR to KUL + LGK (Nov 13-19, 2026)  |  12 Pax (4 Kids, 0 Pets)  |  Budget: Active |
 +---------------------------------------------------------------------------------------------------------+
 | COLUMN 1: TRACKING & UTILITIES    | COLUMN 2: TIMELINE & SELECTION     | COLUMN 3: CONTEXTUAL SIDEBAR   |
 | (Width: 20%)                      | (Width: 55%)                       | (Width: 25%)                   |
@@ -180,10 +202,16 @@ The application follows a **Three-Column Split Architecture** for its main dashb
   * **Step 1 — Plan Your Trip:** All input fields on a single scrollable screen. No per-category step splits. A horizontal 3-step progress indicator sits at the top. The "Generate Itinerary" CTA at the bottom activates only once all required fields pass inline validation.
   * **Step 2 — Itinerary Overview:** Destination overview cards and day-summary blocks are presented. User confirms or adjusts destination and dates before proceeding.
   * **Step 3 — Detailed Itinerary:** Full 3-column layout with the complete timestamped schedule.
+* **Auth-gate placement:** The product does **not** force login on landing-page entry. Users can explore and complete the wizard signed out; the account requirement is enforced at the moment they click **Generate Itinerary**. If the user is not authenticated, the fully collected config is preserved and resumed after signup/login.
+* **Auth/legal page surfaces:** Use dedicated full pages — not modal auth — for `/signup`, `/login`, `/forgot-password`, `/reset-password`, `/terms`, `/privacy`, `/account`, and `/admin` (live internal admin analytics + access-request review console, gated to approved admins).
 * **Interactive Transitions:** Selected choice chips transition from a light grey border to Horizon Blue fill with a checkmark animation. Persona dropdown shows colored tags for each selected persona.
 * **Back Navigation:** Navigating back from Step 2 or 3 to Step 1 fully restores all previously entered values. State is session-scoped — does not survive a tab close or hard refresh.
 * **Auto-Pace Rule:** If the group includes any child under 5 years old, the Pace slider automatically sets to Relaxed and displays: *"Pace set to Relaxed — recommended for groups with young children."*
-* **Validation:** "Generate Itinerary" CTA remains disabled (semi-transparent grey) until: Trip Purpose, Origin, at least one date or season, and Budget are all filled.
+* **Validation:** "Generate Itinerary" CTA remains disabled (semi-transparent grey) until the backend confirms the conversational flow is actually ready to generate — this includes completion of any optional checkpoint follow-up prompt, not just raw required-field count.
+* **Multi-select Interests:** Chip groups representing array-style preferences (especially trip themes such as Culture, Food, Adventure, Photography) must support multi-select before the user advances the conversation. This is driven by an explicit `multi_select` signal from the backend per chip group (⭐ Rev 7) rather than inferred from chip label text on the frontend, so multiselect behavior stays correct regardless of how Anya phrases the options.
+* **Theme & Appearance:** A dark/light mode toggle is available everywhere the user can be — the itinerary dashboard header and the persistent Anya chat panel header, in addition to any shared read-only trip link (⭐ Rev 7).
+* **Activity Media:** YouTube video thumbnails on itinerary activity cards retry automatically on transient lookup failures and fall back to a gradient placeholder (never a broken-image icon) if a thumbnail is unavailable or a video has been removed (⭐ Rev 7).
+* **Shared auth shell:** All auth pages reuse the existing design tokens, `.btn` / `.input` primitives, and typography system through a shared centered-card `AuthLayout`; no separate auth-only design system is introduced.
 
   #### **B. The Live Comparison Matrix Screen**
 
@@ -197,11 +225,11 @@ The application follows a **Three-Column Split Architecture** for its main dashb
 
   ## **6\. Data & AI Architecture Strategy**
 
-To support semantic searches, deep personalization, and the orchestration of real-time social metrics, WanderPlan implements an AI infrastructure layer on top of traditional transactional APIs.
+To support semantic searches, deep personalization, and the orchestration of real-time social metrics, WanderPlanner implements an AI infrastructure layer on top of traditional transactional APIs.
 
 ```
                   +------------------------------------------------------+
-                  |            WanderPlan Core Application               |
+                  |            WanderPlanner Core Application               |
                   +------------------------------------------------------+
                                              |
                   +------------------------------------------------------+
@@ -219,9 +247,9 @@ To support semantic searches, deep personalization, and the orchestration of rea
  * Instagram Metadata Tags        * Natural Language Prompting     * Dynamic Penalty Adjustments
 ```
 
-### **6.1 AI Component Specifications & Phase 1 No-API-Key Data Stack**
+### **6.1 AI Component Specifications & Phase 1 Data Stack**
 
-> **Phase 1 Principle:** All data integrations must function without paid API keys or third-party API contracts. The stack below reflects this constraint.
+> **Phase 1 Principle:** Keep travel-data dependencies as lightweight and mostly free-tier/no-contract as possible, while allowing targeted managed services for core product infrastructure such as authentication, email delivery, and transactional storage.
 
 #### Phase 1 Approved Data Sources
 
@@ -238,7 +266,10 @@ To support semantic searches, deep personalization, and the orchestration of rea
 | YouTube Embeds | YouTube oEmbed endpoint | ❌ None | Embed public videos; no search quota |
 | Images | Unsplash (free tier) + Wikivoyage images | ❌ None | Destination photography |
 | LLM Engine | Google Gemini 2.5 Flash | ✅ GEMINI_API_KEY | Wizard chat, itinerary generation, city recommendations, trip extraction |
-| Vector Database | Qdrant (self-hosted) or Chroma (in-process) | ❌ None | Semantic search |
+| Transactional Database | PostgreSQL (Supabase in production) | ✅ DATABASE_URL | User accounts, consent, refresh tokens, analytics events, password reset tokens |
+| Vector Database | Qdrant | ❌ None | Semantic search / RAG retrieval — separate from Postgres |
+| Auth Identity | Google OAuth 2.0 | ✅ GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET | Optional Google SSO |
+| Transactional Email | Resend | ✅ RESEND_API_KEY | Password-reset delivery |
 | Flights | Skyscanner deep-link redirect | ❌ None | No live pricing; external redirect only |
 | Hotels | Booking.com deep-link redirect | ❌ None | No live inventory; external redirect only |
 | Visa Data | Wikivoyage visa sections (static, cached) | ❌ None | Advisory only; disclaimer required |
@@ -253,7 +284,8 @@ To support semantic searches, deep personalization, and the orchestration of rea
 * Instagram Graph API — **permanently excluded** (public hashtag search deprecated; no viable replacement)
 
 * **LLM Orchestration:** Google Gemini 2.5 Flash via the google-genai Python SDK. Handles wizard conversation, itinerary generation, city recommendations, destination comparison, and trip extraction. Temperature varies by task (0.1–0.6). No LangChain dependency.  
-* **Vector Database for Semantic Search:** **Qdrant** (self-hosted, open source) stores high-dimensional text embeddings of Wikivoyage destination guides, Wikipedia travel content, and Reddit post summaries from public JSON feeds. Enables semantic queries (e.g., *"remote work spots with good coffee near downtown"*).  
+* **Transactional Database:** **Postgres** (Supabase-managed in production) stores users, consent records, refresh tokens, password-reset tokens, and analytics events. This is the product system-of-record for auth/account/compliance data.
+* **Vector Database for Semantic Search:** **Qdrant** stores high-dimensional text embeddings of Wikivoyage destination guides, Wikipedia travel content, and Reddit post summaries from public JSON feeds. Enables semantic queries (e.g., *"remote work spots with good coffee near downtown"*). Qdrant and Postgres serve different roles: **Qdrant for retrieval, Postgres for user/auth/analytics state**.
 * **Social Ingestion:** Reddit public subreddit JSON endpoints (e.g., `reddit.com/r/travel.json`) ingested and indexed into the vector database on a scheduled basis. Content is filtered to safe, travel-relevant posts before indexing. YouTube video IDs are matched contextually using destination name + keyword heuristics against public oEmbed lookups — no YouTube Data API quota consumed.
 
   ### **6.2 Itinerary Alignment Score (Machine Learning Optimization Framework)**
@@ -275,6 +307,8 @@ $$Score\_{Final} \= (W\_p \\cdot P\_{match}) \+ (W\_b \\cdot B\_{match}) \+ (W\_
   * $\\sum Penalties$: Fixed deduction of $0.05$ per negative social signal keyword (e.g., "avoid") found in Reddit/social data for the venue. Value is fixed in Phase 1 and does not scale with signal volume.
 
   > **Visibility:** The alignment score is an **internal ranking signal only** — it is never displayed to the user in the UI.
+
+  > **Implementation status (v10.7):** `ItineraryItem` has no per-item cost field today, so `B_match`/`budget_score` is implemented as a **tag-based proxy** (`chains/scoring.py::_budget_fit()`) rather than the literal cost-vs-limit formula below: it resolves a persona/purpose **budget tier** (`core/budget_tiers.py`) and scores each item against budget-leaning/premium-leaning tag vocabularies, plus splurge/save-category bonuses. The formula below remains the target design once real per-item pricing exists (see Phase 3 of the budget-accuracy roadmap in `docs/rag-strategy.md`).
 
   Python
 
@@ -311,7 +345,7 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
   * *Empty results (no venues match filters):* Display an inline empty state per panel: *"No results found for your filters — try adjusting your budget, pace, or destination."* Each empty panel shows the message independently; other panels are unaffected.
   * *Data source unavailable (Wikivoyage/Wikipedia/OSM unreachable):* Generation proceeds with affected sections blank. Affected cards display a stock destination image and a *"Limited information available for this destination"* badge. Generation is never fully blocked by a single data source failure.
   * *Comparison engine partial failure (one destination returns no data):* Display the grid with available data populated; affected cells show *"Data unavailable"* overlay. A warning banner above the grid reads: *"Some data could not be loaded for [Destination]. Results may be incomplete."*
-* **State Retention:** Itineraries are **session-specific**. No user account or login is required. The application does not persist itinerary data beyond the active browser session. Users retain their plan by using the **"Download Itinerary as PDF"** export function. Browser localStorage may be used only as a short-term within-session buffer against accidental tab refreshes, not as a long-term persistence mechanism.  
+* **State Retention:** A **free account is required before itinerary generation**. The application now persists core account/auth/analytics data in Postgres, but itinerary history itself is still primarily session-scoped in the current product. Browser sessionStorage/localStorage may be used as a short-term resilience buffer (for example, to survive the auth round-trip right before generation), while the **"Download Itinerary as PDF"** export remains the primary user-controlled long-term artifact.
 * **Cross-Browser Support:** Full layout rendering parity across all Chromium-based engines, Safari Desktop, and Mozilla Firefox releases.  
 * **Viewport:** Desktop-first. Minimum supported viewport: 1280px (desktop). Mobile-responsive layout (`< lg` breakpoint, ~1024px) added in v5.0 — bottom tab navigation replaces 3-column layout on small screens. No standalone mobile app scope.  
 * **Notifications:** No push notifications, email confirmations, or SMS alerts of any kind in Phase 1.  
@@ -394,11 +428,107 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 | Parameter | Decision |
 |---|---|
 | Content scope | Full: day-by-day schedule + visa advisory + packing checklist + currency rates + booking deep-links |
-| Visual fidelity | **Styled, branded document** (react-pdf with WanderPlan design tokens) |
+| Visual fidelity | **Styled, branded document** (react-pdf with WanderPlanner design tokens, colorful travel-journal cards, and destination/day photography) |
 | Map inclusion | **No maps** — text, lists, and destination photos only |
 | Pagination | **Single continuous document** (no page-per-day breaks) |
 | Clickable links | **Yes** — venue names and booking URLs are active hyperlinks |
 
+---
+
+### **Clarification #7 — Authentication Method ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| OTP/mobile sign-in in Phase 1? | **No. Deferred.** Launch with **email/password + Google SSO** only. |
+| Why not OTP first? | Faster path to a secure, supportable launch using standard password recovery + a familiar federated identity option. |
+
+---
+
+### **Clarification #8 — Auth Surface: Pages vs Modal ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Login/signup as modal or full page? | **Dedicated full pages** — `/signup`, `/login`, `/forgot-password`, `/reset-password` |
+| Why? | Better for accessibility, direct linking, password-reset flows, and full-page OAuth round trips. |
+
+---
+
+### **Clarification #9 — Where to Enforce the Auth Gate ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Force login on landing page? | **No.** Let users explore and complete the wizard first. |
+| When is auth enforced? | **At the point of clicking "Generate Itinerary".** Preserve the completed trip config, redirect to auth, then auto-resume generation. |
+
+---
+
+### **Clarification #10 — Production Postgres Host ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Which Postgres host? | **Supabase** in production. |
+| Why? | Managed Postgres with a practical free tier; chosen over SQLite (multi-instance/file-locking mismatch), and over other candidates after evaluating ops vs cost tradeoffs. |
+
+---
+
+### **Clarification #11 — Transactional Email Provider ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| How are password-reset emails sent? | **Resend** via HTTP API. |
+| Why? | Simpler operational fit than SMTP-heavy flows and aligns with the app's existing `httpx`-centric integration style. |
+
+
+---
+
+### **Clarification #12 — Session Status Visibility in the Main App Shell ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Should the main app (not just `/account`) show whether the user is signed in, and let them sign out from there? | **Yes.** Found during local manual testing that there was no login/signup CTA on the home page, no "you're signed in" indicator, and no discoverable sign-out option outside of navigating directly to `/account`. |
+| Fix | Added a shared `UserMenu` component: "Log in"/"Sign up" links when signed out; user's name/email in a dropdown with "Account settings" + "Log out" when signed in. Rendered in the landing page nav, the itinerary dashboard title bar, and the top nav bar. |
+
+### **Clarification #13 — Admin Escalation Policy ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Can a new sign-up ever become an admin automatically, and if not, how does anyone become a second/third admin post-launch? | **No new user is ever auto-admin.** `SignupRequest` has no `is_admin` field and the DB column defaults `false` — this was already structurally true. What was missing was a *formal, auditable path* to grant admin access to a trusted existing user. |
+| Fix | Added a request/approval workflow: any signed-in non-admin can submit a one-click "Request admin access" from `/account` (optional reason message). Every existing admin is emailed the moment a request is created (best-effort via Resend, dev-log fallback). The request also appears in a dedicated panel at the top of `/admin`, where any existing admin can Approve (flips `is_admin=true`, emails the requester) or Reject (no access change, emails the requester). Requests are idempotent while pending (no duplicate spam) and one-shot once reviewed (no re-approving/re-rejecting). |
+| Where documented | `TECHNICAL_DOCUMENTATION.md` §7A + v10.6 changelog, `docs/system-design.md` data-flow + DB schema, `DESIGN_REVAMP_SUMMARY.md` admin console UI section. |
+
+---
+
+### **Clarification #14 — Signup Error Message vs. Account-Enumeration Resistance ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Should signup tell a user *why* it failed (e.g. "this email is already registered") or keep a generic message to resist account enumeration? | **Be specific.** Found during local testing that a generic `"Unable to sign up with these details."` message left users confused about whether to retry, check their email, or try logging in instead. |
+| Fix | `POST /api/auth/signup` now returns `"An account with this email already exists. Try logging in instead."` when the email is already registered. Login's error message remains the deliberately combined `"Incorrect email or password."`, which still avoids confirming whether a given email is registered at *login* time — the enumeration trade-off was accepted specifically for signup, not login. |
+| Where documented | `docs/system-design.md` §3A, `TECHNICAL_DOCUMENTATION.md` §14 v10.13 changelog. |
+
+### **Clarification #15 — Hiding Unconfigured Google SSO ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Should the "Continue with Google" button always be shown, even where Google OAuth isn't configured (e.g. local dev)? | **No — hide it until configured.** Found during local testing that clicking it always failed with a raw `{"detail":"Google sign-in is not configured."}` error, which looks broken rather than "not applicable here." |
+| Fix | New `GET /api/auth/config` endpoint reports whether Google SSO is configured (`bool(settings.google_client_id)`); the frontend's `GoogleSsoSection` component only renders the button + divider when true, failing closed (hidden) on load or on any fetch error. |
+| Where documented | `docs/system-design.md` §3A, `DESIGN_REVAMP_SUMMARY.md` (July 9, 2026 component updates), `TECHNICAL_DOCUMENTATION.md` §14 v10.13 changelog. |
+
+### **Clarification #16 — Mobile Is a First-Class Target, Not "Best Viewed on Desktop" ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| A large share of the target audience will use WanderPlanner primarily on mobile devices. Should the product keep warning mobile users it's "best viewed on desktop," or actually be designed for mobile? | **Actually be designed for mobile.** The old `MobileWarningBanner` contradicted this and has been removed. Live testing at a 375px viewport surfaced real overflow/usability bugs (header controls forced off-screen, footer links below the fold, floating chat button overlapping the bottom nav, full-screen map's Close button unreachable, map/day/venue selection requiring manual tab-hopping) — all fixed this pass. |
+| Fix | Header (`LandingHero.tsx`, `UserMenu.tsx`) made icon-only/compact below `sm:`; `AuthLayout.tsx` mobile spacing tightened so the login/signup footer link is always above the fold; `FloatingAnyaButton` repositioned above the bottom tab bar; Full Map View toolbar restructured so Close is always reachable; tapping an itinerary activity now auto-switches to the Map tab and highlights/flies-to it; full-screen map now centers on real itinerary coordinates instead of an unresolved `0/0` destination fallback; Anya's wizard modal backdrop changed from a flat black/white overlay to a frosted-glass blur of the homepage. |
+| Where documented | `docs/system-design.md` §16 v10.14, `TECHNICAL_DOCUMENTATION.md` §14 v10.14, `DESIGN_REVAMP_SUMMARY.md` (July 10, 2026 component updates). |
+
+### **Clarification #17 — Anya Chat: Budget/Theme/Pace/Feasibility Bugs Found in Live Testing ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Live testing of the budget → theme → pace → feasibility conversation surfaced several real bugs: luxury-stay requests weren't recalculating budget; theme chips only allowed single-select; pace chips sometimes didn't render at all; the infeasible-budget warning appeared too late with no explanation and an oddly-phrased suggested number; and the wizard could hang at "Generate itinerary" with no CTA or progress indicator. Fix each, or accept as known limitations? | **Fix all of them.** These are genuine product bugs, not intentional behavior. |
+| Fix | `core/budget_estimator.py` keyword matching broadened to substring-match (catches "luxurious", etc.). Multi-select chip detection (frontend + backend) now excludes generic "No preference" chips before evaluating, fixing theme chips. A general any-turn deterministic chip-backfill safety net (previously scoped only to the first "purpose" question) now covers any field, fixing missing pace chips. `feasibility_chain.py`'s deterministic bare-minimum floor is now traveller-tier-aware, with earlier and clearer shortfall messaging. A regex hallucination guard (`_HALLUCINATED_GENERATION_RE`) plus `_next_missing_field_prompt()` redirects the conversation back to the real next missing field instead of letting the wizard stall on hallucinated success text. Separately, the generation loading screen (previously silent for 30–90s after only 2 status messages) now streams rotating "in progress" filler messages every 3 seconds until the real result is ready. |
+| Where documented | `docs/system-design.md` §16 v10.14, `TECHNICAL_DOCUMENTATION.md` §14 v10.14, `docs/itinerary-generation-flow.md` (generation-loader notes), `DESIGN_REVAMP_SUMMARY.md` (July 10, 2026 component updates). |
 
 ---
 
@@ -436,6 +566,8 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 - Shown in the Trip Metrics panel: *"₹2,50,000 ≈ USD 3,000"*
 - The Gemini prompt receives budget in both INR and destination currency so it can make accurate activity cost decisions.
 
+> **Implementation status (v10.9 — Foreign-currency budget input):** the wizard now **explicitly states INR is assumed** the first time it asks for budget (previously this was only an implicit, undocumented assumption). If a user states their budget in one of 10 supported foreign currencies (USD, EUR, GBP, AED, SGD, AUD, CAD, JPY, THB, CHF), `core/currency_convert.py` deterministically detects the amount + currency (regex, no LLM math) and converts it to INR via the free, keyless Frankfurter.app API (same provider already used by the dashboard's `CurrencyWidget`), with a 6-hour in-memory cache and a hardcoded fallback rate table if the live call fails. The converted INR figure — never an LLM guess — is what gets stored in `config_patch.budget.amount`; Anya's reply transparently states both the original and converted figures plus the rate used (e.g. *"Got it, $2,000 is about ₹1,73,000 at today's rate."*). An unsupported currency prompts the user to restate in one of the 10 supported currencies or in ₹.
+
 ---
 
 ### **R5 — Budget Feasibility Check**
@@ -450,6 +582,10 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
   - **Recommends 2–3 alternative destinations** offering similar experiences at a lower price point
 - If `budget ≥ estimated_minimum_cost`, show a **Feasibility Green Badge**: *"Budget looks sufficient ✓"*
 - All estimates are clearly labelled as approximations.
+
+> **Implementation status (v10.8):** `estimated_minimum_cost` above is no longer a pure Gemini guess — `core/budget_estimator.py` computes it deterministically (free tools only, no paid pricing API) from destination cost tier + season + group composition + duration + traveller comfort level, and `feasibility_chain.py` takes `max(llm_estimate, deterministic_floor)` so the floor always wins if the LLM under-estimates. This check now also runs inside the **LLM chat wizard** (`LLMWizard.tsx`), not just the older structured form — previously it was silently skipped there, so a stated budget could sail straight into itinerary generation unchecked. If a user hasn't stated a budget at all, the wizard now asks a clarifying question (group size, then comfort level) before quoting any number — it never reuses the flat Section-2 "budget tiers" parsing table as a recommendation. If a user mentions already-booked flights/accommodation, those real amounts replace the corresponding estimated component rather than being ignored.
+
+> **Further implementation status (v10.13):** the v10.8 gate above covers the pre-generation `/api/feasibility-check` call. Separately, Anya's live chat conversation (`chains/wizard_chat_chain.py`) previously didn't apply the same scrutiny when a user *stated or lowered* their own budget mid-conversation — the deterministic bare-minimum hint was scoped to "only relevant if user asks for a recommendation," so the LLM had no instruction to compare a user-declared figure against it. Fixed by adding an explicit "FEASIBILITY CHECK" instruction so Anya now proactively flags a shortfall the moment a user states or reduces their budget, not just at the final pre-generation gate.
 
 ---
 
@@ -466,7 +602,7 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 #### UI
 - A **floating action bubble** (🗺️ or ✈️ icon, 52px, fixed bottom-right, z-index: 9999) is visible on all screens.
 - Clicking the bubble opens a **chat panel** (360px wide, slides up from bottom-right, max-height 500px).
-- The panel has a header ("WanderPlan Assistant"), message list, and a text input with Send button.
+- The panel has a header ("WanderPlanner Assistant"), message list, and a text input with Send button.
 - Panel can be closed via ✕ or by clicking the bubble again.
 
 #### Functionality
@@ -484,7 +620,7 @@ The chatbot system prompt enforces:
 3. **No booking**: Do not make bookings or collect payment information.
 4. **No PII**: Do not store or reference any personal information beyond what's in the current message.
 5. **Safe content**: No content that promotes unsafe travel practices.
-- If user asks an out-of-scope question, respond: *"I'm WanderPlan's travel assistant — I can only help with travel-related questions! Try asking me about destinations, visas, packing lists, or trip planning."*
+- If user asks an out-of-scope question, respond: *"I'm WanderPlanner's travel assistant — I can only help with travel-related questions! Try asking me about destinations, visas, packing lists, or trip planning."*
 
 ---
 
@@ -590,3 +726,23 @@ Instead of typing a specific city, users can enter an **entire country** and let
 - New endpoint: `POST /api/recommend-cities`
 - Request: `{ country: string, trip_config: TripConfig }`
 - Response: `{ cities: [{ name: string, country: string, reason: string, lat: number, lon: number }] }`
+
+#### Conversational equivalent via Anya (⭐ Rev 7)
+Users don't have to go through the click-based Recommend Cities flow above to get multi-city/country behavior — Anya (the LLM wizard) now handles it directly in natural conversation:
+- Naming several explicit places in one message (e.g. "Colombo, Mirissa, and Yala National Park") is parsed as the first place becoming `destination` and the rest becoming `hops`, matching R14's multi-hop model.
+- Naming a whole country (e.g. "Italy") is treated as a momentary placeholder — the instant Anya proposes specific cities (or the user confirms them) in her own reply, `destination_mode` resolves from `"country"` to `"fixed"` with a real `destination` + `hops`, matching R15's intent without requiring the dedicated Recommend Cities UI. Fixes a prior bug where country-mode trips never resolved to a concrete city, leaving the budget/booking/travel-tips panels blank on generation.
+
+---
+
+### **R16 — Edit an Existing Trip Without Losing Context**
+Once an itinerary has been generated, users can click **"Edit Trip"** to make changes (destination, dates, budget, themes, etc.) without starting the conversation over.
+
+#### Behavior
+- Reopening the Anya wizard from "Edit Trip" detects that a complete trip config + generated itinerary already exists for the session and carries that config forward instead of restarting Stage 1 from scratch.
+- Anya greets with a one-line summary of the current trip (e.g. "Bali, Indonesia · 7 days · ₹1,00,000 · 2 adults · Relaxed") and offers "Change destination", "Change dates", "Change budget", "Add/change themes", or "Regenerate as-is" chips.
+- Saying "regenerate" / "update it" / confirming a change re-triggers itinerary generation with the updated config, without re-collecting fields that haven't changed.
+
+#### Rationale
+Previously, clicking "Edit Trip" opened a brand-new Anya conversation with no memory of the trip just generated — users had to re-answer purpose, destination, dates, budget, group, and pace from scratch to change even one field.
+
+---

@@ -16,7 +16,13 @@ def get_embedder():
     if _model is None:
         try:
             from sentence_transformers import SentenceTransformer as ST
-            _model = ST(settings.embedding_model)
+            # Force CPU: these are small models where GPU offers little benefit
+            # locally, and calls are offloaded to a worker thread (see embed()
+            # callers using asyncio.to_thread) to keep the event loop free.
+            # PyTorch's MPS (Apple GPU) backend is not thread-safe when invoked
+            # off the main thread — it crashes/hangs the whole process — so we
+            # must not let SentenceTransformer auto-select "mps" here.
+            _model = ST(settings.embedding_model, device="cpu")
         except ImportError:
             raise RuntimeError(
                 "sentence-transformers not installed. "
@@ -42,7 +48,8 @@ def get_reranker():
     if _reranker is None:
         try:
             from sentence_transformers import CrossEncoder
-            _reranker = CrossEncoder(settings.reranker_model)
+            # Same MPS-off-main-thread crash risk as the embedder — force CPU.
+            _reranker = CrossEncoder(settings.reranker_model, device="cpu")
         except ImportError:
             raise RuntimeError(
                 "sentence-transformers not installed. "

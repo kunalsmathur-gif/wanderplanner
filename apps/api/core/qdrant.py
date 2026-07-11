@@ -37,3 +37,18 @@ def _ensure_collections(client: QdrantClient):
                 collection_name=name,
                 vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
             )
+
+    # itinerary_corpus (docs/rag-strategy.md §9) uses two NAMED vectors per
+    # point — "config" (destination+duration+pace+purpose+budget_tier+group
+    # embedding, retrieved by matching the requesting user's trip config) and
+    # "content" (full day-by-day text, retrieved by semantic content
+    # similarity) — rather than a single vector, per the documented
+    # config+content dual-embedding retrieval strategy.
+    if settings.qdrant_collection_itinerary_corpus not in existing:
+        client.create_collection(
+            collection_name=settings.qdrant_collection_itinerary_corpus,
+            vectors_config={
+                "config": VectorParams(size=384, distance=Distance.COSINE),
+                "content": VectorParams(size=384, distance=Distance.COSINE),
+            },
+        )

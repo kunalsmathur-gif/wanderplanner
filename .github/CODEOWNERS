@@ -6,11 +6,11 @@
 # assistants. Changes to these files require a second, human reviewer — do
 # not let an AI agent approve or auto-merge changes to them.
 #
-# NOTE: replace @wanderplan/maintainers below with a real GitHub team/user
+# NOTE: replace @wanderplanner/maintainers below with a real GitHub team/user
 # handle for this repo, then enable "Require review from Code Owners" in
 # branch protection settings for this to actually gate merges.
 
-/apps/web/AGENTS.md      @wanderplan/maintainers
-/apps/web/CLAUDE.md      @wanderplan/maintainers
-**/AGENTS.md             @wanderplan/maintainers
-**/CLAUDE.md             @wanderplan/maintainers
+/apps/web/AGENTS.md      @wanderplanner/maintainers
+/apps/web/CLAUDE.md      @wanderplanner/maintainers
+**/AGENTS.md             @wanderplanner/maintainers
+**/CLAUDE.md             @wanderplanner/maintainers
