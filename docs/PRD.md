@@ -3,7 +3,8 @@
 ## **1\. Document Control**
 
 * **Author:** Product Manager  
-* **Status:** Rev 8 — Updated ✅ (Accounts · Auth Gate · Password Reset · Analytics · Admin Access Requests)
+* **Status:** Rev 10 — Updated ✅ (Crowd-Style Preference · Hidden-Gem Curation · Real-Traveller Itinerary Corpus Grounding)
+* **Strategy companions:** [GTM_STRATEGY.md](GTM_STRATEGY.md) (go-to-market plan, product bets, phased roadmap with kill/go criteria) and [STARTUP_EVALUATION.md](STARTUP_EVALUATION.md) (+ 2026-07-11 re-evaluation addendum) — forward-looking positioning/monetization decisions live there, not in this PRD
 * **Target Release:** Q4 2026  
 * **Platform:** Web Application — Desktop-first (1440x900, 1920x1080) with mobile-responsive support (v5.0+). Bottom tab navigation on mobile (`< lg` breakpoint). No standalone mobile PWA or native app scope.
 * **Language:** English only (no i18n or RTL support in Phase 1)
@@ -17,7 +18,9 @@ WanderPlanner is an all-in-one desktop web application designed to solve the fri
 
 Users can explore the landing experience freely, but **a free account is now required before itinerary generation**. Sign-in options are email/password or Google SSO, and the product intentionally gates auth at the moment the user clicks **Generate** rather than forcing login on first page load.
 
-The application pairs traditional third-party travel APIs with an AI data layer to deliver granular, timestamped travel schedules tailored to complex group dynamics, pet constraints, accessibility limits, corporate/remote work needs, and budget boundaries. Recommendations are dynamically enhanced by real-time social signals (Reddit, YouTube, Instagram) to capture authentic, trending, on-the-ground user insights rather than static commercial itineraries.
+The application pairs traditional third-party travel APIs with an AI data layer to deliver granular, timestamped travel schedules tailored to complex group dynamics, pet constraints, accessibility limits, corporate/remote work needs, and budget boundaries. Recommendations are dynamically enhanced by real-time social signals (Reddit, YouTube, Instagram) to capture authentic, trending, on-the-ground user insights rather than static commercial itineraries. As of Rev 9, generation is additionally grounded in a **real-traveller itinerary corpus**: day-by-day trips scraped from travel blogs, Wikivoyage, Reddit trip reports, and YouTube transcripts are structured, quality-scored, and — when they match the user's trip shape (destination, duration, pace, purpose, group type) — injected into the generation prompt as few-shot examples, so pacing and same-day place groupings are built on patterns that actually worked for real travellers rather than model priors alone.
+
+As of Rev 10, users also control a **crowd-style preference** (Iconic Spots · Mix of Both · Hidden Gems — captured conversationally by Anya, including Hinglish phrasing like "bheed nahi chahiye"). In Hidden Gems mode, itineraries are built around **community-verified, less-crowded places**: OpenStreetMap-verified POIs ranked by high praise but low mention volume in traveller forums, each carrying visible provenance ("mentioned in N traveller posts on r/x") and a 💎 badge — directly addressing the "itineraries only show major touristy places" gap from the July 2026 user interviews. A place with zero community mentions is never recommended as a gem, so recommendations stay checkable, not invented.
 
 ## **3\. User Personas & Core Traits**
 
@@ -305,6 +308,8 @@ $$Score\_{Final} \= (W\_p \\cdot P\_{match}) \+ (W\_b \\cdot B\_{match}) \+ (W\_
 
   > **Visibility:** The alignment score is an **internal ranking signal only** — it is never displayed to the user in the UI.
 
+  > **Implementation status (v10.7):** `ItineraryItem` has no per-item cost field today, so `B_match`/`budget_score` is implemented as a **tag-based proxy** (`chains/scoring.py::_budget_fit()`) rather than the literal cost-vs-limit formula below: it resolves a persona/purpose **budget tier** (`core/budget_tiers.py`) and scores each item against budget-leaning/premium-leaning tag vocabularies, plus splurge/save-category bonuses. The formula below remains the target design once real per-item pricing exists (see Phase 3 of the budget-accuracy roadmap in `docs/rag-strategy.md`).
+
   Python
 
 ```
@@ -493,6 +498,40 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 
 ---
 
+### **Clarification #14 — Signup Error Message vs. Account-Enumeration Resistance ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Should signup tell a user *why* it failed (e.g. "this email is already registered") or keep a generic message to resist account enumeration? | **Be specific.** Found during local testing that a generic `"Unable to sign up with these details."` message left users confused about whether to retry, check their email, or try logging in instead. |
+| Fix | `POST /api/auth/signup` now returns `"An account with this email already exists. Try logging in instead."` when the email is already registered. Login's error message remains the deliberately combined `"Incorrect email or password."`, which still avoids confirming whether a given email is registered at *login* time — the enumeration trade-off was accepted specifically for signup, not login. |
+| Where documented | `docs/system-design.md` §3A, `TECHNICAL_DOCUMENTATION.md` §14 v10.13 changelog. |
+
+### **Clarification #15 — Hiding Unconfigured Google SSO ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Should the "Continue with Google" button always be shown, even where Google OAuth isn't configured (e.g. local dev)? | **No — hide it until configured.** Found during local testing that clicking it always failed with a raw `{"detail":"Google sign-in is not configured."}` error, which looks broken rather than "not applicable here." |
+| Fix | New `GET /api/auth/config` endpoint reports whether Google SSO is configured (`bool(settings.google_client_id)`); the frontend's `GoogleSsoSection` component only renders the button + divider when true, failing closed (hidden) on load or on any fetch error. |
+| Where documented | `docs/system-design.md` §3A, `DESIGN_REVAMP_SUMMARY.md` (July 9, 2026 component updates), `TECHNICAL_DOCUMENTATION.md` §14 v10.13 changelog. |
+
+### **Clarification #16 — Mobile Is a First-Class Target, Not "Best Viewed on Desktop" ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| A large share of the target audience will use WanderPlanner primarily on mobile devices. Should the product keep warning mobile users it's "best viewed on desktop," or actually be designed for mobile? | **Actually be designed for mobile.** The old `MobileWarningBanner` contradicted this and has been removed. Live testing at a 375px viewport surfaced real overflow/usability bugs (header controls forced off-screen, footer links below the fold, floating chat button overlapping the bottom nav, full-screen map's Close button unreachable, map/day/venue selection requiring manual tab-hopping) — all fixed this pass. |
+| Fix | Header (`LandingHero.tsx`, `UserMenu.tsx`) made icon-only/compact below `sm:`; `AuthLayout.tsx` mobile spacing tightened so the login/signup footer link is always above the fold; `FloatingAnyaButton` repositioned above the bottom tab bar; Full Map View toolbar restructured so Close is always reachable; tapping an itinerary activity now auto-switches to the Map tab and highlights/flies-to it; full-screen map now centers on real itinerary coordinates instead of an unresolved `0/0` destination fallback; Anya's wizard modal backdrop changed from a flat black/white overlay to a frosted-glass blur of the homepage. |
+| Where documented | `docs/system-design.md` §16 v10.14, `TECHNICAL_DOCUMENTATION.md` §14 v10.14, `DESIGN_REVAMP_SUMMARY.md` (July 10, 2026 component updates). |
+
+### **Clarification #17 — Anya Chat: Budget/Theme/Pace/Feasibility Bugs Found in Live Testing ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Live testing of the budget → theme → pace → feasibility conversation surfaced several real bugs: luxury-stay requests weren't recalculating budget; theme chips only allowed single-select; pace chips sometimes didn't render at all; the infeasible-budget warning appeared too late with no explanation and an oddly-phrased suggested number; and the wizard could hang at "Generate itinerary" with no CTA or progress indicator. Fix each, or accept as known limitations? | **Fix all of them.** These are genuine product bugs, not intentional behavior. |
+| Fix | `core/budget_estimator.py` keyword matching broadened to substring-match (catches "luxurious", etc.). Multi-select chip detection (frontend + backend) now excludes generic "No preference" chips before evaluating, fixing theme chips. A general any-turn deterministic chip-backfill safety net (previously scoped only to the first "purpose" question) now covers any field, fixing missing pace chips. `feasibility_chain.py`'s deterministic bare-minimum floor is now traveller-tier-aware, with earlier and clearer shortfall messaging. A regex hallucination guard (`_HALLUCINATED_GENERATION_RE`) plus `_next_missing_field_prompt()` redirects the conversation back to the real next missing field instead of letting the wizard stall on hallucinated success text. Separately, the generation loading screen (previously silent for 30–90s after only 2 status messages) now streams rotating "in progress" filler messages every 3 seconds until the real result is ready. |
+| Where documented | `docs/system-design.md` §16 v10.14, `TECHNICAL_DOCUMENTATION.md` §14 v10.14, `docs/itinerary-generation-flow.md` (generation-loader notes), `DESIGN_REVAMP_SUMMARY.md` (July 10, 2026 component updates). |
+
+---
+
 ## **Rev 5 — Phase 1B Requirements** *(Updated: 2026-06-15)*
 
 ---
@@ -527,6 +566,8 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 - Shown in the Trip Metrics panel: *"₹2,50,000 ≈ USD 3,000"*
 - The Gemini prompt receives budget in both INR and destination currency so it can make accurate activity cost decisions.
 
+> **Implementation status (v10.9 — Foreign-currency budget input):** the wizard now **explicitly states INR is assumed** the first time it asks for budget (previously this was only an implicit, undocumented assumption). If a user states their budget in one of 10 supported foreign currencies (USD, EUR, GBP, AED, SGD, AUD, CAD, JPY, THB, CHF), `core/currency_convert.py` deterministically detects the amount + currency (regex, no LLM math) and converts it to INR via the free, keyless Frankfurter.app API (same provider already used by the dashboard's `CurrencyWidget`), with a 6-hour in-memory cache and a hardcoded fallback rate table if the live call fails. The converted INR figure — never an LLM guess — is what gets stored in `config_patch.budget.amount`; Anya's reply transparently states both the original and converted figures plus the rate used (e.g. *"Got it, $2,000 is about ₹1,73,000 at today's rate."*). An unsupported currency prompts the user to restate in one of the 10 supported currencies or in ₹.
+
 ---
 
 ### **R5 — Budget Feasibility Check**
@@ -541,6 +582,10 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
   - **Recommends 2–3 alternative destinations** offering similar experiences at a lower price point
 - If `budget ≥ estimated_minimum_cost`, show a **Feasibility Green Badge**: *"Budget looks sufficient ✓"*
 - All estimates are clearly labelled as approximations.
+
+> **Implementation status (v10.8):** `estimated_minimum_cost` above is no longer a pure Gemini guess — `core/budget_estimator.py` computes it deterministically (free tools only, no paid pricing API) from destination cost tier + season + group composition + duration + traveller comfort level, and `feasibility_chain.py` takes `max(llm_estimate, deterministic_floor)` so the floor always wins if the LLM under-estimates. This check now also runs inside the **LLM chat wizard** (`LLMWizard.tsx`), not just the older structured form — previously it was silently skipped there, so a stated budget could sail straight into itinerary generation unchecked. If a user hasn't stated a budget at all, the wizard now asks a clarifying question (group size, then comfort level) before quoting any number — it never reuses the flat Section-2 "budget tiers" parsing table as a recommendation. If a user mentions already-booked flights/accommodation, those real amounts replace the corresponding estimated component rather than being ignored.
+
+> **Further implementation status (v10.13):** the v10.8 gate above covers the pre-generation `/api/feasibility-check` call. Separately, Anya's live chat conversation (`chains/wizard_chat_chain.py`) previously didn't apply the same scrutiny when a user *stated or lowered* their own budget mid-conversation — the deterministic bare-minimum hint was scoped to "only relevant if user asks for a recommendation," so the LLM had no instruction to compare a user-declared figure against it. Fixed by adding an explicit "FEASIBILITY CHECK" instruction so Anya now proactively flags a shortfall the moment a user states or reduces their budget, not just at the final pre-generation gate.
 
 ---
 
