@@ -2,7 +2,7 @@
 set -euo pipefail
 
 echo "==================================="
-echo "  WanderPlan Frontend Sanity Check"
+echo "  WanderPlanner Frontend Sanity Check"
 echo "==================================="
 echo ""
 

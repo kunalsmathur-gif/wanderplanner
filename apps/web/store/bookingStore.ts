@@ -43,6 +43,6 @@ export const useBookingStore = create<BookingStore>()(
           bookings: s.bookings.map((b) => (b.id === id ? { ...b, ...patch } : b)),
         })),
     }),
-    { name: 'wanderplan-bookings' }
+    { name: 'wanderplanner-bookings' }
   )
 )
