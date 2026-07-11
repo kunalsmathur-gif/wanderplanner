@@ -54,7 +54,7 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("event_type", sa.String(length=64), nullable=False),
         sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("event_metadata", postgresql.JSONB(), nullable=True),
+        sa.Column("event_metadata", postgresql.JSONB().with_variant(sa.JSON(), "sqlite"), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
     )
     op.create_index("ix_events_event_type", "events", ["event_type"])

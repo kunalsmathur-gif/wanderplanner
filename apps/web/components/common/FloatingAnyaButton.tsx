@@ -25,7 +25,7 @@ export function FloatingAnyaButton() {
   }
 
   return (
-    <div className="fixed bottom-6 right-6 z-40">
+    <div className="fixed bottom-24 right-6 z-40 lg:bottom-6">
       <button
         onClick={handleClick}
         className="group flex flex-col items-center gap-1.5 transition-transform hover:scale-105"
