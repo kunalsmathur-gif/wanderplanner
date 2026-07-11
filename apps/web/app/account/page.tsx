@@ -1,11 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { AlertTriangle, Loader2 } from 'lucide-react'
+import { AlertTriangle, Loader2, ShieldCheck, Clock } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { deleteMyAccount, authErrorMessage } from '@/lib/authApi'
+import { getMyAdminRequest, requestAdminAccess, type AdminRequest } from '@/lib/adminApi'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 
 export default function AccountPage() {
@@ -18,6 +19,32 @@ export default function AccountPage() {
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showConfirm, setShowConfirm] = useState(false)
+
+  const [adminRequest, setAdminRequest] = useState<AdminRequest | null>(null)
+  const [adminRequestLoading, setAdminRequestLoading] = useState(true)
+  const [requesting, setRequesting] = useState(false)
+  const [requestError, setRequestError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!user || user.is_admin) { setAdminRequestLoading(false); return }
+    getMyAdminRequest()
+      .then(setAdminRequest)
+      .catch(() => {})
+      .finally(() => setAdminRequestLoading(false))
+  }, [user])
+
+  async function handleRequestAdminAccess() {
+    setRequesting(true)
+    setRequestError(null)
+    try {
+      const req = await requestAdminAccess()
+      setAdminRequest(req)
+    } catch (err) {
+      setRequestError(authErrorMessage(err))
+    } finally {
+      setRequesting(false)
+    }
+  }
 
   if (status === 'loading' || status === 'idle') {
     return (
@@ -67,6 +94,46 @@ export default function AccountPage() {
             <p className="font-medium text-[var(--_fg)]">{user.display_name || user.email}</p>
             {user.email && <p className="text-[var(--_muted-fg)]">{user.email}</p>}
           </div>
+
+          {!user.is_admin && (
+            <div className="mt-8 border-t border-[var(--_border)] pt-6">
+              <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--_fg)]">
+                <ShieldCheck size={18} />
+                Admin access
+              </h2>
+
+              {adminRequestLoading && (
+                <Loader2 className="mt-3 animate-spin text-[var(--_muted-fg)]" size={16} />
+              )}
+
+              {!adminRequestLoading && (!adminRequest || adminRequest.status === 'rejected') && (
+                <>
+                  <p className="mt-2 text-sm text-[var(--_muted-fg)]">
+                    Need admin console access (analytics, cost tracking, user management)? Requests are reviewed and
+                    approved manually by an existing admin — nobody gets admin access automatically.
+                    {adminRequest?.status === 'rejected' && ' Your previous request was not approved, but you can ask again.'}
+                  </p>
+                  {requestError && <p className="mt-2 text-sm text-[var(--_destructive)]">{requestError}</p>}
+                  <button
+                    type="button"
+                    onClick={handleRequestAdminAccess}
+                    disabled={requesting}
+                    className="btn btn-outline mt-3 rounded-xl px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {requesting && <Loader2 size={14} className="mr-1.5 inline animate-spin" />}
+                    Request admin access
+                  </button>
+                </>
+              )}
+
+              {!adminRequestLoading && adminRequest?.status === 'pending' && (
+                <p className="mt-2 flex items-center gap-2 text-sm text-[var(--_muted-fg)]">
+                  <Clock size={14} className="text-[var(--_primary)]" />
+                  Your request is pending review by an existing admin.
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="mt-8 border-t border-[var(--_border)] pt-6">
             <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--_destructive)]">

@@ -1,7 +1,7 @@
 # WanderPlanner — System Design Document
 
-**Version:** 8.3 (Accounts · Auth Gate · Password Reset · Analytics)
-**Last Updated:** July 7, 2026  
+**Version:** 8.5 (Hidden-Gem Scoring + Crowd Dial)
+**Last Updated:** July 11, 2026  
 **Audience:** Engineering team and technical stakeholders
 
 ---
@@ -13,6 +13,7 @@
 3. [Data Flow: Start Anywhere](#3-data-flow-start-anywhere)
 3A. [Data Flow: Authentication (Signup / Login / Google SSO / Password Reset)](#3a-data-flow-authentication-signup--login--google-sso--password-reset)
 3B. [Data Flow: Account Deletion & Data Purge](#3b-data-flow-account-deletion--data-purge)
+3C. [Data Flow: Admin Access Request & Approval](#3c-data-flow-admin-access-request--approval)
 4. [Data Flow: Itinerary Generation with RAG](#4-data-flow-itinerary-generation-with-rag)
 5. [Data Flow: Persistent Anya Chat](#5-data-flow-persistent-anya-chat)
 6. [Data Flow: Share Trip Link](#6-data-flow-share-trip-link)
@@ -203,6 +204,65 @@ wizard_chat_chain.py
 | `"Colombo, Mirissa, and Yala National Park"` (⭐ v10.2 Case D) | `{destination: {city:"Colombo",...}, hops: [{city:"Mirissa",...}, {city:"Yala National Park",...}]}` |
 | `"Italy"` → Anya proposes Rome/Florence/Venice, user confirms (⭐ v10.2) | `{destination_mode: "fixed", destination: {city:"Rome",...}, hops: [{city:"Florence",...}, {city:"Venice",...}]}` |
 
+### 2.4 Budget Recommendation & Pre-Generation Feasibility Gate (⭐ NEW v10.8 — UI/UX)
+
+**Problem this fixes:** previously, if a user asked "what would this cost?" before group size was known, Anya quoted a flat, group-blind number straight from a parsing-only lookup table — and the LLM chat wizard never ran a feasibility check before auto-generating (only the older structured form did), so an unrealistic budget could sail straight into itinerary generation.
+
+**New conversational UX (Stage 1, Field 4 — Budget):**
+```
+User: "What would a Maldives trip cost?"  (group size not yet known)
+Anya: "Maldives for 6 days sounds wonderful! To give you a good idea
+       of the cost, could you tell me who will be joining you?"
+       chips: [Leisure 🌴, Adventure 🏔️, Honeymoon 💍, Family Vacation 👨‍👩‍👧, ...]
+       (no budget number shown — Anya never guesses headcount)
+
+User: "Me, my spouse, and our 3-year-old, mid-range comfort"
+Anya: "For you, your spouse, and your little one, a comfortable
+       mid-range trip for 6 days would be around ₹2,42,300 in total,
+       about ₹80,800 per person. This covers flights, stay, and food.
+       Activities/local transport/shopping would be extra."
+       (real, destination-tier + season + group-aware number — no chip
+        needed here, Anya just states it conversationally and continues
+        to the next field)
+```
+This is powered server-side by `core/budget_estimator.py` (deterministic, no LLM cost math) — see `TECHNICAL_DOCUMENTATION.md` §14 v10.8. The frontend requires **no new UI component** for this part — it's the same chat bubble + chip pattern already used throughout the wizard; the difference is entirely in *what number Anya says and when*.
+
+**New pre-generation feasibility gate (`LLMWizard.tsx`):** once Stage 3 (`ready_to_generate=true`) fires, the frontend now calls `POST /api/feasibility-check` (`runFeasibilityGate()`) **before** showing/starting the generate step:
+```
+              ┌─ feasible? ──────────────────────────────────────────┐
+Stage 3 fires │                                                      │
+ready_to_gen  ├─ YES → unchanged behaviour: 1.2s delay → handleGenerate()
+= true        │
+              └─ NO  → generation PAUSED. New assistant chat bubble:
+                        "⚠️ Budget may be short by ₹X. Estimated
+                         minimum is ₹Y (flights+stay+food floor).
+                         Want to increase your budget, or shall I go
+                         ahead with what you have?"
+                        chips: ["Set budget to ₹Y", "Proceed anyway 🚀",
+                                "Let me adjust something else"]
+```
+- **"Set budget to ₹Y"** — sends that as a normal chat message (Anya updates `budget.amount` via the usual `config_patch` flow, then Stage 3 re-fires and the gate re-checks).
+- **"Proceed anyway 🚀"** — bypasses the LLM round-trip entirely; `handleSubmit()` special-cases this exact chip label to call `handleGenerate()` directly, so the user isn't stuck in a loop if they've deliberately chosen to travel on a tighter budget than recommended.
+- **"Let me adjust something else"** — a normal chat message, keeps the conversation open (destination/dates/pace changes, etc.).
+- **Fail-safe:** if the feasibility check call itself errors (network/server), the gate silently falls back to the original auto-generate behavior — an infra hiccup never blocks a user's trip.
+- **Pre-booked costs:** if a user says they've already booked flights/a hotel (e.g. *"I already paid ₹50,000 for flights"*), Anya asks for the real total and stores it in `prebooked_flights_inr`/`prebooked_accommodation_inr` — the feasibility gate and any budget hint then use that real number instead of a heuristic guess for that line item.
+
+**Destination comparison mode** also gains a new, non-LLM-guessed row: **"Estimated Trip Budget (bare minimum)"**, showing each candidate destination's real computed floor (e.g. *"Goa: ~₹44,000 total (₹22,000/person)"* vs *"Maldives: ~₹1,60,000 total (₹80,000/person)"*), with the cheaper destination highlighted as the winner — rendered by the existing generic comparison-row component, no new UI needed. The row is omitted entirely (not shown as "unknown") if group size hasn't been specified yet for the comparison.
+
+### 2.5 Foreign-Currency Budget Input (⭐ NEW v10.9)
+
+**Problem this fixes:** the wizard silently assumed every budget number was INR — never stated explicitly, and with no path for a user who naturally thinks in USD/EUR/etc. to state it in their own currency.
+
+**Behavior now:**
+- The **first time** Anya asks for budget, she explicitly says it's in ₹ (INR) and names the 10 supported alternative currencies: *"What's your approximate budget in ₹ (INR)? If you'd rather tell me in USD, EUR, GBP, AED, SGD, AUD, CAD, JPY, THB, or CHF, that's fine too — I'll convert it."*
+- If the user's message contains a recognizable foreign-currency amount (`$2000`, `2000 USD`, `1500 euros`, `£1500`, `AED 5000`, `2k dollars`, etc.), `core/currency_convert.py::detect_foreign_currency()` extracts it via regex — deterministic, no LLM math involved.
+- The amount is converted to INR via the free, keyless **Frankfurter.app** API (`convert_to_inr()`), cached in-memory for 6 hours, with a hardcoded approximate fallback rate table if the live call fails (never blocks the wizard on a network hiccup).
+- The exact converted figure is injected into the prompt as a `{currency_conversion_hint}` (same pattern as the budget-estimator hint in §2.4) — Anya is instructed to use that number verbatim for `config_patch.budget.amount` (currency always stored as `"INR"`) and to state both figures + the rate transparently in her reply: *"Got it, $2,000 is about ₹1,73,000 at today's rate."*
+- INR remains the sole canonical currency stored anywhere downstream (feasibility check, budget estimator, itinerary generation, scoring) — the conversion happens once, at the point of user input, so no other part of the system needs to be currency-aware.
+- If a user mentions a currency outside the 10 supported ones, Anya asks them to restate in ₹ or one of the supported currencies rather than guessing.
+
+Live-verified via curl: `"my budget is around $2000"` → `config_patch: {"budget": {"amount": 173000, "currency": "INR"}}`, reply mentions both the $2,000 and ₹1,73,000 figures.
+
 ---
 
 ## 3. Data Flow: Start Anywhere
@@ -291,6 +351,10 @@ flowchart TD
 
 **Nav auth indicator (⭐ NEW):** `components/common/UserMenu.tsx` renders "Log in"/"Sign up" when signed out, or the user's name/email + a "Log out" dropdown when signed in. Wired into `LandingHero`, `ThreeColumnLayout`, and `TopNav` — previously the app had no visible sign-in state anywhere outside `/account`.
 
+**Google SSO gating (⭐ NEW, v10.13):** in local/dev environments (and any deployment without `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` set), Google sign-in previously showed a "Continue with Google" button that always failed with `{"detail":"Google sign-in is not configured."}` on click. `GET /api/auth/config` now returns `{"google_sso_enabled": bool(settings.google_client_id)}`; the frontend's new `components/common/GoogleSsoSection.tsx` fetches this once and only renders the Google button + divider when true (fails closed — hidden on load/error). `/signup` and `/login` both use this component instead of the raw button.
+
+**Signup/login error message specificity (⭐ CHANGED, v10.13):** `POST /api/auth/signup` now returns `"An account with this email already exists. Try logging in instead."` instead of a generic message when the email is already registered — an explicit product decision trading a small amount of account-enumeration resistance for a clearer signup UX. Login's error remains the deliberately combined `"Incorrect email or password."` (does not reveal whether the email itself is registered).
+
 ---
 
 ## 3B. Data Flow: Account Deletion & Data Purge
@@ -306,10 +370,47 @@ flowchart TD
     G --> H["Aggregate analytics survive in anonymized form"]
     F --> I["Frontend clears auth state + returns to signed-out UX"]
 
-    P["Admin bulk purge"] --> Q["Planned/in-progress only"]
-    Q --> R["Intended backend: DELETE /admin/users/{user_id}<br/>POST /admin/users/purge-all with confirmation string"]
-    R --> S["Do not treat as shipped until verified end-to-end"]
+    P["Admin bulk purge"] --> Q["Shipped & verified — /admin console Danger Zone"]
+    Q --> R["Backend: DELETE /admin/users/{user_id}<br/>POST /admin/users/purge-all with confirmation string"]
+    R --> S["Covered by integration tests; live-verified against dev server"]
 ```
+
+---
+
+## 3C. Data Flow: Admin Access Request & Approval
+
+```mermaid
+flowchart TD
+    A["Signed-in non-admin opens /account"] --> B["Clicks 'Request admin access'<br/>(optional reason message)"]
+    B --> C["POST /api/admin/requests"]
+    C --> D{"Already admin?"}
+    D -->|Yes| D1["400 — no request created"]
+    D -->|No| E{"Existing pending request?"}
+    E -->|Yes| E1["Return existing request unchanged<br/>(idempotent, no duplicate email)"]
+    E -->|No| F["Create admin_requests row<br/>status = pending"]
+    F --> G["Email every current admin<br/>(core/email.send_admin_request_notification,<br/>Resend; dev-log fallback if unset)"]
+    G --> H["Requester sees 'pending review' on /account<br/>via GET /api/admin/requests/me"]
+
+    I["Existing admin opens /admin"] --> J["GET /api/admin/requests?status=pending"]
+    J --> K["Admin access requests panel<br/>lists name/email/message"]
+    K --> L{"Admin decision"}
+    L -->|Approve| M["POST /api/admin/requests/{id}/approve"]
+    M --> M1["Set target user.is_admin = true"]
+    M1 --> M2["status = approved, reviewed_by, reviewed_at"]
+    M2 --> N["Email requester: approved<br/>(send_admin_request_decision_email)"]
+    L -->|Reject| O["POST /api/admin/requests/{id}/reject"]
+    O --> O1["is_admin unchanged<br/>status = rejected"]
+    O1 --> N2["Email requester: rejected"]
+
+    M2 --> P["Requester's next GET /api/auth/me<br/>reflects is_admin: true<br/>UserMenu now shows 'Admin console' link"]
+```
+
+**Why this exists:** `SignupRequest` never accepted `is_admin` and the DB column defaults `false`, so nobody could become an admin *by accident*. What was missing was a formal, auditable, two-party workflow for legitimately granting admin access post-launch — this closes that gap without any weakening of the original guarantee.
+
+**Idempotency & one-shot guarantees:**
+- Creating a request while one is already `pending` returns the existing row instead of creating a duplicate (prevents notification spam on double-click/refresh).
+- Both `/approve` and `/reject` return 400 if the request's status is no longer `pending` (prevents double-review races).
+- All admin/requester emails are best-effort (same pattern as password reset) — a Resend outage never blocks the actual request/approval logic.
 
 ---
 
@@ -378,6 +479,49 @@ itinerary_chain.py
          │         cross-encoder pass adds real latency (~23.6 → ~7 req/s @ concurrency=50
          │         when enabled globally) — scoping it here keeps other RAG callers fast.
          │
+         ├─ CORPUS FEW-SHOT RETRIEVAL (⭐ NEW v8.4, docs/rag-strategy.md §9) ──
+         │    services/search.py → retrieve_itinerary_examples(trip_config)
+         │    │    (best-effort via chains/itinerary_chain.py::_itinerary_examples_block —
+         │    │     any failure degrades to "No reference itineraries available.",
+         │    │     never blocks generation; gated by
+         │    │     settings.itinerary_corpus_retrieval_enabled, default True)
+         │    │
+         │    ├─ Build config-style query mirroring the ingest-side embedding text:
+         │    │    "{duration} day {pace} {purpose} {group_type} trip {city} {country}"
+         │    │
+         │    ├─ Search BOTH named vectors of the itinerary_corpus collection
+         │    │    (config + content) with destination payload filter; falls back
+         │    │    to an unfiltered search + case-insensitive client-side city match
+         │    │    (extraction LLM writes free-form destination strings)
+         │    │
+         │    ├─ Weighted merge: 60% config-similarity + 40% content-similarity,
+         │    │    then × (0.5 + 0.5 × quality_score) source-authority weighting;
+         │    │    relevance floor 0.45 — a weak match misleads more than it grounds
+         │    │
+         │    └─ Top ≤3 formatted as "[Source: …] Day 1: … Places: …" examples,
+         │         wrap_untrusted()'d, injected as REAL TRAVELLER ITINERARIES
+         │         FOR REFERENCE in both the Gemini and LangChain prompts
+         │
+         ├─ GEM GUIDANCE (⭐ NEW v8.5, docs/GTM_STRATEGY.md §2 bet 1) ────
+         │    services/gems.py → get_gem_intel(destination) via
+         │    chains/itinerary_chain.py::_gem_guidance_block (best-effort)
+         │    │
+         │    ├─ Deterministic, zero-LLM: OSM-verified POIs scored by Reddit
+         │    │    community signal (mentions + lexicon sentiment ±120 chars).
+         │    │    1-6 mentions & sentiment ≥0.55 → hidden gem;
+         │    │    ≥12 mentions → crowd favourite; 0 mentions → excluded
+         │    │    (no community proof = never recommended)
+         │    │
+         │    ├─ Cached 24h per destination (in-process TTL + per-destination
+         │    │    asyncio.Lock, stampede-safe); compute bounded to
+         │    │    ≤300 POIs × ≤800 chunks in a worker thread
+         │    │
+         │    └─ trip_config.crowd_preference drives injection:
+         │         touristy → no block (0 tokens) | balanced → top 5 gems |
+         │         offbeat → top 8 gems + CROWD-HEAVY de-prioritisation list.
+         │         Gems carry OSM lat/lon + provenance; LLM must tag them
+         │         "hidden_gem" and may never invent unlisted gems
+         │
          ├─ RAG COMPRESSION ────────────────────────────────────────────
          │    summarise_context(context_docs, max_chars=2400)
          │    │
@@ -393,9 +537,12 @@ itinerary_chain.py
          │    └─ Truncate at 2400 chars (~600 tokens)
          │         was: ~30,000 chars (7,500 tokens) — 12× reduction
          │
-         ├─ Assemble Gemini prompt:
+         ├─ Assemble Gemini prompt (guidance blocks fetched concurrently
+         │    via one asyncio.gather — one round-trip, not three ⭐ v8.5):
          │    SYSTEM_PROMPT.format(
          │      context = summarised RAG context (≤600 tokens),
+         │      itinerary_examples = ≤3 real traveller itineraries (⭐ NEW v8.4),
+         │      gem_guidance = crowd-dial hidden-gem candidates (⭐ NEW v8.5),
          │      trip_config = TripConfig JSON
          │    )
          │
@@ -664,6 +811,17 @@ Response: { best_months: string[], weather_summary: string, avoid_months: string
 
 The app now uses **Postgres** (Supabase in production) for user/auth/analytics state. This is separate from **Qdrant**, which remains the vector database for RAG retrieval.
 
+### Production setup runbook (⭐ NEW v10.10 — Supabase Postgres)
+
+1. **Create a free Supabase project** (supabase.com → New Project). Free tier: 500MB database, 2GB bandwidth/month, up to 60 concurrent direct connections — sufficient for this app's traffic today.
+2. **Copy the pooled connection string**, not the direct one: Project Settings → Database → "Transaction pooler" (port `6543`, PgBouncer-backed). Railway's short-lived request-scoped connections can exhaust Supabase's free-tier direct-connection cap (60) under concurrent load; the pooler avoids that.
+3. **Set two Railway env vars**:
+   - `DATABASE_URL=postgresql+asyncpg://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres`
+   - `DATABASE_SSL_REQUIRE=true` — Supabase requires TLS on every connection; `asyncpg` does **not** negotiate SSL automatically from a bare connection string, so this is a genuine footgun without the explicit flag (`db.py` passes `connect_args={"ssl": True}` only when this is set).
+4. **Migrations now run automatically on every deploy** (⭐ fixed this pass): `railway.toml`'s `startCommand` was `uvicorn ...` only — a fresh Supabase database would have booted with **no tables at all** until someone manually ran `alembic upgrade head`. It's now `alembic upgrade head && uvicorn ...`, so every deploy is guaranteed to be on the latest schema.
+5. **Local SQLite dev now matches Postgres migrations exactly** (⭐ fixed this pass): migration `0001_auth_analytics.py` hardcoded `postgresql.JSONB()` for `events.event_metadata` with no SQLite fallback, so `alembic upgrade head` against a *fresh* local SQLite database (the exact command CI/new-contributor onboarding would run) crashed with `CompileError: can't render element of type JSONB` the moment it reached the `events` table — the ORM model (`db_models/event.py`) already correctly used `JSONB().with_variant(JSON(), "sqlite")`, but the raw migration script hadn't matched it. Fixed by adding the same `.with_variant(sa.JSON(), "sqlite")` to the migration. Verified: `alembic upgrade head` now runs cleanly end-to-end (`0001` → `0002` → `0003`) against a brand-new SQLite file.
+6. **Free-tier pause caveat**: Supabase free projects auto-pause after 7 days with zero database activity and need a manual "Resume" click from the dashboard (or any query keeps it warm) — a real caveat for demo days after a quiet week, not a bug.
+
 ### `users`
 
 | Column | Notes |
@@ -714,9 +872,24 @@ The generic `event_type + JSONB metadata` design intentionally avoids new migrat
 | `used_at` | Single-use marker |
 | `created_at` | Issued timestamp |
 
+### `admin_requests` (⭐ NEW)
+
+| Column | Notes |
+|---|---|
+| `id` | UUID primary key |
+| `user_id` | FK → `users.id`, `ON DELETE CASCADE` — the requester |
+| `status` | `pending` \| `approved` \| `rejected`; indexed |
+| `message` | Optional free-text reason from the requester |
+| `reviewed_by` | Nullable FK → `users.id`, `ON DELETE SET NULL` — the admin who approved/rejected |
+| `reviewed_at` | Timestamp of decision, null while pending |
+| `created_at` | Request creation timestamp |
+
+Enforces the "no auto-admin" policy: `is_admin` is only ever flipped `true` via the `/admin/requests/{id}/approve` endpoint (or an out-of-band DB seed for the very first admin) — never by the signup flow itself.
+
 Migrations:
 - `0001_auth_analytics`
 - `0002_password_reset`
+- `0003_admin_requests`
 
 ---
 
@@ -1069,6 +1242,7 @@ Breaking any link in this chain prevents scrolling. `<main className="h-full">` 
 | `EMAIL_FROM_ADDRESS` | `Wanderplanner <no-reply@wanderplanner.app>` | — | Password-reset sender |
 | `PASSWORD_RESET_TOKEN_TTL_MINUTES` | `30` | — | Reset-link expiration |
 | `QDRANT_URL` | `:memory:` | — | Qdrant instance URL |
+| `ITINERARY_CORPUS_RETRIEVAL_ENABLED` | `true` | — | Few-shot grounding from real traveller itineraries in generation prompts (⭐ NEW v8.4, docs/rag-strategy.md §9) |
 | `ALLOWED_ORIGINS` | `["http://localhost:3000"]` | ✅ | CORS whitelist — **must be JSON-array format** (pydantic-settings list parsing), `"*"` is rejected by a validator (⭐ NEW v10.0) |
 | `PEXELS_API_KEY` | — | — | Optional Pexels API key for itinerary day hero photos; generation degrades gracefully without it |
 | `LOG_LEVEL` | `INFO` | — | Structured JSON logging level (⭐ NEW v10.0, `core/logging_config.py`) |
@@ -1175,6 +1349,42 @@ All retries fail → smart mock fallback picks the next missing required field
 Any salvage text shown to users is first cleaned by _strip_trailing_json_artifacts()
 Valid JSON whose reply text contains an escaped schema echo is trimmed by
 _strip_leaked_schema_tail() before rendering
+Literal \uXXXX escapes surviving the plain-text fallback path (e.g. \u20b9 → ₹)
+are decoded by _decode_stray_unicode_escapes() (⭐ NEW, v10.13) before display
+```
+
+### Itinerary Generation Watchdog (⭐ NEW, v10.13)
+
+```
+Frontend: startGeneration() arms a 60s client-side watchdog timer, re-armed on
+every SSE `status` event received. If the stream ever goes fully silent for
+60s (dropped connection, or — in dev — a Fast Refresh remount aborting the
+underlying fetch, which streamItinerary() otherwise treats as an intentional
+cancel and never reports as an error) the watchdog fires: cancels the stream,
+shows "Generation is taking much longer than expected and may have stalled.
+Please try again.", and returns the user to the chat phase. Previously a fully
+silent stream death left the UI frozen on "Starting up…" indefinitely, since
+AbortError is deliberately swallowed by the stream helper's catch handler to
+avoid showing false errors on a normal wizard-close.
+```
+
+### Blocking Call / Event-Loop Hang Prevention (⭐ NEW, v10.13)
+
+```
+core/embeddings.py's embed()/rerank_scores() are CPU-bound (sentence-
+transformers / cross-encoder) and MUST be offloaded via asyncio.to_thread(...)
+at every call site — calling them inline inside an async handler (or a
+background asyncio.create_task, e.g. startup Reddit seeding) blocks the
+single-threaded event loop for the call's full duration, freezing every
+concurrent request app-wide, including signup/login. Confirmed correct at:
+services/search.py (original reference pattern), scrapers/reddit.py,
+routers/reddit_highlights.py, scrapers/wikivoyage.py, scrapers/osm.py,
+chains/itinerary_corpus_extraction_chain.py.
+
+Caveat: asyncio.to_thread() alone is not sufficient on Apple Silicon — PyTorch's
+MPS (Metal GPU) backend is not thread-safe when invoked off the main thread and
+will crash the process intermittently. core/embeddings.py forces device="cpu"
+explicitly in both get_embedder() and get_reranker() to avoid this.
 ```
 
 ### Wikipedia Image Resilience
@@ -1202,9 +1412,107 @@ PEXELS_API_KEY missing / request fails / no result / 6s itinerary photo budget e
   → PDF export simply omits the hero photo block for that day
 ```
 
+### Frontend Request Timeouts (⭐ CHANGED, v10.13)
+
+```
+lib/api.ts shared axios client: 25s default timeout for lightweight endpoints.
+wizardChat() and extractTrip() override to 45s per-call — both share the same
+backend 3-attempt Gemini retry-with-backoff pattern, which can legitimately
+exceed 25s in the worst case, previously racing the frontend timeout and
+surfacing a false "Connection error" on an otherwise still-working request.
+```
+
 ---
 
 ## 16. Change Log
+
+### v10.14 (July 2026) — Mobile Responsiveness Overhaul + Anya Chat/Feasibility Bug Fixes + Generation Progress Streaming
+
+- **New: mobile-first responsive design pass.** The former `MobileWarningBanner` ("best viewed on desktop") was deleted entirely — the product now actively supports mobile, not just tolerates it. Fixed real overflow/usability bugs found via live testing at 375px width: header (`LandingHero.tsx`) previously overflowed the viewport (full wordmark + tagline + full-width CTA button all forced onto one row) — now icon-only logo and icon-only "Plan a trip" CTA below `sm:`, with tighter padding/gaps and a smaller hero heading. `UserMenu.tsx`'s "Log in" text link (redundant with "Sign up" for new visitors) is now hidden below `sm:` to prevent crowding. `AuthLayout.tsx` (shared by signup/login/forgot/reset pages) had its mobile vertical spacing tightened (padding, margins, title size) so the "Already have an account? Log in" footer link is no longer pushed below the fold on a 375×667 viewport (iPhone SE) — verified `scrollHeight === clientHeight` (no scroll needed).
+- **Fixed** Anya wizard modal backdrop being a flat, bland solid black/white overlay — changed to a frosted-glass effect (`bg-white/30 backdrop-blur-md dark:bg-black/30`) so the blurred homepage remains visible behind the chat in both light and dark mode.
+- **Fixed** `FloatingAnyaButton` overlapping the mobile bottom tab bar on the itinerary dashboard — repositioned to `bottom-24` on mobile (`lg:bottom-6` unchanged on desktop).
+- **Fixed** Full Map View's toolbar pushing the "✕ Close" button off-screen when many day-tabs were present — restructured into two rows (label + Close always visible; day-tabs independently horizontally scrollable).
+- **Fixed** map/day/venue linking being non-intuitive: tapping an activity in the itinerary timeline previously required manually switching to the Map tab and hunting for the matching pin. `ItineraryTimeline.tsx`'s `ActivityCard` is now clickable/keyboard-accessible — selecting an activity both highlights/flies-to it on the map **and** auto-switches the mobile bottom-nav to the Map tab (`mobileTab` state lifted into `appStore.ts` so both components can drive it).
+- **Fixed** full-screen map centering on an unrelated random Indian town ("Warud") instead of the actual destination for multi-city/country-mode trips — `destination.lat/lon` is frequently `0/0` for these trips (never resolved at the top level); `MapWrapper.tsx` now prefers the first itinerary item's real resolved coordinates for centering. Also added `RecenterOnChange` (`ItineraryMap.tsx`) since react-leaflet's `<MapContainer center>` prop only applies at initial mount — day switches now properly re-center the map.
+- **Fixed** Anya chat bugs found during live budget/theme/pace testing:
+  - Luxury/premium budget requests weren't recalculating the recommended budget — `core/budget_estimator.py`'s keyword matching broadened to substring-match tier keywords (e.g. "luxur" now catches "luxurious").
+  - Theme chip groups only allowed single-select despite being conceptually multi-select — the frontend/backend multi-select detection now explicitly excludes generic "No preference"-style chips before evaluating.
+  - Pace/other later-conversation chip groups sometimes rendered with **zero chips** (LLM dropped them mid-turn) — added a general any-turn deterministic chip-backfill safety net (previously this safety net only covered the very first "purpose" question).
+  - Feasibility check surfaced too late (only right before generation) with no explanation of *why* a budget was insufficient, and suggested an oddly-phrased absolute replacement number instead of "increase by ₹X" framing — `feasibility_chain.py`'s deterministic bare-minimum floor is now traveller-tier-aware, and the shortfall messaging is clearer.
+  - Fixed a "stuck at Generate itinerary" hang where the LLM hallucinated success/completion text without the `ready_to_generate` flag ever actually becoming true (the `purpose` field was never really captured) — added `_HALLUCINATED_GENERATION_RE` guard + `_next_missing_field_prompt()` to redirect the conversation back to the real next missing field.
+- **New: progressively engaging itinerary-generation loader.** Previously the backend only sent 2 status messages ("Analysing your preferences...", "Searching destination content...") before going completely silent for the 30–90s LLM call, leaving the loading UI static with no sense of progress. `routers/itinerary.py`'s `_stream_generation` now runs `generate_itinerary()` as a background asyncio task while polling every 3s and streaming rotating filler status messages (`_GENERATION_FILLER_MESSAGES`, e.g. "Planning day 1...", "Fetching local tips...", "Balancing your budget...") until the real result is ready — end-to-end verified against the live Gemini-backed endpoint (~42s generation, 8 rotating messages shown).
+- Verified: 153 backend tests passing (154 total minus 1 pre-existing unrelated failure), 36/36 frontend tests, `tsc --noEmit` clean, multiple Playwright mobile-viewport screenshot verifications (375px header, wizard modal light/dark, signup/login page fit at 375×667).
+
+### v10.13 (July 2026) — Local Testing Bug Fixes: Event-Loop Hangs, Budget Feasibility, Google SSO Gating, Duplicate Keys, Generation Watchdog
+
+- **Fixed** signup/all-requests hang caused by synchronous `embed()`/`rerank_scores()` calls blocking the asyncio event loop — wrapped in `asyncio.to_thread(...)` at every call site.
+- **Fixed** intermittent backend crash from the above fix (PyTorch MPS not thread-safe off the main thread) by forcing `device="cpu"` in `core/embeddings.py`.
+- **Fixed** Anya not flagging an infeasible budget the user *lowers* mid-conversation — added an explicit "FEASIBILITY CHECK" instruction block to the wizard system prompt referencing the already-computed deterministic bare-minimum estimate.
+- **Fixed** literal `\u20b9` (₹) escapes leaking into chat replies on the plain-text JSON-fallback path — new `_decode_stray_unicode_escapes()` helper.
+- **New** `GET /api/auth/config` + conditional `GoogleSsoSection.tsx` — hides "Continue with Google" until OAuth is actually configured, instead of showing a button that always fails locally.
+- **Changed** signup error message to `"An account with this email already exists. Try logging in instead."` (was a generic message) — explicit product decision, see §3A.
+- **Fixed** false-positive "Connection error" on `/api/wizard-chat`/`/api/extract-trip` — frontend timeout bumped to 45s for these two endpoints to match backend retry-with-backoff worst case.
+- **Fixed** duplicate React key warnings (`llm-msg-N`) in the wizard chat — replaced a module-level id counter (which resets across Next.js Fast Refresh while component state persists) with `crypto.randomUUID()`.
+- **New** 60s client-side generation-stall watchdog — previously a silently-dead SSE stream (dropped connection, or a dev Fast Refresh remount aborting the fetch) left the UI frozen on "Starting up…" forever with no recovery path.
+
+### v10.12 (July 2026) — Itinerary Corpus Extraction Chain + `itinerary_corpus` Qdrant Collection
+
+- **New `apps/api/chains/itinerary_corpus_extraction_chain.py`** — small Gemini call per raw scraped document (reuses the JSON-extraction pattern from `chains/extract_trip_chain.py`) turning it into a structured `ItineraryCorpusDoc` (destination/country/duration/pace/purpose/budget_tier/group_type/days), or `None` if the LLM decides it isn't actually a real itinerary. Computes a `quality_score` (0.90 authoritative blogs/Wikivoyage, 0.85 high-karma Reddit, 0.65 standard Reddit, 0.40 low-signal Reddit, 0.55 YouTube) per the source-tier table in docs/rag-strategy.md §9.
+- **New `itinerary_corpus` Qdrant collection** with **two named vectors** per point (`config` + `content`), created automatically by `core/qdrant.py::_ensure_collections()`. The `config` vector embeds a short string like "5 day moderate cultural couple trip Kyoto Japan November" (matched against a user's trip config at retrieval time); the `content` vector embeds the full day-by-day text (matched by semantic similarity) — exactly the dual-embedding strategy documented in §9.
+- **New scheduler job** (`core/scheduler.py::_refresh_itinerary_corpus`) — runs monthly (`ITINERARY_CORPUS_REFRESH_DAYS`, default 30), tolerant of individual source/document failures.
+- **Scope note**: this only *ingests* — wiring the collection into the itinerary generation prompt as few-shot grounding is the separate, still-pending `itinerary-corpus-retrieval` roadmap item.
+- Verified: 154 backend tests passing (137 existing + 17 new), no regressions; manually confirmed the new Qdrant collection creates with the correct two-named-vector schema.
+
+### v10.11 (July 2026) — Itinerary Corpus Scrapers (raw fetch stage, docs/rag-strategy.md §9)
+
+- **New `apps/api/scrapers/itinerary_corpus.py`** — first implementation step of the free-tier "Itinerary Corpus" pipeline. Fetches raw, itinerary-shaped content from four free/keyless sources and returns plain dicts (`source`, `source_name`, `source_url`, `title`, `raw_text`, `published_date`) — no LLM structuring, no embeddings, no Qdrant writes yet.
+  - Travel blog RSS (Nomadic Matt, Planet D) via `feedparser` + BeautifulSoup full-page fetch, filtered to itinerary-shaped titles.
+  - Wikivoyage itinerary articles via the **official Wikimedia `action=parse` API** (not raw HTML scraping) — a curated seed list of dedicated itinerary articles (Golden Triangle, Grand Tour of Europe, Trans-Siberian Railway, etc.).
+  - Reddit trip-report self-posts — reuses the existing keyless direct public-JSON pattern (no PRAW/OAuth credentials needed), searching itinerary-focused subreddits for itinerary-shaped posts.
+  - YouTube caption transcripts via `youtube_transcript_api` (no API key) for a curated seed list of video IDs — live video *discovery* would require the paid/keyed YouTube Data API, so intentionally out of scope here.
+- **New dependencies**: `feedparser==6.0.12`, `youtube-transcript-api==1.2.4` (both free/open-source).
+- **New tests**: `tests/unit/test_itinerary_corpus_scraper.py`, 16 fully offline/mocked tests.
+- **Scope boundary**: structuring raw text into the `ItineraryCorpusDoc` schema and populating a new `itinerary_corpus` Qdrant collection is the separate, still-pending `itinerary-corpus-extraction` roadmap item — this pass only covers raw content collection.
+- Verified: 137 backend tests passing (121 existing + 16 new), no regressions.
+
+### v10.10 (July 2026) — Docker/Env Template Refresh + Supabase Production Runbook (infra housekeeping)
+
+- **`.env.example` (backend)**: was badly stale — missing ~25 settings that `core/config.py` had grown to support (DB, JWT/auth, Google SSO, Resend email, OSM/retrieval feature flags, Reddit ingestion). Rewritten to cover every setting with free-tier guidance inline.
+- **Fixed misleading `DATABASE_URL` default**: `core/config.py` defaulted to a non-functional placeholder Postgres string; now defaults to local SQLite (matches actual local dev usage in `.env`), zero setup required.
+- **New `DATABASE_SSL_REQUIRE` setting**: Supabase (and most managed Postgres) require TLS that `asyncpg` won't negotiate automatically from a bare connection string — this was an undocumented footgun, now explicit and wired into `db.py`'s `connect_args`.
+- **Fixed a real cross-environment migration bug**: `alembic upgrade head` against a *fresh* SQLite database crashed on migration `0001` (`events.event_metadata` used a hardcoded Postgres-only `JSONB` type with no SQLite fallback, while the ORM model already had one) — fixed by matching the ORM's `.with_variant(JSON(), "sqlite")`. Verified clean end-to-end on a brand-new SQLite file.
+- **Fixed missing auto-migration on deploy**: `railway.toml`'s `startCommand` only ran `uvicorn`, meaning a fresh Supabase database would deploy with zero tables until someone manually ran migrations. Now `alembic upgrade head && uvicorn ...`.
+- **`docker-compose.yml`**: added an optional `postgres` service (profile-gated, `docker compose --profile postgres up`) for local Postgres-parity testing without affecting the SQLite-by-default path.
+- **New Supabase production setup runbook** in `docs/system-design.md` §8A: pooled-connection-string guidance (port 6543, avoids exhausting the free tier's 60-connection cap), the two required env vars, and the free-tier auto-pause-after-7-days caveat.
+- Verified: 121 backend tests passing, no regressions; `alembic upgrade head` tested clean on a fresh SQLite file; `docker-compose.yml` validated as syntactically correct YAML.
+
+### v10.9 (July 2026) — Foreign-Currency Budget Input
+
+- **New `core/currency_convert.py`** — deterministic (regex, no LLM math) detection of a budget stated in one of 10 supported foreign currencies (USD, EUR, GBP, AED, SGD, AUD, CAD, JPY, THB, CHF), converted to INR via the free, keyless Frankfurter.app API with a 6-hour in-memory cache and hardcoded fallback rates.
+- **Wizard chat**: now explicitly states INR is assumed the first time it asks for budget, and names the 10 supported alternative currencies. A detected foreign-currency amount is converted deterministically and both figures + the rate are stated transparently in Anya's reply; `config_patch.budget.amount` always stores the converted INR figure.
+- Verified: 121 backend tests passing (no regressions), `tsc --noEmit` clean (no frontend changes needed), live curl-tested (`"$2000"` → `₹1,73,000`, first-ask message correctly mentions INR + currency options). See `TECHNICAL_DOCUMENTATION.md` §14 v10.9 and system-design.md §2.5 for full detail.
+
+### v10.8 (July 2026) — Real Budget Estimator + Pre-Generation Feasibility Gate (backend + UI)
+
+- **New `core/budget_estimator.py`** — deterministic (no LLM, free-tools-only) bare-minimum budget engine: destination cost tier + season + group composition + duration + traveller comfort level → flights/stay/food breakdown, total, and per-person figure. Returns `None` (forces a clarifying question) if group size is unknown.
+- **Wizard chat UX change**: Anya no longer quotes a flat group-blind number from the parsing-only budget-tier table; she now asks for group size first, then states a real per-person + total estimate with what it covers/excludes (see §2.4).
+- **New pre-generation feasibility gate in `LLMWizard.tsx`**: the LLM chat wizard now calls `/api/feasibility-check` before auto-generating (previously only the older structured form did). Infeasible budgets pause generation with a shortfall message + "Set budget to ₹X" / "Proceed anyway 🚀" / "Let me adjust something else" chips, rather than silently generating against an unrealistic number.
+- **`feasibility_chain.py`**: the check now takes `max(llm_estimate, deterministic_floor)` and supports pre-booked flight/accommodation overrides (`prebooked_flights_inr`/`prebooked_accommodation_inr`) when a user states a real paid amount.
+- **New comparison-mode row**: "Estimated Trip Budget (bare minimum)" in destination comparisons, using the same deterministic estimator per destination, cheapest destination highlighted as winner.
+- Verified: 121 backend tests passing (no regressions), `tsc --noEmit` clean, live curl-verified end-to-end (ask-before-quote, per-person quote, infeasible-budget flag + floor + alternatives, comparison-mode budget row). See `TECHNICAL_DOCUMENTATION.md` §14 v10.8 for full detail.
+
+### v10.6 (July 2026) — Admin Access Request/Approval Workflow
+
+- **New `admin_requests` table** (migration `0003_admin_requests`) — tracks requester, status (`pending`/`approved`/`rejected`), optional message, reviewer, and timestamps.
+- **New endpoints**: `POST /api/admin/requests` (any non-admin, idempotent while pending), `GET /api/admin/requests/me`, `GET /api/admin/requests` (admin-only list), `POST /api/admin/requests/{id}/approve` and `/reject` (admin-only, one-shot).
+- **New emails**: every existing admin is notified the moment a request is created; the requester is notified of the approve/reject decision. Both best-effort via Resend with a dev-log fallback, same pattern as password reset.
+- **New UI**: `/account` gained a "Request admin access" section (hidden for existing admins); `/admin` gained an "Admin access requests" panel above the metrics cards for reviewing pending requests.
+- **Policy formalized**: `is_admin` was already impossible to set at signup (`SignupRequest` has no such field; DB defaults `false`) — this closes the gap by giving a formal, auditable, two-party path to grant it afterward. See §3C for the full data flow and §8A for the schema.
+- Verified: 8 new integration tests (121 total backend tests passing); `tsc --noEmit` clean; 36 frontend tests passing; live end-to-end curl-tested against the running dev servers (signup → request → admin sees & approves → `is_admin: true` confirmed on `/auth/me` → admin-endpoint access confirmed).
+
+### v10.5 (July 2026) — Admin Console Entry Point
+
+- Added a conditional "Admin console" link (shield icon) to `UserMenu.tsx`'s dropdown, shown only when `user.is_admin === true`, positioned above "Log out" — previously `/admin` had no in-app entry point and had to be navigated to directly by URL.
 
 ### v10.4 (July 2026) — Local Testing Fixes: Auth Nav Indicator, Wizard Resume Race, Chip Backfill, SQLite FK Cascade
 

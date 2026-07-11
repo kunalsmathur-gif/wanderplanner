@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any
 
 from pydantic import BaseModel
 
+from core.budget_estimator import budget_estimate_prompt_hint
+from core.currency_convert import TOP_10_CURRENCIES, currency_conversion_prompt_hint
 from core.config import settings
 from core.llm_client import track_gemini_usage
 from models.chat import ChatMessage
@@ -39,15 +42,28 @@ _MULTI_SELECT_CHIP_KEYWORDS = [
     "nightlife", "sports", "wellness", "religious", "vegetarian",
 ]
 
+# Generic catch-all chips (e.g. "No preference") that can appear alongside a
+# theme-chip group without being a theme themselves. They must NOT break the
+# "every chip looks like a theme" check below, or the whole group silently
+# falls back to single-select — which was the actual bug: the themes prompt
+# always appends one of these, so multi-select was never detected.
+_GENERIC_CHIP_KEYWORDS = ["no preference", "none", "skip", "any", "no thanks", "not sure"]
+
 
 def _is_multi_select_chips(chips: list[str]) -> bool:
-    """True if every chip looks like a travel-theme option, meaning the user
-    should be able to select several before continuing."""
+    """True if every non-generic chip looks like a travel-theme option,
+    meaning the user should be able to select several before continuing."""
     if len(chips) < 2:
+        return False
+    theme_chips = [
+        chip for chip in chips
+        if not any(g in chip.lower() for g in _GENERIC_CHIP_KEYWORDS)
+    ]
+    if not theme_chips:
         return False
     return all(
         any(keyword in chip.lower() for keyword in _MULTI_SELECT_CHIP_KEYWORDS)
-        for chip in chips
+        for chip in theme_chips
     )
 
 
@@ -210,6 +226,25 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       as well" -> append {{"city": "Kandy", ...}} to the existing hops in config_patch.
     Map: "suggest me" / "not sure" / "anywhere" / "kuch bhi" / "you decide" -> Case C
 
+    CRITICAL — never strand a trip in "exploring" mode while collecting other fields.
+    A budget can't be estimated and dates/group questions feel pointless if the user doesn't
+    even know where they're going yet. So the moment destination_mode becomes "exploring",
+    treat naming actual places as the URGENT next step — prioritize it over dates, budget,
+    or group size:
+      - If you already know the purpose (or any other stated preference — beaches, culture,
+        nightlife, kid-friendly, budget level, etc.), propose 2-3 concrete destinations with a
+        one-line reason for each IN THAT SAME REPLY, and ask the user to pick one (or say
+        "you choose"). Do NOT ask about dates/budget/group in this reply.
+      - If you don't yet know the purpose either, ask for purpose AND make clear a destination
+        suggestion is coming right after — do not silently move past destination toward budget
+        or group size while it is still unresolved.
+      - Once the user picks a place (or says "you choose"/"surprise me"), immediately set
+        destination_mode: "fixed" with that destination in config_patch that same turn, THEN
+        continue collecting the remaining fields (dates, budget, group, pace).
+      - Never leave destination_mode: "exploring" set for more than the single turn where you
+        first ask about destination preferences — the very next assistant turn must either name
+        concrete candidates or lock in the chosen one.
+
     COUNTRY DESTINATIONS: If the user names a country (not a specific city), warmly name
     the key cities/regions you plan to explore and ask if they have a preference or are happy
     to visit all. For example:
@@ -262,9 +297,50 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
     -> start: "2026-12-01", end: "2026-12-31", flexible: true).
 
   Field 4 -- budget (JSON key: "budget")
-    Total trip budget in INR.
+    Total trip budget in INR. **INR (₹) is always the canonical/stored currency — say so explicitly the
+    first time you ask for budget**, e.g. "What's your approximate budget in ₹ (INR)? If you'd rather
+    tell me in USD, EUR, GBP, AED, SGD, AUD, CAD, JPY, THB, or CHF, that's fine too — I'll convert it."
     Format: {{"amount": 100000, "currency": "INR"}}
     Always convert shorthand using the currency rules in Section 2.
+
+    FOREIGN CURRENCY STATED BY THE USER (e.g. "$2000", "1500 euros", "AED 5000"):
+      Never do this conversion math yourself — it is computed deterministically server-side.
+      Check {currency_conversion_hint} below: if it is non-empty, it already contains the exact
+      converted INR figure — use that exact number for config_patch.budget.amount (currency always
+      "INR"), and mention BOTH the original stated amount and the converted ₹ figure + rate in your
+      reply for transparency (e.g. "Got it, $2000 is about ₹1,73,000 at today's rate."). If a currency
+      is mentioned that ISN'T one of the 10 supported ones above, tell the user you currently only
+      support INR + those 10 currencies and ask them to restate in one of those (or in ₹).
+
+    RECOMMENDING A BUDGET (user asks you to suggest/recommend one instead of giving their own number):
+      Never invent a number yourself and never use the Section 2 "Budget tiers" shorthand table for this —
+      that table is only for parsing the user's OWN stated amount (e.g. "a budget trip" -> 40000), not for
+      generating a recommendation.
+      Follow {budget_estimate_hint} below exactly:
+        - If it tells you group size is unknown, ask for group composition FIRST (this may jump ahead of
+          the normal field order) and do NOT quote any number until you have it.
+        - Once it gives you a computed estimate, present it in your own words, ALWAYS stating both the
+          TOTAL and the PER-PERSON figure, and mention it covers flights + stay + food as a bare minimum
+          (activities/shopping/local transport are extra). Briefly mention any flagged assumptions
+          (trip length, comfort level, season) so the user can correct them.
+
+    FEASIBILITY CHECK (user states/proposes their OWN number — as the initial figure, in response to
+    "is X feasible?", or by asking to lower a previously discussed budget):
+      Never silently accept a number without checking it. Compare the user's stated total (or per-person
+      figure x headcount) against the computed bare-minimum total in {budget_estimate_hint} above (this
+      requires group size to be known — if it isn't, record the number as given and ask for group size
+      next as usual; feasibility can only be judged once headcount is known).
+        - If the user's number is AT OR ABOVE the bare-minimum total: confirm it's workable, optionally
+          noting it's tight/comfortable relative to the estimate.
+        - If the user's number is BELOW the bare-minimum total (this includes when the user asks to
+          *reduce* an already-quoted budget to a figure under the minimum): do NOT just say "Understood"
+          and move on. Say so plainly — e.g. "That's below the bare-minimum I'd estimate for flights +
+          stay + food alone (₹{{total}} for {{headcount}}, ~₹{{per_person}}/person) — it may mean a much
+          tighter trip (hostel-style stay, budget flights, street food) or cutting the destination/duration/
+          group. Want to adjust the budget, shorten the trip, or should I plan around this tighter number
+          and flag the trade-offs?" Still record whatever number the user ultimately confirms into
+          config_patch.budget — this is a transparency check, not a hard block — but never accept a
+          below-minimum figure without surfacing the gap first.
 
   Field 5 -- group (JSON key: "group")
     Who is travelling.
@@ -301,6 +377,31 @@ Extract if the user mentions them. Never ask for them directly (the checkpoint i
                     "wheelchair_accessible": false, "pet_friendly": false}}
   personas: array from ["digital_nomad", "sports_fitness", "pet_parent",
                           "luxury_traveller", "budget_backpacker", "senior_traveller"]
+  crowd_preference: "touristy" | "balanced" | "offbeat" (default "balanced" — only set when the user signals it)
+    Mappings:
+      "hidden gems" / "less crowded" / "offbeat" / "off the beaten path" / "away from tourists" /
+      "local experiences" / "secret spots" / "bheed nahi chahiye" / "peaceful places" -> offbeat
+      "famous spots" / "main attractions" / "iconic places" / "must-see" / "first time, want the classics" -> touristy
+    Chip suggestion (offer once at the Stage 2 checkpoint, alongside other optional prefs):
+      "Crowd style? 🧭" -> chips ["Iconic Spots 🗼", "Mix of Both ⚖️", "Hidden Gems 💎"]
+      "Iconic Spots" -> touristy | "Mix of Both" -> balanced | "Hidden Gems" -> offbeat
+  splurge_categories: array from ["accommodation", "food", "activities", "shopping", "local_transport"]
+  save_categories: array from ["accommodation", "food", "activities", "shopping", "local_transport"]
+    Only extract if the user explicitly says something like "splurge on hotels but keep food cheap",
+    "I don't care about shopping, save there", "nice hotel is a priority", "we want to eat well but save on transport".
+    Never ask for these directly — Stage 2's optional checkpoint may offer them as a one-off suggestion
+    (see chip below), but do not block the required-fields flow on it.
+    Chip suggestion (offer once, only after all 6 required fields + budget are known):
+      "Want to splurge on anything? 💰" -> chips ["Nice Hotel 🏨", "Great Food 🍽️", "Top Activities 🎟️", "No preference"]
+      A user picking "Nice Hotel" -> splurge_categories: ["accommodation"]. "No preference" -> leave both arrays empty and move on.
+  prebooked_flights_inr: integer (INR) — ONLY if the user explicitly says they've already booked/paid for flights
+    (e.g. "I already booked my tickets for 50k", "flights are done, cost 30000").
+    ALWAYS ask for the actual amount paid rather than guessing: "Got it — how much did the flights cost in total?"
+  prebooked_accommodation_inr: integer (INR) — ONLY if the user explicitly says they've already booked/paid for
+    a hotel/stay (e.g. "hotel is already booked for 20k", "accommodation sorted, paid 15000").
+    ALWAYS ask for the actual amount paid rather than guessing.
+    These feed directly into budget recommendations and the feasibility check — once known, the real paid
+    amount replaces the heuristic estimate for that cost component so the remaining-budget math is accurate.
 
 ---
 
@@ -343,11 +444,30 @@ Stage 3 -- Generate signal.
     b) CURRENT_STATE shows "status: checkpoint-asked", AND
     c) User says "generate" / "start" / "let's go" / "just do it" / "chal" / "bas karo" /
        "I'm ready" / "regenerate" / "update it" / "update my itinerary" / "regenerate as-is" /
-       clicks "Just generate it!" or "Regenerate as-is" / provides optional preferences.
+       clicks "Just generate it!" or "Regenerate as-is" / provides optional preferences, OR
+       your OWN immediately-previous message asked something like "shall I go ahead and
+       generate it?" / "are you ready for me to generate your itinerary?" and the user replies
+       with any simple affirmative -- "yes", "yeah", "yep", "sure", "ok", "okay", "go ahead",
+       "please do", "confirm", "sounds good", "haan" -- even though that word alone isn't in
+       the list above. A plain "yes" answering YOUR OWN generate question always counts.
   When setting ready_to_generate: true, also set summary to a single human-readable line.
 
 GUARD: If user asks to generate but fields are missing -> refuse warmly, name exactly which
 fields are missing, ask for them in one combined question. Set ready_to_generate: false.
+
+CRITICAL -- NEVER HALLUCINATE GENERATION STATUS:
+  You have NO visibility into whether an itinerary has actually been generated -- only the
+  application does that, as a real action taken AFTER you set ready_to_generate: true in this
+  same turn. You must NEVER say things like "Generating your itinerary now", "Your itinerary
+  is ready", or answer "yes, it's ready" to a user asking whether it's done -- even if it feels
+  like the natural conversational answer. If the user asks whether their itinerary is ready
+  and you are not this turn setting ready_to_generate: true, say you can't check that from
+  here and that the app screen will show progress/the result directly.
+  Also double-check CURRENT_STATE literally has all 6 fields filled before ever asking "are you
+  ready to generate?" -- do not ask that question, or claim generation, based on something you
+  merely mentioned/inferred in your own reply text (e.g. calling it a "family trip" in prose
+  does NOT mean purpose was actually recorded -- it only counts if it's in CURRENT_STATE or in
+  config_patch this turn).
 
 ---
 
@@ -421,6 +541,12 @@ Treat it as ground truth. Only ask for keys that are null or absent here.
 
 {collected_state}
 
+## BUDGET GUIDANCE HINT (a computed bare-minimum estimate for this trip — use it in TWO situations)
+{budget_estimate_hint}
+
+## FOREIGN CURRENCY CONVERSION HINT (only relevant if the user's latest message stated a budget in a non-INR currency)
+{currency_conversion_hint}
+
 ## PRELOADED DESTINATION
 {preloaded_destination}
 """
@@ -466,6 +592,86 @@ def _has_all_required(config: dict[str, Any]) -> bool:
         return False
 
     return True
+
+
+# Phrases that falsely imply generation has started/finished — used as a
+# safety net to catch the LLM narrating success in `reply` text without the
+# backing `ready_to_generate` flag actually being true this turn (a real
+# observed failure mode: the model says "Generating your itinerary now" or
+# "Yes, it's ready!" purely as conversational text, with no actual action
+# behind it, leaving the user stuck with no loader/CTA and no itinerary).
+_HALLUCINATED_GENERATION_RE = re.compile(
+    r"\bgenerat(?:ing|ed)\b.{0,40}\b(?:itinerary|trip)\b"  # "generating"/"generated" (gerund/past — an
+                                                            # in-progress-or-done claim), NOT bare "generate"
+                                                            # (used in legitimate questions like "shall I
+                                                            # generate your itinerary?")
+    r"|\bis\s+(?:now\s+)?ready\b"      # "itinerary is (now) ready" / "it is ready" — an assertion, not the
+                                        # interrogative "are you ready" (different verb form: are, not is)
+    r"|\bit'?s\s+ready\b",              # "it's ready" contraction form of the same assertion
+    re.IGNORECASE,
+)
+
+
+# Canonical chip sets keyed by the field they belong to, used to detect a
+# reply that has moved on to a later question but still carries a STALE chip
+# set from an earlier, already-answered field (see _is_stale_chips below).
+_FIELD_CHIP_SETS: dict[str, frozenset[str]] = {
+    "purpose": frozenset({"Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"}),
+    "destination": frozenset({"Suggest me! 🌍", "I have a destination in mind"}),
+    "group": frozenset({"Solo 🧳", "Couple ❤️", "Family 👨‍👩‍👧", "Friends 🎉"}),
+    "pace": frozenset({"Relaxed 🧘", "Moderate 🚶", "Packed 🏃"}),
+}
+
+
+def _is_stale_chips(chips: list[str], config: dict[str, Any]) -> bool:
+    """True if `chips` matches a field's canonical set but CURRENT_STATE says
+    that field is already filled — i.e. the model echoed an old question's
+    chips instead of the one it's actually asking now."""
+    chip_set = frozenset(chips)
+    dest = config.get("destination")
+    mode = config.get("destination_mode", "fixed")
+    filled = {
+        "purpose": bool(config.get("purpose")),
+        "destination": (mode == "exploring") or (mode == "country" and config.get("destination_country")) or (mode == "fixed" and dest and dest.get("city")),
+        "group": (config.get("group", {}).get("adults", 0) >= 1),
+        "pace": bool(config.get("pace")),
+    }
+    for field, canonical in _FIELD_CHIP_SETS.items():
+        if chip_set == canonical and filled.get(field):
+            return True
+    return False
+
+
+def _next_missing_field_prompt(config: dict[str, Any]) -> tuple[str, list[str]]:
+    """Returns (reply, chips) for the next required field still missing from
+    config, in field order. Used as the honest fallback whenever the model
+    claims (or implies) the trip is ready/generating without the fields to
+    back it up — see _HALLUCINATED_GENERATION_RE — so the user always gets a
+    real next step instead of a dead-end success claim."""
+    if not config.get("purpose"):
+        return (
+            "Just need one more thing — what's the main purpose of this trip?",
+            ["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"],
+        )
+    dest = config.get("destination")
+    mode = config.get("destination_mode", "fixed")
+    has_dest = (mode == "exploring") or (mode == "country" and config.get("destination_country")) or (mode == "fixed" and dest and dest.get("city"))
+    if not has_dest:
+        return ("Where are you thinking of going?", ["Suggest me! 🌍", "I have a destination in mind"])
+    dates = config.get("dates") or {}
+    if not (dates.get("start") and dates.get("end")):
+        return ("When are you planning to travel, and for how many days?", [])
+    if not (config.get("budget", {}).get("amount", 0) > 0):
+        return (f"What's your approximate budget in ₹ (INR)? (Or tell me in {', '.join(TOP_10_CURRENCIES)} — I'll convert.)", [])
+    if not (config.get("group", {}).get("adults", 0) >= 1):
+        return ("Who will be joining you — travelling solo, as a couple, or with family?", ["Solo 🧳", "Couple ❤️", "Family 👨‍👩‍👧", "Friends 🎉"])
+    if not config.get("pace"):
+        return ("What pace works for you?", ["Relaxed 🧘", "Moderate 🚶", "Packed 🏃"])
+    # All fields are actually present — the false claim likely came from a
+    # non-triggering confirmation (e.g. the checkpoint wasn't asked yet, or
+    # `ready_to_generate` genuinely wasn't set this turn). Nudge forward
+    # honestly rather than repeat a claim we can't back up.
+    return ("Everything's noted! Want me to go ahead and generate your itinerary now?", ["Just generate it! 🚀"])
 
 
 def _summarise_state(config: dict[str, Any]) -> str:
@@ -632,6 +838,22 @@ def _strip_trailing_json_artifacts(text: str) -> str:
     return cleaned.rstrip() or text
 
 
+def _decode_stray_unicode_escapes(text: str) -> str:
+    """Decode literal `\\uXXXX` JSON-style escape sequences (e.g. `\\u20b9`
+    for ₹) that leak into the plain-text fallback path below. This happens
+    when Gemini's response fails the full JSON parse (so `json.loads` never
+    runs to decode them) but the text itself still contains raw JSON string
+    escapes — otherwise the user sees literal "\\u20b9" instead of "₹"."""
+    if not text or "\\u" not in text:
+        return text
+    try:
+        return re.sub(
+            r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), text
+        )
+    except Exception:
+        return text
+
+
 def _looks_like_valid_json(raw: str) -> bool:
     """Best-effort check that Gemini's raw text is a complete, parseable
     JSON object with a non-empty `reply` field — used to decide whether a
@@ -675,9 +897,25 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
 
     client = google_genai.Client(api_key=settings.gemini_api_key)
 
+    # Last user message text, used only to detect an explicit economical/
+    # premium preference for the budget-recommendation hint below.
+    last_user_text = next(
+        (m.content for m in reversed(request.messages) if m.role == "user"), None
+    )
+    try:
+        budget_hint = budget_estimate_prompt_hint(request.partial_config, last_user_text)
+    except Exception:
+        budget_hint = ""
+    try:
+        currency_hint = currency_conversion_prompt_hint(last_user_text)
+    except Exception:
+        currency_hint = ""
+
     system_prompt = WIZARD_SYSTEM_PROMPT.format(
         preloaded_destination=request.preloaded_destination or "None",
         collected_state=_summarise_state(request.partial_config),
+        budget_estimate_hint=budget_hint or "(not applicable this turn)",
+        currency_conversion_hint=currency_hint or "(not applicable this turn — user has not stated a foreign-currency amount)",
     )
 
     # Last 20 messages as conversation history
@@ -807,6 +1045,11 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                     reply_text = inner["reply"]
             except Exception:
                 pass
+        # Defensive: decode any literal `\uXXXX` escapes that survived a
+        # double-escaped JSON string value (e.g. "\u20b9" left un-decoded
+        # because the LLM emitted a doubly-escaped backslash) — no-op on
+        # already-correct text.
+        reply_text = _decode_stray_unicode_escapes(reply_text)
         chips_list = (
             data.get("chips")
             or data.get("suggested_chips")
@@ -863,6 +1106,14 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # Server-side override: only allow ready=true if all required fields present
         ready = data.get("ready_to_generate", False) and _has_all_required(merged)
 
+        # Anti-hallucination safety net: if the model's own reply text falsely
+        # implies generation is happening/done while `ready` is False this
+        # turn, the user is left stuck with a confident-sounding lie and no
+        # real next step (no loader, no CTA, nothing generated). Override
+        # with an honest prompt for whatever's actually still missing.
+        if not ready and _HALLUCINATED_GENERATION_RE.search(reply_text):
+            reply_text, chips_list = _next_missing_field_prompt(merged)
+
         # Safety net: the very first turn always asks about trip purpose (system
         # prompt Section 4, Field 1 mandates chips here), but with almost no
         # conversation context yet, the LLM occasionally omits them. Since this
@@ -871,6 +1122,31 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # leaving the opening question chip-less.
         if not chips_list and not merged.get("purpose") and len(request.messages) <= 1:
             chips_list = ["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"]
+
+        # Safety net: the model sometimes echoes a PREVIOUS turn's chip set
+        # instead of the one for the field it's actually asking about this
+        # turn — observed in the wild as the purpose chips (Leisure/Adventure/
+        # ...) reappearing under a reply that had already moved on to asking
+        # about destination. Detect chips that belong to a field CURRENT_STATE
+        # says is already filled, and replace them with the chips for whatever
+        # is genuinely still missing.
+        if chips_list and _is_stale_chips(chips_list, merged):
+            _, fresh_chips = _next_missing_field_prompt(merged)
+            chips_list = fresh_chips
+
+        # Safety net (general, any turn): the same "LLM asks the right
+        # question but drops the chips" failure mode observed above for the
+        # opening purpose question also happens later in the conversation —
+        # e.g. asking about pace/group in plain text with no chips (seen in
+        # the wild: "would you prefer a relaxed pace, moderate, or packed?"
+        # with an empty chips array). Fields with a fixed enum always have a
+        # canonical chip set (see _next_missing_field_prompt); if chips are
+        # still empty and the next actually-missing field is one of those,
+        # backfill just the chips — the LLM's own wording is left untouched.
+        if not chips_list and not ready:
+            _, fallback_chips = _next_missing_field_prompt(merged)
+            if fallback_chips and fallback_chips != ["Just generate it! 🚀"]:
+                chips_list = fallback_chips
 
         return WizardChatResponse(
             reply=reply_text,
@@ -925,6 +1201,35 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # leaked `",` or dangling `}`/`]`) from a truncated response before
         # ever showing it to the user.
         clean_raw = _strip_trailing_json_artifacts(clean_raw)
+
+        # Decode any literal JSON `\uXXXX` escapes (e.g. `\u20b9` -> ₹) left
+        # over because this text never went through json.loads on this path.
+        clean_raw = _decode_stray_unicode_escapes(clean_raw)
+
+        # Same first-turn purpose-chip safety net as the JSON-success path
+        # above: a plain-text (non-JSON) greeting response on the very first
+        # turn should still offer the standard purpose chips rather than
+        # leaving the user with no way to respond except free text.
+        if not extracted_chips and not request.partial_config.get("purpose") and len(request.messages) <= 1:
+            extracted_chips = ["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"]
+
+        # General any-turn chip backfill — same rationale as the JSON-success
+        # path above (this fallback fires whenever the LLM's raw response
+        # wasn't valid JSON at all, so it never had a `chips` field to begin
+        # with; the fixed-enum fields still deserve their canonical chips).
+        if not extracted_chips:
+            _, fallback_chips = _next_missing_field_prompt(request.partial_config)
+            if fallback_chips and fallback_chips != ["Just generate it! 🚀"]:
+                extracted_chips = fallback_chips
+
+        # Anti-hallucination safety net (see the JSON-success path above for
+        # full rationale) — this plain-text fallback path ALWAYS returns
+        # ready_to_generate=False, so a falsely-confident "it's ready!" here
+        # would be even more misleading since there's no backing config_patch
+        # either.
+        if clean_raw and _HALLUCINATED_GENERATION_RE.search(clean_raw):
+            clean_raw, extracted_chips = _next_missing_field_prompt(request.partial_config)
+
         return WizardChatResponse(
             reply=clean_raw or "I'm on it! Just a moment…",
             chips=extracted_chips,
@@ -965,7 +1270,10 @@ def _mock_wizard(request: WizardChatRequest) -> WizardChatResponse:
     if not (dates.get("start") and dates.get("end")):
         return WizardChatResponse(reply="When are you planning to travel, and for how many days?", chips=[], config_patch={}, ready_to_generate=False)
     if not (config.get("budget", {}).get("amount", 0) > 0):
-        return WizardChatResponse(reply="What's your approximate budget for this trip?", chips=[], config_patch={}, ready_to_generate=False)
+        return WizardChatResponse(
+            reply=f"What's your approximate budget in ₹ (INR)? (Or tell me in {', '.join(TOP_10_CURRENCIES)} — I'll convert.)",
+            chips=[], config_patch={}, ready_to_generate=False,
+        )
     if not (config.get("group", {}).get("adults", 0) >= 1):
         return WizardChatResponse(reply="Who will be joining you — travelling solo, as a couple, or with family?", chips=["Solo 🧳", "Couple ❤️", "Family 👨‍👩‍👧", "Friends 🎉"], config_patch={}, ready_to_generate=False)
     if not config.get("pace"):
