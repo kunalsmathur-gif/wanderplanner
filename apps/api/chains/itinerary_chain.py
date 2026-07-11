@@ -63,6 +63,37 @@ async def _gem_guidance_block(trip_config: TripConfig) -> str:
     )
 
 
+def _pinned_guidance_block(trip_config: TripConfig) -> str:
+    """Hard must-include constraints from named-interest refinements (GTM §2,
+    the "Harry Potter test"). Every entry was verified against OSM/wiki by
+    services/poi_pinning.py before it reached the config — this block turns
+    them into commitments, not suffix nudges. Deterministic formatting, zero
+    lookups, zero LLM calls."""
+    pins = getattr(trip_config, "pinned_pois", None) or []
+    if not pins:
+        return ""
+    lines = []
+    for p in pins:
+        if p.lat or p.lon:
+            coords = f"lat {p.lat}, lon {p.lon} — real verified coordinates, use them exactly"
+        else:
+            coords = "coordinates not on file — use your best-known real coordinates for it"
+        via = f" (for the user's {p.source_interest} interest)" if p.source_interest else ""
+        poi_type = f", {p.poi_type}" if p.poi_type else ""
+        # Names/interests transit LLM output + OSM payloads — same neutralize
+        # treatment as every other externally-sourced string in this prompt.
+        lines.append(neutralize(f"- {p.name}{poi_type} ({coords}){via}", context="pinned POI"))
+    return (
+        "PINNED MUST-INCLUDE PLACES — HARD CONSTRAINTS:\n"
+        "The user explicitly committed to these verified places. Each one MUST "
+        "appear exactly once in the itinerary as its own activity item, on a day "
+        "and at a time where it fits the route. Never drop, rename, or substitute "
+        "a pinned place. Add \"pinned\" to its tags array, and mention in its "
+        "description why it matches the user's interest.\n"
+        + "\n".join(lines)
+    )
+
+
 async def _itinerary_examples_block(trip_config: TripConfig) -> str:
     """Few-shot grounding from the itinerary_corpus collection (docs §9).
     Best-effort: any retrieval failure degrades to the explicit "none
@@ -122,6 +153,10 @@ CROWD PREFERENCE (trip_config.crowd_preference):
 - Every item taken from HIDDEN GEM CANDIDATES: use its provided lat/lon (they are real OpenStreetMap coordinates — do not invent others), add "hidden_gem" to its tags array, and include its community provenance naturally in the description (e.g. "a quiet spot locals rave about on r/IndiaTravel").
 - Never invent a "hidden gem" that is not in the HIDDEN GEM CANDIDATES list — an unverified recommendation is worse than a famous one. If no candidates section is provided, simply plan normally without the "hidden_gem" tag.
 
+PINNED PLACES (if a PINNED MUST-INCLUDE PLACES section is provided below):
+- These are non-negotiable commitments, stronger than any other guidance in this prompt: every pinned place must appear exactly once as its own itinerary item with the "pinned" tag.
+- If a pinned place conflicts with pace limits, prefer dropping an unpinned filler activity over dropping the pin.
+
 OUTPUT SCHEMA:
 {{
   "days": [
@@ -170,6 +205,8 @@ REAL TRAVELLER ITINERARIES FOR REFERENCE (use as inspiration, not verbatim):
 {itinerary_examples}
 
 {gem_guidance}
+
+{pinned_guidance}
 
 {budget_guidance}
 
@@ -283,6 +320,27 @@ def _mock_itinerary(trip_config: TripConfig, tip_texts: list[str] | None = None)
             ],
             "transit_warnings": [],
         })
+
+    # Honour pinned must-include places in mock mode too (one per day, round-
+    # robin) so the refine → pin → regenerate → diff loop is exercisable
+    # without a live LLM.
+    for idx, pin in enumerate(getattr(trip_config, "pinned_pois", None) or []):
+        day = days[idx % len(days)]
+        day["items"].append({
+            "id": str(uuid.uuid4()),
+            "time_start": "19:00",
+            "time_end": "21:00",
+            "title": pin.name,
+            "description": f"Pinned for your {pin.source_interest or 'special'} interest — a verified real place.",
+            "location": {"lat": pin.lat, "lon": pin.lon, "address": f"{dest}"},
+            # tags[0] renders as the category badge; "pinned" in the rest
+            # of the list renders the 📌 chip (see ItineraryTimeline.tsx).
+            "tags": ["experience", "pinned"],
+            "local_name": "",
+            "booking_url": "",
+            "youtube_video_id": "",
+            "youtube_search_query": "",
+        })
     return {
         "days": days,
         "expense_breakdown": {
@@ -379,6 +437,7 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
         context=context_text,
         itinerary_examples=itinerary_examples,
         gem_guidance=gem_guidance,
+        pinned_guidance=_pinned_guidance_block(trip_config),
         budget_guidance=neutralize(
             budget_guidance, context="budget tier + cost grounding guidance"
         ),
@@ -482,6 +541,7 @@ async def _langchain_itinerary(trip_config: TripConfig) -> dict:
         "context": context_text,
         "itinerary_examples": itinerary_examples,
         "gem_guidance": gem_guidance,
+        "pinned_guidance": _pinned_guidance_block(trip_config),
         "budget_guidance": neutralize(budget_guidance, context="budget tier + cost grounding guidance"),
         "trip_config": trip_json,
     })

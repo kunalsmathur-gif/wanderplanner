@@ -52,6 +52,17 @@ export interface TripDates {
   duration_days?: number  // Desired trip duration when dates are flexible
 }
 
+// Verified must-include place from a named-interest refinement (the "Harry
+// Potter test"). Only the backend creates these, after OSM/wiki verification.
+export interface PinnedPOI {
+  name: string
+  lat: number
+  lon: number
+  poi_type: string
+  source_interest: string
+  verified_by: 'osm' | 'wiki'
+}
+
 export interface TripConfig {
   purpose: string
   dates: TripDates
@@ -72,6 +83,7 @@ export interface TripConfig {
   save_categories: string[]
   prebooked_flights_inr: number | null
   prebooked_accommodation_inr: number | null
+  pinned_pois: PinnedPOI[]             // verified hard constraints (max 8)
 }
 
 // Itinerary types
@@ -186,6 +198,9 @@ export interface ChatRefineResponse {
   action_type: ChatActionType
   config_patch: Partial<TripConfig> | null
   major_change: boolean
+  named_interest: string | null
+  pinned_pois: PinnedPOI[]        // newly verified pins from this message
+  dropped_candidates: string[]    // candidates that failed verification
 }
 
 export interface ComparisonParameter {

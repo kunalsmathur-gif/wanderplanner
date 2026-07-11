@@ -1,39 +1,31 @@
 # Next-Session TODO — GTM Phase 1 Execution
 
-**Last updated:** 2026-07-11 (end of session)
-**Context:** Executing the Phase 1 roadmap in [GTM_STRATEGY.md](GTM_STRATEGY.md). Items 1–2 shipped this session (v10.15 + v10.16, see `TECHNICAL_DOCUMENTATION.md` §14). This file is the pick-up point for the next session.
+**Last updated:** 2026-07-12 (end of session)
+**Context:** Executing the Phase 1 roadmap in [GTM_STRATEGY.md](GTM_STRATEGY.md). Items 1–3 shipped (v10.15–v10.17, see `TECHNICAL_DOCUMENTATION.md` §14). This file is the pick-up point for the next session.
 
 ---
 
-## ✅ Done this session (for context)
+## ✅ Done last session (for context)
 
-1. **Itinerary-corpus few-shot retrieval** (v10.15) — `services/search.py::retrieve_itinerary_examples()` wired into both LLM generation paths. 13 tests.
-2. **Hidden-gem scoring + crowd dial** (v10.16) — `services/gems.py`, `TripConfig.crowd_preference`, prompt + retrieval-bias wiring, Anya extraction (live-verified: "less crowded hidden gems" → `offbeat`), 💎 timeline badge. 15 tests.
-3. Strategy docs: `GTM_STRATEGY.md` created; `STARTUP_EVALUATION.md` addendum (score 5→6/10).
-
-Backend unit suite: **148 passed**. `tsc --noEmit` clean.
+1. **Refinement hard-constraints + visible diff UI** (v10.17, the "Harry Potter test") — GTM Phase 1 item 3:
+   - `chains/interest_expansion_chain.py` (named interest → ≤10 candidate places, one `gemini-2.5-flash` call) + `services/poi_pinning.py` (verify vs `osm_pois` fuzzy-match with real coords, `wiki` text fallback; unverified = dropped, never pinned) + `TripConfig.pinned_pois` (cap 8) + `PINNED MUST-INCLUDE PLACES — HARD CONSTRAINTS` prompt block in both LLM paths.
+   - `chat_refine` orchestration: detects `named_interest`, pins survivors into `config_patch`, honest reply about dropped candidates; LLM-authored `pinned_pois` stripped (integrity guard).
+   - Frontend: in-place regeneration from the Anya panel (old plan survives failures), `lib/itineraryDiff.ts` added/removed/moved chips, 📌 pin chips + timeline badge.
+   - 29 new tests (177 total green), tsc clean. **Live-verified** detection→expansion→honest-degradation against the running Gemini API (9 real Harry Potter places expanded for London; all dropped against empty local Qdrant with the honest reply).
+   - ⚠️ Found live: `gemini-2.5-flash` burns `max_output_tokens` on hidden thinking → tight caps truncate JSON. Expansion cap is 2048 until google-genai ≥2.x lands (then `ThinkingConfig(thinking_budget=0)`). `extract_trip_chain.py`'s 512 cap has the same latent risk.
 
 ---
 
 ## ⏭️ Remaining Phase 1 items (in execution order)
 
-### 1. Refinement hard-constraints + visible diff UI (the "Harry Potter test") — NEXT UP
+### 1. Refinement-fidelity eval suite (vs ChatGPT) — NEXT UP
 
-The #2 user-interview gap: refinements are prompt nudges, not commitments. Plan:
-
-1. **Interest → entity expansion chain**: named interest ("Harry Potter fan", "F1 enthusiast") → candidate POIs via one small Gemini call (pattern: `chains/extract_trip_chain.py`).
-2. **Verification step**: geocode/confirm each candidate against `osm_pois` / Wikivoyage before use — reuse the OSM-verification approach from `services/gems.py`. Unverified candidates are dropped, never pinned.
-3. **Hard pinning**: survivors become must-include constraints in the generation/refinement prompt (a `PINNED_POIS` section with lat/lon), not suffix text.
-4. **Visible diff after each refinement**: compute added/removed/swapped items between old and new itinerary (match by title similarity) and render chips in the Anya chat panel ("Added: WB Studio Tour (Day 3)"). Touch points: `chains/chat_refine_chain.py` (check actual filename), `ChatRefineResponse` in `apps/web/types/index.ts`, the persistent Anya chat component.
-5. Keep the scale/latency/cost rules: one small extraction LLM call max per refinement, verification via existing collections (no new APIs), diff computed client-side or in the response path (cheap).
-
-### 2. Refinement-fidelity eval suite (vs ChatGPT)
-
-- ~20 named-interest prompts scored on whether the right verified POIs appear in output; build on `docs/eval-set.csv` / `apps/api/eval/`.
-- This is the **Phase 1 kill-criterion gate** (see GTM_STRATEGY §5): if we can't measurably beat ChatGPT here, pivot to pure B2B tooling.
+- ~20 named-interest prompts scored on whether the right **verified** POIs appear in output; build on `docs/eval-set.csv` / `apps/api/eval/`.
+- v10.17 gives the scoring hook for free: check output items for the `pinned` tag / pinned titles, and diff fidelity across refinements.
+- This is the **Phase 1 kill-criterion gate** (GTM_STRATEGY §5): if we can't measurably beat ChatGPT here, pivot to pure B2B tooling.
 - Output doubles as marketing content ("WanderPlanner vs ChatGPT on 50 refinement tests").
 
-### 3. Affiliate tracking on existing deep-links
+### 2. Affiliate tracking on existing deep-links
 
 - **Blocked on founder action**: register for Viator, GetYourGuide, Skyscanner affiliate programs, then supply the IDs.
 - Code side is small: append affiliate params to the existing booking deep-links (grep `booking_url` construction + `KAYAK`/`Viator` link builders).
@@ -42,10 +34,13 @@ The #2 user-interview gap: refinements are prompt nudges, not commitments. Plan:
 
 ## 🔧 Operational / hygiene items
 
-- **Run corpus ingestion once locally** (`chains/itinerary_corpus_extraction_chain.py::ingest_itinerary_corpus()`, needs `GEMINI_API_KEY`) so v10.15's retrieval actually has data — until then generation uses the clean "No reference itineraries available" fallback. Same for gem intel: it needs `reddit` + `osm_pois` data for the destination (both have existing ingestion jobs).
-- **E2E check of gems in a real generation**: sign in on local, generate a Phuket/Goa trip with crowd dial = Hidden Gems, confirm 💎-tagged items with provenance appear. (Unit-tested but not yet observed end-to-end with live data.)
-- **`WizardForm.tsx` is dead code** (never imported; `LLMWizard` is the live wizard). The crowd-dial UI added to `PaceBudgetSection.tsx` is unreachable until that form is revived — decide whether to delete the form wizard or mount it somewhere.
-- Consider a `HIDDEN_GEM` metric in admin analytics (how often gems get generated/kept) once real traffic exists.
+- **E2E of the pinned-POI positive path with real data**: needs `osm_pois` ingested for a destination + a signed-in session. Flow: sign in on local → generate a London trip → Anya: "I'm a huge Harry Potter fan" → confirm 📌 pins with real coords, in-place regeneration, and diff chips. (Negative/degradation path live-verified 2026-07-12; positive path is unit-proven only.)
+- **Run corpus ingestion once locally** (`chains/itinerary_corpus_extraction_chain.py::ingest_itinerary_corpus()`, needs `GEMINI_API_KEY`) so v10.15's retrieval has data. Same for gem intel (`reddit` + `osm_pois`) and pin verification (`osm_pois`/`wiki`) — all three features currently degrade cleanly to their no-data fallbacks on a fresh `:memory:` Qdrant.
+- **E2E check of gems in a real generation**: sign in on local, generate a Phuket/Goa trip with crowd dial = Hidden Gems, confirm 💎-tagged items with provenance appear.
+- **`WizardForm.tsx` is dead code** (never imported; `LLMWizard` is the live wizard). The crowd-dial UI in `PaceBudgetSection.tsx` is unreachable until that form is revived — decide whether to delete the form wizard or mount it somewhere.
+- **`chat_refine` has no retry on transient Gemini 503s** (hit one live this session; the generation chain retries but refine doesn't) — consider one cheap retry with backoff.
+- **Dependabot: google-genai → 2.10.0** is open; when merged, add `ThinkingConfig(thinking_budget=0)` to `interest_expansion_chain.py` (drop cap to ~512) and consider the same for `extract_trip_chain.py`.
+- Consider a `HIDDEN_GEM` / `PINNED` metric in admin analytics (how often gems/pins get generated & kept) once real traffic exists.
 
 ## 💰 Deferred by cost decision (revisit later)
 

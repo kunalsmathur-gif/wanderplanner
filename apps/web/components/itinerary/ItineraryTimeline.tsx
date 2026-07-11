@@ -122,10 +122,12 @@ function ActivityCard({ item, isActive, onHover, onSelect }: {
               className={
                 tag === 'hidden_gem'
                   ? 'rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-900 dark:text-violet-300'
+                  : tag === 'pinned'
+                  ? 'rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-300'
                   : 'rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400'
               }
             >
-              {tag === 'instaworthy' ? '📸 ' : tag === 'hidden_gem' ? '💎 ' : ''}{tag.replace(/_/g, ' ')}
+              {tag === 'instaworthy' ? '📸 ' : tag === 'hidden_gem' ? '💎 ' : tag === 'pinned' ? '📌 ' : ''}{tag.replace(/_/g, ' ')}
             </span>
           ))}
           {isSafeExternalUrl(item.booking_url) && (

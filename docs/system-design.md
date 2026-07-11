@@ -1,7 +1,7 @@
 # WanderPlanner — System Design Document
 
-**Version:** 8.5 (Hidden-Gem Scoring + Crowd Dial)
-**Last Updated:** July 11, 2026  
+**Version:** 8.6 (Refinement Hard-Constraints + Visible Diff — the "Harry Potter test")
+**Last Updated:** July 12, 2026  
 **Audience:** Engineering team and technical stakeholders
 
 ---
@@ -597,9 +597,21 @@ chat_refine_chain.py
          │    System: "You are Anya... CURRENT TRIP CONFIG: {config_json}"
          │    User: conversation history
          │
-         └─ Output: { reply, action_type, config_patch, major_change }
+         ├─ Output: { reply, action_type, config_patch, major_change, named_interest }
+         │    (any LLM-authored pinned_pois in config_patch is stripped —
+         │     pins may only come from verification)
          │
-         ◄─ response
+         └─ named_interest set? (⭐ v10.17 — "Harry Potter test")
+              → interest_expansion_chain: ONE gemini-2.5-flash call
+                → ≤10 candidate place names
+              → services/poi_pinning.verify_candidates (zero LLM, zero new APIs):
+                   osm_pois fuzzy name match → pin w/ real lat/lon ("osm")
+                   wiki chunk text presence  → pin w/o coords     ("wiki")
+                   neither                   → dropped, never pinned
+              → merge_pins into config_patch.pinned_pois (existing first, cap 8)
+              → reply += honest 📌 summary (pinned / dropped / none-verified)
+         │
+         ◄─ response { ..., pinned_pois, dropped_candidates }
          │
          ├─ action_type = 'none'
          │    → display reply in ChatPanel
@@ -607,14 +619,20 @@ chat_refine_chain.py
          ├─ action_type = 'patch_config'
          │    → updateConfig(config_patch) silently
          │    → display reply ("I've updated your budget to ₹1.5L!")
+         │    → patch contains pinned_pois + itinerary exists?
+         │         → regenerateInPlace() (⭐ v10.17): streamItinerary SSE,
+         │           old plan stays visible until the new one lands,
+         │           then diffItineraries(old, new) → diff-chips message
+         │           (+ added (Day N) / − removed / ↷ moved Day A → B)
          │
          └─ action_type = 'regenerate' + major_change = true
               → show confirmation dialog in ChatPanel:
                    ┌─────────────────────────────────┐
                    │ ⚠️ This change will regenerate  │
-                   │ [Yes, apply & reset] [Just noting]│
+                   │ [Yes, rebuild it] [Just noting] │
                    └─────────────────────────────────┘
-              ├─ "Yes" → updateConfig + resetItinerary
+              ├─ "Yes" → updateConfig + regenerateInPlace() + diff chips
+              │          (no more reset-and-reopen-the-wizard dead end)
               └─ "Just noting it" → dismiss, no action
 ```
 
@@ -1026,12 +1044,15 @@ However, **Gemini token/cost event instrumentation is still in progress** in the
 | `POST /api/generate-itinerary` (attempt 5) | `itinerary_chain.py` | `gemini-1.5-flash` | **0.4** | — |
 | `POST /api/extract-trip` | `extract_trip_chain.py` | `gemini-2.5-flash` | **0.1** | 512 |
 | `POST /api/recommend-cities` | `recommend_cities_chain.py` | `gemini-2.5-flash` | **0.4** | 1024 |
+| (inside `/api/chat-refine`, only when a named interest is detected) | `interest_expansion_chain.py` | `gemini-2.5-flash` | **0.1** | 2048 |
 
 Temperature rationale:
 - **0.4** — Wizard: more deterministic extraction while keeping Anya conversational
 - **0.5** — Chat refine: friendly but semi-deterministic for config patches
 - **0.4** — Itinerary/cities: structured JSON; lower = fewer schema violations
-- **0.1** — Extraction: near-deterministic; wrong extraction = wrong wizard preload
+- **0.1** — Extraction/expansion: near-deterministic; wrong extraction = wrong wizard preload, invented place = dropped at verification
+
+⚠️ Max-tokens gotcha (v10.17, live-verified): `gemini-2.5-flash` spends `max_output_tokens` on **hidden thinking before the visible JSON** — the expansion chain's original 256 cap truncated every response mid-list. google-genai 1.2.0 exposes no `thinking_budget`; the cap is 2048 until the SDK ≥2.x bump, after which `ThinkingConfig(thinking_budget=0)` + ~512 is the right shape. `extract_trip_chain.py`'s 512 cap carries the same latent risk.
 
 ---
 
