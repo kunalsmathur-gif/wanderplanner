@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Loader2, ShieldAlert, Users, LogIn, Sparkles, DollarSign, AlertTriangle } from 'lucide-react'
+import { Loader2, ShieldAlert, Users, LogIn, Sparkles, IndianRupee, AlertTriangle, ShieldCheck, Check, X } from 'lucide-react'
 import {
   ResponsiveContainer,
   LineChart,
@@ -14,7 +14,17 @@ import {
   Legend,
 } from 'recharts'
 import { useAuthStore } from '@/store/authStore'
-import { getAdminSummary, getAdminTimeseries, purgeAllUsers, type AdminSummary, type AdminTimeseries } from '@/lib/adminApi'
+import {
+  getAdminSummary,
+  getAdminTimeseries,
+  purgeAllUsers,
+  listAdminRequests,
+  approveAdminRequest,
+  rejectAdminRequest,
+  type AdminSummary,
+  type AdminTimeseries,
+  type AdminRequest,
+} from '@/lib/adminApi'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 
 function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: string; value: string | number; sub?: string }) {
@@ -46,7 +56,49 @@ export default function AdminDashboardPage() {
   const [purgeResult, setPurgeResult] = useState<string | null>(null)
   const [purgeError, setPurgeError] = useState<string | null>(null)
 
+  const [adminRequests, setAdminRequests] = useState<AdminRequest[]>([])
+  const [requestsLoading, setRequestsLoading] = useState(true)
+  const [reviewingId, setReviewingId] = useState<string | null>(null)
+  const [requestsError, setRequestsError] = useState<string | null>(null)
+
   const PURGE_PHRASE = 'DELETE ALL USERS'
+
+  async function loadAdminRequests() {
+    setRequestsLoading(true)
+    try {
+      setAdminRequests(await listAdminRequests('pending'))
+    } catch {
+      setRequestsError('Failed to load admin access requests.')
+    } finally {
+      setRequestsLoading(false)
+    }
+  }
+
+  async function handleApprove(id: string) {
+    setReviewingId(id)
+    setRequestsError(null)
+    try {
+      await approveAdminRequest(id)
+      setAdminRequests((prev) => prev.filter((r) => r.id !== id))
+    } catch {
+      setRequestsError('Failed to approve request — please try again.')
+    } finally {
+      setReviewingId(null)
+    }
+  }
+
+  async function handleReject(id: string) {
+    setReviewingId(id)
+    setRequestsError(null)
+    try {
+      await rejectAdminRequest(id)
+      setAdminRequests((prev) => prev.filter((r) => r.id !== id))
+    } catch {
+      setRequestsError('Failed to reject request — please try again.')
+    } finally {
+      setReviewingId(null)
+    }
+  }
 
   async function handlePurgeAll() {
     setPurging(true)
@@ -73,6 +125,12 @@ export default function AdminDashboardPage() {
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [status, user, range])
+
+  useEffect(() => {
+    if (status !== 'authenticated' || !user?.is_admin) return
+    loadAdminRequests()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, user])
 
   if (status === 'loading' || status === 'idle') {
     return (
@@ -142,6 +200,59 @@ export default function AdminDashboardPage() {
         <h1 className="text-2xl font-bold text-[var(--_fg)] [font-family:var(--font-display)]">Admin analytics</h1>
         <p className="mt-1 text-sm text-[var(--_muted-fg)]">Sessions, sign-ups, generations, and API cost tracking.</p>
 
+        <div className="mt-8 rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-5">
+          <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--_fg)]">
+            <ShieldCheck size={18} />
+            Admin access requests
+            {adminRequests.length > 0 && (
+              <span className="rounded-full bg-[var(--_primary)] px-2 py-0.5 text-xs font-bold text-white">{adminRequests.length}</span>
+            )}
+          </h2>
+          <p className="mt-1 text-sm text-[var(--_muted-fg)]">
+            Nobody gets admin access automatically — review and approve/reject requests here. Requesters (and all
+            existing admins, on new requests) are notified by email.
+          </p>
+
+          {requestsLoading && <Loader2 className="mt-4 animate-spin text-[var(--_muted-fg)]" size={20} />}
+          {requestsError && <p className="mt-3 text-sm text-[var(--_destructive)]">{requestsError}</p>}
+
+          {!requestsLoading && adminRequests.length === 0 && !requestsError && (
+            <p className="mt-4 text-sm text-[var(--_muted-fg)]">No pending requests.</p>
+          )}
+
+          {!requestsLoading && adminRequests.length > 0 && (
+            <ul className="mt-4 divide-y divide-[var(--_border)]">
+              {adminRequests.map((req) => (
+                <li key={req.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-[var(--_fg)]">{req.user_display_name || req.user_email}</p>
+                    {req.user_email && <p className="text-xs text-[var(--_muted-fg)]">{req.user_email}</p>}
+                    {req.message && <p className="mt-1 text-xs italic text-[var(--_muted-fg)]">"{req.message}"</p>}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={reviewingId === req.id}
+                      onClick={() => handleApprove(req.id)}
+                      className="btn flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Check size={13} /> Approve
+                    </button>
+                    <button
+                      type="button"
+                      disabled={reviewingId === req.id}
+                      onClick={() => handleReject(req.id)}
+                      className="btn btn-outline flex items-center gap-1 rounded-lg border-[var(--_destructive)] px-3 py-1.5 text-xs font-semibold text-[var(--_destructive)] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <X size={13} /> Reject
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
         {loading && (
           <div className="mt-10 flex justify-center"><Loader2 className="animate-spin text-[var(--_muted-fg)]" size={24} /></div>
         )}
@@ -158,10 +269,10 @@ export default function AdminDashboardPage() {
 
             <h2 className="mt-8 text-base font-semibold text-[var(--_fg)]">Cost & usage metrics</h2>
             <div className="mt-3 grid grid-cols-2 gap-4 md:grid-cols-4">
-              <StatCard icon={<DollarSign size={16} />} label="Gemini requests (30d)" value={summary.cost_usage.gemini_requests_30d} />
-              <StatCard icon={<DollarSign size={16} />} label="Gemini tokens (30d)" value={summary.cost_usage.gemini_tokens_30d.toLocaleString()} />
-              <StatCard icon={<DollarSign size={16} />} label="Est. Gemini cost (30d)" value={`$${summary.cost_usage.gemini_estimated_cost_usd_30d.toFixed(4)}`} sub="Approximate — for monitoring only" />
-              <StatCard icon={<DollarSign size={16} />} label="Pexels calls (30d)" value={summary.cost_usage.pexels_calls_30d} sub="Free tier: 200 req/hour" />
+              <StatCard icon={<IndianRupee size={16} />} label="Gemini requests (30d)" value={summary.cost_usage.gemini_requests_30d} />
+              <StatCard icon={<IndianRupee size={16} />} label="Gemini tokens (30d)" value={summary.cost_usage.gemini_tokens_30d.toLocaleString()} />
+              <StatCard icon={<IndianRupee size={16} />} label="Est. Gemini cost (30d)" value={`₹${summary.cost_usage.gemini_estimated_cost_inr_30d.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} sub="Approximate — for monitoring only" />
+              <StatCard icon={<IndianRupee size={16} />} label="Pexels calls (30d)" value={summary.cost_usage.pexels_calls_30d} sub="Free tier: 200 req/hour" />
             </div>
 
             <h2 className="mt-8 text-base font-semibold text-[var(--_fg)]">Activity over time</h2>

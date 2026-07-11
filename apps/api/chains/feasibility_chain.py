@@ -7,6 +7,9 @@ import json
 from core.config import settings
 from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize
+from core.budget_estimator import estimate_bare_minimum_budget
+from core.budget_tiers import budget_tier_prompt_hint
+from core.cost_grounding import flight_cost_grounding_hint, accommodation_cost_grounding_hint
 from models.feasibility import FeasibilityResponse, CostBreakdown, AlternativeDestination
 from models.trip import TripConfig
 
@@ -18,6 +21,10 @@ Provide cost estimates based on average market rates. Be conservative (lean slig
 
 TRIP DETAILS:
 {trip_config}
+
+{budget_tier_hint}
+
+{cost_grounding_hint}
 
 OUTPUT SCHEMA (valid JSON only, no markdown):
 {{
@@ -40,7 +47,8 @@ OUTPUT SCHEMA (valid JSON only, no markdown):
 RULES:
 - Convert all costs to INR.
 - Use average economy class fares from major Indian airports.
-- For accommodation, use the style specified (hostel/budget/boutique/luxury).
+- For accommodation, use the style specified (hostel/budget/boutique/luxury), and the BUDGET TIER GUIDANCE above.
+- If a FLIGHT COST GROUNDING or COMMUNITY-REPORTED rate range is given above, treat it as a strong sanity check — do not stray far from it without good reason.
 - If budget is clearly insufficient, suggest 2-3 cheaper alternatives that offer similar experiences.
 - If budget is sufficient, still suggest 1-2 alternative destinations for variety.
 - Keep alternatives realistic for Indian passport holders.
@@ -108,9 +116,26 @@ async def check_feasibility(trip_config: TripConfig) -> FeasibilityResponse:
     if not settings.gemini_api_key:
         raise RuntimeError("GEMINI_API_KEY is not set.")
 
+    # Free-tools-only budget curation (⭐ NEW): persona/purpose budget-tier
+    # guidance + a real-distance flight heuristic + community-reported price
+    # mentions pulled from the existing free RAG collections. Best-effort —
+    # a retrieval hiccup degrades to "no extra grounding", never blocks the
+    # feasibility check.
+    budget_tier_hint = budget_tier_prompt_hint(trip_config)
+    try:
+        flight_hint, accommodation_hint = await asyncio.gather(
+            flight_cost_grounding_hint(trip_config),
+            accommodation_cost_grounding_hint(trip_config),
+        )
+    except Exception:
+        flight_hint, accommodation_hint = "", ""
+    cost_grounding_hint = "\n\n".join(h for h in (flight_hint, accommodation_hint) if h)
+
     client = google_genai.Client(api_key=settings.gemini_api_key)
     prompt = FEASIBILITY_PROMPT.format(
-        trip_config=neutralize(json.dumps(trip_summary, indent=2), context="trip summary")
+        trip_config=neutralize(json.dumps(trip_summary, indent=2), context="trip summary"),
+        budget_tier_hint=neutralize(budget_tier_hint, context="budget tier guidance"),
+        cost_grounding_hint=neutralize(cost_grounding_hint, context="free-tools cost grounding") if cost_grounding_hint else "No community-reported price data available — rely on general market-rate knowledge.",
     )
 
     def _call_sync():
@@ -136,17 +161,72 @@ async def check_feasibility(trip_config: TripConfig) -> FeasibilityResponse:
         cleaned = "\n".join(cleaned.split("\n")[:-1])
 
     data = json.loads(cleaned)
-    return _build_response(data, budget_inr)
+    bare_minimum = _safe_bare_minimum(trip_config)
+    return _build_response(data, budget_inr, bare_minimum, trip_config)
 
 
-def _build_response(data: dict, budget_inr: int) -> FeasibilityResponse:
+def _traveller_level_hint_text(trip_config: TripConfig) -> str:
+    """Synthesises a hint string from structured tier signals already on the
+    trip config (personas, accommodation style) so the deterministic floor
+    picks up a premium/economical preference even when we don't have the
+    user's raw chat text at this call site (unlike budget_estimate_prompt_hint,
+    which runs during the chat turn itself). Without this, the floor always
+    assumed mid-range, which could sit far below — and look inconsistent
+    with — a premium-aware LLM cost estimate."""
+    parts = list(trip_config.personas) + list(trip_config.accommodation.style) + list(trip_config.splurge_categories)
+    return " ".join(parts)
+
+
+def _safe_bare_minimum(trip_config: TripConfig) -> dict | None:
+    """Best-effort deterministic bare-minimum estimate (flights+stay+food) used
+    as a floor against the LLM's own cost guess — never blocks the feasibility
+    check if it fails for any reason (e.g. group size still unknown)."""
+    try:
+        hint_text = _traveller_level_hint_text(trip_config)
+        return estimate_bare_minimum_budget(trip_config.model_dump(), hint_text)
+    except Exception:
+        return None
+
+
+def _build_response(
+    data: dict,
+    budget_inr: int,
+    bare_minimum: dict | None = None,
+    trip_config: TripConfig | None = None,
+) -> FeasibilityResponse:
+    llm_flights = int(data.get("flights_inr", 0))
+    llm_accommodation = int(data.get("accommodation_inr", 0))
     total = int(data.get("total_estimated_inr", 0))
+
+    # Already-booked flights/accommodation (⭐ NEW): swap the LLM's guessed
+    # component for the user's real paid amount, since that's a sunk cost
+    # already covered, not something still owed against the stated budget.
+    prebooked_flights = getattr(trip_config, "prebooked_flights_inr", None) if trip_config else None
+    prebooked_accommodation = getattr(trip_config, "prebooked_accommodation_inr", None) if trip_config else None
+    if prebooked_flights is not None:
+        total = total - llm_flights + prebooked_flights
+        llm_flights = prebooked_flights
+    if prebooked_accommodation is not None:
+        total = total - llm_accommodation + prebooked_accommodation
+        llm_accommodation = prebooked_accommodation
+
+    # Deterministic free-tools floor (⭐ NEW): the LLM's cost guess can
+    # occasionally undershoot for an unusual destination/group combo. Our
+    # hand-authored bare-minimum estimate (flights+stay+food only) acts as a
+    # floor — if the LLM total falls short of it, use the floor instead so
+    # "feasible" never means "feasible according to an optimistic guess".
+    floor_used = False
+    bare_minimum_inr = bare_minimum["total_inr"] if bare_minimum else None
+    if bare_minimum_inr is not None and bare_minimum_inr > total:
+        total = bare_minimum_inr
+        floor_used = True
+
     feasible = total <= budget_inr
 
     breakdown = CostBreakdown(
-        flights_inr=int(data.get("flights_inr", 0)),
+        flights_inr=llm_flights,
         visa_inr=int(data.get("visa_inr", 0)),
-        accommodation_inr=int(data.get("accommodation_inr", 0)),
+        accommodation_inr=llm_accommodation,
         daily_expenses_inr=int(data.get("daily_expenses_inr", 0)),
         total_estimated_inr=total,
     )
@@ -169,7 +249,8 @@ def _build_response(data: dict, budget_inr: int) -> FeasibilityResponse:
     else:
         shortfall = total - budget_inr
         buffer = 0
-        verdict = f"⚠️ Budget may be short by ₹{shortfall:,}. Estimated minimum is ₹{total:,}."
+        floor_note = " (based on our bare-minimum flights+stay+food floor)" if floor_used else ""
+        verdict = f"⚠️ Budget may be short by ₹{shortfall:,}. Estimated minimum is ₹{total:,}{floor_note}."
 
     return FeasibilityResponse(
         feasible=feasible,
@@ -178,6 +259,7 @@ def _build_response(data: dict, budget_inr: int) -> FeasibilityResponse:
         breakdown=breakdown,
         shortfall_inr=shortfall,
         buffer_inr=buffer,
+        bare_minimum_inr=bare_minimum_inr,
         alternatives=alternatives,
     )
 

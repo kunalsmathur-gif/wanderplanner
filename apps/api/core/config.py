@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     qdrant_collection_reddit: str = "reddit"
     qdrant_collection_osm: str = "osm_pois"
     qdrant_collection_itinerary_cache: str = "itinerary_cache"
+    qdrant_collection_itinerary_corpus: str = "itinerary_corpus"
 
     # Embeddings
     embedding_model: str = "all-MiniLM-L6-v2"
@@ -33,6 +34,8 @@ class Settings(BaseSettings):
                                           # off by default (adds a 2nd model + latency);
                                           # explicitly enabled only for final itinerary
                                           # generation via retrieve_context(enable_reranking=True)
+    itinerary_corpus_retrieval_enabled: bool = True  # few-shot grounding from real
+                                          # traveller itineraries (docs §9 retrieval)
     itinerary_cache_score_threshold: float = 0.88
 
     # OSM POI ingestion (docs §3I)
@@ -71,10 +74,26 @@ class Settings(BaseSettings):
     osm_refresh_days: int = 7
     osm_ingest_delay_seconds: float = 2.0  # be polite to the free Overpass API between destinations
 
+    itinerary_corpus_refresh_days: int = 30  # monthly cadence (docs §9 ingestion pipeline)
+
     log_level: str = "INFO"
 
+    # Cost display currency conversion — Gemini list pricing is USD-denominated,
+    # so per-call costs are still computed/stored internally in USD; this rate
+    # is applied only at the admin-dashboard display layer to show INR instead.
+    # Update periodically to track the real USD/INR rate (approximate is fine —
+    # this is a directional cost signal, not accounting-grade billing).
+    usd_to_inr_rate: float = 87.0
+
     # Database (users, sessions, analytics events)
-    database_url: str = "postgresql+asyncpg://wanderplanner:wanderplanner@localhost:5432/wanderplanner"
+    # Defaults to local SQLite (zero setup, free) -- override via .env for
+    # Postgres in production (e.g. Supabase free tier).
+    database_url: str = "sqlite+aiosqlite:///./dev.db"
+    # Supabase (and most managed Postgres hosts) require TLS on their direct
+    # connection port -- asyncpg does not negotiate SSL automatically, so this
+    # must be explicitly enabled for those hosts (set DATABASE_SSL_REQUIRE=true).
+    # Leave false for local SQLite / local Postgres without TLS.
+    database_ssl_require: bool = False
 
     # Auth / sessions
     jwt_secret: str = "change-me-in-production"

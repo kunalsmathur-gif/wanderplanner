@@ -12,7 +12,10 @@ from sqlalchemy.orm import DeclarativeBase
 
 from core.config import settings
 
-engine = create_async_engine(settings.database_url, pool_pre_ping=True, future=True)
+_connect_args: dict = {"ssl": True} if settings.database_ssl_require else {}
+engine = create_async_engine(
+    settings.database_url, pool_pre_ping=True, future=True, connect_args=_connect_args
+)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 # SQLite (used for local dev / tests) does not enforce FK constraints by
