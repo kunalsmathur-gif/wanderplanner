@@ -8,7 +8,7 @@ from datetime import datetime
 
 def create_prd():
     doc = SimpleDocTemplate(
-        "docs/WanderPlan_PRD.pdf",
+        "docs/WanderPlanner_PRD.pdf",
         pagesize=A4,
         rightMargin=72,
         leftMargin=72,
@@ -79,7 +79,7 @@ def create_prd():
     
     # Title Page
     story.append(Spacer(1, 2*inch))
-    story.append(Paragraph("WanderPlan", title_style))
+    story.append(Paragraph("WanderPlanner", title_style))
     story.append(Paragraph("Product Requirements Document", subtitle_style))
     story.append(Spacer(1, 0.3*inch))
     story.append(Paragraph("AI-Powered Conversational Travel Planning Platform", subtitle_style))
@@ -125,8 +125,8 @@ def create_prd():
     # 1. Executive Summary
     story.append(Paragraph("1. Executive Summary", heading1_style))
     story.append(Paragraph(
-        "WanderPlan is an AI-powered travel planning platform that revolutionizes trip planning through natural, "
-        "conversational interactions. Unlike traditional booking platforms with complex forms, WanderPlan introduces "
+        "WanderPlanner is an AI-powered travel planning platform that revolutionizes trip planning through natural, "
+        "conversational interactions. Unlike traditional booking platforms with complex forms, WanderPlanner introduces "
         "<b>Anya</b> — an intelligent AI assistant that guides users through personalized itinerary creation using voice "
         "and text conversations.",
         body_style
@@ -291,7 +291,7 @@ def create_prd():
     story.append(Spacer(1, 12))
     story.append(Paragraph("5.2 Conversational Flow", heading2_style))
     flow_steps = [
-        "User opens app → Anya greets: \"Hi! I'm Anya from WanderPlan...\"",
+        "User opens app → Anya greets: \"Hi! I'm Anya from WanderPlanner...\"",
         "Sequential prompts for 9 inputs (purpose → origin → destination → dates → group → budget → accommodation → pace → themes)",
         "City suggestions for exploring/country modes via Gemini",
         "Refinement step: \"Anything else before I generate?\"",
@@ -573,7 +573,7 @@ def create_prd():
     story.append(Paragraph("End of Product Requirements Document", subtitle_style))
     
     doc.build(story)
-    print("✅ PRD PDF created: docs/WanderPlan_PRD.pdf")
+    print("✅ PRD PDF created: docs/WanderPlanner_PRD.pdf")
 
 if __name__ == "__main__":
     create_prd()

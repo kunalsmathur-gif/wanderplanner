@@ -11,6 +11,7 @@ convention (we keep queries small and destination-scoped).
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from typing import Any
 
@@ -136,7 +137,9 @@ async def ingest_osm_pois(destination: str) -> int:
     from qdrant_client.models import PointStruct
 
     texts = [p["text"] for p in pois]
-    vectors = embed(texts)
+    # Offload the CPU-bound embed() call to a worker thread — this coroutine
+    # runs on the scheduler's event loop and must not block other requests.
+    vectors = await asyncio.to_thread(embed, texts)
 
     points = []
     for poi, vec in zip(pois, vectors):

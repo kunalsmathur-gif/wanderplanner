@@ -1,4 +1,4 @@
-# WanderPlan End-to-End Testing & Screen Recording Guide
+# WanderPlanner End-to-End Testing & Screen Recording Guide
 
 ## 🎬 Screen Recording Setup (macOS)
 
@@ -60,7 +60,7 @@ Then open OBS and configure screen capture source.
    - [ ] Check progress bar (0% initially)
    
 3. **Conversational Flow - Text Input**
-   - [ ] Read Anya's greeting: "Hi! I'm Anya from WanderPlan..."
+   - [ ] Read Anya's greeting: "Hi! I'm Anya from WanderPlanner..."
    - [ ] Answer each question via text:
      - **Purpose:** Click stamp chip (e.g., "Leisure 🏖️")
      - **Destination:** Type "Paris, France"
@@ -227,6 +227,25 @@ While testing, verify these new design elements:
 
 ---
 
+
+## 🔁 Full-Stack Regression Checklist
+
+Run this before every release that touches auth, itinerary generation, analytics, or the new Postgres-backed account flows. Use the detailed cases in `docs/eval-set.md` as the source of truth; this checklist is only the release gate.
+
+| Area | Mode | Release checklist | Traceability |
+|---|---|---|---|
+| Authentication & session lifecycle | Automated API smoke + manual Google SSO smoke | [ ] Verify signup, duplicate-email handling, password validation, login, Google SSO success/failure, refresh rotation, logout, and `/auth/me` unauthenticated behavior | `AUTH-001` → `AUTH-012` |
+| Password reset | Automated API + manual email-link smoke | [ ] Verify forgot-password non-enumeration, valid reset, reused/expired/malformed token rejection, and reset-password strength checks | `PWRESET-001` → `PWRESET-006` |
+| Consent capture & legal disclosure | Manual browser + spot-check in DB/admin tooling | [ ] Verify signup consent checkbox enforcement, `/terms` + `/privacy` links, consent timestamp persistence, and copy consistency with the legal pages | `CONSENT-001` → `CONSENT-004` |
+| Itinerary auth gate & resume-after-auth | Manual browser + targeted API smoke | [ ] Verify logged-out generate redirects to signup, pending trip config survives full-page Google OAuth, auth success auto-resumes generation, and direct unauthenticated generation calls return 401 | `GATE-001` → `GATE-004` |
+| Self-service account deletion | Manual browser + API verification | [ ] Verify `/account` requires `DELETE`, account deletion clears the session, and refresh-token rows are removed/anonymized as documented | `PURGE-001`, `PURGE-002` |
+| Admin dashboard & admin delete flows | Manual browser + admin API smoke | [ ] Verify `/admin` 401/403 gating, summary cards, 7d/30d chart, cost cards, single-user delete, self-delete block, and bulk purge confirmation flow | `ADMIN-001` → `ADMIN-006`, `PURGE-003` → `PURGE-006` |
+| Cost / usage analytics | Automated integration smoke + manual admin spot-check | [ ] Verify aggregated `gemini_usage` events, uncached-only Pexels counting, and YouTube thumbnail client beacons | `COST-021` → `COST-024` |
+
+**Minimum manual release sweep:** Google SSO happy path, forgot-password email flow, logged-out itinerary → signup → auto-resume, `/account` self-delete confirmation, `/admin` bulk purge confirmation (against seeded non-production data only).
+
+---
+
 ## 🐛 Issues to Watch For
 
 ### Common Issues:
@@ -274,7 +293,7 @@ While testing, verify these new design elements:
 1. Review the video
 2. Note timestamp of any bugs
 3. Export in standard format (MP4)
-4. Store in `wanderplan/recordings/` folder
+4. Store in `wanderplanner/recordings/` folder
 
 ---
 

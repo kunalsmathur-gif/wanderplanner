@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * WanderPlan API Flow Testing
+ * WanderPlanner API Flow Testing
  * Simulates conversation flows by testing API endpoints
  */
 
@@ -67,7 +67,7 @@ async function testEndpoint(name, url, options = {}) {
 // Test Suite
 async function runTests() {
   log('\n╔════════════════════════════════════════════╗', 'bright');
-  log('║   WanderPlan API Flow Testing Suite      ║', 'bright');
+  log('║   WanderPlanner API Flow Testing Suite      ║', 'bright');
   log('╚════════════════════════════════════════════╝\n', 'bright');
 
   let passed = 0;

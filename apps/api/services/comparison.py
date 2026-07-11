@@ -8,6 +8,7 @@ import logging
 from google import genai as google_genai
 
 from core.config import settings
+from core.llm_client import track_gemini_usage
 from models.itinerary import ComparisonResponse, ComparisonParameter
 from models.trip import TripConfig, DestinationInput
 from services.geocode import geocode_city
@@ -88,6 +89,14 @@ async def build_comparison(
     if weather_param:
         params.append(weather_param)
 
+    # Deterministic bare-minimum budget estimate per destination (⭐ NEW,
+    # free-tools-only — same core.budget_estimator used in the wizard chat's
+    # budget recommendations, so "which destination is cheaper" isn't left
+    # purely to the LLM's qualitative "Cost of Living" guess below).
+    budget_param = _compare_bare_minimum_budget(destinations, trip_config)
+    if budget_param:
+        params.append(budget_param)
+
     # AI qualitative parameters (10 rich dimensions)
     if len(destinations) >= 2:
         ai_params = await _compare_qualitative(destinations[0].city, destinations[1].city, trip_config)
@@ -97,6 +106,36 @@ async def build_comparison(
     _annotate_winners(params)
 
     return ComparisonResponse(comparison=params, partial_failures=partial_failures)
+
+
+def _compare_bare_minimum_budget(
+    destinations: list[DestinationInput], trip_config: TripConfig
+) -> ComparisonParameter | None:
+    """Real computed (not LLM-guessed) bare-minimum flights+stay+food estimate
+    per destination, using the trip's own group/dates. Best-effort — skipped
+    entirely if group size isn't known yet (same rule as the wizard chat
+    recommendation: never guess headcount)."""
+    from core.budget_estimator import estimate_bare_minimum_budget
+
+    values: dict[str, str] = {}
+    totals: dict[str, float] = {}
+    for dest in destinations:
+        try:
+            config_dict = trip_config.model_dump()
+            config_dict["destination"] = {"city": dest.city, "country": dest.country}
+            estimate = estimate_bare_minimum_budget(config_dict)
+        except Exception:
+            estimate = None
+        if estimate is None:
+            return None  # group size unknown — skip this parameter entirely
+        values[dest.city] = f"~₹{estimate['total_inr']:,} total (₹{estimate['per_person_inr']:,}/person)"
+        totals[dest.city] = estimate["total_inr"]
+
+    param = ComparisonParameter(parameter="Estimated Trip Budget (bare minimum)", values=values)
+    if totals:
+        param.winner = min(totals, key=totals.__getitem__)  # cheaper destination wins
+        param.highlight = "winner"
+    return param
 
 
 def _compare_weather(names: list[str], data: dict) -> ComparisonParameter | None:
@@ -139,11 +178,12 @@ async def _compare_qualitative(
         for model_name in models_to_try:
             for attempt in range(max_attempts):
                 try:
-                    def _call_sync(m: str = model_name) -> str:  # noqa: E731
-                        resp = client.models.generate_content(model=m, contents=prompt)
-                        return resp.text or ""
+                    def _call_sync(m: str = model_name):  # noqa: E731
+                        return client.models.generate_content(model=m, contents=prompt)
 
-                    raw = await asyncio.get_event_loop().run_in_executor(None, _call_sync)
+                    resp = await asyncio.get_event_loop().run_in_executor(None, _call_sync)
+                    track_gemini_usage(resp, model=model_name, purpose="comparison")
+                    raw = resp.text or ""
                     break  # success
                 except Exception as exc:
                     is_transient = any(kw in str(exc) for kw in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED"))
