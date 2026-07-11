@@ -8,10 +8,17 @@ import logging
 from urllib.parse import quote_plus
 
 import httpx
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
+from core.llm_client import track_gemini_usage
+from core.llm_usage import reset_usage
+from core.analytics import flush_llm_usage
+from core.auth_dependency import get_optional_user
+from db import get_db
+from db_models import User
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -104,16 +111,17 @@ async def _generate_gemini_tips(destination: str, limit: int) -> list[TravelTip]
             limit=limit,
         )
 
-        def _call_sync() -> str:
-            response = client.models.generate_content(
+        def _call_sync():
+            return client.models.generate_content(
                 model=settings.gemini_model,
                 contents=[genai_types.Content(role="user", parts=[genai_types.Part(text=prompt)])],
                 config=genai_types.GenerateContentConfig(temperature=0.7, max_output_tokens=1500),
             )
-            return response.text
 
         loop = asyncio.get_event_loop()
-        raw = await loop.run_in_executor(None, _call_sync)
+        response = await loop.run_in_executor(None, _call_sync)
+        track_gemini_usage(response, model=settings.gemini_model, purpose="travel_tips")
+        raw = response.text
         cleaned = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         items = json.loads(cleaned)
         return [TravelTip(**item) for item in items if isinstance(item, dict)]
@@ -175,32 +183,38 @@ def _fallback_tips(destination: str, limit: int) -> list[TravelTip]:
 async def travel_tips(
     destination: str = Query(..., description="Destination city/country"),
     limit: int = Query(6, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
 ) -> TravelTipsResponse:
-    cache_key = destination.strip().lower()
+    reset_usage()
+    try:
+        cache_key = destination.strip().lower()
 
-    if cache_key in _tips_cache:
-        cached = [TravelTip(**t) for t in _tips_cache[cache_key]]
-        return TravelTipsResponse(tips=cached[:limit], destination=destination)
+        if cache_key in _tips_cache:
+            cached = [TravelTip(**t) for t in _tips_cache[cache_key]]
+            return TravelTipsResponse(tips=cached[:limit], destination=destination)
 
-    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True) as http:
-        reddit_task = asyncio.create_task(_fetch_reddit_tips(destination, http))
-        gemini_task = asyncio.create_task(_generate_gemini_tips(destination, limit))
-        reddit_tips, gemini_tips = await asyncio.gather(reddit_task, gemini_task)
+        async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True) as http:
+            reddit_task = asyncio.create_task(_fetch_reddit_tips(destination, http))
+            gemini_task = asyncio.create_task(_generate_gemini_tips(destination, limit))
+            reddit_tips, gemini_tips = await asyncio.gather(reddit_task, gemini_task)
 
-    combined: list[TravelTip] = []
-    combined.extend(reddit_tips)
-    for tip in gemini_tips:
-        if len(combined) >= limit:
-            break
-        combined.append(tip)
+        combined: list[TravelTip] = []
+        combined.extend(reddit_tips)
+        for tip in gemini_tips:
+            if len(combined) >= limit:
+                break
+            combined.append(tip)
 
-    # Use fallback if both sources failed
-    if not combined:
-        logger.info("Using fallback tips for %s", destination)
-        combined = _fallback_tips(destination, limit)
+        # Use fallback if both sources failed
+        if not combined:
+            logger.info("Using fallback tips for %s", destination)
+            combined = _fallback_tips(destination, limit)
 
-    combined = combined[:limit]
-    _tips_cache[cache_key] = [t.model_dump() for t in combined]
+        combined = combined[:limit]
+        _tips_cache[cache_key] = [t.model_dump() for t in combined]
 
-    return TravelTipsResponse(tips=combined, destination=destination)
+        return TravelTipsResponse(tips=combined, destination=destination)
+    finally:
+        await flush_llm_usage(db, user_id=user.id if user else None)
 

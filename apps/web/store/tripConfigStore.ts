@@ -25,7 +25,12 @@ const DEFAULT_CONFIG: TripConfig = {
   group: DEFAULT_GROUP,
   accommodation: DEFAULT_ACCOMMODATION,
   pace: 'moderate',
+  crowd_preference: 'balanced',
   budget: { amount: 0, currency: 'INR' },
+  splurge_categories: [],
+  save_categories: [],
+  prebooked_flights_inr: null,
+  prebooked_accommodation_inr: null,
 }
 
 interface TripConfigStore {

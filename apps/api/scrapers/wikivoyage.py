@@ -1,5 +1,6 @@
 from __future__ import annotations
 """Wikivoyage scraper — extracts destination guide sections."""
+import asyncio
 import hashlib
 import re
 import httpx
@@ -69,7 +70,9 @@ async def ingest_wikivoyage(destination: str):
         return
 
     texts = [d["text"] for d in docs]
-    vectors = embed(texts)
+    # Offload the CPU-bound embed() call to a worker thread — this coroutine
+    # runs on the scheduler's event loop and must not block other requests.
+    vectors = await asyncio.to_thread(embed, texts)
 
     client = get_qdrant()
     from qdrant_client.models import PointStruct

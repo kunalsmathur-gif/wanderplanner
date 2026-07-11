@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "🚀 WanderPlan E2E Testing Setup"
+echo "🚀 WanderPlanner E2E Testing Setup"
 echo "================================"
 echo ""
 
@@ -37,7 +37,7 @@ echo "   1. Press Cmd + Shift + 5"
 echo "   2. Select 'Record Entire Screen' or 'Record Selected Portion'"
 echo "   3. Click the Record button"
 echo ""
-echo "📖 Testing Guide: wanderplan/E2E_TESTING_GUIDE.md"
+echo "📖 Testing Guide: wanderplanner/E2E_TESTING_GUIDE.md"
 echo ""
 echo "🌐 Opening browser..."
 sleep 2

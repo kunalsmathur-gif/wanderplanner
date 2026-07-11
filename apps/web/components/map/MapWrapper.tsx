@@ -18,9 +18,18 @@ export function MapWrapper() {
   const destination = useTripConfigStore((s) => s.config.destination)
 
   const items = days[activeDay]?.items ?? []
-  const center: [number, number] = destination?.lat
-    ? [destination.lat, destination.lon]
-    : [20, 78] // fallback: India centre
+  const validItems = items.filter((i) => i.location?.lat && i.location?.lon)
+
+  // Prefer centering on the current day's actual (resolved) stop coordinates
+  // over the trip's top-level `destination` field — the latter is frequently
+  // 0/0 for multi-city or country-mode trips (it's not always geocoded), which
+  // previously caused the map to fall through to a hardcoded India-centre
+  // fallback and render a seemingly random, unrelated town.
+  const center: [number, number] = validItems.length > 0
+    ? [validItems[0].location.lat, validItems[0].location.lon]
+    : destination?.lat
+      ? [destination.lat, destination.lon]
+      : [20, 78] // last-resort fallback: India centre
 
   return (
     <div className="h-[220px] w-full overflow-hidden rounded-lg border border-slate-200">
