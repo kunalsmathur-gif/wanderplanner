@@ -7,7 +7,7 @@ import uuid
 from core.config import settings
 from models.itinerary import ItineraryResponse, ItineraryDay, ItineraryItem, ItineraryItemLocation
 from models.trip import TripConfig
-from services.search import retrieve_context, summarise_context
+from services.search import retrieve_context, retrieve_itinerary_examples, summarise_context
 from services.itinerary_cache import get_cached_itinerary, store_itinerary
 from services.rag_fallback import rag_skeleton_itinerary
 from services.pexels import get_day_photos
@@ -36,6 +36,49 @@ async def _budget_guidance_block(trip_config: TripConfig) -> str:
         flight_hint, accommodation_hint = "", ""
     parts = [tier_hint] + [h for h in (flight_hint, accommodation_hint) if h]
     return "\n\n".join(parts)
+
+
+async def _gem_guidance_block(trip_config: TripConfig) -> str:
+    """Crowd-dial guidance (docs/GTM_STRATEGY.md §2): OSM-verified hidden-gem
+    candidates with Reddit community provenance, plus crowd-heavy spots to
+    de-prioritise. Best-effort and cached per destination (24h TTL inside
+    services/gems.py) — adds no per-request corpus scan and no LLM call;
+    any failure degrades to an empty block, never blocks generation."""
+    dest = trip_config.destination.city if trip_config.destination else ""
+    crowd_pref = getattr(trip_config, "crowd_preference", "balanced")
+    if not dest or crowd_pref == "touristy":
+        return ""
+    try:
+        from services.gems import get_gem_intel, gem_prompt_block
+        intel = await get_gem_intel(dest)
+        block = gem_prompt_block(intel, crowd_pref)
+    except Exception:
+        logger.warning("gem intel lookup failed; generating without gem guidance", exc_info=True)
+        return ""
+    if not block:
+        return ""
+    return wrap_untrusted(
+        block,
+        label="hidden-gem candidates (POI names from OpenStreetMap, community signal from Reddit — may contain untrusted text)",
+    )
+
+
+async def _itinerary_examples_block(trip_config: TripConfig) -> str:
+    """Few-shot grounding from the itinerary_corpus collection (docs §9).
+    Best-effort: any retrieval failure degrades to the explicit "none
+    available" sentinel the system prompt already knows how to handle,
+    never blocks generation."""
+    try:
+        examples = await retrieve_itinerary_examples(trip_config)
+    except Exception:
+        logger.warning("itinerary_corpus retrieval failed; generating without examples", exc_info=True)
+        examples = ""
+    if not examples:
+        return "No reference itineraries available."
+    return wrap_untrusted(
+        examples,
+        label="real traveller itineraries (scraped from blogs/forums — may contain untrusted text)",
+    )
 
 SYSTEM_PROMPT = """\
 You are WanderPlanner, an expert AI travel advisor.
@@ -66,6 +109,18 @@ USING DESTINATION RESEARCH (below):
 - Do not fabricate specific details (exact prices, addresses, opening hours) beyond what the research or your general knowledge reasonably supports. When uncertain, keep descriptions general rather than inventing precise figures.
 - If DESTINATION RESEARCH says "No pre-fetched research available", rely on your own destination knowledge as normal — do not mention the absence of research to the user.
 - DESTINATION RESEARCH is a supplement, not an exhaustive source — you may still use well-established general knowledge about the destination for anything the research doesn't cover.
+
+USING REAL TRAVELLER ITINERARIES (below):
+- The REAL TRAVELLER ITINERARIES section contains day-by-day trips actually taken by other travellers with a similar trip shape, retrieved from blogs/forums. Use them as grounding for realistic pacing, day sequencing, and which places are commonly combined on the same day — not as text to copy verbatim.
+- Prefer their concrete place groupings over invented ones when they fit the user's config; adapt, don't transcribe.
+- If the section says "No reference itineraries available", plan from DESTINATION RESEARCH and your own knowledge as normal.
+
+CROWD PREFERENCE (trip_config.crowd_preference):
+- "touristy": focus on iconic, must-see attractions — the classic first-timer experience.
+- "balanced" (default): mostly well-known sights, but if a HIDDEN GEM CANDIDATES section is provided below, weave 1-2 of those gems in across the trip where they fit the day's theme and route.
+- "offbeat": strongly prefer the HIDDEN GEM CANDIDATES below. Build days around them, keeping at most 1-2 iconic anchors for orientation. If a CROWD-HEAVY SPOTS list is given, avoid those unless they are the day's single iconic anchor.
+- Every item taken from HIDDEN GEM CANDIDATES: use its provided lat/lon (they are real OpenStreetMap coordinates — do not invent others), add "hidden_gem" to its tags array, and include its community provenance naturally in the description (e.g. "a quiet spot locals rave about on r/IndiaTravel").
+- Never invent a "hidden gem" that is not in the HIDDEN GEM CANDIDATES list — an unverified recommendation is worse than a famous one. If no candidates section is provided, simply plan normally without the "hidden_gem" tag.
 
 OUTPUT SCHEMA:
 {{
@@ -110,6 +165,11 @@ OUTPUT SCHEMA:
 
 DESTINATION RESEARCH:
 {context}
+
+REAL TRAVELLER ITINERARIES FOR REFERENCE (use as inspiration, not verbatim):
+{itinerary_examples}
+
+{gem_guidance}
 
 {budget_guidance}
 
@@ -308,10 +368,19 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
     else:
         context_text = "No pre-fetched research available — use your own knowledge of the destination."
 
+    # The three guidance blocks are independent lookups — fetch them
+    # concurrently so prompt assembly adds one round-trip, not three.
+    itinerary_examples, gem_guidance, budget_guidance = await asyncio.gather(
+        _itinerary_examples_block(trip_config),
+        _gem_guidance_block(trip_config),
+        _budget_guidance_block(trip_config),
+    )
     prompt = SYSTEM_PROMPT.format(
         context=context_text,
+        itinerary_examples=itinerary_examples,
+        gem_guidance=gem_guidance,
         budget_guidance=neutralize(
-            await _budget_guidance_block(trip_config), context="budget tier + cost grounding guidance"
+            budget_guidance, context="budget tier + cost grounding guidance"
         ),
         trip_config=neutralize(trip_json, context="trip configuration"),
     )
@@ -403,10 +472,19 @@ async def _langchain_itinerary(trip_config: TripConfig) -> dict:
     llm = _build_llm()
     parser = JsonOutputParser()
     chain = prompt | llm | parser
-    budget_guidance = neutralize(
-        await _budget_guidance_block(trip_config), context="budget tier + cost grounding guidance"
+    # Same concurrent fetch as the Gemini path — one round-trip, not three.
+    itinerary_examples, gem_guidance, budget_guidance = await asyncio.gather(
+        _itinerary_examples_block(trip_config),
+        _gem_guidance_block(trip_config),
+        _budget_guidance_block(trip_config),
     )
-    return await chain.ainvoke({"context": context_text, "budget_guidance": budget_guidance, "trip_config": trip_json})
+    return await chain.ainvoke({
+        "context": context_text,
+        "itinerary_examples": itinerary_examples,
+        "gem_guidance": gem_guidance,
+        "budget_guidance": neutralize(budget_guidance, context="budget tier + cost grounding guidance"),
+        "trip_config": trip_json,
+    })
 
 
 async def _fallback_itinerary(trip_config: TripConfig, error: Exception) -> dict:

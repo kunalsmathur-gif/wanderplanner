@@ -17,8 +17,8 @@ document's `quality_score` from its source type/signal, per the "Source
 Quality Scoring" table in rag-strategy.md §9.
 
 Retrieval of this collection (wiring `itinerary_corpus` into the itinerary
-generation prompt as few-shot grounding) is the separate, still-pending
-`itinerary-corpus-retrieval` roadmap item — this module only ingests.
+generation prompt as few-shot grounding) lives in
+`services/search.py::retrieve_itinerary_examples` — this module only ingests.
 """
 from __future__ import annotations
 
