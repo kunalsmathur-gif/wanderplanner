@@ -27,7 +27,7 @@ export default function Home() {
       >
         {hasItinerary
           ? (
-          <main id="main-content" aria-label="Wanderplan itinerary dashboard" className="h-full">
+          <main id="main-content" aria-label="Wanderplanner itinerary dashboard" className="h-full">
               <ThreeColumnLayout />
             </main>
           )

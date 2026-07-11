@@ -26,6 +26,7 @@ class FeasibilityResponse(BaseModel):
     breakdown: CostBreakdown
     shortfall_inr: int = 0        # 0 if feasible
     buffer_inr: int = 0           # remaining budget if feasible
+    bare_minimum_inr: int | None = None  # deterministic flights+stay+food floor, when computable
     alternatives: list[AlternativeDestination] = Field(default_factory=list)
     disclaimer: str = "Cost estimates are approximate and based on average market rates."
 

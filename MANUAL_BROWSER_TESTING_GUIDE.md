@@ -1,4 +1,4 @@
-# Manual Browser Testing Guide for WanderPlan
+# Manual Browser Testing Guide for WanderPlanner
 
 ## Prerequisites
 - ✅ Backend running on http://localhost:8000
@@ -333,7 +333,7 @@ If you find bugs, note:
 # 9. Click floating orb to reopen wizard
 # 10. Show console - no errors
 
-# Save recording to: ./recordings/wanderplan-e2e-test.mov
+# Save recording to: ./recordings/wanderplanner-e2e-test.mov
 ```
 
 ---
