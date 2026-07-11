@@ -119,9 +119,13 @@ function ActivityCard({ item, isActive, onHover, onSelect }: {
           {item.tags.slice(1).map((tag) => (
             <span
               key={tag}
-              className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+              className={
+                tag === 'hidden_gem'
+                  ? 'rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-900 dark:text-violet-300'
+                  : 'rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400'
+              }
             >
-              {tag === 'instaworthy' ? '📸 ' : ''}{tag.replace(/_/g, ' ')}
+              {tag === 'instaworthy' ? '📸 ' : tag === 'hidden_gem' ? '💎 ' : ''}{tag.replace(/_/g, ' ')}
             </span>
           ))}
           {isSafeExternalUrl(item.booking_url) && (

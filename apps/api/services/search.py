@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
 
 from qdrant_client.models import Filter, FieldCondition, MatchValue
@@ -32,6 +33,14 @@ _PURPOSE_QUERY_EXPANSION: dict[str, str] = {
     "business_leisure": "convenient efficient wifi",
     "adventure": "adventure outdoor trekking hiking",
     "group_holiday": "group friends nightlife",
+}
+
+# Crowd-dial retrieval bias (hidden-gem curation, docs/GTM_STRATEGY.md §2) —
+# same zero-infra query-expansion mechanism as the persona/purpose maps above.
+_CROWD_QUERY_EXPANSION: dict[str, str] = {
+    "offbeat": "hidden gems off the beaten path quiet local secret underrated",
+    "touristy": "top attractions iconic landmarks must-see famous",
+    "balanced": "",
 }
 
 
@@ -284,12 +293,15 @@ async def retrieve_context(trip_config: TripConfig, enable_reranking: bool | Non
     # just better query construction over the same free collections.
     persona_keywords = " ".join(_PERSONA_QUERY_EXPANSION.get(p, "") for p in trip_config.personas).strip()
     purpose_keywords = _PURPOSE_QUERY_EXPANSION.get(purpose.strip().lower(), "")
+    crowd_keywords = _CROWD_QUERY_EXPANSION.get(
+        getattr(trip_config, "crowd_preference", "balanced"), ""
+    )
 
     raw_queries = [
         # Query 1 — config-oriented: persona + core nouns (+ persona keyword expansion)
         f"{dest} travel {personas} {persona_keywords} highlights activities food".strip(),
-        # Query 2 — purpose/vibe: what kind of trip (+ occasion keyword expansion)
-        f"things to do in {dest} {purpose} {purpose_keywords} {pace} trip hidden gems local tips".strip(),
+        # Query 2 — purpose/vibe: what kind of trip (+ occasion & crowd-dial keyword expansion)
+        f"things to do in {dest} {purpose} {purpose_keywords} {crowd_keywords} {pace} trip hidden gems local tips".strip(),
         # Query 3 — practical: logistics, advice, warnings
         f"{dest} best restaurants sightseeing transport safety advice",
     ]
@@ -338,6 +350,169 @@ async def retrieve_context(trip_config: TripConfig, enable_reranking: bool | Non
         }
         for r in merged
     ]
+
+
+# ---------------------------------------------------------------------------
+# Itinerary-corpus few-shot retrieval (docs/rag-strategy.md §9 "Injection into
+# LLM Prompt") — retrieves 2-3 real traveller itineraries matching the user's
+# trip config from the two-named-vector `itinerary_corpus` collection.
+# ---------------------------------------------------------------------------
+
+# Below this weighted-similarity floor a "match" is usually a different trip
+# shape entirely (wrong duration/purpose) — injecting it would mislead more
+# than ground. §9 suggests 0.72 for a config-only search; the floor here is
+# lower because the 60/40 config+content merge dilutes the config score.
+_CORPUS_MIN_SCORE = 0.45
+
+
+def _corpus_group_type(group) -> str:
+    """Map GroupComposition onto the corpus payload's group_type vocabulary
+    (solo | couple | family | friends | group)."""
+    total_adults = group.adults + group.seniors
+    if group.has_kids or group.has_infants:
+        return "family"
+    if total_adults == 1:
+        return "solo"
+    if total_adults == 2:
+        return "couple"
+    return "group"
+
+
+def _corpus_duration_days(dates: dict | None) -> int | None:
+    if not dates:
+        return None
+    if dates.get("duration_days"):
+        return int(dates["duration_days"])
+    start, end = dates.get("start"), dates.get("end")
+    if start and end:
+        try:
+            d = (datetime.fromisoformat(end) - datetime.fromisoformat(start)).days + 1
+            return d if d > 0 else None
+        except ValueError:
+            return None
+    return None
+
+
+def _corpus_config_query(trip_config: TripConfig) -> str:
+    """Mirror of the ingest-side `_config_text()` in
+    chains/itinerary_corpus_extraction_chain.py — the query must live in the
+    same embedding space as the stored config vectors, e.g.
+    '5 day moderate cultural couple trip Kyoto Japan'."""
+    dest = trip_config.destination
+    duration = _corpus_duration_days(trip_config.dates)
+    parts = [
+        f"{duration} day" if duration else "",
+        trip_config.effective_pace(),
+        trip_config.purpose or "",
+        _corpus_group_type(trip_config.group),
+        "trip",
+        dest.city if dest else "",
+        dest.country if dest else "",
+    ]
+    return " ".join(p for p in parts if p).strip()
+
+
+def _format_corpus_days_brief(days: list[dict], max_days: int = 8) -> str:
+    lines = []
+    for day in days[:max_days]:
+        places = ", ".join(day.get("places", []))
+        line = f"Day {day.get('day_number')}: {day.get('theme', '')}. Places: {places}."
+        tips = day.get("tips", "")
+        if tips:
+            line += f" Tip: {tips}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+async def retrieve_itinerary_examples(trip_config: TripConfig, limit: int = 3) -> str:
+    """Retrieve up to `limit` real traveller itineraries as few-shot grounding
+    for generation (docs §9). Returns a prompt-ready string, or "" when the
+    corpus has no usable match — callers treat "" as "skip the section".
+
+    Both named vectors are queried with the same config-style query embedding
+    and merged 60% config / 40% content per the §9 embedding strategy, then
+    weighted by each document's source-authority `quality_score`.
+    """
+    if not settings.itinerary_corpus_retrieval_enabled:
+        return ""
+    if not trip_config.destination or not trip_config.destination.city:
+        return ""
+
+    query = _corpus_config_query(trip_config)
+    vector = (await asyncio.to_thread(embed, [query]))[0]
+    client = get_qdrant()
+    city = trip_config.destination.city
+
+    dest_filter = Filter(
+        must=[FieldCondition(key="destination", match=MatchValue(value=city))]
+    )
+
+    def _search_named(vector_name: str, use_filter: bool):
+        return client.search(
+            collection_name=settings.qdrant_collection_itinerary_corpus,
+            query_vector=(vector_name, vector),
+            query_filter=dest_filter if use_filter else None,
+            limit=limit * 2,
+            with_payload=True,
+        )
+
+    config_hits, content_hits = await asyncio.gather(
+        asyncio.to_thread(_search_named, "config", True),
+        asyncio.to_thread(_search_named, "content", True),
+    )
+
+    # The extraction LLM writes free-form destination names ("Kyoto" vs
+    # "kyoto"), so an exact payload filter can miss legitimate matches.
+    # Fall back to an unfiltered search + case-insensitive client-side check
+    # rather than silently injecting a different city's itinerary.
+    if not config_hits and not content_hits:
+        config_hits, content_hits = await asyncio.gather(
+            asyncio.to_thread(_search_named, "config", False),
+            asyncio.to_thread(_search_named, "content", False),
+        )
+        city_lower = city.strip().lower()
+        config_hits = [h for h in config_hits if ((h.payload or {}).get("destination") or "").strip().lower() == city_lower]
+        content_hits = [h for h in content_hits if ((h.payload or {}).get("destination") or "").strip().lower() == city_lower]
+
+    # 60/40 config/content weighted merge (docs §9), then source-authority
+    # weighting so a high-karma trip report outranks a low-signal blog at
+    # equal similarity.
+    merged: dict[int | str, dict] = {}
+    for hits, weight in ((config_hits, 0.6), (content_hits, 0.4)):
+        for h in hits:
+            entry = merged.setdefault(h.id, {"payload": h.payload or {}, "score": 0.0})
+            entry["score"] += weight * h.score
+    for entry in merged.values():
+        quality = float(entry["payload"].get("quality_score", 0.5))
+        entry["score"] *= 0.5 + 0.5 * quality
+
+    ranked = sorted(merged.values(), key=lambda e: e["score"], reverse=True)
+
+    examples = []
+    for entry in ranked[:limit]:
+        if entry["score"] < _CORPUS_MIN_SCORE:
+            continue
+        p = entry["payload"]
+        try:
+            days = json.loads(p.get("days_json", "[]"))
+        except (TypeError, ValueError):
+            continue
+        if not days:
+            continue
+        header_bits = [
+            f"{p['duration_days']} days" if p.get("duration_days") else "",
+            p.get("pace") or "",
+            p.get("purpose") or "",
+            p.get("group_type") or "",
+        ]
+        header = ", ".join(b for b in header_bits if b)
+        source = p.get("source_name") or "traveller report"
+        examples.append(
+            f"[Source: {source}{' — ' + header if header else ''}]\n"
+            + _format_corpus_days_brief(days)
+        )
+
+    return "\n\n---\n\n".join(examples)
 
 
 # ---------------------------------------------------------------------------

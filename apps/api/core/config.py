@@ -34,6 +34,8 @@ class Settings(BaseSettings):
                                           # off by default (adds a 2nd model + latency);
                                           # explicitly enabled only for final itinerary
                                           # generation via retrieve_context(enable_reranking=True)
+    itinerary_corpus_retrieval_enabled: bool = True  # few-shot grounding from real
+                                          # traveller itineraries (docs §9 retrieval)
     itinerary_cache_score_threshold: float = 0.88
 
     # OSM POI ingestion (docs §3I)
