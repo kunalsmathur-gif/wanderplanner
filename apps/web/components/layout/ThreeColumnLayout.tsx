@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
 import { LayoutList, BarChart2, Map } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
+import type { MobileTab } from '@/store/appStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { Column1Metrics } from '@/components/dashboard/Column1Metrics'
@@ -11,8 +11,8 @@ import { Column3Sidebar } from '@/components/itinerary/Column3Sidebar'
 import { ComparisonPanel } from '@/components/comparison/ComparisonPanel'
 import { MapWrapper } from '@/components/map/MapWrapper'
 import { ShareButton } from '@/components/common/ShareButton'
-
-type MobileTab = 'itinerary' | 'overview' | 'map'
+import { ThemeToggle } from '@/components/common/ThemeToggle'
+import { UserMenu } from '@/components/common/UserMenu'
 
 // ── Shared title bar ──────────────────────────────────────────────────────────
 function TitleBar({ destination, days }: { destination: { city: string; country: string } | null; days: number }) {
@@ -21,7 +21,11 @@ function TitleBar({ destination, days }: { destination: { city: string; country:
       <p className="truncate text-xs font-semibold text-[var(--_muted-fg)]">
         {destination ? `${destination.city}, ${destination.country}` : 'Your Itinerary'} · {days} days
       </p>
-      <ShareButton />
+      <div className="flex items-center gap-2">
+        <ThemeToggle className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--_border)] text-[var(--_fg)] transition-colors hover:border-[var(--_primary)] hover:text-[var(--_primary)]" />
+        <ShareButton />
+        <UserMenu />
+      </div>
     </div>
   )
 }
@@ -60,7 +64,8 @@ function MobileTabBar({ active, onChange }: { active: MobileTab; onChange: (tab:
 }
 
 export function ThreeColumnLayout() {
-  const [mobileTab, setMobileTab] = useState<MobileTab>('itinerary')
+  const mobileTab = useAppStore((state) => state.mobileTab)
+  const setMobileTab = useAppStore((state) => state.setMobileTab)
   const step3View = useAppStore((state) => state.step3View)
   const setStep3View = useAppStore((state) => state.setStep3View)
   const days = useItineraryStore((state) => state.days)
@@ -73,41 +78,41 @@ export function ThreeColumnLayout() {
     return (
       <div className="relative flex h-full flex-col overflow-hidden bg-[var(--_bg)]">
         {/* Toolbar */}
-        <div className="flex shrink-0 items-center justify-between border-b border-[var(--_border)] bg-[var(--_card)] px-4 py-2">
-          <div className="flex items-center gap-3">
-            <span className="text-sm font-semibold text-[var(--_fg)]">🗺 Full Map View</span>
-            {day && (
-              <span className="hidden text-xs text-[var(--_muted-fg)] sm:inline">
-                Day {day.day_number} · {day.items.length} stops
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {/* Day tabs — scrollable on mobile */}
-            <div className="flex gap-1 overflow-x-auto">
-              {days.map((d, i) => (
-                <button
-                  key={d.day_number}
-                  type="button"
-                  onClick={() => useItineraryStore.getState().setActiveDay(i)}
-                  className={[
-                    'shrink-0 rounded-lg px-3 py-1 text-xs font-medium transition-colors',
-                    i === activeDay
-                      ? 'bg-[var(--_primary)] text-white'
-                      : 'border border-[var(--_border)] bg-[var(--_card)] text-[var(--_muted-fg)] hover:text-[var(--_fg)]',
-                  ].join(' ')}
-                >
-                  Day {d.day_number}
-                </button>
-              ))}
+        <div className="flex shrink-0 flex-col gap-2 border-b border-[var(--_border)] bg-[var(--_card)] px-4 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="whitespace-nowrap text-sm font-semibold text-[var(--_fg)]">🗺 Full Map View</span>
+              {day && (
+                <span className="hidden truncate text-xs text-[var(--_muted-fg)] sm:inline">
+                  Day {day.day_number} · {day.items.length} stops
+                </span>
+              )}
             </div>
             <button
               type="button"
               onClick={() => setStep3View('itinerary')}
-              className="ml-2 rounded-lg border border-[var(--_border)] px-3 py-1.5 text-xs font-medium text-[var(--_fg)] transition-colors hover:bg-[var(--_muted)]"
+              className="shrink-0 rounded-lg border border-[var(--_border)] px-3 py-1.5 text-xs font-medium text-[var(--_fg)] transition-colors hover:bg-[var(--_muted)]"
             >
               ✕ Close
             </button>
+          </div>
+          {/* Day tabs — scrollable on mobile, own row so they never push Close off-screen */}
+          <div className="flex gap-1 overflow-x-auto">
+            {days.map((d, i) => (
+              <button
+                key={d.day_number}
+                type="button"
+                onClick={() => useItineraryStore.getState().setActiveDay(i)}
+                className={[
+                  'shrink-0 rounded-lg px-3 py-1 text-xs font-medium transition-colors',
+                  i === activeDay
+                    ? 'bg-[var(--_primary)] text-white'
+                    : 'border border-[var(--_border)] bg-[var(--_card)] text-[var(--_muted-fg)] hover:text-[var(--_fg)]',
+                ].join(' ')}
+              >
+                Day {d.day_number}
+              </button>
+            ))}
           </div>
         </div>
         {/* Full-height map */}

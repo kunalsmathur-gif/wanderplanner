@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import re
 
-logger = logging.getLogger("wanderplan.prompt_guard")
+logger = logging.getLogger("wanderplanner.prompt_guard")
 
 # Common prompt-injection phrasing seen in the wild. Matched case-insensitively.
 _INJECTION_PATTERNS = [

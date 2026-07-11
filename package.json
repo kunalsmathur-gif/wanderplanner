@@ -1,5 +1,5 @@
 {
-  "name": "wanderplan",
+  "name": "wanderplanner",
   "private": true,
   "workspaces": [
     "apps/web"

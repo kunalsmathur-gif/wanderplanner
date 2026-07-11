@@ -1,4 +1,4 @@
-# WanderPlan — RAG Strategy: Current State, Gaps & Roadmap
+# WanderPlanner — RAG Strategy: Current State, Gaps & Roadmap
 **Version:** 4.0 · **Date:** June 2026 · **Updated:** July 2, 2026
 
 ---
@@ -7,7 +7,7 @@
 
 **Yes — fully wired into production, and substantially upgraded as of v5.3.**
 
-WanderPlan has a RAG infrastructure in place (Qdrant + `all-MiniLM-L6-v2` embeddings). All retrieval paths — including the primary **Gemini** production path — now call `retrieve_context()`. The previous silent bypass has been fixed, a hidden concurrency bug that serialized retrieval under load has been fixed, and the hybrid search / HyDE / reranking / OSM ingestion / itinerary-cache items that were "pending" in the v3.0 roadmap are now implemented.
+WanderPlanner has a RAG infrastructure in place (Qdrant + `all-MiniLM-L6-v2` embeddings). All retrieval paths — including the primary **Gemini** production path — now call `retrieve_context()`. The previous silent bypass has been fixed, a hidden concurrency bug that serialized retrieval under load has been fixed, and the hybrid search / HyDE / reranking / OSM ingestion / itinerary-cache items that were "pending" in the v3.0 roadmap are now implemented.
 
 ### What's Wired Up (Current)
 
@@ -83,6 +83,8 @@ Now returns properly destination-tagged posts thanks to the fixed `_extract_dest
 2. **No Anya wizard RAG** — city suggestions rely on Gemini parametric memory alone
 3. **No visa/entry-rules collection** — not yet ingested
 4. **No `itinerary_corpus` / `generated_itineraries` learning flywheel** — described in §9/§10 below, not yet built
+
+**v10.7 update:** persona/occasion-filtered retrieval (§9's "Mechanism A" from the budget/curation design memo) is now implemented — `services/search.py::retrieve_context()` biases its 3 query variants with persona/purpose keyword expansions (e.g. `digital_nomad` → "coworking wifi cafe remote work", `honeymoon` → "romantic scenic couples sunset") over the *existing* `wiki`/`reddit` collections. This is a zero-infra query-construction improvement, not the full §11 unified metadata/payload-filtering schema — that remains unbuilt. `itinerary_corpus` and `generated_itineraries` (§9/§10 proper) also remain unbuilt.
 
 ---
 
@@ -469,7 +471,7 @@ User trip config
 
 ---
 
-## 6. Use Cases RAG Can Power in WanderPlan
+## 6. Use Cases RAG Can Power in WanderPlanner
 
 | # | Use Case | Collections | Value |
 |---|---|---|---|
@@ -522,6 +524,12 @@ User trip config
 
 ## 9. Web-Scraped Itinerary Corpus Pipeline
 
+**v10.11 update:** the *raw fetching* half of this pipeline (Phase v0 sources) is now implemented in `scrapers/itinerary_corpus.py` — travel blog RSS (Nomadic Matt, Planet D), Wikivoyage itinerary articles (official Wikimedia API), Reddit trip-report self-posts (keyless direct-JSON search), and YouTube caption transcripts (curated video-ID seed list, no API key). This module deliberately stops at raw text + source metadata — it does **not** call an LLM to structure it into `ItineraryCorpusDoc`, and does **not** embed/write to Qdrant yet. Those two steps remain the separate, still-pending `itinerary-corpus-extraction` follow-up (structuring chain + new `itinerary_corpus` collection described below).
+
+**v10.12 update:** the extraction half is now also implemented — `chains/itinerary_corpus_extraction_chain.py` runs each raw document through a small Gemini call (`extract_itinerary_doc`) to produce a structured `ItineraryCorpusDoc` (or `None` if the text isn't actually a real itinerary), computes a `quality_score` per the source-tier table below, and upserts into a new **`itinerary_corpus`** Qdrant collection using the documented two-named-vector schema (`config` + `content`). Wired into the scheduler as a monthly job (`itinerary_corpus_refresh_days`, default 30).
+
+**v10.13 update:** **retrieval is now implemented** — `services/search.py::retrieve_itinerary_examples()` builds a config-style query mirroring the ingest-side `_config_text()` (e.g. "5 day moderate cultural couple trip Kyoto Japan"), searches **both named vectors** with a destination payload filter (plus a case-insensitive unfiltered fallback, since the extraction LLM writes free-form destination strings), merges **60% config / 40% content** per the embedding-strategy table below, weights by source-authority `quality_score`, and injects the top ≤3 as a `REAL TRAVELLER ITINERARIES FOR REFERENCE` section in both the Gemini and LangChain generation prompts (`chains/itinerary_chain.py::_itinerary_examples_block`, best-effort, `wrap_untrusted`-wrapped). Gated by `settings.itinerary_corpus_retrieval_enabled` (default `True`).
+
 ### Concept
 
 Scrape real, human-authored itineraries from travel blogs, forums, and social media. Extract them into a structured format, embed them, and store in a new `itinerary_corpus` Qdrant collection. When a user asks for a Tokyo 7-day trip, the LLM receives 2–3 real itineraries from other travellers as grounding — the output is built on patterns that actually worked, not just training data.
@@ -531,6 +539,7 @@ This is fundamentally different from the existing wiki/reddit collections:
 - **Itinerary corpus** → structured day-by-day plans ("Day 1: Senso-ji → Akihabara → Shibuya crossing")
 
 ### Data Sources & Scraping Strategy
+
 
 **Phase v0 — Free, friction-free sources (build the pipeline first):**
 
@@ -639,7 +648,7 @@ Not all sources are equal. Weight retrieved documents by source authority:
 | **Community (high karma)** | Reddit posts with score > 500 | 0.75–0.90 |
 | **Community (standard)** | Reddit posts score 50–500, TripAdvisor threads | 0.55–0.75 |
 | **Community (low signal)** | Reddit score < 50, generic blogs | 0.30–0.55 |
-| **Generated (WanderPlan)** | Past generated itineraries (Section 10) | 0.60–0.85 (feedback-based) |
+| **Generated (WanderPlanner)** | Past generated itineraries (Section 10) | 0.60–0.85 (feedback-based) |
 
 ### Ingestion Pipeline (Scheduled)
 
@@ -698,7 +707,7 @@ REAL TRAVELLER ITINERARIES FOR REFERENCE (use as inspiration, not verbatim):
 
 ### Concept: RAG as Collaborative Filtering
 
-Every itinerary WanderPlan generates is a data point. When a new user has a similar profile to past users, the system retrieves their itineraries as implicit "examples of what worked". This is **few-shot prompting with dynamically retrieved examples** — the model learns behaviorally without any retraining.
+Every itinerary WanderPlanner generates is a data point. When a new user has a similar profile to past users, the system retrieves their itineraries as implicit "examples of what worked". This is **few-shot prompting with dynamically retrieved examples** — the model learns behaviorally without any retraining.
 
 The key insight: a digital nomad solo traveller in Chiang Mai for 10 days at ₹80k budget is nearly identical to 20 previous such users. Their itinerary should start from that learned baseline, not from scratch.
 
@@ -942,7 +951,7 @@ async def route_query(question: str) -> str:
   Reddit trip rprt   ──(daily)────────────▶        [itinerary_corpus]      ← NEW
   YouTube vlogs      ──(daily)────────────▶        [itinerary_corpus]      ← NEW
   Visa/entry rules   ──(monthly static)───▶        [visa_info]             ← NEW
-  WanderPlan output  ──(per generation)───▶        [generated_itineraries] ← NEW
+  WanderPlanner output  ──(per generation)───▶        [generated_itineraries] ← NEW
   Pre-generated      ──(bootstrap)────────▶        [itinerary_cache]       ← NEW
 
 ═══════════════════════════════════════════════════════════════════
@@ -961,7 +970,7 @@ async def route_query(question: str) -> str:
        │       ├── reddit           (context query)     → top 5 chunks
        │       ├── osm_pois         (context query)     → top 5 POIs
        │       ├── itinerary_corpus (config query)      → top 3 real itineraries
-       │       └── generated_itin.  (fingerprint)       → top 2 past WanderPlan trips
+       │       └── generated_itin.  (fingerprint)       → top 2 past WanderPlanner trips
        │
        ├─ [3] Rerank + deduplicate
        │       └── score × quality_score; remove jaccard > 0.6 duplicates
@@ -976,7 +985,7 @@ async def route_query(question: str) -> str:
        └─ [5] Inject into LLM prompt
                ├── {context}           → wiki + reddit + OSM tips
                ├── {examples}          → blog/forum/YouTube itineraries
-               └── {past_itineraries}  → WanderPlan learned itineraries
+               └── {past_itineraries}  → WanderPlanner learned itineraries
 
 ═══════════════════════════════════════════════════════════════════
                 POST-GENERATION PIPELINE
@@ -997,7 +1006,7 @@ async def route_query(question: str) -> str:
 |---|---|---|
 | Wiki/Reddit raw chunks | ~7,500 tokens | ~600 tokens (summarised) |
 | Real itinerary examples | 0 | ~450 tokens |
-| Past WanderPlan itineraries | 0 | ~300 tokens |
+| Past WanderPlanner itineraries | 0 | ~300 tokens |
 | **Total context** | **~7,500 tokens** | **~1,350 tokens** |
 | **Output quality** | Training data only | Real + learned + community-grounded |
 | **Cost per session (Gemini 2.0 Flash)** | **~$0.007** | **~$0.004** |
@@ -1023,15 +1032,16 @@ More context signal, fewer tokens, better output.
 | P1 | Cross-encoder reranker | 1 day | ✅ Done — scoped to itinerary generation only (§3J) |
 | P1 | Golden dataset + automated retrieval eval | 4 hrs | ✅ Done — `eval/golden_dataset.json` + `eval/run_rag_eval.py` |
 | P1 | `generated_itineraries` collection + store on generate | 4 hrs | ❌ Pending — learning flywheel not yet started |
-| P2 | Travel blog scraper — `feedparser` + BeautifulSoup (Nomadic Matt, Planet D, Lonely Planet) | 1 day | ❌ Pending — itinerary_corpus seeded with authoritative content |
-| P2 | Reddit PRAW ingester (replace direct JSON feed) — flair:trip-report filter, top 5 comments per post | 4 hrs | ❌ Pending — high-volume, properly tagged community itineraries |
-| P2 | YouTube `youtube-transcript-api` scraper (no API key) | 4 hrs | ❌ Pending — video-native itinerary patterns, free |
+| P2 | Travel blog scraper — `feedparser` + BeautifulSoup (Nomadic Matt, Planet D) | 1 day | ✅ Done (v10.11) — `scrapers/itinerary_corpus.py::scrape_travel_blog_feed`, raw fetch only |
+| P2 | Reddit trip-report ingester — direct public-JSON search (`q=itinerary`), itinerary-shaped title filter | 4 hrs | ✅ Done (v10.11) — `scrapers/itinerary_corpus.py::scrape_reddit_trip_reports`; kept the existing keyless direct-JSON approach instead of adding PRAW OAuth (no new required credentials) |
+| P2 | YouTube `youtube-transcript-api` scraper (no API key) | 4 hrs | ✅ Done (v10.11) — `scrapers/itinerary_corpus.py::fetch_youtube_transcript`; video-ID discovery stays out of scope (would need the paid/keyed YouTube Data API), so a curated seed list of video IDs is used instead of live search |
+| P2 | Extraction LLM chain → structured `ItineraryCorpusDoc` + `itinerary_corpus` Qdrant collection (config+content dual embedding, quality scoring, monthly scheduler job) | 1 day | ✅ Done (v10.12) — `chains/itinerary_corpus_extraction_chain.py`; retrieval (wiring into the generation prompt) is the separate `itinerary-corpus-retrieval` roadmap item |
 | P2 | Unified metadata schema normalisation across all scrapers | 3 hrs | ❌ Pending — consistent filters; `attraction_type` precision retrieval |
 | P2 | Quality score background task (session signals) | 4 hrs | ❌ Pending — enables persona-based re-ranking |
 | P2 | Visa info collection | 3 hrs | ❌ Pending — entry requirements surfaced in wizard |
 | P2 | Time-decay scoring in reranker | 2 hrs | ✅ Done — 18-month half-life, floor 40% |
 | P2 | Semantic chunking (by section headers / Reddit comments) | 3 hrs | ✅ Done |
-| P3 | Wikimedia API ingestion (replace Wikivoyage scraper) | 2 hrs | ❌ Pending — more stable than HTML scraping |
+| P3 | Wikimedia API ingestion (replace Wikivoyage scraper) | 2 hrs | ✅ Done (v10.11, scoped to itinerary corpus) — `scrapers/itinerary_corpus.py::scrape_wikivoyage_itinerary` uses the official `action=parse` Wikimedia API for a curated list of dedicated Wikivoyage itinerary articles (Golden Triangle, Grand Tour of Europe, Trans-Siberian Railway, etc.); the original `scrapers/wikivoyage.py` (general destination guide sections) is unchanged |
 | P3 | TripAdvisor via Apify/Bright Data (v1 premium) | 2 days | ❌ Pending — current ratings and reviews |
 | P3 | `yt-dlp` + Whisper STT for non-captioned YouTube videos (v1) | 1 day | ❌ Pending — niche travel vlogger content |
 | P3 | Instagram/TikTok via Octolens or Prowlo (v1) | 2 days | ❌ Pending — trending visual content, geotag-based retrieval |

@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-logger = logging.getLogger("wanderplan.errors")
+logger = logging.getLogger("wanderplanner.errors")
 
 GENERIC_MESSAGE = "Something went wrong while processing your request. Please try again."
 
