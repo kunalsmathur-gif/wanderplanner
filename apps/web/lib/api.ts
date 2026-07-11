@@ -86,11 +86,20 @@ export async function wizardChat(
   partialConfig: Partial<TripConfig>,
   preloadedDestination?: string,
 ): Promise<WizardChatResponse> {
-  const { data } = await api.post('/api/wizard-chat', {
-    messages,
-    partial_config: partialConfig,
-    preloaded_destination: preloadedDestination ?? null,
-  })
+  const { data } = await api.post(
+    '/api/wizard-chat',
+    {
+      messages,
+      partial_config: partialConfig,
+      preloaded_destination: preloadedDestination ?? null,
+    },
+    // Longer timeout than the shared default: the backend retries up to 3x
+    // on transient Gemini errors AND on JSON-validity failures, and observed
+    // real-world latency for that worst case (5s + 7s + 13s+) can land right
+    // at or past the default 25s, surfacing as a spurious "Connection error"
+    // even though the backend eventually succeeds.
+    { timeout: 45_000 },
+  )
   return data as WizardChatResponse
 }
 
@@ -123,7 +132,10 @@ export interface ExtractedTrip {
 }
 
 export async function extractTrip(input: string): Promise<ExtractedTrip> {
-  const { data } = await api.post('/api/extract-trip', { input })
+  // Same rationale as wizardChat: this endpoint retries up to 3x on Gemini
+  // transient errors / JSON-validity failures, which can exceed the shared
+  // 25s default in the worst case.
+  const { data } = await api.post('/api/extract-trip', { input }, { timeout: 45_000 })
   return data as ExtractedTrip
 }
 

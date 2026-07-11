@@ -45,6 +45,18 @@ export async function fetchCurrentUser(): Promise<AuthUser | null> {
   }
 }
 
+/** Public, non-secret capability flags for the auth UI (e.g. whether Google
+ * OAuth is configured on the backend). Defaults to disabled on any failure
+ * so the UI fails closed (hides the button) rather than showing a broken one. */
+export async function fetchAuthConfig(): Promise<{ google_sso_enabled: boolean }> {
+  try {
+    const { data } = await authApi.get('/api/auth/config')
+    return { google_sso_enabled: Boolean(data?.google_sso_enabled) }
+  } catch {
+    return { google_sso_enabled: false }
+  }
+}
+
 export async function forgotPassword(email: string): Promise<void> {
   await authApi.post('/api/auth/password/forgot', { email })
 }

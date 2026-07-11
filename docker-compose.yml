@@ -8,6 +8,10 @@ services:
     environment:
       - QDRANT_URL=http://qdrant:6333
       - ALLOWED_ORIGINS=http://localhost:3000
+      # DATABASE_URL defaults to local SQLite (core/config.py) if not set in
+      # ./apps/api/.env — override there to point at the optional `postgres`
+      # service below (e.g. postgresql+asyncpg://wanderplanner:wanderplanner@postgres:5432/wanderplanner)
+      # or a Supabase/managed Postgres instance for production-like testing.
     env_file:
       - ./apps/api/.env
     depends_on:
@@ -30,5 +34,28 @@ services:
       timeout: 5s
       retries: 5
 
+  # Optional local Postgres — only needed if you want to test against Postgres
+  # instead of the default SQLite. Not started by default `docker compose up`;
+  # run with `docker compose --profile postgres up` to include it, and set
+  # DATABASE_URL=postgresql+asyncpg://wanderplanner:wanderplanner@postgres:5432/wanderplanner
+  # in ./apps/api/.env. Free/open-source, no license cost either way.
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    environment:
+      - POSTGRES_USER=wanderplanner
+      - POSTGRES_PASSWORD=wanderplanner
+      - POSTGRES_DB=wanderplanner
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wanderplanner"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   qdrant_data:
+  postgres_data:

@@ -276,6 +276,17 @@ Open `http://localhost:3000`.
 
 ## Changelog
 
+### v5.9 — Local Testing Fixes: Event-Loop Hangs, Budget Feasibility, Google SSO Gating, Duplicate Keys, Generation Watchdog (July 2026)
+- ✅ **FIXED: signup (and every other request) could hang indefinitely** — a synchronous embedding-model call inside an async request handler and a startup background task was blocking the whole event loop. Offloaded to worker threads everywhere; also fixed a resulting Apple Silicon (MPS) thread-safety crash by forcing CPU-only inference.
+- ✅ **FIXED: Anya didn't flag an infeasible budget the user lowered mid-conversation** — she now proactively compares any stated/reduced budget against a computed bare-minimum estimate and warns on a shortfall, not just at the final pre-generation gate.
+- ✅ **FIXED: literal `\u20b9` shown instead of ₹** in some chat replies — a plain-text fallback path wasn't decoding JSON unicode escapes.
+- ✅ **NEW: Google SSO button now hides itself** when Google OAuth isn't configured (e.g. local dev), instead of showing a button that always fails.
+- ✅ **CHANGED: signup now tells you if the email is already registered** ("Try logging in instead.") instead of a generic error message — an explicit product decision.
+- ✅ **FIXED: false "Connection error" on the wizard chat** — frontend timeout for the two Gemini-retry-backed endpoints bumped to 45s to match the backend's actual worst-case latency.
+- ✅ **FIXED: duplicate React key warnings in the wizard chat** (up to 44 in devtools) — message ids now use `crypto.randomUUID()` instead of a counter that could collide across dev hot-reloads.
+- ✅ **NEW: 60-second generation-stall watchdog** — if itinerary generation ever goes completely silent (dropped connection, dev hot-reload mid-generation), the UI now shows a retry prompt instead of freezing on "Starting up…" forever.
+- Docs updated: `TECHNICAL_DOCUMENTATION.md` (§14 v10.13 changelog), `docs/system-design.md` (§3A, §15, §16), `docs/itinerary-generation-flow.md`, `docs/PRD.md` (R5 + Clarifications #14–15), `DESIGN_REVAMP_SUMMARY.md` (July 9 component updates).
+
 ### v5.8 — Admin Access Request/Approval Workflow (July 2026)
 - ✅ **NEW: no user can become admin without explicit approval.** Any signed-in user can now click "Request admin access" on `/account`; every existing admin gets emailed immediately and sees the request in a new "Admin access requests" panel at the top of `/admin`, with Approve/Reject buttons.
 - Approving flips the target user's `is_admin` to `true` and emails them the decision; rejecting leaves access unchanged and also emails the decision. Requests are idempotent while pending (no duplicate spam) and one-shot once reviewed.
