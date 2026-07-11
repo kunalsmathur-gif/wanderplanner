@@ -1,4 +1,4 @@
-# API Testing Fixes - WanderPlan
+# API Testing Fixes - WanderPlanner
 
 ## Summary
 

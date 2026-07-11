@@ -36,6 +36,9 @@ class ItineraryDay(BaseModel):
     theme: str
     items: list[ItineraryItem] = Field(default_factory=list)
     transit_warnings: list[TransitWarning] = Field(default_factory=list)
+    image_url: str = ""
+    image_photographer: str = ""
+    image_photographer_url: str = ""
 
 
 class ExpenseBreakdown(BaseModel):

@@ -1,6 +1,7 @@
 """Reddit public JSON feed ingester — no API key required."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
 from datetime import datetime, timezone
@@ -138,7 +139,11 @@ async def ingest_reddit():
             if not docs:
                 continue
 
-            vectors = embed([d["text"] for d in docs])
+            # embed() is CPU/IO-bound (downloads + runs the sentence-transformers
+            # model) and this coroutine runs as a fire-and-forget startup task on
+            # the main event loop — calling it inline froze every other request
+            # (including signup) for the duration of the model load + encode.
+            vectors = await asyncio.to_thread(embed, [d["text"] for d in docs])
             from qdrant_client.models import PointStruct
             points = []
             for doc, vec in zip(docs, vectors):

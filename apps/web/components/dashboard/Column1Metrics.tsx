@@ -32,6 +32,8 @@ function MetricRow({ icon, label, value }: { icon: React.ReactNode; label: strin
 export function Column1Metrics() {
   const budget = useTripConfigStore((state) => state.config.budget)
   const destination = useTripConfigStore((state) => state.config.destination)
+  const destinationCountry = useTripConfigStore((state) => state.config.destination_country)
+  const hops = useTripConfigStore((state) => state.config.hops)
   const days = useItineraryStore((state) => state.days)
   const step3View = useAppStore((state) => state.step3View)
   const setStep3View = useAppStore((state) => state.setStep3View)
@@ -40,6 +42,16 @@ export function Column1Metrics() {
   const totalActivities = days.reduce((sum, day) => sum + day.items.length, 0)
   void totalActivities // used only for potential future re-add
 
+  // Fallback chain so the metrics panel never shows a bare "—": prefer the
+  // resolved city, then list multi-city stops, then fall back to the country
+  // name for trips where the LLM hasn't resolved a concrete city yet.
+  const destinationLabel = destination?.city
+    ? hops.length > 0
+      ? `${destination.city} +${hops.length}`
+      : destination.city
+    : (destinationCountry ?? '—')
+  const hasDestination = Boolean(destination?.city || destinationCountry)
+
   return (
     <div className="space-y-4 p-4">
       <h3 className="text-xs font-semibold uppercase tracking-widest text-[var(--_muted-fg)]">
@@ -47,7 +59,7 @@ export function Column1Metrics() {
       </h3>
 
       <div className="overflow-hidden rounded-xl border border-[var(--_border)] bg-[var(--_card)]">
-        <MetricRow icon={<MapPin size={14} />}       label="Destination" value={destination?.city ?? '—'} />
+        <MetricRow icon={<MapPin size={14} />}       label="Destination" value={destinationLabel} />
         <MetricRow icon={<Wallet size={14} />}       label="Budget"      value={`${budget.currency} ${budget.amount.toLocaleString()}`} />
         <MetricRow icon={<CalendarDays size={14} />} label="Days"        value={String(days.length)} />
       </div>
@@ -68,7 +80,7 @@ export function Column1Metrics() {
         <PdfDownloadButton />
       </div>
 
-      {destination?.city && (
+      {hasDestination && (
         <>
           <div className="border-t border-[var(--_border)] pt-3">
             <ExpenseBreakupCard />

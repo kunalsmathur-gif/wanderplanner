@@ -1,6 +1,8 @@
 """Reddit highlights endpoint — returns top traveler posts for a destination."""
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
@@ -32,7 +34,9 @@ async def reddit_highlights(
     try:
         client = get_qdrant()
         query = f"{destination} travel tips guide best places"
-        vector = embed([query])[0]
+        # embed() is CPU-bound (sentence-transformers); offload to a worker
+        # thread so it doesn't block the event loop for concurrent requests.
+        vector = (await asyncio.to_thread(embed, [query]))[0]
 
         # Search without destination filter first (destination tagging is naive)
         # to surface any relevant posts

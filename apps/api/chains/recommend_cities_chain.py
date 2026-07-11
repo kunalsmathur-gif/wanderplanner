@@ -7,6 +7,7 @@ import logging
 from pydantic import BaseModel
 
 from core.config import settings
+from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize
 from models.trip import TripConfig
 
@@ -98,17 +99,18 @@ async def recommend_cities(request: RecommendCitiesRequest) -> RecommendCitiesRe
 
     client = google_genai.Client(api_key=settings.gemini_api_key)
 
-    def _call_sync() -> str:
-        response = client.models.generate_content(
+    def _call_sync():
+        return client.models.generate_content(
             model=settings.gemini_model,
             contents=[genai_types.Content(role="user", parts=[genai_types.Part(text=prompt)])],
             config=genai_types.GenerateContentConfig(temperature=0.4, max_output_tokens=1024),
         )
-        return response.text
 
     try:
         loop = asyncio.get_event_loop()
-        raw = await loop.run_in_executor(None, _call_sync)
+        response = await loop.run_in_executor(None, _call_sync)
+        track_gemini_usage(response, model=settings.gemini_model, purpose="recommend_cities")
+        raw = response.text
 
         cleaned = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         cities_data = json.loads(cleaned)
