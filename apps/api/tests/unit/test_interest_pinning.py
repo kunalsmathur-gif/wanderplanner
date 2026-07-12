@@ -18,7 +18,7 @@ from chains.chat_refine_chain import (
     chat_refine,
 )
 from chains.interest_expansion_chain import expand_interest_to_candidates, _mock_candidates
-from chains.itinerary_chain import _mock_itinerary, _pinned_guidance_block
+from chains.itinerary_chain import _classify_gemini_error, _mock_itinerary, _pinned_guidance_block
 from models.chat import ChatMessage
 from models.trip import MAX_PINNED_POIS, DestinationInput, PinnedPOI, TripConfig
 from services.poi_pinning import (
@@ -264,6 +264,19 @@ class TestChatRefineOrchestration:
                                   pins=[], dropped=[])
         assert resp.named_interest is None
         assert resp.config_patch == {"pace": "relaxed"}
+
+
+class TestGeminiErrorClassifier:
+    def test_503_is_transient(self):
+        assert _classify_gemini_error("503 UNAVAILABLE high demand") == "transient"
+
+    def test_retired_model_404_is_model_missing(self):
+        err = ("404 NOT_FOUND. models/gemini-2.5-flash-lite-preview-06-17 "
+               "is not found for API version v1beta")
+        assert _classify_gemini_error(err) == "model_missing"
+
+    def test_auth_error_is_fatal(self):
+        assert _classify_gemini_error("401 UNAUTHENTICATED: API key not valid") == "fatal"
 
 
 class TestTransientLLMErrorClassifier:

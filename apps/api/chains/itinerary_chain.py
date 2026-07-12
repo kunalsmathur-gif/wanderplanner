@@ -397,6 +397,17 @@ def _parse_expense_breakdown(raw: dict, trip_config: TripConfig) -> "ExpenseBrea
     )
 
 
+def _classify_gemini_error(err_str: str) -> str:
+    """Route a Gemini call failure: "transient" (retry same model with
+    backoff), "model_missing" (retired/renamed model id — skip straight to
+    the next fallback model), or "fatal" (auth/invalid request — raise)."""
+    if any(kw in err_str for kw in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "quota")):
+        return "transient"
+    if "404" in err_str or "NOT_FOUND" in err_str or "is not found" in err_str:
+        return "model_missing"
+    return "fatal"
+
+
 async def _gemini_itinerary(trip_config: TripConfig) -> dict:
     """Call Google Gemini directly with automatic retry on 503 errors."""
     import asyncio
@@ -450,8 +461,14 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
 
     # Retry logic: up to 5 attempts, broader exception matching, fallback model
     loop = asyncio.get_event_loop()
-    # Models to try in order: primary → lighter fallback
-    models_to_try = [settings.gemini_model, "gemini-2.5-flash-lite-preview-06-17", "gemini-1.5-flash"]
+    # Models to try in order: primary → current GA fallbacks (deduped in case
+    # the primary IS one of them). Fallback ids must be GA models: a retired
+    # preview id ("gemini-2.5-flash-lite-preview-06-17") 404'd and aborted the
+    # whole chain before the next fallback was tried — caught by the first
+    # v10.18 live eval run.
+    models_to_try = list(dict.fromkeys(
+        [settings.gemini_model, "gemini-2.5-flash", "gemini-2.0-flash"]
+    ))
     max_attempts = 5
 
     last_error: Exception | None = None
@@ -484,21 +501,26 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
                 raise RuntimeError(f"Gemini returned invalid JSON: {e}") from e
 
             except Exception as e:
-                err_str = str(e)
-                is_transient = any(kw in err_str for kw in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "quota"))
-                if is_transient and attempt < max_attempts - 1:
+                kind = _classify_gemini_error(str(e))
+                if kind == "transient" and attempt < max_attempts - 1:
                     wait_time = min(5 * (2 ** attempt), 60)  # 5s, 10s, 20s, 40s, 60s cap
                     logger.warning("Gemini transient error on %s (attempt %d/%d). Retrying in %ds…", model_name, attempt + 1, max_attempts, wait_time)
                     await asyncio.sleep(wait_time)
                     last_error = e
                     continue
-                elif is_transient:
+                elif kind == "transient":
                     # exhausted retries on this model → try next model
                     logger.error("Gemini model %s failed after %d attempts, trying fallback…", model_name, max_attempts)
                     last_error = e
                     break
+                elif kind == "model_missing":
+                    # Retired/renamed model id — retrying it is pointless, but
+                    # the next fallback model may work fine. Skip immediately.
+                    logger.error("Gemini model %s unavailable (%s); trying fallback…", model_name, e)
+                    last_error = e
+                    break
                 else:
-                    raise  # non-transient error: propagate immediately
+                    raise  # fatal (auth/invalid request): propagate immediately
         else:
             continue  # inner loop completed without break → success already returned
         continue   # model failed, try next model
