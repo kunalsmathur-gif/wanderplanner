@@ -1,7 +1,7 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.18 (Refinement-Fidelity Eval Suite — the Phase 1 kill-criterion gate)
-**Last Updated:** July 12, 2026  
+**Version:** 10.18.1 (Refinement-Fidelity Eval Suite + live-eval shakedown fixes)
+**Last Updated:** July 13, 2026  
 **Status:** Production-ready MVP
 
 ---
@@ -1417,6 +1417,17 @@ curl http://localhost:8000/health
 ---
 
 ## 14. Recent Changes (v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.18.1 Changes (July 2026) — Live-eval shakedown fixes: dead google.api_core import was disabling live Gemini generation, chat_refine 503 retry, eval-runner resilience
+
+The first `--live` run of the v10.18 eval immediately caught two real bugs — exactly what the harness is for.
+
+| Change | Detail |
+|---|---|
+| **FIXED** `chains/itinerary_chain.py::_gemini_itinerary` | An unused `from google.api_core.exceptions import ServerError` import (a package google-genai does not depend on and which isn't installed) made the whole import block raise → misleading "google-genai not installed" → **every live Gemini itinerary generation silently fell back to the RAG fallback chain**. Caught by the eval's inclusion metric flatlining at 0.00 while refine/expansion worked. Import removed (the symbol was never referenced). |
+| **FIXED** `chains/chat_refine_chain.py` | The known "no retry on transient Gemini 503s" gap (hit live 2026-07-12 and again killing the first live eval run): one cheap retry with 2s backoff on transient LLM errors (`_is_transient_llm_error` — 5xx/UNAVAILABLE/RESOURCE_EXHAUSTED/429 text match, version-proof against google.genai error-class churn). Non-transient errors still raise immediately. |
+| **UPDATED** `eval/run_refinement_eval.py` + `eval/refinement_scoring.py` | Per-case retry (10s backoff) then record-as-errored instead of killing a 20-case live run on one persistent failure. Errored cases are **excluded from every aggregate but counted** (`n_errored`) and the report gains a "rerun before publishing" warning — fidelity claims never quietly average over cases that didn't run. |
+| **Verified** | Full backend suite **204 passed** (200 + 4 new: transient-classifier ×3, errored-aggregation ×1), 6 skipped. Offline eval gate still 1.000/100%. |
 
 ### v10.18 Changes (July 2026) — Refinement-Fidelity Eval Suite, the Phase 1 kill-criterion gate (GTM Phase 1, item 4)
 

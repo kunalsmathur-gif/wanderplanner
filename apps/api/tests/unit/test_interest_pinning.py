@@ -10,7 +10,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from chains.chat_refine_chain import ChatRefineRequest, ChatRefineResponse, chat_refine, _apply_interest_pinning
+from chains.chat_refine_chain import (
+    ChatRefineRequest,
+    ChatRefineResponse,
+    _apply_interest_pinning,
+    _is_transient_llm_error,
+    chat_refine,
+)
 from chains.interest_expansion_chain import expand_interest_to_candidates, _mock_candidates
 from chains.itinerary_chain import _mock_itinerary, _pinned_guidance_block
 from models.chat import ChatMessage
@@ -258,6 +264,19 @@ class TestChatRefineOrchestration:
                                   pins=[], dropped=[])
         assert resp.named_interest is None
         assert resp.config_patch == {"pace": "relaxed"}
+
+
+class TestTransientLLMErrorClassifier:
+    def test_gemini_503_unavailable_is_transient(self):
+        exc = RuntimeError("503 UNAVAILABLE. {'error': {'code': 503, 'status': 'UNAVAILABLE'}}")
+        assert _is_transient_llm_error(exc)
+
+    def test_quota_429_is_transient(self):
+        assert _is_transient_llm_error(RuntimeError("429 RESOURCE_EXHAUSTED"))
+
+    def test_bad_request_is_not_transient(self):
+        assert not _is_transient_llm_error(ValueError("400 INVALID_ARGUMENT: bad schema"))
+        assert not _is_transient_llm_error(RuntimeError("GEMINI_API_KEY is not set."))
 
 
 class TestApplyInterestPinningGuards:

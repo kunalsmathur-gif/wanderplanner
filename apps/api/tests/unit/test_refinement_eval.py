@@ -258,6 +258,18 @@ class TestAggregationAndReport:
         assert agg["fidelity"] == 0.9
         assert agg["honesty_rate"] == 1.0
 
+    def test_errored_cases_excluded_from_means_but_counted(self):
+        results = self._results() + [
+            {"id": "C", "destination": "Z", "interest": "k", "negative": False,
+             "error": "503 UNAVAILABLE"},
+        ]
+        agg = aggregate(results)
+        assert agg["n_errored"] == 1
+        assert agg["n_positive"] == 1          # errored case not scored
+        assert agg["fidelity"] == 0.9          # mean unchanged by the errored case
+        report = render_report(results, agg, "live")
+        assert "errored" in report and "rerun before publishing" in report
+
     def test_aggregate_baseline(self):
         results = [
             {"id": "A", "negative": False, "verified_recall": 0.5,

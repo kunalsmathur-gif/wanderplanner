@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Literal
 
 from pydantic import BaseModel
@@ -12,6 +13,18 @@ from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize
 from models.chat import ChatMessage
 from models.trip import PinnedPOI, TripConfig
+
+logger = logging.getLogger(__name__)
+
+
+def _is_transient_llm_error(exc: Exception) -> bool:
+    """Gemini overload/availability blips worth one cheap retry — matched on
+    the error text because google.genai error classes vary across versions."""
+    text = repr(exc)
+    return any(tok in text for tok in (
+        "503", "500", "502", "504", "UNAVAILABLE", "RESOURCE_EXHAUSTED",
+        "overloaded", "DeadlineExceeded", "429",
+    ))
 
 
 class ChatRefineResponse(BaseModel):
@@ -176,7 +189,19 @@ async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
         )
 
     loop = asyncio.get_event_loop()
-    response = await loop.run_in_executor(None, _call_sync)
+    # One cheap retry on transient Gemini 5xx/quota blips (hit live 2026-07-12:
+    # a single 503 UNAVAILABLE bubbled straight to the frontend; the
+    # generation chain retries but refine didn't).
+    for attempt in range(2):
+        try:
+            response = await loop.run_in_executor(None, _call_sync)
+            break
+        except Exception as exc:
+            if attempt == 0 and _is_transient_llm_error(exc):
+                logger.warning("chat_refine transient LLM error (%s); retrying once…", exc)
+                await asyncio.sleep(2)
+                continue
+            raise
     track_gemini_usage(response, model=settings.gemini_model, purpose="chat_refine")
     raw = response.text
 

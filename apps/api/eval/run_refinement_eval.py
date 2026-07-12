@@ -232,8 +232,28 @@ async def run(live: bool, baseline_path: Path | None) -> None:
     print(f"Running {len(dataset['cases'])} refinement cases ({mode})…\n")
     results = []
     for case in dataset["cases"]:
-        result = await run_case(case, live)
+        # One retry with backoff per case (live Gemini 503 blips), then record
+        # the case as errored rather than killing a 20-case run — errored
+        # cases are excluded from aggregates and flagged in the report.
+        result = None
+        for attempt in range(2):
+            try:
+                result = await run_case(case, live)
+                break
+            except Exception as exc:
+                if attempt == 0:
+                    print(f"…  {case['id']} errored ({exc}); retrying in 10s")
+                    await asyncio.sleep(10)
+                else:
+                    print(f"❌ {case['id']} failed twice ({exc}); recorded as errored")
+                    result = {
+                        "id": case["id"], "destination": case["destination"],
+                        "interest": case["named_interest"],
+                        "negative": case["negative"], "error": str(exc),
+                    }
         results.append(result)
+        if "error" in result:
+            continue
         if result["negative"]:
             status = "✅" if result["honest"] else "❌"
             print(f"{status} {result['id']}  {case['destination']:<12} "

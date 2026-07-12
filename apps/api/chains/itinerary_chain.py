@@ -401,9 +401,13 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
     """Call Google Gemini directly with automatic retry on 503 errors."""
     import asyncio
     try:
+        # NOTE: do not import from google.api_core here — that's a separate
+        # package google-genai doesn't depend on. An unused ServerError import
+        # from it silently disabled this whole live path (ImportError →
+        # "google-genai not installed" → RAG fallback) — caught by the v10.18
+        # refinement-fidelity eval's inclusion metric flatlining at 0.
         from google import genai as google_genai
         from google.genai import types as genai_types
-        from google.api_core.exceptions import ServerError
     except ImportError:
         raise RuntimeError("google-genai not installed. Run: pip install google-genai")
 

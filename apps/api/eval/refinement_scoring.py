@@ -174,11 +174,16 @@ def _mean(results: list[dict], key: str) -> float:
 
 
 def aggregate(results: list[dict]) -> dict:
-    positives = [r for r in results if not r["negative"]]
-    negatives = [r for r in results if r["negative"]]
+    """Errored cases (runner failures, e.g. persistent LLM 503s) carry an
+    "error" key: excluded from every mean but counted — a fidelity claim must
+    never quietly average over cases that didn't run."""
+    scored = [r for r in results if "error" not in r]
+    positives = [r for r in scored if not r["negative"]]
+    negatives = [r for r in scored if r["negative"]]
     return {
         "n_positive": len(positives),
         "n_negative": len(negatives),
+        "n_errored": sum(1 for r in results if "error" in r),
         "expansion_recall": _mean(positives, "expansion_recall"),
         "pin_recall": _mean(positives, "pin_recall"),
         "pin_precision": _mean(positives, "pin_precision"),
@@ -186,7 +191,7 @@ def aggregate(results: list[dict]) -> dict:
         "stability_rate": _mean(positives, "stability_rate"),
         "fidelity": _mean(positives, "fidelity"),
         "honesty_rate": (
-            sum(1 for r in negatives if r["honest"]) / len(negatives) if negatives else 1.0
+            sum(1 for r in negatives if r.get("honest")) / len(negatives) if negatives else 1.0
         ),
     }
 
@@ -229,6 +234,14 @@ def render_report(
         f"- Pin stability across an unrelated re-refinement: {agg['stability_rate']:.2f}",
         f"- Pin precision (on-interest): {agg['pin_precision']:.2f}",
         f"- Honesty on impossible asks: {agg['honesty_rate']:.0%}",
+    ]
+    if agg.get("n_errored"):
+        lines += [
+            "",
+            f"⚠️ **{agg['n_errored']} case(s) errored and are excluded from every "
+            "aggregate above — rerun before publishing these numbers.**",
+        ]
+    lines += [
         "",
         "## Per-case results",
         "",
@@ -237,6 +250,12 @@ def render_report(
     ]
     for r in results:
         if r["negative"]:
+            continue
+        if "error" in r:
+            lines.append(
+                f"| {r['id']} | {r['destination']} | {r['interest']} | "
+                f"⚠️ errored: {r['error']} | | | |"
+            )
             continue
         lines.append(
             f"| {r['id']} | {r['destination']} | {r['interest']} | "
@@ -248,7 +267,12 @@ def render_report(
     for r in results:
         if not r["negative"]:
             continue
-        verdict = "✅" if r["honest"] else f"❌ pins={r['pins']} leaked={r['leaked']}"
+        if "error" in r:
+            verdict = f"⚠️ errored: {r['error']}"
+        elif r["honest"]:
+            verdict = "✅"
+        else:
+            verdict = f"❌ pins={r['pins']} leaked={r['leaked']}"
         lines.append(f"| {r['id']} | {r['destination']} | {r['interest']} | {verdict} |")
 
     if baseline_results is not None and baseline_agg is not None:

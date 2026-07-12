@@ -37,7 +37,6 @@
 - **Run corpus ingestion once locally** (`chains/itinerary_corpus_extraction_chain.py::ingest_itinerary_corpus()`, needs `GEMINI_API_KEY`) so v10.15's retrieval has data. Same for gem intel (`reddit` + `osm_pois`) and pin verification (`osm_pois`/`wiki`) — all three features currently degrade cleanly to their no-data fallbacks on a fresh `:memory:` Qdrant. (The refinement eval does NOT need this — it seeds its own fixtures.)
 - **E2E check of gems in a real generation**: sign in on local, generate a Phuket/Goa trip with crowd dial = Hidden Gems, confirm 💎-tagged items with provenance appear.
 - **`WizardForm.tsx` is dead code** (never imported; `LLMWizard` is the live wizard). The crowd-dial UI in `PaceBudgetSection.tsx` is unreachable until that form is revived — decide whether to delete the form wizard or mount it somewhere.
-- **`chat_refine` has no retry on transient Gemini 503s** (hit one live 2026-07-12; the generation chain retries but refine doesn't) — consider one cheap retry with backoff.
 - **Dependabot: google-genai → 2.10.0** is open; when merged, add `ThinkingConfig(thinking_budget=0)` to `interest_expansion_chain.py` (drop cap to ~512) and consider the same for `extract_trip_chain.py`.
 - Consider a `HIDDEN_GEM` / `PINNED` metric in admin analytics (how often gems/pins get generated & kept) once real traffic exists.
 - Optional eval-harness extension noted in `docs/eval-set.md` §4U: point `run_rag_eval.py` at `retrieve_context()` (with reranking forced on) for full-pipeline retrieval scoring.
