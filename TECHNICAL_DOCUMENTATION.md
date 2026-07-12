@@ -1,7 +1,7 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.17 (Refinement Hard-Constraints + Visible Diff — the "Harry Potter test")
-**Last Updated:** July 11, 2026  
+**Version:** 10.18 (Refinement-Fidelity Eval Suite — the Phase 1 kill-criterion gate)
+**Last Updated:** July 12, 2026  
 **Status:** Production-ready MVP
 
 ---
@@ -1416,7 +1416,20 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.18 Changes (July 2026) — Refinement-Fidelity Eval Suite, the Phase 1 kill-criterion gate (GTM Phase 1, item 4)
+
+Implements docs/GTM_STRATEGY.md §5 Phase 1 item 4: an automated, repeatable measurement of the v10.17 refinement pipeline's headline promise — a named interest becomes *verified* places that *actually appear* in the itinerary and *survive* further refinement — plus the apparatus for the published "WanderPlanner vs ChatGPT" comparison. Cost discipline: the default (regression) mode makes **zero** LLM calls and needs no network at all; the eval seeds a controlled truth-set into an **in-memory Qdrant** and never touches real ingested collections.
+
+| Change | Detail |
+|---|---|
+| **NEW** `eval/refinement_fidelity_dataset.json` | 20 named-interest refinement cases: 16 positive (Harry Potter/London + Edinburgh, anime/Tokyo, zen gardens/Kyoto, Impressionist art/Paris, ancient Rome, Gaudí/Barcelona, Beatles/Liverpool, movie studios/LA, hawker food/Singapore, and an India-first block — Mughal Delhi, Bollywood Mumbai, Rajput Jaipur, Portuguese Goa, Sikh Amritsar, palaces-and-gardens Bengaluru) and 4 negative honesty cases where the correct answer is to pin nothing (HP in Goa, F1 in Jaipur, Ghibli in Amritsar, scuba in Kyoto). Fixtures = the controlled truth-set: 76 real OSM POIs (approx. real coords, incl. off-interest distractors per destination so precision is non-trivial) + 5 wiki chunks (exercising the wiki-only verification path, e.g. "Platform 9 3/4"). Each positive case also carries one invented candidate that MUST be dropped — the hallucination guard is scored, not assumed. `offline_candidates` replay a recorded interest-expansion so the deterministic stages run without any LLM. |
+| **NEW** `eval/refinement_scoring.py` | Pure scoring shared by runner, baseline scorer and tests; name matching deliberately reuses `services/poi_pinning`'s `_normalize`/`_names_match` so the eval agrees with production about place identity. Per positive case: `expansion_recall`, `pin_recall`, `pin_precision`, `inclusion_rate` (pin appears **exactly once** with the `pinned` tag — the hard-constraint contract), `stability_rate` (pins survive an unrelated pace-change re-refinement — diff fidelity), composite `fidelity = 0.4·recall + 0.4·inclusion + 0.2·stability`. Negative cases: `honest` = zero pins AND no unverified candidate leaked into the itinerary. Baseline scoring for recorded ChatGPT answers: `verified_recall`, `unverifiable_rate`, honesty — same matcher, same truth-set. Markdown report renderer produces the vs-ChatGPT comparison table (the marketing artifact). |
+| **NEW** `eval/run_refinement_eval.py` | Runner with two modes. **offline (default)** — deterministic + free: replays `offline_candidates` through the REAL `_apply_interest_pinning` → `verify_candidates` → `merge_pins` → `generate_itinerary` (mock LLM path, which honours pins) → pace-change regeneration; this is the regression gate and scores 1.000 by construction while the pipeline is intact. **--live** — real Gemini detection (`chat_refine`), expansion and generation for the actual kill-criterion numbers (~$0.02/case). Both modes force `qdrant_url=":memory:"` before any client is created and seed fixtures with zero-vectors (verification scrolls payloads; the embedding model never loads). `--baseline eval/baselines/chatgpt_refinement.json` scores recorded ChatGPT answers and emits the comparison. Reports land in `eval/out/` (gitignored; publish deliberately). Windows console UTF-8 reconfigure so ✅/❌ don't crash cp1252. |
+| **NEW** `eval/baselines/chatgpt_refinement.template.json` | Recording protocol + ready-to-paste prompts (same trip framing the pipeline gets: destination + 5-day leisure + the refinement message). Founder records ChatGPT's first-answer place lists verbatim (fresh session per case, no cherry-picking), copies template → `chatgpt_refinement.json`, reruns with `--baseline`. |
+| **NEW** `tests/unit/test_refinement_eval.py` | 23 fully offline tests. Dataset-consistency class runs every case through the REAL `verify_candidates_sync` against the dataset's own fixtures: all expected POIs verify (the eval's ceiling must be a perfect score), every invented candidate drops, negatives pin nothing, OSM pins carry fixture coords / wiki pins don't. Scoring math: exactly-once inclusion (duplicates fail), pinned-tag requirement, stability vs presence distinction, off-target precision, fuzzy title matching, negative honesty incl. leak detection, baseline recall/unverifiable-rate, aggregation + report rendering. Plus an RF-001 end-to-end offline slice (verify → mock generation → re-refinement → perfect score). |
+| **Verified** | Full backend suite: **200 passed** (177 + 23 new), 6 skipped. Offline eval run end-to-end: 20/20 cases, fidelity 1.000 / honesty 100% (the deterministic ceiling — regressions in expansion wiring, verification, pin merging, prompt-block or mock-pin handling now surface as score drops). No frontend changes; `tsc` not applicable. **Next founder actions to produce the publishable numbers:** (1) run `--live` with a `GEMINI_API_KEY` (needs nothing else — fixtures are self-contained), (2) record the ChatGPT baseline per the template protocol, (3) rerun with `--baseline` and publish `eval/out/refinement_fidelity_report.md`. |
 
 ### v10.17 Changes (July 2026) — Refinement Hard-Constraints + Visible Diff UI, the "Harry Potter test" (GTM Phase 1, bet 2)
 

@@ -3,7 +3,7 @@
 ## **1\. Document Control**
 
 * **Author:** Product Manager  
-* **Status:** Rev 11 — Updated ✅ (Refinement Hard-Constraints "Harry Potter test" · Visible Refinement Diff · In-Place Regeneration)
+* **Status:** Rev 12 — Updated ✅ (Refinement-Fidelity Eval Suite — automated scoring of the "Harry Potter test" promise: verified pins appear in output and survive re-refinement; ChatGPT-baseline comparison harness for the GTM Phase 1 kill-criterion gate)
 * **Strategy companions:** [GTM_STRATEGY.md](GTM_STRATEGY.md) (go-to-market plan, product bets, phased roadmap with kill/go criteria) and [STARTUP_EVALUATION.md](STARTUP_EVALUATION.md) (+ 2026-07-11 re-evaluation addendum) — forward-looking positioning/monetization decisions live there, not in this PRD
 * **Target Release:** Q4 2026  
 * **Platform:** Web Application — Desktop-first (1440x900, 1920x1080) with mobile-responsive support (v5.0+). Bottom tab navigation on mobile (`< lg` breakpoint). No standalone mobile PWA or native app scope.
