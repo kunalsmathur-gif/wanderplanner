@@ -214,8 +214,20 @@ def score_baseline(dataset: dict, baseline_path: Path) -> tuple[list[dict], dict
     return results, aggregate_baseline(results)
 
 
-async def run(live: bool, baseline_path: Path | None) -> None:
+async def run(live: bool, baseline_path: Path | None, results_path: Path | None = None) -> None:
     dataset = load_dataset()
+
+    if results_path is not None:
+        # Rescore mode: reuse a saved run's per-case results (e.g. add a
+        # freshly recorded ChatGPT baseline to yesterday's live numbers)
+        # without re-running — and re-paying for — the pipeline.
+        saved = json.loads(results_path.read_text(encoding="utf-8"))
+        results = saved["results"]
+        mode = f"{saved.get('mode', 'unknown')} (rescored from {results_path.name})"
+        print(f"Loaded {len(results)} saved case results ({mode}).")
+        await _finish(dataset, results, mode, baseline_path)
+        return
+
     mode = "live" if live else "offline-replay"
 
     if live and settings.llm_provider == "mock":
@@ -265,8 +277,16 @@ async def run(live: bool, baseline_path: Path | None) -> None:
                   f"stab={result['stability_rate']:.2f} fid={result['fidelity']:.2f}  "
                   f"({case['named_interest']})")
 
+    await _finish(dataset, results, mode, baseline_path)
+
+
+async def _finish(dataset: dict, results: list[dict], mode: str,
+                  baseline_path: Path | None) -> None:
     agg = aggregate(results)
     print("\n=== AGGREGATE ===")
+    if agg.get("n_errored"):
+        print(f"⚠️  {agg['n_errored']} case(s) errored — excluded from aggregates; "
+              "rerun before publishing.")
     print(f"Refinement fidelity score: {agg['fidelity']:.3f}")
     print(f"Pin recall:                {agg['pin_recall']:.3f}")
     print(f"Inclusion (exactly-once):  {agg['inclusion_rate']:.3f}")
@@ -301,8 +321,11 @@ def main() -> None:
                         help="real Gemini detection/expansion/generation (costs money)")
     parser.add_argument("--baseline", type=Path, default=None,
                         help="path to recorded ChatGPT answers JSON")
+    parser.add_argument("--results", type=Path, default=None,
+                        help="rescore from a saved refinement_fidelity_results.json "
+                             "instead of running the pipeline")
     args = parser.parse_args()
-    asyncio.run(run(args.live, args.baseline))
+    asyncio.run(run(args.live, args.baseline, args.results))
 
 
 if __name__ == "__main__":
