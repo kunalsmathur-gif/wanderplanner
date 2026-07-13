@@ -216,6 +216,7 @@ def render_report(
     mode: str,
     baseline_results: list[dict] | None = None,
     baseline_agg: dict | None = None,
+    baseline_label: str = "ChatGPT",
 ) -> str:
     """Markdown report — doubles as the raw material for the published
     'WanderPlanner vs ChatGPT' comparison (GTM_STRATEGY §3 item 5)."""
@@ -278,9 +279,9 @@ def render_report(
     if baseline_results is not None and baseline_agg is not None:
         lines += [
             "",
-            "## vs ChatGPT baseline (recorded answers, same prompts, same matcher)",
+            f"## vs {baseline_label} baseline (recorded answers, same prompts, same matcher)",
             "",
-            "| Metric | WanderPlanner | ChatGPT |",
+            f"| Metric | WanderPlanner | {baseline_label} |",
             "|---|---|---|",
             f"| Verified-POI recall | {agg['pin_recall']:.2f} | {baseline_agg['verified_recall']:.2f} |",
             f"| Unverifiable suggestions | 0.00 (unverified candidates are dropped by design) "
@@ -289,8 +290,8 @@ def render_report(
             "",
             "WanderPlanner's pins are verified against OpenStreetMap/Wikivoyage before "
             "they can enter an itinerary; a hallucinated place is structurally unable "
-            "to be pinned. The baseline column scores ChatGPT's raw suggestions against "
-            "the same truth-set with the same fuzzy matcher.",
+            f"to be pinned. The baseline column scores {baseline_label}'s raw suggestions "
+            "against the same truth-set with the same fuzzy matcher.",
         ]
 
     lines.append("")

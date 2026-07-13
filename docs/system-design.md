@@ -602,10 +602,15 @@ chat_refine_chain.py
          │     pins may only come from verification)
          │
          └─ named_interest set? (⭐ v10.17 — "Harry Potter test")
+              (⭐ v10.19: if named_interest is null but the patch adds NEW
+               themes, the interest is derived from them deterministically —
+               live eval caught the LLM routing "zen gardens" into themes)
               → interest_expansion_chain: ONE gemini-2.5-flash call
                 → ≤10 candidate place names
               → services/poi_pinning.verify_candidates (zero LLM, zero new APIs):
-                   osm_pois fuzzy name match → pin w/ real lat/lon ("osm")
+                   osm_pois name match → pin w/ real lat/lon ("osm")
+                     (⭐ v10.19: diacritic-folding normalize; strongest match
+                      wins — exact > containment > fuzzy, not first fuzzy hit)
                    wiki chunk text presence  → pin w/o coords     ("wiki")
                    neither                   → dropped, never pinned
               → merge_pins into config_patch.pinned_pois (existing first, cap 8)

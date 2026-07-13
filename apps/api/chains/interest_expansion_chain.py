@@ -36,8 +36,14 @@ RULES:
 - Only places you are confident actually exist. Fewer, real places beat many
   invented ones — every name will be verified against a places database and
   invented names are discarded.
+- Every place must specifically serve the stated interest — known FOR the
+  interest itself, not merely a popular attraction at the destination. If
+  you are unsure whether a place genuinely relates to the interest, leave
+  it out; do not pad the list.
 - Specific venues/sites only (studios, museums, filming locations, circuits,
-  shops, viewpoints) — no whole neighbourhoods, cities, or generic advice.
+  shops, viewpoints) — no whole cities or generic advice. A named district or
+  quarter counts ONLY when the district itself is the visitable attraction
+  for the interest (e.g. a preserved heritage quarter).
 - Use the commonly used English name for each place.
 - At most 10 candidates. If the destination has nothing for this interest,
   return an empty list.

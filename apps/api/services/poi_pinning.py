@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import unicodedata
 from difflib import SequenceMatcher
 
 from core.config import settings
@@ -38,7 +39,12 @@ _FUZZY_THRESHOLD = 0.80
 
 
 def _normalize(name: str) -> str:
-    """Lowercase, strip punctuation/diacritic-ish noise, collapse whitespace."""
+    """Lowercase, fold diacritics to their base letters (Ryōan-ji → ryoan ji,
+    Sé → se), strip remaining punctuation, collapse whitespace. Without the
+    fold, an accented candidate vs an ASCII fixture name loses the exact and
+    containment matches and survives only on fuzzy ratio."""
+    name = unicodedata.normalize("NFKD", name)
+    name = "".join(ch for ch in name if not unicodedata.combining(ch))
     name = name.lower()
     name = re.sub(r"[^a-z0-9\s]", " ", name)
     return re.sub(r"\s+", " ", name).strip()
@@ -57,6 +63,24 @@ def _names_match(candidate_norm: str, poi_norm: str) -> bool:
     if len(poi_norm) >= 6 and poi_norm in candidate_norm:
         return True
     return SequenceMatcher(None, candidate_norm, poi_norm).ratio() >= _FUZZY_THRESHOLD
+
+
+def _best_osm_match(cand_norm: str, poi_index: list[tuple[str, dict]]) -> dict | None:
+    """Strongest match wins, not the first fuzzy hit in scroll order: exact,
+    then containment, then fuzzy. Live 2026-07-13: candidate \"Ginkaku-ji\"
+    fuzzy-matched \"Kinkaku-ji\" (ratio 0.89) which happened to sit earlier in
+    the index than the exact \"Ginkaku-ji\" entry, silently pinning the wrong
+    temple and double-counting its sibling."""
+    for norm, poi in poi_index:
+        if cand_norm == norm:
+            return poi
+    for norm, poi in poi_index:
+        if (len(cand_norm) >= 6 and cand_norm in norm) or (len(norm) >= 6 and norm in cand_norm):
+            return poi
+    for norm, poi in poi_index:
+        if SequenceMatcher(None, cand_norm, norm).ratio() >= _FUZZY_THRESHOLD:
+            return poi
+    return None
 
 
 def verify_candidates_sync(
@@ -99,7 +123,7 @@ def verify_candidates_sync(
             continue
         seen_norms.add(cand_norm)
 
-        osm_hit = next((p for norm, p in poi_index if _names_match(cand_norm, norm)), None)
+        osm_hit = _best_osm_match(cand_norm, poi_index)
         if osm_hit is not None:
             pins.append(PinnedPOI(
                 name=osm_hit.get("name") or candidate,

@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.18.2 (First live kill-criterion numbers + ChatGPT/Claude baselines)
+**Version:** 10.19.0 (Recall-bug fixes + structural pin enforcement — live fidelity 0.904)
 **Last Updated:** July 13, 2026  
 **Status:** Production-ready MVP
 
@@ -1416,7 +1416,21 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.19.0 Changes (July 2026) — Live recall bugs fixed + structural pin enforcement; repeat live run: fidelity 0.904
+
+Diagnosis-first session: before touching code, the three v10.18.2 zero-pin cases were reproduced live (~$0.02, raw Gemini responses captured). **The root cause was named-interest detection, not diacritics**: Gemini returned `named_interest: null` on all three — routing "zen gardens" and "Portuguese colonial heritage" into a `themes` config patch (RF-004/RF-014), and answering the Bengaluru question conversationally while naming places itself (RF-016, violating the no-self-naming rule). The repro also caught a fourth, unsuspected bug: candidate "Ginkaku-ji" was pinned as "Kinkaku-ji" because verification took the first fuzzy hit (ratio 0.89) in scroll order instead of the later exact match.
+
+| Change | Detail |
+|---|---|
+| **UPDATED** `chains/chat_refine_chain.py` detection prompt | NAMED INTEREST DETECTION broadened beyond fandoms: any concrete interest (cultural themes, heritage, food, nature, architecture) counts, question phrasings included ("what does Bengaluru have for palace lovers?"), with explicit examples from the failing cases. Reply rule strengthened: never name places yourself, even when answering a question. |
+| **NEW** deterministic themes-patch backstop in `_apply_interest_pinning` | When the refine LLM leaves `named_interest` null but the patch adds NEW themes (vs the trip's existing ones, case-insensitive), the interest label is derived from those themes (join of first 2). Zero extra LLM calls; verification still gates every pin. Covers the exact live failure mode even if the model regresses on the prompt. |
+| **FIXED** `services/poi_pinning.py` — `_normalize` diacritic folding + `_best_osm_match` | `_normalize` now NFKD-folds diacritics to base letters (Ryōan-ji → ryoan ji, Sé → se) so accented candidates hit exact/containment matches instead of surviving only on fuzzy ratio. New `_best_osm_match`: strongest match wins — exact, then containment, then fuzzy — replacing first-fuzzy-hit-in-scroll-order (the Ginkaku-ji/Kinkaku-ji mis-pin). |
+| **NEW** `chains/itinerary_chain.py::_enforce_pins` — structural exactly-once enforcement | The PINNED prompt block is now a request, not the guarantee: after generation + post-processing filters, `_enforce_pins()` matches item titles against pins with the production matcher, tags the first match, untags duplicates, and injects any dropped pin (evening slot, lightest day, verified coords — same shape as the mock path). Pure CPU, zero LLM, all generation paths incl. fallbacks. Fixes RF-007 Barcelona (1-of-3 pins honoured live in v10.18.2). |
+| **UPDATED** `chains/interest_expansion_chain.py` prompt | Anti-distractor rule (place must be known FOR the interest, not merely popular at the destination — RF-001 Borough Market over-reach) + heritage-quarter allowance (a named district counts when the district itself is the attraction — RF-014 Fontainhas was being suppressed by the blanket "no neighbourhoods" rule). |
+| **Repeat live run (gemini-2.5-flash override)** | **Fidelity 0.904 · recall 0.854 · inclusion 0.938 · stability 0.938 · precision 0.917 · honesty 4/4.** All three v10.18.2 zero-cases and Barcelona now score 1.00. Inclusion/stability are 1.00 on every case that produced pins (the 0.938 aggregates are dragged only by RF-010). Remaining blemishes: RF-010 Singapore 0.00 — persistent Gemini 503s killed the expansion call during the run (transient infra, visible in the log, not a pipeline bug; rerun before publishing); RF-012 Mumbai recall 0.33 (Film City pinned; Mannat/Prithvi Theatre not proposed live); RF-001/RF-009 recall 0.67. Both baseline comparison reports regenerated in `eval/out/` (vs ChatGPT 1.000 recall / 0.743 unverifiable / 0% honesty; vs Claude Sonnet 0.979 / 0.786 / 0% strict-honesty with the verbal-honesty nuance documented in-file). |
+| **Verified** | Backend suite **219 passed** (207 + 12 new: diacritic normalize/match ×3, exact-beats-fuzzy ×1, themes-backstop ×4, `_enforce_pins` ×4), 6 skipped. Offline eval gate: 1.000 / 100% honesty. Live spot-check of the three fixed cases before the full run: all pinned verified places. |
 
 ### v10.18.2 Changes (July 2026) — First live kill-criterion run + ChatGPT & Claude Sonnet baselines
 

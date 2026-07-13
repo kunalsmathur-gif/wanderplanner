@@ -94,6 +94,52 @@ def _pinned_guidance_block(trip_config: TripConfig) -> str:
     )
 
 
+def _enforce_pins(days: list["ItineraryDay"], trip_config: TripConfig) -> list["ItineraryDay"]:
+    """Deterministic hard-constraint enforcement (GTM §2): the prompt asks for
+    each pinned place exactly once with the "pinned" tag, but LLM compliance
+    is probabilistic (live 2026-07-13 eval: Barcelona honoured 1 of 3 pins —
+    renamed/untagged the rest). Make the contract structural instead: match
+    generated item titles against pins with the same fuzzy matcher used at
+    verification time, tag the first match, untag duplicates, and inject any
+    pin the LLM dropped. Pure CPU, zero LLM calls, bounded by MAX_PINNED_POIS."""
+    pins = getattr(trip_config, "pinned_pois", None) or []
+    if not pins or not days:
+        return days
+    from services.poi_pinning import _names_match, _normalize
+
+    for pin in pins:
+        pin_norm = _normalize(pin.name)
+        if not pin_norm:
+            continue
+        matches = [
+            item for day in days for item in day.items
+            if _names_match(_normalize(item.title or ""), pin_norm)
+        ]
+        if matches:
+            if "pinned" not in matches[0].tags:
+                matches[0].tags = [*matches[0].tags, "pinned"]
+            for extra in matches[1:]:
+                if "pinned" in extra.tags:
+                    extra.tags = [t for t in extra.tags if t != "pinned"]
+        else:
+            # Same shape as the _mock_itinerary injection: an evening slot on
+            # the lightest day, real verified coordinates when we have them.
+            day = min(days, key=lambda d: len(d.items))
+            day.items.append(ItineraryItem(
+                id=str(uuid.uuid4()),
+                time_start="19:00",
+                time_end="21:00",
+                title=pin.name,
+                description=(
+                    f"Pinned for your {pin.source_interest or 'special'} "
+                    "interest — a verified real place."
+                ),
+                location=ItineraryItemLocation(lat=pin.lat, lon=pin.lon, address=""),
+                tags=["experience", "pinned"],
+            ))
+    return days
+
+
 async def _itinerary_examples_block(trip_config: TripConfig) -> str:
     """Few-shot grounding from the itinerary_corpus collection (docs §9).
     Best-effort: any retrieval failure degrades to the explicit "none
@@ -624,6 +670,8 @@ async def generate_itinerary(trip_config: TripConfig) -> ItineraryResponse:
     days = _parse_days(raw.get("days", []))
     days = apply_kid_safety_filter(days, trip_config)
     days = inject_persona_modules(days, trip_config)
+    # After the filters so an enforced pin can't be re-dropped downstream.
+    days = _enforce_pins(days, trip_config)
 
     scored_days = []
     for day in days:

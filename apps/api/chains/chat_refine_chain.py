@@ -81,15 +81,23 @@ ACTION RULES:
   In the reply, ask the user to confirm regeneration.
 
 NAMED INTEREST DETECTION:
-- If the user expresses a specific fandom, passion or theme and wants places
-  for it in the trip (e.g. "I'm a huge Harry Potter fan", "add some F1
-  experiences", "we love street photography"), set "named_interest" to a
-  short label for it (e.g. "Harry Potter", "Formula 1", "street photography")
-  and action_type to "patch_config" (config_patch may be null — the server
-  finds and verifies real matching places itself; do NOT list places in
+- If the user expresses a specific interest, passion, fandom or theme they
+  want the trip to serve, set "named_interest" to a short label for it and
+  action_type to "patch_config" (config_patch may be null — the server finds
+  and verifies real matching places itself; do NOT list places in
   config_patch).
+- This covers ANY concrete interest, not just pop-culture fandoms: fandoms
+  ("I'm a huge Harry Potter fan" → "Harry Potter", "add some F1 experiences"
+  → "Formula 1"), activities ("we love street photography" → "street
+  photography"), and cultural/thematic interests ("I love zen gardens and
+  quiet temples" → "zen gardens", "I want the Portuguese colonial heritage
+  side" → "Portuguese heritage", "historic palaces and botanical gardens" →
+  "historic palaces and gardens").
+- Detect it even when phrased as a question about the destination ("what
+  does Bengaluru have for palace lovers?" → "historic palaces") — set
+  named_interest and let the server find verified places.
 - In the reply, say you're finding real verified places for that interest —
-  do NOT name specific places yourself.
+  do NOT name specific places yourself, even when answering a question.
 - Otherwise set "named_interest": null.
 
 GUARDRAILS:
@@ -112,6 +120,22 @@ async def _apply_interest_pinning(
     what was pinned and what couldn't be verified. Best-effort throughout —
     any failure leaves the original response untouched."""
     interest = (resp.named_interest or "").strip()
+    if not interest:
+        # Deterministic backstop for a live-observed failure mode (2026-07-13
+        # eval, RF-004/RF-014): the refine LLM routes a concrete interest into
+        # a themes config_patch instead of named_interest. A theme the user
+        # just added IS a named interest, so derive the label from the new
+        # themes — zero extra LLM calls, and verification still gates pins.
+        patch_themes = (resp.config_patch or {}).get("themes")
+        if isinstance(patch_themes, list):
+            existing = {str(t).strip().lower() for t in (trip_config.themes or [])}
+            new_themes = [
+                str(t).strip() for t in patch_themes
+                if isinstance(t, str) and t.strip() and t.strip().lower() not in existing
+            ]
+            if new_themes:
+                interest = " and ".join(new_themes[:2])
+                resp.named_interest = interest
     destination = trip_config.destination.city if trip_config.destination else ""
     if not interest or not destination:
         return resp

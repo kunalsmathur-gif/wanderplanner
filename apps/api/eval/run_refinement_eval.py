@@ -192,8 +192,9 @@ async def run_case(case: dict, live: bool) -> dict:
     return score_positive_case(case, candidates, pin_names, items, refined_items)
 
 
-def score_baseline(dataset: dict, baseline_path: Path) -> tuple[list[dict], dict]:
+def score_baseline(dataset: dict, baseline_path: Path) -> tuple[list[dict], dict, str]:
     recorded = json.loads(baseline_path.read_text(encoding="utf-8"))
+    label = recorded.get("recorded_with") or "ChatGPT"
     by_id = {e["id"]: e for e in recorded.get("cases", [])}
     fixture_names_by_dest: dict[str, list[str]] = {}
     for poi in dataset["fixtures"]["osm_pois"]:
@@ -211,7 +212,7 @@ def score_baseline(dataset: dict, baseline_path: Path) -> tuple[list[dict], dict
         ))
     if missing:
         print(f"⚠️  baseline file has no recorded answer for: {', '.join(missing)}")
-    return results, aggregate_baseline(results)
+    return results, aggregate_baseline(results), label
 
 
 async def run(live: bool, baseline_path: Path | None, results_path: Path | None = None) -> None:
@@ -295,15 +296,17 @@ async def _finish(dataset: dict, results: list[dict], mode: str,
     print(f"Honesty on impossible:     {agg['honesty_rate']:.0%}")
 
     baseline_results = baseline_agg = None
+    baseline_label = "ChatGPT"
     if baseline_path is not None:
-        baseline_results, baseline_agg = score_baseline(dataset, baseline_path)
-        print("\n=== ChatGPT BASELINE ===")
+        baseline_results, baseline_agg, baseline_label = score_baseline(dataset, baseline_path)
+        print(f"\n=== {baseline_label} BASELINE ===")
         print(f"Verified-POI recall:       {baseline_agg['verified_recall']:.3f}")
         print(f"Unverifiable suggestions:  {baseline_agg['unverifiable_rate']:.3f}")
         print(f"Honesty on impossible:     {baseline_agg['honesty_rate']:.0%}")
 
     OUT_DIR.mkdir(exist_ok=True)
-    report = render_report(results, agg, mode, baseline_results, baseline_agg)
+    report = render_report(results, agg, mode, baseline_results, baseline_agg,
+                           baseline_label=baseline_label)
     report_path = OUT_DIR / "refinement_fidelity_report.md"
     report_path.write_text(report, encoding="utf-8")
     json_path = OUT_DIR / "refinement_fidelity_results.json"

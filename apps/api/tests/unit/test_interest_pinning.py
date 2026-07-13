@@ -18,8 +18,14 @@ from chains.chat_refine_chain import (
     chat_refine,
 )
 from chains.interest_expansion_chain import expand_interest_to_candidates, _mock_candidates
-from chains.itinerary_chain import _classify_gemini_error, _mock_itinerary, _pinned_guidance_block
+from chains.itinerary_chain import (
+    _classify_gemini_error,
+    _enforce_pins,
+    _mock_itinerary,
+    _pinned_guidance_block,
+)
 from models.chat import ChatMessage
+from models.itinerary import ItineraryDay, ItineraryItem, ItineraryItemLocation
 from models.trip import MAX_PINNED_POIS, DestinationInput, PinnedPOI, TripConfig
 from services.poi_pinning import (
     _names_match,
@@ -86,6 +92,19 @@ class TestNameMatching:
         # containment shortcut requires ≥6 chars — "eye" ⊂ "london eye" must not match
         assert not _names_match("eye", "london eye")
 
+    # Diacritic folding — live 2026-07-13 eval suspects: a Gemini candidate
+    # like "Ryōan-ji" must match the ASCII OSM fixture name exactly, not
+    # merely survive on fuzzy ratio.
+    def test_normalize_folds_diacritics(self):
+        assert _normalize("Ryōan-ji") == "ryoan ji"
+        assert _normalize("Sé Cathedral") == "se cathedral"
+        assert _normalize("Sagrada Família") == "sagrada familia"
+
+    def test_diacritic_candidate_matches_ascii_name(self):
+        assert _names_match(_normalize("Ryōan-ji"), _normalize("Ryoan-ji"))
+        assert _names_match(_normalize("Sé Cathedral"), _normalize("Se Cathedral"))
+        assert _names_match(_normalize("Sagrada Família"), _normalize("Sagrada Familia"))
+
 
 class TestVerifyCandidates:
     def _run(self, candidates, pois, wiki_chunks=None):
@@ -140,6 +159,23 @@ class TestVerifyCandidates:
         assert verify_candidates_sync([], "London") == ([], [])
         pins, dropped = verify_candidates_sync(["X Place"], "")
         assert pins == [] and dropped == ["X Place"]
+
+    def test_diacritic_candidate_verified_against_ascii_fixture(self):
+        pins, dropped = self._run(["Ryōan-ji"], [_poi("Ryoan-ji", poi_type="temple")])
+        assert dropped == []
+        assert len(pins) == 1
+        assert pins[0].name == "Ryoan-ji"  # canonical OSM name wins
+        assert pins[0].verified_by == "osm"
+
+    def test_exact_match_beats_earlier_fuzzy_hit(self):
+        # Live 2026-07-13: "Ginkaku-ji" fuzzy-matched "Kinkaku-ji" (ratio
+        # 0.89) sitting earlier in the index than its own exact entry.
+        pins, dropped = self._run(
+            ["Ginkaku-ji"],
+            [_poi("Kinkaku-ji", poi_type="temple"), _poi("Ginkaku-ji", poi_type="temple")],
+        )
+        assert dropped == []
+        assert [p.name for p in pins] == ["Ginkaku-ji"]
 
 
 class TestMergePins:
@@ -299,6 +335,130 @@ class TestApplyInterestPinningGuards:
         out = await _apply_interest_pinning(resp, _trip())
         assert out.reply == "hi"
         assert out.pinned_pois == []
+
+
+@pytest.mark.asyncio
+class TestThemesPatchBackstop:
+    """Live 2026-07-13 eval regression (RF-004/RF-014): the refine LLM routed
+    the interest into a themes config_patch and left named_interest null —
+    the backstop must derive the interest from the NEW themes."""
+
+    async def _apply(self, resp: ChatRefineResponse, trip: TripConfig,
+                     pins: list[PinnedPOI]):
+        expanded_with: list[str] = []
+
+        async def _fake_expand(interest, destination):
+            expanded_with.append(interest)
+            return ["Ryoan-ji"] if pins else []
+
+        async def _fake_verify(candidates, destination, source_interest=""):
+            return pins, []
+
+        with patch("chains.interest_expansion_chain.expand_interest_to_candidates",
+                   _fake_expand), \
+             patch("services.poi_pinning.verify_candidates", _fake_verify):
+            out = await _apply_interest_pinning(resp, trip)
+        return out, expanded_with
+
+    async def test_new_theme_becomes_named_interest(self):
+        resp = ChatRefineResponse(
+            reply="Noted!", action_type="patch_config",
+            config_patch={"themes": ["zen gardens", "temples"]},
+        )
+        pin = PinnedPOI(name="Ryoan-ji", lat=35.03, lon=135.72,
+                        source_interest="zen gardens and temples")
+        out, expanded_with = await self._apply(resp, _trip(), [pin])
+        assert out.named_interest == "zen gardens and temples"
+        assert expanded_with == ["zen gardens and temples"]
+        assert [p.name for p in out.pinned_pois] == ["Ryoan-ji"]
+        assert "📌" in out.reply
+
+    async def test_themes_already_on_trip_do_not_retrigger(self):
+        trip = _trip()
+        trip = trip.model_copy(update={"themes": ["Zen Gardens"]})
+        resp = ChatRefineResponse(
+            reply="Noted!", action_type="patch_config",
+            config_patch={"themes": ["zen gardens"]},  # case-insensitive dup
+        )
+        out, expanded_with = await self._apply(resp, trip, [])
+        assert out.named_interest is None
+        assert expanded_with == []
+        assert out.pinned_pois == []
+
+    async def test_explicit_named_interest_wins_over_backstop(self):
+        resp = ChatRefineResponse(
+            reply="On it!", action_type="patch_config",
+            config_patch={"themes": ["street food"]},
+            named_interest="Harry Potter",
+        )
+        out, expanded_with = await self._apply(resp, _trip(), [])
+        assert out.named_interest == "Harry Potter"
+        assert expanded_with == ["Harry Potter"]
+
+    async def test_non_theme_patch_is_noop(self):
+        resp = ChatRefineResponse(
+            reply="Done!", action_type="patch_config",
+            config_patch={"pace": "relaxed"},
+        )
+        out, expanded_with = await self._apply(resp, _trip(), [])
+        assert out.named_interest is None
+        assert expanded_with == []
+
+
+class TestEnforcePins:
+    """Live 2026-07-13 eval regression (RF-007 Barcelona: 3 correct pins, only
+    1 honoured exactly-once with the tag): pin inclusion must be structural,
+    not prompt-compliance-dependent."""
+
+    def _item(self, title: str, tags: list[str] | None = None) -> ItineraryItem:
+        return ItineraryItem(
+            id=title.lower().replace(" ", "-"),
+            time_start="10:00", time_end="12:00",
+            title=title, description="…",
+            location=ItineraryItemLocation(lat=0.0, lon=0.0),
+            tags=tags or [],
+        )
+
+    def _day(self, number: int, items: list[ItineraryItem]) -> ItineraryDay:
+        return ItineraryDay(day_number=number, date="2026-11-10",
+                            theme="Day", items=items)
+
+    def _trip_with_pins(self, names: list[str]) -> TripConfig:
+        return _trip([PinnedPOI(name=n, lat=41.4, lon=2.17,
+                                source_interest="Gaudi architecture")
+                      for n in names])
+
+    def test_untagged_match_gets_pinned_tag(self):
+        days = [self._day(1, [self._item("Sagrada Família Basilica")])]
+        out = _enforce_pins(days, self._trip_with_pins(["Sagrada Familia"]))
+        assert out[0].items[0].tags == ["pinned"]
+
+    def test_dropped_pin_is_injected_on_lightest_day(self):
+        days = [
+            self._day(1, [self._item("La Rambla"), self._item("Camp Nou")]),
+            self._day(2, [self._item("Beach Walk")]),
+        ]
+        out = _enforce_pins(days, self._trip_with_pins(["Casa Batllo"]))
+        injected = [i for d in out for i in d.items if "pinned" in i.tags]
+        assert len(injected) == 1
+        assert injected[0].title == "Casa Batllo"
+        assert injected[0].location.lat == 41.4
+        assert injected[0] in out[1].items  # lightest day
+
+    def test_duplicate_tagged_matches_reduced_to_one(self):
+        days = [self._day(1, [
+            self._item("Park Guell", tags=["park", "pinned"]),
+            self._item("Park Güell viewpoint", tags=["pinned"]),
+        ])]
+        out = _enforce_pins(days, self._trip_with_pins(["Park Guell"]))
+        tagged = [i for i in out[0].items if "pinned" in i.tags]
+        assert len(tagged) == 1
+        assert tagged[0].title == "Park Guell"
+
+    def test_no_pins_is_noop(self):
+        days = [self._day(1, [self._item("La Rambla")])]
+        out = _enforce_pins(days, _trip())
+        assert out[0].items[0].tags == []
 
 
 class TestMockItineraryHonoursPins:
