@@ -1,30 +1,41 @@
 # Next-Session TODO — GTM Phase 1 Execution
 
-**Last updated:** 2026-07-12 (end of session, v10.18)
-**Context:** Executing the Phase 1 roadmap in [GTM_STRATEGY.md](GTM_STRATEGY.md). Items 1–4 shipped (v10.15–v10.18, see `TECHNICAL_DOCUMENTATION.md` §14). This file is the pick-up point for the next session.
+**Last updated:** 2026-07-13 (end of session, v10.18.2)
+**Context:** Executing the Phase 1 roadmap in [GTM_STRATEGY.md](GTM_STRATEGY.md). The kill-criterion gate now has real numbers on all three systems; publishing is blocked on a short recall-bug fix list, then a repeat live run. This file is the pick-up point for the next session.
 
 ---
 
 ## ✅ Done last session (for context)
 
-1. **Refinement-fidelity eval suite** (v10.18) — GTM Phase 1 item 4, the kill-criterion gate:
-   - `eval/refinement_fidelity_dataset.json` — 20 cases (16 positive incl. 6 Indian destinations, 4 negative honesty cases), 76-POI OSM + 5-chunk wiki fixture truth-set with per-destination distractors; every positive case carries one invented candidate that must drop.
-   - `eval/refinement_scoring.py` — pin recall / precision / exactly-once inclusion / re-refinement stability / composite fidelity / honesty; reuses `poi_pinning`'s production name matcher. `eval/run_refinement_eval.py` — offline replay (deterministic, free, in-memory Qdrant, regression gate at fidelity 1.000) / `--live` (real Gemini, ~$0.02/case) / `--baseline` (ChatGPT comparison table → `eval/out/refinement_fidelity_report.md`).
-   - `eval/baselines/chatgpt_refinement.template.json` — recording protocol + paste-ready prompts for the ChatGPT baseline.
-   - 23 new tests (`tests/unit/test_refinement_eval.py`, incl. dataset consistency through the REAL `verify_candidates_sync`); **200 passed / 6 skipped**. Offline run verified end-to-end: 20/20, fidelity 1.000, honesty 100% (the deterministic ceiling).
+1. **First live kill-criterion run + both baselines** (v10.18.1–.2):
+   - Live WanderPlanner: **fidelity 0.771, pin recall 0.750, inclusion 0.771, stability 0.812, honesty 4/4**. 13/16 positive cases ≥0.87.
+   - **ChatGPT free tier** (founder-recorded): recall 1.000, unverifiable 0.747, honesty 0/4 (suggested the nonexistent "Wizarding World Goa").
+   - **Claude Sonnet** (fresh cold-context no-tools agents, method in the baseline file): recall 0.979, unverifiable 0.786, strict honesty 0/4 **but verbally honest on all four** (explicitly said the ask can't be served; raw responses preserved).
+   - Verdict shaping up: **the wedge is trust + itinerary follow-through, not recall.**
+   - The live run itself caught three production bugs, all fixed + tested (207 passed): a dead `google.api_core` import silently disabling ALL live Gemini generation; no retry on transient 503s in `chat_refine`; a retired preview model id aborting the whole Gemini fallback chain.
+   - Eval tooling: `--results` rescore mode, baseline labels, per-case error resilience. Reports in gitignored `eval/out/` (`report_vs_chatgpt.md`, `report_vs_claude_sonnet.md`).
 
 ---
 
 ## ⏭️ Remaining Phase 1 items (in execution order)
 
-### 1. Produce & publish the kill-criterion numbers — NEXT UP (mostly founder actions)
+### 1. Fix the three live recall bugs + compliance gap — NEXT UP
 
-- **Founder:** run `python -m eval.run_refinement_eval --live` from `apps/api` (venv python, needs `GEMINI_API_KEY`; fixtures are self-contained — no ingestion needed). ~$0.40 total.
-- **Founder:** record the ChatGPT baseline per `eval/baselines/chatgpt_refinement.template.json` (fresh session per case, first answer only, ~30 min), save as `chatgpt_refinement.json`.
-- Rerun with `--baseline`, review `eval/out/refinement_fidelity_report.md`, decide **kill/go** (GTM §5): can we measurably beat ChatGPT on verified-place fidelity? Publish the report as marketing content if yes.
-- Code follow-ups if live numbers reveal gaps: expansion prompt tuning, fuzzy-match threshold, expected-POI list adjustments (e.g. Griffith Observatory may legitimately show up for RF-009 movie studios — decide expected vs off-target before publishing).
+From the 2026-07-13 live run (details: TECHNICAL_DOCUMENTATION §14 v10.18.2):
 
-### 2. Affiliate tracking on existing deep-links
+- **RF-004 Kyoto (zen gardens), RF-014 Goa (Portuguese heritage), RF-016 Bengaluru (palaces & gardens) → zero pins.** Diagnose where the live pipeline dropped out: `named_interest` detection in `chat_refine`? expansion returning empty? verification rejecting everything? Prime suspects: **diacritics** (Ryōan-ji vs Ryoan-ji, Sé vs Se — check `poi_pinning._normalize`, which strips non-ASCII to spaces and may break containment matching) and multi-word interest phrasings not being detected. Reproduce cheaply: call `chat_refine`/`expand_interest_to_candidates` live for just those 3 cases before touching code.
+- **RF-007 Barcelona: 3 correct pins, only 1 honoured exactly-once with the `pinned` tag** in the generated itinerary — check whether Gemini renamed (Família vs Familia), duplicated, or dropped the tag; consider strengthening the PINNED prompt block or post-generation pin enforcement (deterministic: inject missing pins like `_mock_itinerary` does).
+- **RF-001 London pinned distractor Borough Market** — expansion over-reach; tighten the expansion prompt ("only places that specifically serve the interest") and/or drop candidates that match fixtures but not the interest.
+- Add offline regression cases for whatever the diagnosis finds (e.g. diacritic name matching tests).
+
+### 2. Repeat the live run → kill/go decision → publish
+
+- `python -m eval.run_refinement_eval --live` (~$0.40), then `--results ... --baseline` for both baselines.
+- Expectation after fixes: recall ~0.9+; wedge story: verified-by-construction pins, honest refusals, itinerary follow-through vs 0.75–0.79 unverifiable-suggestion rates.
+- **Publish deliberately**: commit the two reports out of `eval/out/` + write the public comparison piece. Must state the Claude verbal-honesty nuance and the recording protocol (both baseline files document it) — credibility depends on not overclaiming.
+- This is the GTM §5 kill/go gate: if fixed-recall still can't support the trust story vs ChatGPT, pivot per strategy.
+
+### 3. Affiliate tracking on existing deep-links
 
 - **Blocked on founder action**: register for Viator, GetYourGuide, Skyscanner affiliate programs, then supply the IDs.
 - Code side is small: append affiliate params to the existing booking deep-links (grep `booking_url` construction + `KAYAK`/`Viator` link builders).
@@ -33,18 +44,18 @@
 
 ## 🔧 Operational / hygiene items
 
-- **E2E of the pinned-POI positive path with real data**: needs `osm_pois` ingested for a destination + a signed-in session. Flow: sign in on local → generate a London trip → Anya: "I'm a huge Harry Potter fan" → confirm 📌 pins with real coords, in-place regeneration, and diff chips. (Negative/degradation path live-verified 2026-07-12; positive path is unit- and eval-proven offline.)
-- **Run corpus ingestion once locally** (`chains/itinerary_corpus_extraction_chain.py::ingest_itinerary_corpus()`, needs `GEMINI_API_KEY`) so v10.15's retrieval has data. Same for gem intel (`reddit` + `osm_pois`) and pin verification (`osm_pois`/`wiki`) — all three features currently degrade cleanly to their no-data fallbacks on a fresh `:memory:` Qdrant. (The refinement eval does NOT need this — it seeds its own fixtures.)
-- **E2E check of gems in a real generation**: sign in on local, generate a Phuket/Goa trip with crowd dial = Hidden Gems, confirm 💎-tagged items with provenance appear.
-- **`WizardForm.tsx` is dead code** (never imported; `LLMWizard` is the live wizard). The crowd-dial UI in `PaceBudgetSection.tsx` is unreachable until that form is revived — decide whether to delete the form wizard or mount it somewhere.
-- **Dependabot: google-genai → 2.10.0** is open; when merged, add `ThinkingConfig(thinking_budget=0)` to `interest_expansion_chain.py` (drop cap to ~512) and consider the same for `extract_trip_chain.py`.
-- Consider a `HIDDEN_GEM` / `PINNED` metric in admin analytics (how often gems/pins get generated & kept) once real traffic exists.
-- Optional eval-harness extension noted in `docs/eval-set.md` §4U: point `run_rag_eval.py` at `retrieve_context()` (with reranking forced on) for full-pipeline retrieval scoring.
+- **GEMINI_MODEL note:** local `.env` still says `gemini-2.5-flash-lite`, which was heavily 503-congested on 2026-07-13; the live eval ran with a process-level `GEMINI_MODEL=gemini-2.5-flash` override. Consider switching the default (or trust the now-fixed fallback chain).
+- **E2E of the pinned-POI positive path with real data**: needs `osm_pois` ingested for a destination + a signed-in session (eval fixtures don't cover the real-ingestion path). Flow: sign in on local → London trip → Anya: "I'm a huge Harry Potter fan" → confirm 📌 pins, in-place regeneration, diff chips.
+- **Run corpus ingestion once locally** (`ingest_itinerary_corpus()`, needs `GEMINI_API_KEY`) so v10.15 retrieval, gem intel and pin verification have real data (all three degrade cleanly today on empty Qdrant).
+- **E2E check of gems in a real generation** (crowd dial = Hidden Gems → 💎 items with provenance).
+- **`WizardForm.tsx` is dead code** (`LLMWizard` is live) — decide delete vs mount; crowd-dial UI in `PaceBudgetSection.tsx` unreachable until then.
+- **Dependabot: google-genai → 2.10.0**: when merged, add `ThinkingConfig(thinking_budget=0)` to `interest_expansion_chain.py` (cap back to ~512) and consider same for `extract_trip_chain.py`.
+- `HIDDEN_GEM`/`PINNED` admin metrics once real traffic exists · optional §4U extension: point `run_rag_eval.py` at `retrieve_context()`.
 
 ## 💰 Deferred by cost decision (revisit later)
 
-- **BestTime.app live crowd-forecast layer** (paid API) — corpus signal shipped first; live layer is a premium/B2B upsell candidate.
-- **Booking.com affiliate pricing for accommodation** — blocked on partner-account approval (see TECHNICAL_DOCUMENTATION §14 backlog table).
+- **BestTime.app live crowd-forecast layer** (paid API) — premium/B2B upsell candidate.
+- **Booking.com affiliate pricing for accommodation** — blocked on partner-account approval.
 
 ## 📋 Phase 2 preview (don't start until Phase 1 eval gate passes)
 

@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.18.1 (Refinement-Fidelity Eval Suite + live-eval shakedown fixes)
+**Version:** 10.18.2 (First live kill-criterion numbers + ChatGPT/Claude baselines)
 **Last Updated:** July 13, 2026  
 **Status:** Production-ready MVP
 
@@ -1417,6 +1417,18 @@ curl http://localhost:8000/health
 ---
 
 ## 14. Recent Changes (v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.18.2 Changes (July 2026) — First live kill-criterion run + ChatGPT & Claude Sonnet baselines
+
+The GTM Phase 1 gate (§5) now has real numbers on all three systems, scored with the same matcher against the same fixture truth-set.
+
+| Change | Detail |
+|---|---|
+| **Live WanderPlanner run** (gemini-2.5-flash via env override; flash-lite was congested) | Fidelity **0.771** · pin recall **0.750** · inclusion **0.771** · stability **0.812** · precision **0.792** · honesty **4/4 (100%)**. 13/16 positive cases ≥0.87; three scored **zero pins** (RF-004 Kyoto zen, RF-014 Goa Portuguese heritage, RF-016 Bengaluru palaces/gardens — live detection/expansion produced nothing; suspects: diacritics in place names (Ryōan-ji/Sé Cathedral) and interest phrasings not detected as `named_interest`). RF-007 Barcelona: all 3 pins correct but only 1 appeared exactly-once with the `pinned` tag in the generated itinerary (generation-compliance gap). RF-001 London pinned distractor Borough Market (expansion over-reach; precision hit). These are the next-session fix list — publish only after they're addressed and the live run is repeated. |
+| **NEW** `eval/baselines/chatgpt_refinement.json` | Founder-recorded ChatGPT free-tier answers (template protocol; two mechanical splits made in ChatGPT's favour, disclosed in-file). Scores: verified-POI recall **1.000**, unverifiable-suggestion rate **0.747**, honesty on impossible asks **0/4** — including suggesting the nonexistent "Wizarding World Goa" for RF-017. |
+| **NEW** `eval/baselines/claude_sonnet_refinement.json` | Claude Sonnet answers gathered via fresh cold-context no-tools agents with zero access to the answer key (method documented in-file). Scores: verified-POI recall **0.979**, unverifiable rate **0.786**, strict honesty **0/4** — but with a critical, auditable nuance: all four impossible-ask answers *explicitly stated the interest cannot be served locally* before offering labelled alternatives (raw responses preserved in-file); no invented places anywhere. Any publication must state this distinction — the strict places-suggested metric undercounts Claude's verbal honesty. |
+| **UPDATED** `eval/run_refinement_eval.py` + `eval/refinement_scoring.py` | `--results` rescore mode (re-score a saved run against a new baseline without re-running/re-paying) and baseline labelling from the file's `recorded_with` (report headings no longer hardcode "ChatGPT"). |
+| **Verdict so far** | The wedge is **trust, not recall**: big chatbots beat the pipeline on naming famous places (1.00/0.98 vs 0.75 — with 3 fixable zero-cases dragging ours), but 75–79% of their suggestions are unverifiable against the truth-set, they don't say "no" when nothing real exists, and they have no itinerary follow-through (inclusion/stability don't exist for a chatbot answer). Kill/go decision deferred until the three recall bugs are fixed and the live run repeated. Comparison reports live in gitignored `eval/out/` (`report_vs_chatgpt.md`, `report_vs_claude_sonnet.md`) pending a deliberate publish. |
 
 ### v10.18.1 Changes (July 2026) — Live-eval shakedown fixes: dead google.api_core import was disabling live Gemini generation, chat_refine 503 retry, eval-runner resilience
 

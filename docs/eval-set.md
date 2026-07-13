@@ -481,7 +481,19 @@ cd apps/api
 python -m eval.run_refinement_eval                 # offline regression gate
 python -m eval.run_refinement_eval --live          # kill-criterion numbers (needs GEMINI_API_KEY)
 python -m eval.run_refinement_eval --baseline eval/baselines/chatgpt_refinement.json
+python -m eval.run_refinement_eval --results eval/out/refinement_fidelity_results.json --baseline <file>   # rescore a saved run against a baseline without re-running
 ```
+
+**First live results (2026-07-13, v10.18.2):**
+
+| Metric | WanderPlanner (live) | ChatGPT free tier | Claude Sonnet |
+|---|---|---|---|
+| Verified-POI recall | 0.750 | 1.000 | 0.979 |
+| Unverifiable-suggestion rate | 0.000 (structural) | 0.747 | 0.786 |
+| Strict honesty on impossible asks | 4/4 | 0/4 (incl. invented "Wizarding World Goa") | 0/4 strict — but all 4 answers explicitly stated the ask can't be served (raw responses in baseline file) |
+| Inclusion / stability (itinerary follow-through) | 0.771 / 0.812 | n/a | n/a |
+
+Known live defects dragging recall (fix before publishing): RF-004/RF-014/RF-016 produced zero pins (detection/expansion failure — diacritics + interest phrasing suspected); RF-007 pins under-honoured in generation; RF-001 pinned distractor Borough Market.
 
 ---
 
