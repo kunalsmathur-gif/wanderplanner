@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 import { ThemeToggle } from '@/components/common/ThemeToggle'
 import type { ItineraryDay, ExpenseBreakdown } from '@/types'
+import { formatDayDate } from '@/lib/format'
 
 interface SharedData {
   itinerary: { days: ItineraryDay[]; alignment_score: number; expense_breakdown?: ExpenseBreakdown }
@@ -82,7 +83,7 @@ export default function SharedTripPage({ params }: { params: { slug: string } })
               {data.itinerary.days.map((day, i) => (
                 <section key={i} className="rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-6">
                   <h2 className="font-display mb-4 text-lg font-bold text-[var(--_fg)]">
-                    Day {i + 1}{day.date ? ` · ${day.date}` : ''}
+                    Day {i + 1}{day.date ? ` · ${formatDayDate(day.date)}` : ''}
                   </h2>
                   <div className="space-y-3">
                     {day.items?.map((item, j) => (

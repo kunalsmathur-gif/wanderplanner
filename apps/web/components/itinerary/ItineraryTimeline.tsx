@@ -6,6 +6,7 @@ import { PolaroidCard } from '@/components/itinerary/PolaroidCard'
 import type { ItineraryItem } from '@/types'
 import { useEffect, useState } from 'react'
 import { isSafeExternalUrl } from '@/lib/url-safety'
+import { formatDayDate } from '@/lib/format'
 import { logClientEvent } from '@/lib/analyticsBeacon'
 
 const thumbnailCache = new Map<string, string | null>()
@@ -187,7 +188,7 @@ export function ItineraryTimeline() {
             type="button"
           >
             Day {itineraryDay.day_number}
-            <span className="block text-xs font-normal text-[var(--_muted-fg)]">{itineraryDay.date}</span>
+            <span className="block text-xs font-normal text-[var(--_muted-fg)]">{formatDayDate(itineraryDay.date)}</span>
           </button>
         ))}
       </div>

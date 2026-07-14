@@ -4,9 +4,10 @@ import { useEffect, useRef, useState } from 'react'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { checkFeasibility } from '@/lib/api'
 import type { FeasibilityResponse } from '@/types'
+import { formatCurrency } from '@/lib/format'
 
 function fmt(n: number) {
-  return `₹${n.toLocaleString('en-IN')}`
+  return formatCurrency(n, 'INR')
 }
 
 export function FeasibilityCard() {

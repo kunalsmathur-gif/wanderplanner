@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
+import { formatCurrency } from '@/lib/format'
 
 const CATEGORIES = [
   { key: 'flights_inr',          icon: '✈️',  label: 'Flights'             },
@@ -18,7 +19,7 @@ const CATEGORIES = [
 type CategoryKey = typeof CATEGORIES[number]['key']
 
 function fmtInr(n: number) {
-  return `₹${n.toLocaleString('en-IN')}`
+  return formatCurrency(n, 'INR')
 }
 
 export function ExpenseBreakupCard() {
@@ -95,7 +96,7 @@ export function ExpenseBreakupCard() {
               {breakdown.destination_currency_code && breakdown.total_destination_currency > 0 && (
                 <p className="text-xs text-[var(--_muted-fg)]">
                   ≈ {breakdown.destination_currency_code}{' '}
-                  {Math.round(breakdown.total_destination_currency / divisor).toLocaleString()}
+                  {Math.round(breakdown.total_destination_currency / divisor).toLocaleString('en-IN')}
                 </p>
               )}
             </div>

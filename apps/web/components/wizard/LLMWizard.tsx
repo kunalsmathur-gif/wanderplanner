@@ -11,6 +11,7 @@ import { useAuthStore } from '@/store/authStore'
 import { wizardChat } from '@/lib/api'
 import { streamItinerary, checkFeasibility } from '@/lib/api'
 import { savePendingGeneration, getPendingGeneration, clearPendingGeneration } from '@/lib/pendingGeneration'
+import { formatCurrency } from '@/lib/format'
 import type { TripConfig } from '@/types'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 
@@ -237,7 +238,7 @@ export function LLMWizard() {
       const summaryLine = [
         destLabel,
         durationLabel,
-        `${existingConfig.budget.currency} ${existingConfig.budget.amount.toLocaleString()}`,
+        formatCurrency(existingConfig.budget.amount, existingConfig.budget.currency),
         `${existingConfig.group.adults} adult${existingConfig.group.adults !== 1 ? 's' : ''}`,
         existingConfig.pace,
       ].filter(Boolean).join(' · ')

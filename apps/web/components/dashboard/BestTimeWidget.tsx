@@ -35,20 +35,20 @@ export function BestTimeWidget({ destination }: Props) {
 
   if (loading) return (
     <div className="animate-pulse space-y-2 px-4 py-3">
-      <div className="h-3 bg-slate-200 rounded w-1/2" />
-      <div className="h-2 bg-slate-200 rounded w-3/4" />
+      <div className="h-3 bg-[var(--_muted)] rounded w-1/2" />
+      <div className="h-2 bg-[var(--_muted)] rounded w-3/4" />
     </div>
   )
 
   if (error || !data) return (
-    <div className="px-4 py-3 text-xs text-slate-400 italic">
+    <div className="px-4 py-3 text-xs text-[var(--_muted-fg)] italic">
       Best-time data unavailable for this destination.
     </div>
   )
 
   return (
     <div className="px-4 py-3 space-y-3">
-      <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+      <h4 className="text-xs font-semibold text-[var(--_muted-fg)] uppercase tracking-wide">
         📅 Best Time to Visit
       </h4>
 
@@ -62,33 +62,33 @@ export function BestTimeWidget({ destination }: Props) {
               <div
                 className={[
                   'h-3 rounded-sm',
-                  isBest ? 'bg-green-400' : isAvoid ? 'bg-red-300' : 'bg-slate-200',
+                  isBest ? 'bg-green-400' : isAvoid ? 'bg-red-300' : 'bg-[var(--_muted)]',
                 ].join(' ')}
               />
-              <span className="text-[9px] text-slate-400 mt-0.5 block">{m[0]}</span>
+              <span className="text-[9px] text-[var(--_muted-fg)] mt-0.5 block">{m[0]}</span>
             </div>
           )
         })}
       </div>
 
       {/* Legend */}
-      <div className="flex gap-3 text-[10px] text-slate-500">
+      <div className="flex gap-3 text-[10px] text-[var(--_muted-fg)]">
         <span><span className="inline-block w-2 h-2 bg-green-400 rounded-sm mr-1" />Best</span>
         <span><span className="inline-block w-2 h-2 bg-red-300 rounded-sm mr-1" />Avoid</span>
-        <span><span className="inline-block w-2 h-2 bg-slate-200 rounded-sm mr-1" />OK</span>
+        <span><span className="inline-block w-2 h-2 bg-[var(--_muted)] rounded-sm mr-1" />OK</span>
       </div>
 
       {/* Summary */}
       {data.weather_summary && (
-        <p className="text-xs text-slate-600 leading-relaxed">{data.weather_summary}</p>
+        <p className="text-xs text-[var(--_fg-muted)] leading-relaxed">{data.weather_summary}</p>
       )}
 
       <div className="space-y-1">
         {data.peak_season && (
-          <p className="text-xs text-slate-500">🎯 Peak: <span className="font-medium text-slate-700">{data.peak_season}</span></p>
+          <p className="text-xs text-[var(--_muted-fg)]">👥 Busiest (crowds & prices): <span className="font-medium text-[var(--_fg)]">{data.peak_season}</span></p>
         )}
         {data.off_season && (
-          <p className="text-xs text-slate-500">💤 Off-season: <span className="font-medium text-slate-700">{data.off_season}</span></p>
+          <p className="text-xs text-[var(--_muted-fg)]">💤 Quietest: <span className="font-medium text-[var(--_fg)]">{data.off_season}</span></p>
         )}
       </div>
     </div>

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { chatRefine, geocode, recommendCities, streamItinerary } from '@/lib/api'
+import { formatCurrency } from '@/lib/format'
 import { useAppStore } from '@/store/appStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
@@ -125,7 +126,7 @@ function isValidDate(value: string) {
 }
 
 function formatBudget(amount: number) {
-  return `INR ${amount.toLocaleString('en-IN')}`
+  return formatCurrency(amount, 'INR')
 }
 
 function formatThemeLabel(themes: string[]) {

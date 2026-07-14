@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.21.0 (UI/UX audit §2.1+§2.2: dark-mode token pass on six light-only components, plain-language error copy, dead WizardForm wizard deleted)
+**Version:** 10.22.0 (UI/UX audit §2.3–§2.5: on-demand PDF generation, app-wide en-IN currency + human day-date formatters, BestTime label clarity)
 **Last Updated:** July 13, 2026  
 **Status:** Production-ready MVP
 
@@ -1416,7 +1416,20 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.22.0 Changes (July 2026) — UI/UX audit §2.3–§2.5: on-demand PDF, one currency/date formatter app-wide, BestTime label clarity
+
+Second UI/UX-audit milestone of the session. All deterministic, zero-LLM; the PDF change is also a bundle/CPU win.
+
+| Change | Detail |
+|---|---|
+| **REWRITTEN** `PdfDownloadButton.tsx` — on-demand generation (audit §2.3) | `<PDFDownloadLink>` rendered the full PDF to a blob **on every dashboard mount** whether or not the user downloaded. The button now builds the blob only on click via `pdf().toBlob()`, and `@react-pdf/renderer` + `ItineraryDocument` are dynamic-imported at click time — the ~1 MB renderer leaves the dashboard bundle entirely. Failure shows an inline "Could not generate the PDF — please try again." instead of silently dying. |
+| **NEW** `lib/format.ts` — the one formatter pair (audit §2.4) | `formatCurrency(amount, code)` (`Intl.NumberFormat('en-IN', {style:'currency'})`, whole units, malformed-code fallback to a plain label) and `formatDayDate(iso)` ("2026-11-14" → "Sat, 14 Nov"; non-ISO input passes through). 8 unit tests. |
+| **UPDATED** currency call sites | Trip Metrics budget (`Column1Metrics` — was browser-locale `INR 150,000`, now `₹1,50,000` matching the landing page), `ExpenseBreakupCard`/`FeasibilityCard` fmt helpers, `ConversationalWizard.formatBudget`, `LLMWizard` resume-summary line (was browser-locale). Chat strings already on `en-IN` grouping were left alone; the PDF document keeps its deliberate `Rs.` prefix (font glyph). |
+| **UPDATED** date call sites | Day tabs (`ItineraryTimeline`), share page (`t/[slug]`), and `ItineraryOverview` day list now render "Sat, 14 Nov" instead of raw ISO. |
+| **UPDATED** `CurrencyWidget` + `BestTimeWidget` (audit §2.4/§2.5) | Failure copy softened to "Rates temporarily unavailable."; BestTime's confusing "🎯 Peak" (overlapping "Best months") is now "👥 Busiest (crowds & prices)" and "💤 Off-season" is "💤 Quietest" — reconciled with the crowd-preference language elsewhere. Both widgets also moved off light-only slate classes onto the `--_*` tokens (same gap class as §2.1, fixed while touching them). |
+| **Verified** | `tsc --noEmit` clean · web suite 44 passed (36 + 8 new `format.test.ts`). |
 
 ### v10.21.0 Changes (July 2026) — UI/UX audit §2.1+§2.2: dark-mode polish pass + plain-language error copy + dead-code deletion
 

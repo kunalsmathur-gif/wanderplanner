@@ -30,13 +30,13 @@ export function CurrencyWidget({ baseCurrency }: Props) {
 
   if (loading) return (
     <div className="animate-pulse px-4 py-3 space-y-1.5">
-      {[1, 2, 3].map((i) => <div key={i} className="h-3 bg-slate-200 rounded w-full" />)}
+      {[1, 2, 3].map((i) => <div key={i} className="h-3 bg-[var(--_muted)] rounded w-full" />)}
     </div>
   )
 
   if (error) return (
-    <div className="px-4 py-2 text-xs text-slate-400 italic">
-      Currency rates unavailable.
+    <div className="px-4 py-2 text-xs text-[var(--_muted-fg)] italic">
+      Rates temporarily unavailable.
     </div>
   )
 
@@ -46,15 +46,15 @@ export function CurrencyWidget({ baseCurrency }: Props) {
 
   return (
     <div className="px-4 py-3 space-y-2">
-      <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+      <h4 className="text-xs font-semibold text-[var(--_muted-fg)] uppercase tracking-wide">
         💱 Exchange Rates
       </h4>
-      <p className="text-[10px] text-slate-400">1 {baseCurrency} =</p>
+      <p className="text-[10px] text-[var(--_muted-fg)]">1 {baseCurrency} =</p>
       <div className="space-y-1">
         {display.slice(0, 6).map((cur) => (
           <div key={cur} className="flex justify-between text-xs">
-            <span className="text-slate-500">{cur}</span>
-            <span className="font-medium text-slate-700">{rates![cur].toFixed(4)}</span>
+            <span className="text-[var(--_muted-fg)]">{cur}</span>
+            <span className="font-medium text-[var(--_fg)]">{rates![cur].toFixed(4)}</span>
           </div>
         ))}
       </div>

@@ -3,6 +3,7 @@
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useAppStore } from '@/store/appStore'
 import { ErrorState } from '@/components/common/ErrorState'
+import { formatDayDate } from '@/lib/format'
 
 export function ItineraryOverview() {
   const { status, progress, error, days, alignmentScore } = useItineraryStore()
@@ -72,7 +73,7 @@ export function ItineraryOverview() {
                 </span>
                 <div>
                   <p className="font-semibold text-[var(--_fg)] text-sm">{day.theme}</p>
-                  <p className="text-xs text-[var(--_muted-fg)]">{day.date} · {day.items.length} activities</p>
+                  <p className="text-xs text-[var(--_muted-fg)]">{formatDayDate(day.date)} · {day.items.length} activities</p>
                 </div>
               </div>
               <div className="flex flex-wrap gap-1 pl-11">

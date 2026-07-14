@@ -7,6 +7,7 @@ import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useAppStore } from '@/store/appStore'
 import { CurrencyWidget } from '@/components/dashboard/CurrencyWidget'
+import { formatCurrency } from '@/lib/format'
 import { ExpenseBreakupCard } from '@/components/dashboard/ExpenseBreakupCard'
 import { BookingHub } from '@/components/dashboard/BookingHub'
 
@@ -60,7 +61,7 @@ export function Column1Metrics() {
 
       <div className="overflow-hidden rounded-xl border border-[var(--_border)] bg-[var(--_card)]">
         <MetricRow icon={<MapPin size={14} />}       label="Destination" value={destinationLabel} />
-        <MetricRow icon={<Wallet size={14} />}       label="Budget"      value={`${budget.currency} ${budget.amount.toLocaleString()}`} />
+        <MetricRow icon={<Wallet size={14} />}       label="Budget"      value={formatCurrency(budget.amount, budget.currency)} />
         <MetricRow icon={<CalendarDays size={14} />} label="Days"        value={String(days.length)} />
       </div>
 
