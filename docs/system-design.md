@@ -1,7 +1,7 @@
 # WanderPlanner — System Design Document
 
-**Version:** 8.5 (Hidden-Gem Scoring + Crowd Dial)
-**Last Updated:** July 11, 2026  
+**Version:** 8.7 (Refinement-Fidelity Eval Suite — the Phase 1 kill-criterion gate)
+**Last Updated:** July 12, 2026  
 **Audience:** Engineering team and technical stakeholders
 
 ---
@@ -597,9 +597,26 @@ chat_refine_chain.py
          │    System: "You are Anya... CURRENT TRIP CONFIG: {config_json}"
          │    User: conversation history
          │
-         └─ Output: { reply, action_type, config_patch, major_change }
+         ├─ Output: { reply, action_type, config_patch, major_change, named_interest }
+         │    (any LLM-authored pinned_pois in config_patch is stripped —
+         │     pins may only come from verification)
          │
-         ◄─ response
+         └─ named_interest set? (⭐ v10.17 — "Harry Potter test")
+              (⭐ v10.19: if named_interest is null but the patch adds NEW
+               themes, the interest is derived from them deterministically —
+               live eval caught the LLM routing "zen gardens" into themes)
+              → interest_expansion_chain: ONE gemini-2.5-flash call
+                → ≤10 candidate place names
+              → services/poi_pinning.verify_candidates (zero LLM, zero new APIs):
+                   osm_pois name match → pin w/ real lat/lon ("osm")
+                     (⭐ v10.19: diacritic-folding normalize; strongest match
+                      wins — exact > containment > fuzzy, not first fuzzy hit)
+                   wiki chunk text presence  → pin w/o coords     ("wiki")
+                   neither                   → dropped, never pinned
+              → merge_pins into config_patch.pinned_pois (existing first, cap 8)
+              → reply += honest 📌 summary (pinned / dropped / none-verified)
+         │
+         ◄─ response { ..., pinned_pois, dropped_candidates }
          │
          ├─ action_type = 'none'
          │    → display reply in ChatPanel
@@ -607,14 +624,20 @@ chat_refine_chain.py
          ├─ action_type = 'patch_config'
          │    → updateConfig(config_patch) silently
          │    → display reply ("I've updated your budget to ₹1.5L!")
+         │    → patch contains pinned_pois + itinerary exists?
+         │         → regenerateInPlace() (⭐ v10.17): streamItinerary SSE,
+         │           old plan stays visible until the new one lands,
+         │           then diffItineraries(old, new) → diff-chips message
+         │           (+ added (Day N) / − removed / ↷ moved Day A → B)
          │
          └─ action_type = 'regenerate' + major_change = true
               → show confirmation dialog in ChatPanel:
                    ┌─────────────────────────────────┐
                    │ ⚠️ This change will regenerate  │
-                   │ [Yes, apply & reset] [Just noting]│
+                   │ [Yes, rebuild it] [Just noting] │
                    └─────────────────────────────────┘
-              ├─ "Yes" → updateConfig + resetItinerary
+              ├─ "Yes" → updateConfig + regenerateInPlace() + diff chips
+              │          (no more reset-and-reopen-the-wizard dead end)
               └─ "Just noting it" → dismiss, no action
 ```
 
@@ -1026,12 +1049,15 @@ However, **Gemini token/cost event instrumentation is still in progress** in the
 | `POST /api/generate-itinerary` (attempt 5) | `itinerary_chain.py` | `gemini-1.5-flash` | **0.4** | — |
 | `POST /api/extract-trip` | `extract_trip_chain.py` | `gemini-2.5-flash` | **0.1** | 512 |
 | `POST /api/recommend-cities` | `recommend_cities_chain.py` | `gemini-2.5-flash` | **0.4** | 1024 |
+| (inside `/api/chat-refine`, only when a named interest is detected) | `interest_expansion_chain.py` | `gemini-2.5-flash` | **0.1** | 2048 |
 
 Temperature rationale:
 - **0.4** — Wizard: more deterministic extraction while keeping Anya conversational
 - **0.5** — Chat refine: friendly but semi-deterministic for config patches
 - **0.4** — Itinerary/cities: structured JSON; lower = fewer schema violations
-- **0.1** — Extraction: near-deterministic; wrong extraction = wrong wizard preload
+- **0.1** — Extraction/expansion: near-deterministic; wrong extraction = wrong wizard preload, invented place = dropped at verification
+
+⚠️ Max-tokens gotcha (v10.17, live-verified): `gemini-2.5-flash` spends `max_output_tokens` on **hidden thinking before the visible JSON** — the expansion chain's original 256 cap truncated every response mid-list. google-genai 1.2.0 exposes no `thinking_budget`; the cap is 2048 until the SDK ≥2.x bump, after which `ThinkingConfig(thinking_budget=0)` + ~512 is the right shape. `extract_trip_chain.py`'s 512 cap carries the same latent risk.
 
 ---
 
@@ -1425,6 +1451,18 @@ surfacing a false "Connection error" on an otherwise still-working request.
 ---
 
 ## 16. Change Log
+
+### v10.18.2 (July 2026) — First live kill-criterion numbers + ChatGPT/Claude Sonnet baselines
+- Live run: fidelity 0.771, honesty 4/4; three zero-pin recall bugs identified (Kyoto/Goa/Bengaluru) + one generation-compliance gap (Barcelona) — fix list in NEXT_SESSION_TODO
+- Baselines recorded and scored with the same matcher: ChatGPT free tier (recall 1.000, unverifiable 0.747, honesty 0/4) and Claude Sonnet via fresh cold-context agents (recall 0.979, unverifiable 0.786, verbally honest on all four impossibles — nuance documented in the baseline file)
+- Eval runner: `--results` rescore mode; report headings take the baseline label from the file's `recorded_with`
+- Shakedown fixes along the way (v10.18.1): removed a dead `google.api_core` import that silently disabled ALL live Gemini itinerary generation; `chat_refine` gained a one-retry backoff on transient 5xx; Gemini model fallback chain repaired (retired preview id no longer aborts the chain; GA fallbacks 2.5-flash/2.0-flash)
+
+### v10.18 (July 2026) — Refinement-Fidelity Eval Suite (GTM Phase 1 kill-criterion gate)
+- New automated eval harness for the v10.17 refinement hard-constraints pipeline: `eval/refinement_fidelity_dataset.json` (20 named-interest cases — 16 positive across 16 destinations incl. 6 Indian cities, 4 negative honesty cases; 76-POI OSM + 5-chunk wiki fixture truth-set with distractors), `eval/refinement_scoring.py` (pin recall / precision / exactly-once inclusion / re-refinement stability / composite fidelity / honesty; reuses `poi_pinning`'s production name matcher), `eval/run_refinement_eval.py` (offline replay mode = free deterministic regression gate at fidelity 1.000; `--live` = real Gemini kill-criterion numbers; `--baseline` = ChatGPT comparison table)
+- Eval always forces an in-memory Qdrant seeded with zero-vector fixture payloads — real collections are never touched, the embedding model never loads (verification is scroll-only)
+- ChatGPT baseline recording protocol shipped at `eval/baselines/chatgpt_refinement.template.json`; reports render to gitignored `eval/out/`
+- 23 new offline unit tests (`tests/unit/test_refinement_eval.py`), incl. dataset-consistency checks that push every case through the real `verify_candidates_sync` — backend suite 200 passed / 6 skipped
 
 ### v10.14 (July 2026) — Mobile Responsiveness Overhaul + Anya Chat/Feasibility Bug Fixes + Generation Progress Streaming
 

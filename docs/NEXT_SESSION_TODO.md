@@ -1,57 +1,69 @@
 # Next-Session TODO — GTM Phase 1 Execution
 
-**Last updated:** 2026-07-11 (end of session)
-**Context:** Executing the Phase 1 roadmap in [GTM_STRATEGY.md](GTM_STRATEGY.md). Items 1–2 shipped this session (v10.15 + v10.16, see `TECHNICAL_DOCUMENTATION.md` §14). This file is the pick-up point for the next session.
+**Last updated:** 2026-07-13 (end of session, v10.19.0)
+**Context:** Executing the Phase 1 roadmap in [GTM_STRATEGY.md](GTM_STRATEGY.md). The recall bugs are fixed and the repeat live run scored **fidelity 0.904 / honesty 4-4** — the kill-criterion gate passes on numbers. Publishing needs one clean rerun (RF-010 was zeroed by transient Gemini 503s). A full UI/UX + copy audit was completed (findings below, **no changes made yet** — founder to prioritise).
 
 ---
 
-## ✅ Done this session (for context)
+## ✅ Done last session (for context)
 
-1. **Itinerary-corpus few-shot retrieval** (v10.15) — `services/search.py::retrieve_itinerary_examples()` wired into both LLM generation paths. 13 tests.
-2. **Hidden-gem scoring + crowd dial** (v10.16) — `services/gems.py`, `TripConfig.crowd_preference`, prompt + retrieval-bias wiring, Anya extraction (live-verified: "less crowded hidden gems" → `offbeat`), 💎 timeline badge. 15 tests.
-3. Strategy docs: `GTM_STRATEGY.md` created; `STARTUP_EVALUATION.md` addendum (score 5→6/10).
-
-Backend unit suite: **148 passed**. `tsc --noEmit` clean.
-
----
+1. **Three zero-pin recall bugs diagnosed + fixed** (v10.19.0): root cause was named-interest **detection**, not diacritics — Gemini routed "zen gardens"/"Portuguese colonial heritage" into `themes` patches and answered the Bengaluru question conversationally. Fixes: broadened detection prompt (any concrete interest + question phrasings), deterministic themes-patch backstop in `_apply_interest_pinning`, NFKD diacritic folding in `_normalize`, and exact>containment>fuzzy `_best_osm_match` (live repro caught "Ginkaku-ji" being pinned as "Kinkaku-ji" via first-fuzzy-hit).
+2. **Pin inclusion made structural** (`itinerary_chain._enforce_pins`): tag repair, duplicate untagging, dropped-pin injection after generation on every path. Live inclusion/stability now 1.00 on every pinned case.
+3. **Expansion prompt**: anti-distractor rule (RF-001 Borough Market) + heritage-quarter allowance (RF-014 Fontainhas).
+4. **Repeat live run**: fidelity 0.904 · recall 0.854 · inclusion 0.938 · stability 0.938 · precision 0.917 · honesty 4/4. Both baseline reports regenerated in `eval/out/`. 219 unit tests pass; offline gate 1.000.
 
 ## ⏭️ Remaining Phase 1 items (in execution order)
 
-### 1. Refinement hard-constraints + visible diff UI (the "Harry Potter test") — NEXT UP
+### 1. One clean live rerun, then publish — NEXT UP
 
-The #2 user-interview gap: refinements are prompt nudges, not commitments. Plan:
+- **RF-010 Singapore scored 0.00 purely from persistent Gemini 503s** during expansion (log line: "interest expansion failed for 'hawker centres'"). Rerun `python -m eval.run_refinement_eval --live` (~$0.40, `GEMINI_MODEL=gemini-2.5-flash` process override) at a less congested hour; expect recall ≈0.90+.
+- Optional recall chase before publishing: **RF-012 Mumbai (0.33)** — live expansion proposed Film City but not Mannat/Prithvi Theatre; consider whether the tightened anti-distractor rule is now too conservative for celebrity-home/theatre venues, or accept and disclose.
+- Then `--results ... --baseline` for both baselines and **publish deliberately**: commit the two reports out of gitignored `eval/out/` + write the comparison piece. Must state the Claude verbal-honesty nuance and the recording protocol — credibility depends on not overclaiming.
 
-1. **Interest → entity expansion chain**: named interest ("Harry Potter fan", "F1 enthusiast") → candidate POIs via one small Gemini call (pattern: `chains/extract_trip_chain.py`).
-2. **Verification step**: geocode/confirm each candidate against `osm_pois` / Wikivoyage before use — reuse the OSM-verification approach from `services/gems.py`. Unverified candidates are dropped, never pinned.
-3. **Hard pinning**: survivors become must-include constraints in the generation/refinement prompt (a `PINNED_POIS` section with lat/lon), not suffix text.
-4. **Visible diff after each refinement**: compute added/removed/swapped items between old and new itinerary (match by title similarity) and render chips in the Anya chat panel ("Added: WB Studio Tour (Day 3)"). Touch points: `chains/chat_refine_chain.py` (check actual filename), `ChatRefineResponse` in `apps/web/types/index.ts`, the persistent Anya chat component.
-5. Keep the scale/latency/cost rules: one small extraction LLM call max per refinement, verification via existing collections (no new APIs), diff computed client-side or in the response path (cheap).
+### 2. UI/UX + copy audit follow-ups (2026-07-13 audit — identified only, NOT yet fixed; founder to prioritise)
 
-### 2. Refinement-fidelity eval suite (vs ChatGPT)
+Full audit with file-level detail and suggested fix order: [UI_UX_AUDIT_2026-07-13.md](UI_UX_AUDIT_2026-07-13.md). Summary:
 
-- ~20 named-interest prompts scored on whether the right verified POIs appear in output; build on `docs/eval-set.csv` / `apps/api/eval/`.
-- This is the **Phase 1 kill-criterion gate** (see GTM_STRATEGY §5): if we can't measurably beat ChatGPT here, pivot to pure B2B tooling.
-- Output doubles as marketing content ("WanderPlanner vs ChatGPT on 50 refinement tests").
+**Trust-critical (fix before any public push — they contradict the verified-truth wedge):**
+- `routers/travel_tips.py` — the Gemini prompt generates tips that *"read like they come from real travelers"* and labels them `r/travel` / `TripAdvisor` / `Lonely Planet` / `Nomadic Matt`; `_fallback_tips` hardcodes fake upvote counts (127/94/156/203). **Fabricated provenance on a production surface.** Real Reddit tips (also fetched) are fine — label LLM/fallback tips honestly ("General tip") or drop them.
+- Booking deep-links likely broken: Google Flights uses the retired `#search;f=...` fragment syntax (opens bare homepage); Skyscanner/MakeMyTrip URL templates expect IATA/city codes but receive raw city names. The sidebar promises "Links open pre-filled with your trip details." Affiliate tracking (item 3 below) builds on these — fix formats first.
+
+**High (visible polish/correctness):**
+- Dark mode gaps — hardcoded light-only styling in `ItineraryOverview.tsx:66`, `ExpenseBreakupCard.tsx:39`, `FeasibilityCard.tsx:124`, `BookingLinksSection.tsx:162`, `PdfDownloadButton.tsx` (slate-100/200), `ErrorState.tsx` (also uses the OLD `#1E40AF` palette, not `--_primary`).
+- Developer-speak in user-facing errors: "Check that the backend is running and retry" (`ErrorState.tsx:19`), "please make sure the backend is running" (`ConversationalWizard.tsx:1270`).
+- `PDFDownloadLink` renders the PDF document eagerly on every dashboard mount (CPU cost on load) — switch to on-demand generation.
+- Raw ISO dates in UI: day tabs (`ItineraryTimeline.tsx:190`) and share page show `2026-11-14` instead of "Fri, 14 Nov".
+- Currency display inconsistent: metrics show `INR 150,000` (`Column1Metrics.tsx:63`) vs landing's `₹1,50,000` (Indian grouping); pick one formatter app-wide.
+- `CurrencyWidget` surfaces raw "Currency rates unavailable." in the sidebar — degrade silently or soften copy.
+
+**Medium (a11y + metadata):**
+- `/login`, `/signup`, `/account`, share page don't set per-page `<title>`/metadata (all render the landing title; hurts SEO + tab identification). Share page (`/t/[slug]`) is client-fetched — no OG tags, so shared links unfurl blank in WhatsApp/Slack; it's a growth surface, consider SSR + OG image.
+- Unnamed icon-only buttons (no aria-label): currency refresh (`Column1Metrics` area), BookingHub tab buttons, `/dev` page cards.
+- Share page doesn't render 📌 pinned / 💎 gem badges — the differentiating features are invisible on the viral surface.
+- Mock/dev YouTube link is a rickroll (`dev/mockData.ts`, `dQw4w9WgXcQ`) — harmless in dev, embarrassing if mock path ever serves prod.
+
+**Verified OK (no action):** mobile bottom-tab layout (Itinerary/Overview/Map & Tips, no horizontal overflow), landing copy + FAQ, wizard conversational flow + chips, account page (delete confirmation done right), share-page expired-link state, PolaroidCard theming (an automation-pane artifact initially looked like a dark-mode bug — it isn't one).
 
 ### 3. Affiliate tracking on existing deep-links
 
 - **Blocked on founder action**: register for Viator, GetYourGuide, Skyscanner affiliate programs, then supply the IDs.
-- Code side is small: append affiliate params to the existing booking deep-links (grep `booking_url` construction + `KAYAK`/`Viator` link builders).
-
----
+- Code side is small: append affiliate params to the booking deep-links — but fix the broken link formats (audit item above) first.
 
 ## 🔧 Operational / hygiene items
 
-- **Run corpus ingestion once locally** (`chains/itinerary_corpus_extraction_chain.py::ingest_itinerary_corpus()`, needs `GEMINI_API_KEY`) so v10.15's retrieval actually has data — until then generation uses the clean "No reference itineraries available" fallback. Same for gem intel: it needs `reddit` + `osm_pois` data for the destination (both have existing ingestion jobs).
-- **E2E check of gems in a real generation**: sign in on local, generate a Phuket/Goa trip with crowd dial = Hidden Gems, confirm 💎-tagged items with provenance appear. (Unit-tested but not yet observed end-to-end with live data.)
-- **`WizardForm.tsx` is dead code** (never imported; `LLMWizard` is the live wizard). The crowd-dial UI added to `PaceBudgetSection.tsx` is unreachable until that form is revived — decide whether to delete the form wizard or mount it somewhere.
-- Consider a `HIDDEN_GEM` metric in admin analytics (how often gems get generated/kept) once real traffic exists.
+- **GEMINI_MODEL note:** local `.env` still says `gemini-2.5-flash-lite` (503-congested on 2026-07-13 again); both live evals ran with process-level `GEMINI_MODEL=gemini-2.5-flash`. Consider switching the default.
+- **E2E of the pinned-POI positive path with real data**: needs `osm_pois` ingested + signed-in session. Flow: sign in → London trip → Anya: "I'm a huge Harry Potter fan" → confirm 📌 pins, in-place regeneration, diff chips. (The v10.19 themes-backstop path could also be E2E'd: "add some zen gardens to my trip".)
+- **Run corpus ingestion once locally** (`ingest_itinerary_corpus()`, needs `GEMINI_API_KEY`) so v10.15 retrieval, gem intel and pin verification have real data.
+- **E2E check of gems in a real generation** (crowd dial = Hidden Gems → 💎 items with provenance).
+- **`WizardForm.tsx` is dead code** (`LLMWizard` is live) — decide delete vs mount; crowd-dial UI in `PaceBudgetSection.tsx` unreachable until then. (Old wizard sections also carry the pre-rebrand `#1E40AF` palette — deleting them shrinks the dark-mode fix surface.)
+- **Dependabot: google-genai → 2.10.0**: when merged, add `ThinkingConfig(thinking_budget=0)` to `interest_expansion_chain.py` (cap back to ~512) and consider same for `extract_trip_chain.py`.
+- `HIDDEN_GEM`/`PINNED` admin metrics once real traffic exists · optional §4U extension: point `run_rag_eval.py` at `retrieve_context()`.
 
 ## 💰 Deferred by cost decision (revisit later)
 
-- **BestTime.app live crowd-forecast layer** (paid API) — corpus signal shipped first; live layer is a premium/B2B upsell candidate.
-- **Booking.com affiliate pricing for accommodation** — blocked on partner-account approval (see TECHNICAL_DOCUMENTATION §14 backlog table).
+- **BestTime.app live crowd-forecast layer** (paid API) — premium/B2B upsell candidate.
+- **Booking.com affiliate pricing for accommodation** — blocked on partner-account approval.
 
-## 📋 Phase 2 preview (don't start until Phase 1 eval gate passes)
+## 📋 Phase 2 preview (don't start until Phase 1 publish is done)
 
 Agent mode (branded PDF export, markup field, client-shareable link) · live budget grounding (Amadeus free tier, IRCTC fare tables) · hand-onboard 10 agents. Full detail + kill/go criteria in [GTM_STRATEGY.md](GTM_STRATEGY.md) §5.

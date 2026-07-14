@@ -1,10 +1,14 @@
 import { create } from 'zustand'
+import type { PinnedPOI } from '@/types'
+import type { ItineraryDiff } from '@/lib/itineraryDiff'
 
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
   timestamp: number
+  pins?: PinnedPOI[]      // verified pins to render as 📌 chips
+  diff?: ItineraryDiff    // itinerary changes to render as added/removed/moved chips
 }
 
 type ChatStatus = 'idle' | 'sending' | 'error'
@@ -19,7 +23,7 @@ interface ChatStore {
   close: () => void
   toggle: () => void
   addMessage: (msg: Omit<ChatMessage, 'id' | 'timestamp'>) => ChatMessage
-  updateLastAssistant: (content: string) => void
+  updateLastAssistant: (content: string, extras?: Pick<ChatMessage, 'pins' | 'diff'>) => void
   setStatus: (s: ChatStatus, err?: string) => void
   clearHistory: () => void
 }
@@ -43,12 +47,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     return full
   },
 
-  updateLastAssistant: (content) =>
+  updateLastAssistant: (content, extras) =>
     set((s) => {
       const msgs = [...s.messages]
       for (let i = msgs.length - 1; i >= 0; i--) {
         if (msgs[i].role === 'assistant') {
-          msgs[i] = { ...msgs[i], content }
+          msgs[i] = { ...msgs[i], content, ...extras }
           break
         }
       }

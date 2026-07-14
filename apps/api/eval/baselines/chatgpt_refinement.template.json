@@ -1,0 +1,36 @@
+{
+  "_instructions": [
+    "Recording protocol for the ChatGPT baseline (GTM Phase 1 kill-criterion comparison).",
+    "1. Copy this file to chatgpt_refinement.json (same folder).",
+    "2. For each case below, open a FRESH ChatGPT session (no memory carry-over) and paste `prompt_to_paste` verbatim.",
+    "3. Into `places`, copy EVERY specific place name ChatGPT suggests for the interest, verbatim — venues, sites, streets. Skip generic advice ('visit a local market') and whole cities/neighbourhood-level suggestions unless the case's expected POI is itself a street/quarter.",
+    "4. Do not correct, retry, or cherry-pick — first answer only. If it names zero specific places, leave `places` empty.",
+    "5. Record `model` (e.g. 'ChatGPT free tier, 2026-07') in the top-level `recorded_with` field.",
+    "6. Score with: python -m eval.run_refinement_eval --baseline eval/baselines/chatgpt_refinement.json",
+    "Prompts embed the same trip framing the WanderPlanner pipeline gets (destination + 5-day leisure trip + the refinement message)."
+  ],
+  "recorded_with": "",
+  "recorded_on": "",
+  "cases": [
+    {"id": "RF-001", "prompt_to_paste": "I'm planning a 5-day leisure trip to London, United Kingdom. I'm a huge Harry Potter fan — please work some real HP places into this trip! List the specific places you'd include.", "places": []},
+    {"id": "RF-002", "prompt_to_paste": "I'm planning a 5-day leisure trip to Edinburgh, United Kingdom. We're big Harry Potter nerds — where was JK Rowling actually writing? Add those spots. List the specific places you'd include.", "places": []},
+    {"id": "RF-003", "prompt_to_paste": "I'm planning a 5-day leisure trip to Tokyo, Japan. I'm really into anime and Studio Ghibli — can you add proper anime places? List the specific places you'd include.", "places": []},
+    {"id": "RF-004", "prompt_to_paste": "I'm planning a 5-day leisure trip to Kyoto, Japan. I love zen gardens and quiet temples — make sure the famous zen spots are in. List the specific places you'd include.", "places": []},
+    {"id": "RF-005", "prompt_to_paste": "I'm planning a 5-day leisure trip to Paris, France. I'm obsessed with Impressionist painting — Monet, Degas, all of it. Add the right museums. List the specific places you'd include.", "places": []},
+    {"id": "RF-006", "prompt_to_paste": "I'm planning a 5-day leisure trip to Rome, Italy. Ancient Roman history is my thing — gladiators, emperors, ruins. Pin the real sites. List the specific places you'd include.", "places": []},
+    {"id": "RF-007", "prompt_to_paste": "I'm planning a 5-day leisure trip to Barcelona, Spain. I'm a Gaudi architecture fan — I want his actual buildings, not generic sightseeing. List the specific places you'd include.", "places": []},
+    {"id": "RF-008", "prompt_to_paste": "I'm planning a 5-day leisure trip to Liverpool, United Kingdom. Massive Beatles fan here — build the trip around the real Beatles landmarks. List the specific places you'd include.", "places": []},
+    {"id": "RF-009", "prompt_to_paste": "I'm planning a 5-day leisure trip to Los Angeles, United States. I want the movie-studio experience — real working studios and film history, please. List the specific places you'd include.", "places": []},
+    {"id": "RF-010", "prompt_to_paste": "I'm planning a 5-day leisure trip to Singapore. We're food travellers — hawker centres are the whole point. Add the legendary ones. List the specific places you'd include.", "places": []},
+    {"id": "RF-011", "prompt_to_paste": "I'm planning a 5-day leisure trip to Delhi, India. I'm fascinated by Mughal history — the real monuments, not just markets. List the specific places you'd include.", "places": []},
+    {"id": "RF-012", "prompt_to_paste": "I'm planning a 5-day leisure trip to Mumbai, India. Bollywood superfan here — studios, star homes, the works. What's actually visitable? List the specific places you'd include.", "places": []},
+    {"id": "RF-013", "prompt_to_paste": "I'm planning a 5-day leisure trip to Jaipur, India. I want the royal Rajput heritage — forts and palaces are why we're coming. List the specific places you'd include.", "places": []},
+    {"id": "RF-014", "prompt_to_paste": "I'm planning a 5-day leisure trip to Goa, India. Beyond beaches, I really want the Portuguese colonial heritage side of Goa. List the specific places you'd include.", "places": []},
+    {"id": "RF-015", "prompt_to_paste": "I'm planning a 5-day leisure trip to Amritsar, India. We're coming for Sikh heritage and history — please anchor the trip on it. List the specific places you'd include.", "places": []},
+    {"id": "RF-016", "prompt_to_paste": "I'm planning a 5-day leisure trip to Bengaluru, India. I love historic palaces and botanical gardens — what does Bengaluru really have? List the specific places you'd include.", "places": []},
+    {"id": "RF-017", "prompt_to_paste": "I'm planning a 5-day leisure trip to Goa, India. I'm a huge Harry Potter fan — any HP experiences in Goa? List the specific places you'd include.", "places": []},
+    {"id": "RF-018", "prompt_to_paste": "I'm planning a 5-day leisure trip to Jaipur, India. I'm a Formula 1 fanatic — add some F1 experiences to the Jaipur trip. List the specific places you'd include.", "places": []},
+    {"id": "RF-019", "prompt_to_paste": "I'm planning a 5-day leisure trip to Amritsar, India. Any Studio Ghibli themed places in Amritsar? My kid is obsessed. List the specific places you'd include.", "places": []},
+    {"id": "RF-020", "prompt_to_paste": "I'm planning a 5-day leisure trip to Kyoto, Japan. I'd love to fit in some scuba diving while we're in Kyoto. List the specific places you'd include.", "places": []}
+  ]
+}

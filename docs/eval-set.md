@@ -1,5 +1,5 @@
 # WanderPlanner — Evaluation Set
-**Version:** 5.0 · **Date:** July 2, 2026  
+**Version:** 5.1 · **Date:** July 12, 2026 (adds §4V refinement-fidelity harness)  
 **Scope:** All AI, API, and integration surfaces across WanderPlanner v5.3 (RAG Optimization Round 2)  
 **Purpose:** Manual and automated regression testing for correctness, safety, tone, cost and reliability
 
@@ -452,6 +452,48 @@ curl -c cookies.txt -X POST http://localhost:8000/api/auth/login \
 cd apps/api
 python -m eval.run_rag_eval
 ```
+
+---
+
+### 4V — Refinement-Fidelity Eval Suite (`eval/refinement_fidelity_dataset.json`, `eval/run_refinement_eval.py`) ✅ DONE (v10.18)
+
+The **GTM Phase 1 kill-criterion gate** (GTM_STRATEGY §5): automated scoring of the v10.17 refinement hard-constraints pipeline, plus the apparatus for the published "WanderPlanner vs ChatGPT" comparison. Like §4U this is an automated harness, not individually numbered cases.
+
+**Dataset:** 20 named-interest refinement cases (`RF-001`–`RF-020`): 16 positive (expected verified POIs exist at the destination — London/Edinburgh Harry Potter, Tokyo anime, Kyoto zen, Paris Impressionism, Rome antiquity, Barcelona Gaudí, Liverpool Beatles, LA studios, Singapore hawker food, and six Indian cases: Delhi Mughal, Mumbai Bollywood, Jaipur Rajput, Goa Portuguese, Amritsar Sikh, Bengaluru palaces/gardens) + 4 negative honesty cases (e.g. Harry Potter in Goa) where the correct behaviour is pinning **nothing**. The fixture truth-set (76 real OSM POIs incl. per-destination distractors + 5 wiki chunks) is seeded into an **in-memory Qdrant** — real collections are never read or written. Each positive case carries one invented candidate that must be dropped, so the hallucination guard is itself scored.
+
+**Metrics per positive case** (name matching = production `poi_pinning._names_match`):
+- **pin_recall** — expected POIs that became pins
+- **pin_precision** — pins that are on-interest
+- **inclusion_rate** — pins appearing **exactly once** in the generated itinerary with the `pinned` tag (the hard-constraint contract)
+- **stability_rate** — pins surviving an unrelated pace-change re-refinement + regeneration (diff fidelity)
+- **fidelity** = 0.4·recall + 0.4·inclusion + 0.2·stability
+
+Negative cases score **honesty**: zero pins and no unverified name leaked into the itinerary.
+
+**Modes:**
+- offline (default) — replays recorded expansion candidates through the real verification/pinning/generation (mock LLM) code. Deterministic, free, zero network. This is the regression gate: it scores **1.000 by construction** while the pipeline is intact (guaranteed by dataset-consistency unit tests in `tests/unit/test_refinement_eval.py`); any drop is a regression.
+- `--live` — real Gemini detection + expansion + generation (~$0.02/case): produces the actual kill-criterion numbers.
+- `--baseline eval/baselines/chatgpt_refinement.json` — scores manually recorded ChatGPT answers (protocol + paste-ready prompts in `chatgpt_refinement.template.json`) with the same matcher/truth-set: verified recall, unverifiable-suggestion rate, honesty. Renders the comparison table into `eval/out/refinement_fidelity_report.md`.
+
+**How to run:**
+```bash
+cd apps/api
+python -m eval.run_refinement_eval                 # offline regression gate
+python -m eval.run_refinement_eval --live          # kill-criterion numbers (needs GEMINI_API_KEY)
+python -m eval.run_refinement_eval --baseline eval/baselines/chatgpt_refinement.json
+python -m eval.run_refinement_eval --results eval/out/refinement_fidelity_results.json --baseline <file>   # rescore a saved run against a baseline without re-running
+```
+
+**First live results (2026-07-13, v10.18.2):**
+
+| Metric | WanderPlanner (live) | ChatGPT free tier | Claude Sonnet |
+|---|---|---|---|
+| Verified-POI recall | 0.750 | 1.000 | 0.979 |
+| Unverifiable-suggestion rate | 0.000 (structural) | 0.747 | 0.786 |
+| Strict honesty on impossible asks | 4/4 | 0/4 (incl. invented "Wizarding World Goa") | 0/4 strict — but all 4 answers explicitly stated the ask can't be served (raw responses in baseline file) |
+| Inclusion / stability (itinerary follow-through) | 0.771 / 0.812 | n/a | n/a |
+
+Known live defects dragging recall (fix before publishing): RF-004/RF-014/RF-016 produced zero pins (detection/expansion failure — diacritics + interest phrasing suspected); RF-007 pins under-honoured in generation; RF-001 pinned distractor Borough Market.
 
 ---
 

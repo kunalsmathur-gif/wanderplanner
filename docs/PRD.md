@@ -3,7 +3,7 @@
 ## **1\. Document Control**
 
 * **Author:** Product Manager  
-* **Status:** Rev 10 — Updated ✅ (Crowd-Style Preference · Hidden-Gem Curation · Real-Traveller Itinerary Corpus Grounding)
+* **Status:** Rev 13 — Updated ✅ (Named-interest detection broadened beyond fandoms + deterministic themes-patch backstop; pin inclusion now enforced structurally post-generation — the exactly-once contract holds by construction. Driven by the first live kill-criterion run's failure analysis)
 * **Strategy companions:** [GTM_STRATEGY.md](GTM_STRATEGY.md) (go-to-market plan, product bets, phased roadmap with kill/go criteria) and [STARTUP_EVALUATION.md](STARTUP_EVALUATION.md) (+ 2026-07-11 re-evaluation addendum) — forward-looking positioning/monetization decisions live there, not in this PRD
 * **Target Release:** Q4 2026  
 * **Platform:** Web Application — Desktop-first (1440x900, 1920x1080) with mobile-responsive support (v5.0+). Bottom tab navigation on mobile (`< lg` breakpoint). No standalone mobile PWA or native app scope.
@@ -671,18 +671,22 @@ The chatbot must not just answer questions in isolation — it must be able to *
 
 #### Behaviour
 - **Minor changes** (activity swap, hotel style, food preference, packing tip acted on): Applied silently to the trip config store; user sees an inline confirmation in the chat (e.g. *"Done! I've updated your accommodation preference to boutique hotels."*).
-- **Major changes** (destination change, date change, traveller count change, persona change, budget change): Bot detects these as significant and surfaces a **confirmation dialog**: *"This will regenerate your itinerary. Continue?"* — with "Yes, regenerate" / "No, just noting it" options.
-- If the user confirms, the wizard is reset to the relevant step and the itinerary is regenerated.
+- **Major changes** (destination change, date change, traveller count change, persona change, budget change): Bot detects these as significant and surfaces a **confirmation dialog**: *"This will regenerate your itinerary. Continue?"* — with "Yes, rebuild it" / "No, just noting it" options.
+- If the user confirms, the itinerary is **regenerated in place** (Rev 11): the existing plan stays visible until the new one arrives, and a failed regeneration never destroys a working plan.
+- **Named-interest hard constraints (Rev 11 — the "Harry Potter test").** When the user names an interest ("I'm a huge Harry Potter fan", "add F1 experiences"), the system expands it to candidate places with one small LLM call, **verifies each against OpenStreetMap/Wikivoyage data already ingested**, and pins the survivors as must-include constraints (max 8) — a verified commitment, not a prompt nudge. Unverifiable candidates are dropped and the bot says so ("couldn't verify X, left it out" — better honest than invented). Pinned items carry a 📌 badge on the timeline. **Rev 13:** detection covers any concrete interest — cultural themes, heritage, food, nature — not just fandoms, including question phrasings ("what does Bengaluru have for palace lovers?"), with a deterministic backstop that derives the interest from newly added trip themes; and pin inclusion in the generated itinerary is **enforced structurally after generation** (tag repair, duplicate cleanup, dropped-pin injection — zero LLM calls), so a pinned place appearing exactly once is guaranteed by construction, not by LLM compliance.
+- **Visible refinement diff (Rev 11).** After any refinement that rebuilds the plan, the chat shows chips summarising exactly what changed: `+ added (Day N)`, `− removed`, `↷ moved (Day A → B)` — refinements are verifiable by the user, never silent.
 
 #### Backend
 - New endpoint: `POST /api/chat-refine`
 - Request: same as `/api/chat` + current `trip_config` snapshot
-- Response: `{ reply: string, action_type: "none" | "patch_config" | "regenerate", config_patch: Partial<TripConfig> | null, major_change: boolean }`
+- Response: `{ reply: string, action_type: "none" | "patch_config" | "regenerate", config_patch: Partial<TripConfig> | null, major_change: boolean, named_interest: string | null, pinned_pois: PinnedPOI[], dropped_candidates: string[] }`
 - The Gemini prompt is extended to parse intent and return structured JSON action alongside the text reply.
+- Interest expansion: `chains/interest_expansion_chain.py`; verification: `services/poi_pinning.py` (`osm_pois` fuzzy match with real coordinates, `wiki` text fallback; zero new APIs). Pins are injected into generation as a `PINNED MUST-INCLUDE PLACES — HARD CONSTRAINTS` prompt section that outranks all other guidance.
 
 #### Guardrails
 - All existing R9 guardrails apply.
 - The bot will only patch config fields it explicitly recognises — it will never silently overwrite the full config.
+- The LLM can never author `pinned_pois` itself — any such patch field is stripped server-side; pins exist only via OSM/Wikivoyage verification.
 
 ---
 
