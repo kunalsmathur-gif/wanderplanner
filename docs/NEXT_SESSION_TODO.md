@@ -22,6 +22,8 @@
 
 ### 2. UI/UX + copy audit follow-ups (2026-07-13 audit — identified only, NOT yet fixed; founder to prioritise)
 
+Full audit with file-level detail and suggested fix order: [UI_UX_AUDIT_2026-07-13.md](UI_UX_AUDIT_2026-07-13.md). Summary:
+
 **Trust-critical (fix before any public push — they contradict the verified-truth wedge):**
 - `routers/travel_tips.py` — the Gemini prompt generates tips that *"read like they come from real travelers"* and labels them `r/travel` / `TripAdvisor` / `Lonely Planet` / `Nomadic Matt`; `_fallback_tips` hardcodes fake upvote counts (127/94/156/203). **Fabricated provenance on a production surface.** Real Reddit tips (also fetched) are fine — label LLM/fallback tips honestly ("General tip") or drop them.
 - Booking deep-links likely broken: Google Flights uses the retired `#search;f=...` fragment syntax (opens bare homepage); Skyscanner/MakeMyTrip URL templates expect IATA/city codes but receive raw city names. The sidebar promises "Links open pre-filled with your trip details." Affiliate tracking (item 3 below) builds on these — fix formats first.
