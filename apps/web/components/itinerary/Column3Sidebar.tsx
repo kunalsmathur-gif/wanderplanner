@@ -96,38 +96,54 @@ export function Column3Sidebar() {
           <p className="text-xs text-[var(--_muted-fg)]">No tips found for this destination yet.</p>
         ) : (
           <div className="space-y-2">
-            {tips.map((tip, idx) => (
-              <a
-                key={`${tip.post_url}-${idx}`}
-                href={tip.post_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block overflow-hidden rounded-xl border border-[var(--_border)] bg-[var(--_card)] transition-colors hover:border-[var(--_primary)]"
-              >
-                {tip.thumbnailUrl && (
-                  <img
-                    src={tip.thumbnailUrl}
-                    alt={tip.title}
-                    className="h-24 w-full object-cover"
-                    loading="lazy"
-                  />
-                )}
-                <div className="p-3">
-                  <div className="mb-1.5 flex items-center justify-between gap-2">
-                    <span className="rounded-full bg-[var(--_muted)] px-2 py-0.5 text-[11px] font-semibold text-[var(--_primary)]">
-                      {tip.source}
-                    </span>
-                    {tip.score > 0 && (
-                      <span className="text-[11px] font-medium text-[var(--_muted-fg)]">↑ {tip.score}</span>
+            {tips.map((tip, idx) => {
+              const body = (
+                <>
+                  {tip.thumbnailUrl && (
+                    <img
+                      src={tip.thumbnailUrl}
+                      alt={tip.title}
+                      className="h-24 w-full object-cover"
+                      loading="lazy"
+                    />
+                  )}
+                  <div className="p-3">
+                    <div className="mb-1.5 flex items-center justify-between gap-2">
+                      <span className="rounded-full bg-[var(--_muted)] px-2 py-0.5 text-[11px] font-semibold text-[var(--_primary)]">
+                        {tip.source}
+                      </span>
+                      {tip.score > 0 && (
+                        <span className="text-[11px] font-medium text-[var(--_muted-fg)]">↑ {tip.score}</span>
+                      )}
+                    </div>
+                    <p className="line-clamp-2 text-sm font-semibold text-[var(--_fg)]">{tip.title}</p>
+                    {tip.text_preview && (
+                      <p className="mt-1 line-clamp-3 text-xs text-[var(--_muted-fg)]">{tip.text_preview}</p>
                     )}
                   </div>
-                  <p className="line-clamp-2 text-sm font-semibold text-[var(--_fg)]">{tip.title}</p>
-                  {tip.text_preview && (
-                    <p className="mt-1 line-clamp-3 text-xs text-[var(--_muted-fg)]">{tip.text_preview}</p>
-                  )}
+                </>
+              )
+              const cardClass =
+                'block overflow-hidden rounded-xl border border-[var(--_border)] bg-[var(--_card)]'
+
+              // Real community tips link to their source; general tips have no
+              // source page to link to, so they render as plain cards.
+              return tip.post_url ? (
+                <a
+                  key={`${tip.title}-${idx}`}
+                  href={tip.post_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`${cardClass} transition-colors hover:border-[var(--_primary)]`}
+                >
+                  {body}
+                </a>
+              ) : (
+                <div key={`${tip.title}-${idx}`} className={cardClass}>
+                  {body}
                 </div>
-              </a>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>

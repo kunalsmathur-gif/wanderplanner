@@ -10,7 +10,7 @@ const ITEMS: ItineraryItem[] = [
     location: { lat: 35.7148, lon: 139.7967, address: 'Asakusa, Tokyo' },
     tags: ['instaworthy', 'kid_friendly'],
     booking_url: '',
-    youtube_video_id: 'dQw4w9WgXcQ',
+    youtube_video_id: '',
     alignment_score: 92,
     warnings: [],
   },

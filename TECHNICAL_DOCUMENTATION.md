@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.19.0 (Recall-bug fixes + structural pin enforcement — live fidelity 0.904)
+**Version:** 10.20.0 (Clean live run published — fidelity 0.975; trust-critical UI fixes: honest tip provenance + working booking deep-links)
 **Last Updated:** July 13, 2026  
 **Status:** Production-ready MVP
 
@@ -1416,7 +1416,21 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.20.0 Changes (July 2026) — Clean live run PUBLISHED (fidelity 0.975) + trust-critical audit fixes (honest tip provenance, working booking deep-links)
+
+The Phase 1 publish gate is cleared and the two trust-critical items from the 2026-07-13 UI/UX audit — the ones that contradicted the verified-truth wedge on production surfaces — are fixed.
+
+| Change | Detail |
+|---|---|
+| **Clean live rerun** (gemini-2.5-flash override, 2026-07-14) | **Fidelity 0.975 · recall 0.938 · inclusion 1.000 · stability 1.000 · precision 0.979 · honesty 4/4.** RF-010 Singapore recovered 0.00 → 1.00 (last run's zero was transient Gemini 503s, as diagnosed); RF-012 Mumbai improved 0.33 → 0.67 with no code change (live expansion variance). Remaining misses are all recall 0.67 (RF-001/RF-009/RF-012 — expansion not proposing one truth-set place each); inclusion/stability 1.00 on every case. |
+| **PUBLISHED** `docs/eval-results/` | The deliberate publish out of gitignored `eval/out/`: comparison piece (`README.md` — "Can your AI travel planner prove it listened?") + both verbatim baseline reports dated 2026-07-14. The piece leads with what we lose (ChatGPT recall 1.00 vs our 0.94), states the recording protocol (including the two corrections made in ChatGPT's favour), carries the **mandatory Claude verbal-honesty disclosure** (strict 0/4 but verbally honest 4/4, no invented places — vs ChatGPT's invented "Wizarding World Goa"), and an explicit "what we are NOT claiming" section (unverifiable ≠ hallucinated; n=20; category difference vs chatbots). The Claude report copy carries an editorial note pointing at the disclosure. |
+| **FIXED (trust-critical)** `routers/travel_tips.py` — fabricated provenance removed | The Gemini prompt no longer asks for tips that "read like real travelers" with `r/travel`/TripAdvisor/Lonely Planet labels, and `_fallback_tips` no longer hardcodes fake upvote counts (127/94/156/203). Provenance is now **enforced in code, not just the prompt**: LLM and template tips always get `source="General tip"`, `score=0`, `post_url=""` regardless of what the model returns. Real Reddit tips (live search, real permalinks/scores) are unchanged. `Column3Sidebar.tsx` renders no-URL tips as plain cards instead of links. Verified live in dev: 6 "General tip" cards, 0 fake-source anchors, no scores. |
+| **FIXED (trust-critical)** `BookingLinksSection.tsx` — broken flight deep-links | Google Flights moved off the retired `#search;f=…` fragment to the supported natural-language `?q=Flights from X to Y on … through …` (pre-fills from city names; degrades to "Flights to Y" when origin is unset). Skyscanner/MakeMyTrip get real IATA-coded deep-links via **NEW `lib/cityCodes.ts`** — a small static city→IATA map (~75 cities, India-first + common international; deterministic, zero-LLM) with `isIndianCode()` driving MMT's `intl` flag; when either end doesn't resolve (or dates are missing) they fall back to their search pages and the sidebar copy honestly switches from "Links open pre-filled…" to "Some links open as a search page…". Verified in dev: Delhi→Tokyo produces `del/tyo/261114/261116` (Skyscanner) and `DEL-TYO-14/11/2026_TYO-DEL-16/11/2026` (MMT). |
+| **UPDATED** `app/dev/page.tsx` + `app/dev/mockData.ts` | Dev fixture now seeds origin (Delhi) + real dates so the booking-links pre-fill path is exercisable locally; the rickroll YouTube id (audit §3.4) replaced with the empty id the backend mock path uses. |
+| **FIXED** `eval/run_refinement_eval.py` rescore label | Repeated `--results` rescores no longer nest "(rescored from …)" suffixes in the saved mode label. |
+| **Verified** | Backend suite **223 passed** (219 + 4 new `test_travel_tips.py`: fallback labelling ×2, prompt carries no community branding ×1, structural relabel-even-if-model-fabricates ×1), 6 skipped. `tsc --noEmit` clean. Browser verification of tips + booking links on the dev dashboard (external link targets verified by construction; in-session external navigation unavailable). |
 
 ### v10.19.0 Changes (July 2026) — Live recall bugs fixed + structural pin enforcement; repeat live run: fidelity 0.904
 

@@ -1,5 +1,10 @@
-"""Travel tips endpoint — uses Gemini to generate authentic community-style travel tips,
-with Reddit as an optional real-time supplement."""
+"""Travel tips endpoint — real Reddit tips (live search, real permalinks/scores)
+supplemented by honestly-labelled LLM-generated general tips.
+
+Provenance rule: only tips fetched from a real community source may carry a
+community label (r/…) or a score. LLM and template tips are always labelled
+"General tip" with no score and no third-party branding — enforced in code,
+not just in the prompt."""
 from __future__ import annotations
 
 import asyncio
@@ -34,21 +39,21 @@ HEADERS = {
 }
 
 _TIPS_PROMPT = """\
-You are a seasoned travel community curator. Generate {limit} authentic, helpful travel tips \
-for "{destination}" that read like they come from real travelers on Reddit, travel blogs, and \
-travel forums. Each tip should be practical, specific, and actionable.
+You are a knowledgeable travel assistant. Generate {limit} practical, specific, actionable \
+travel tips for "{destination}". Do NOT imitate or attribute the tips to any person, website, \
+or community — they will be shown to the user labelled as general tips.
 
 Respond ONLY with a JSON array (no markdown, no extra text):
 [
   {{
-    "title": "Short catchy tip title (max 80 chars)",
-    "text_preview": "2-3 sentence practical tip that a real traveler would share (max 250 chars)",
-    "source": "One of: r/travel, r/solotravel, TripAdvisor, Travel Blog, Lonely Planet, Nomadic Matt",
-    "post_url": "https://www.reddit.com/r/travel/search/?q={destination_encoded}",
-    "score": 0
+    "title": "Short tip title (max 80 chars)",
+    "text_preview": "2-3 sentence practical tip (max 250 chars)"
   }}
 ]
 """
+
+# Honest label for tips that do not come from a real community source.
+GENERAL_TIP_SOURCE = "General tip"
 
 
 class TravelTip(BaseModel):
@@ -105,11 +110,7 @@ async def _generate_gemini_tips(destination: str, limit: int) -> list[TravelTip]
 
     try:
         client = google_genai.Client(api_key=settings.gemini_api_key)
-        prompt = _TIPS_PROMPT.format(
-            destination=destination,
-            destination_encoded=quote_plus(destination),
-            limit=limit,
-        )
+        prompt = _TIPS_PROMPT.format(destination=destination, limit=limit)
 
         def _call_sync():
             return client.models.generate_content(
@@ -124,59 +125,57 @@ async def _generate_gemini_tips(destination: str, limit: int) -> list[TravelTip]
         raw = response.text
         cleaned = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         items = json.loads(cleaned)
-        return [TravelTip(**item) for item in items if isinstance(item, dict)]
+        # Provenance enforced here: whatever the model returned, LLM tips carry
+        # the honest label, no score, and no link masquerading as a source.
+        return [
+            TravelTip(
+                title=str(item.get("title", "")).strip(),
+                text_preview=str(item.get("text_preview", "")).strip(),
+                post_url="",
+                source=GENERAL_TIP_SOURCE,
+                score=0,
+            )
+            for item in items
+            if isinstance(item, dict) and item.get("title")
+        ]
     except Exception as e:
         logger.warning("Gemini tips failed for %s: %s: %s", destination, type(e).__name__, e)
         return []
 
 
 def _fallback_tips(destination: str, limit: int) -> list[TravelTip]:
-    """Curated fallback tips when Reddit and Gemini both fail"""
-    templates = [
-        TravelTip(
-            title=f"Best time to visit {destination}",
-            text_preview=f"Research the weather patterns and peak tourist seasons. Shoulder seasons often offer better prices and fewer crowds while still having good weather.",
-            post_url=f"https://www.reddit.com/r/travel/search/?q={quote_plus(destination)}",
-            source="r/travel",
-            score=127,
+    """Curated template tips when Reddit and Gemini both fail — labelled honestly,
+    never with a community source or an invented score."""
+    texts = [
+        (
+            f"Best time to visit {destination}",
+            "Research the weather patterns and peak tourist seasons. Shoulder seasons often offer better prices and fewer crowds while still having good weather.",
         ),
-        TravelTip(
-            title=f"Local transportation in {destination}",
-            text_preview="Download local transportation apps before arrival. Many cities have excellent public transit that's cheaper and more authentic than taxis or rideshares.",
-            post_url=f"https://www.tripadvisor.com/Search?q={quote_plus(destination)}",
-            source="TripAdvisor",
-            score=94,
+        (
+            f"Local transportation in {destination}",
+            "Download local transportation apps before arrival. Many cities have excellent public transit that's cheaper and more authentic than taxis or rideshares.",
         ),
-        TravelTip(
-            title="Book accommodations early",
-            text_preview=f"Popular areas in {destination} fill up quickly. Book at least 2-3 months in advance for better selection and prices, especially during peak seasons.",
-            post_url=f"https://www.reddit.com/r/solotravel/search/?q={quote_plus(destination)}",
-            source="r/solotravel",
-            score=156,
+        (
+            "Book accommodations early",
+            f"Popular areas in {destination} fill up quickly. Book at least 2-3 months in advance for better selection and prices, especially during peak seasons.",
         ),
-        TravelTip(
-            title="Learn basic local phrases",
-            text_preview="Download a translation app and learn at least 'hello', 'thank you', and 'excuse me' in the local language. Locals really appreciate the effort!",
-            post_url="https://www.nomadicmatt.com/travel-tips/",
-            source="Nomadic Matt",
-            score=0,
+        (
+            "Learn basic local phrases",
+            "Download a translation app and learn at least 'hello', 'thank you', and 'excuse me' in the local language. Locals really appreciate the effort!",
         ),
-        TravelTip(
-            title=f"Hidden gems in {destination}",
-            text_preview="Skip the tourist traps and ask locals for recommendations. The best food and experiences are often in neighborhoods away from main attractions.",
-            post_url="https://www.lonelyplanet.com/search",
-            source="Lonely Planet",
-            score=0,
+        (
+            f"Hidden gems in {destination}",
+            "Skip the tourist traps and ask locals for recommendations. The best food and experiences are often in neighborhoods away from main attractions.",
         ),
-        TravelTip(
-            title="Travel insurance is essential",
-            text_preview="Get comprehensive travel insurance that covers medical emergencies, trip cancellations, and lost belongings. It's worth the peace of mind.",
-            post_url=f"https://www.reddit.com/r/travel/search/?q=travel+insurance",
-            source="r/travel",
-            score=203,
+        (
+            "Travel insurance is essential",
+            "Get comprehensive travel insurance that covers medical emergencies, trip cancellations, and lost belongings. It's worth the peace of mind.",
         ),
     ]
-    return templates[:limit]
+    return [
+        TravelTip(title=title, text_preview=preview, post_url="", source=GENERAL_TIP_SOURCE, score=0)
+        for title, preview in texts[:limit]
+    ]
 
 
 @router.get("/travel-tips", response_model=TravelTipsResponse)

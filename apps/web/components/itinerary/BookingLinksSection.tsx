@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useItineraryStore } from '@/store/itineraryStore'
+import { cityToIata, isIndianCode } from '@/lib/cityCodes'
 
 type TabId = 'flights' | 'stays' | 'activities'
 
@@ -10,10 +11,12 @@ interface BookingLink {
   name: string
   logo: string
   url: string
+  prefilled: boolean
 }
 
 function buildLinks(
   origin: string,
+  originIata: string,
   destination: string,
   checkin: string,
   checkout: string,
@@ -24,7 +27,7 @@ function buildLinks(
   const ci = checkin   // YYYY-MM-DD
   const co = checkout
 
-  // Compact date for Skyscanner: YYYYMMDD → YYMMDD
+  // Skyscanner path dates: YYYY-MM-DD → YYMMDD
   const skyFmt = (d: string) => d.replace(/-/g, '').slice(2) // 260801
 
   // MakeMyTrip format: DD/MM/YYYY
@@ -34,22 +37,43 @@ function buildLinks(
     return `${day}/${m}/${y}`
   }
 
+  // Skyscanner and MakeMyTrip only accept IATA city codes, not city names —
+  // build precise deep-links when both ends resolve, otherwise fall back to
+  // their search pages (and say so via `prefilled`).
+  const oCode = originIata || cityToIata(origin)
+  const dCode = cityToIata(destination)
+  const haveCodes = Boolean(oCode && dCode && ci && co)
+
+  // Google Flights' natural-language query pre-fills from city names.
+  const gfFrom = origin ? ` from ${origin}` : ''
+  const gfQuery =
+    ci && co
+      ? `Flights${gfFrom} to ${destination} on ${ci} through ${co}`
+      : `Flights${gfFrom} to ${destination}`
+
   return {
     flights: [
       {
         name: 'Google Flights',
         logo: '🔍',
-        url: `https://www.google.com/flights?hl=en#search;f=${enc(origin)};t=${enc(destination)};d=${ci};r=${co};px=${adults}`,
+        url: `https://www.google.com/travel/flights?hl=en&q=${enc(gfQuery)}`,
+        prefilled: true,
       },
       {
         name: 'Skyscanner',
         logo: '✈️',
-        url: `https://www.skyscanner.com/transport/flights/${enc(origin)}/${enc(destination)}/${skyFmt(ci)}/${skyFmt(co)}/?adults=${adults}&cabinclass=economy`,
+        url: haveCodes
+          ? `https://www.skyscanner.com/transport/flights/${oCode!.toLowerCase()}/${dCode!.toLowerCase()}/${skyFmt(ci)}/${skyFmt(co)}/?adults=${adults}&cabinclass=economy`
+          : 'https://www.skyscanner.com/',
+        prefilled: haveCodes,
       },
       {
         name: 'MakeMyTrip',
         logo: '🇮🇳',
-        url: `https://www.makemytrip.com/flight/search?tripType=R&itinerary=${enc(origin)}-${enc(destination)}-${mmtFmt(ci)}-${enc(destination)}-${enc(origin)}-${mmtFmt(co)}&paxType=A-${adults}_C-0_I-0&intl=true`,
+        url: haveCodes
+          ? `https://www.makemytrip.com/flight/search?tripType=R&itinerary=${oCode}-${dCode}-${mmtFmt(ci)}_${dCode}-${oCode}-${mmtFmt(co)}&paxType=A-${adults}_C-0_I-0&intl=${isIndianCode(oCode!) && isIndianCode(dCode!) ? 'false' : 'true'}`
+          : 'https://www.makemytrip.com/flights/',
+        prefilled: haveCodes,
       },
     ],
     stays: [
@@ -57,16 +81,19 @@ function buildLinks(
         name: 'Airbnb',
         logo: '🏠',
         url: `https://www.airbnb.com/s/${enc(d)}/homes?checkin=${ci}&checkout=${co}&adults=${adults}`,
+        prefilled: true,
       },
       {
         name: 'Booking.com',
         logo: '🏨',
         url: `https://www.booking.com/searchresults.html?ss=${enc(d)}&checkin=${ci}&checkout=${co}&group_adults=${adults}&no_rooms=1`,
+        prefilled: true,
       },
       {
         name: 'Hotels.com',
         logo: '🛎️',
         url: `https://www.hotels.com/search.do?q-destination=${enc(d)}&q-check-in=${ci}&q-check-out=${co}&q-rooms=1&q-room-0-adults=${adults}`,
+        prefilled: true,
       },
     ],
     activities: [
@@ -74,16 +101,19 @@ function buildLinks(
         name: 'Klook',
         logo: '🎡',
         url: `https://www.klook.com/en-IN/search/?query=${enc(d)}`,
+        prefilled: true,
       },
       {
         name: 'GetYourGuide',
         logo: '🎟️',
         url: `https://www.getyourguide.com/s/?q=${enc(d)}&date_from=${ci}&date_to=${co}&travelers=${adults}`,
+        prefilled: true,
       },
       {
         name: 'Viator',
         logo: '🗺️',
         url: `https://www.viator.com/search/${enc(d)}?startDate=${ci}&endDate=${co}&adults=${adults}`,
+        prefilled: true,
       },
     ],
   }
@@ -101,14 +131,16 @@ export function BookingLinksSection() {
   const [activeTab, setActiveTab] = useState<TabId>('flights')
 
   const dest = config.destination?.city
-  const origin = config.origin.iata || config.origin.city
+  const origin = config.origin.city
+  const originIata = config.origin.iata
   const checkin = config.dates.start ?? ''
   const checkout = config.dates.end ?? ''
   const adults = Math.max(1, config.group.adults + config.group.seniors)
 
   if (!dest) return null
 
-  const links = buildLinks(origin, dest, checkin, checkout, adults)
+  const links = buildLinks(origin, originIata, dest, checkin, checkout, adults)
+  const allPrefilled = links[activeTab].every((l) => l.prefilled)
 
   const nightCount = (() => {
     if (!checkin || !checkout) return null
@@ -181,7 +213,9 @@ export function BookingLinksSection() {
       </div>
 
       <p className="text-xs text-slate-400">
-        Links open pre-filled with your trip details.
+        {allPrefilled
+          ? 'Links open pre-filled with your trip details.'
+          : 'Some links open as a search page — pre-fill isn’t available for this route yet.'}
       </p>
     </div>
   )

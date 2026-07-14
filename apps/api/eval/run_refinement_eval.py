@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -224,7 +225,9 @@ async def run(live: bool, baseline_path: Path | None, results_path: Path | None 
         # without re-running — and re-paying for — the pipeline.
         saved = json.loads(results_path.read_text(encoding="utf-8"))
         results = saved["results"]
-        mode = f"{saved.get('mode', 'unknown')} (rescored from {results_path.name})"
+        # Strip any suffix a previous rescore appended so labels don't nest.
+        base_mode = re.sub(r" \(rescored from .*\)$", "", saved.get("mode", "unknown"))
+        mode = f"{base_mode} (rescored from {results_path.name})"
         print(f"Loaded {len(results)} saved case results ({mode}).")
         await _finish(dataset, results, mode, baseline_path)
         return

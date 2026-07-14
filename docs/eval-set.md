@@ -512,8 +512,8 @@ Known live defects dragging recall (fix before publishing): RF-004/RF-014/RF-016
 
 | ID | Input | Expected | Pass criteria | Priority |
 |---|---|---|---|---|
-| EXT-007 | `destination=Kyoto&limit=5` | 5 tips about Kyoto | `len(tips) == 5`; each has title, text_preview, source, post_url | P0 |
-| EXT-008 | `source` field values | Any destination | Each tip's `source` is one of: `r/travel`, `r/solotravel`, `TripAdvisor`, `Travel Blog`, `Lonely Planet`, `Nomadic Matt` | `source in ALLOWED_SOURCES` | P1 |
+| EXT-007 | `destination=Kyoto&limit=5` | 5 tips about Kyoto | `len(tips) == 5`; each has title, text_preview, source | P0 |
+| EXT-008 | `source` field values (v10.20 provenance rule) | Any destination | A community source (`r/<subreddit>`, with score and real permalink) appears only on live-fetched Reddit tips; every LLM/template tip is `General tip` with `score == 0` and empty `post_url` | `source == "General tip"` ⟺ tip is not from live Reddit | P0 |
 | EXT-009 | Cache hit on second call | Call same destination twice | Second call faster (< 50ms) and returns same results | Response is cached | P1 |
 | EXT-010 | `text_preview` length | Any tip | ≤ 250 characters | `len(text_preview) <= 250` | P1 |
 

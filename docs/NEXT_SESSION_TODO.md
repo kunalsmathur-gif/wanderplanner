@@ -1,69 +1,55 @@
-# Next-Session TODO — GTM Phase 1 Execution
+# Next-Session TODO — GTM Phase 1 wrap-up → Phase 2
 
-**Last updated:** 2026-07-13 (end of session, v10.19.0)
-**Context:** Executing the Phase 1 roadmap in [GTM_STRATEGY.md](GTM_STRATEGY.md). The recall bugs are fixed and the repeat live run scored **fidelity 0.904 / honesty 4-4** — the kill-criterion gate passes on numbers. Publishing needs one clean rerun (RF-010 was zeroed by transient Gemini 503s). A full UI/UX + copy audit was completed (findings below, **no changes made yet** — founder to prioritise).
+**Last updated:** 2026-07-14 (end of session, v10.20.0)
+**Context:** Phase 1 item 4 is **done and published**: the clean live rerun scored **fidelity 0.975 / recall 0.938 / inclusion+stability 1.000 / honesty 4-4**, and the comparison piece + both baseline reports now live in [docs/eval-results/](eval-results/README.md) (with the Claude verbal-honesty disclosure and the recording protocol). The two trust-critical audit items are fixed. Remaining Phase 1 surface is the rest of the UI/UX audit + the founder-blocked affiliate item.
 
 ---
 
 ## ✅ Done last session (for context)
 
-1. **Three zero-pin recall bugs diagnosed + fixed** (v10.19.0): root cause was named-interest **detection**, not diacritics — Gemini routed "zen gardens"/"Portuguese colonial heritage" into `themes` patches and answered the Bengaluru question conversationally. Fixes: broadened detection prompt (any concrete interest + question phrasings), deterministic themes-patch backstop in `_apply_interest_pinning`, NFKD diacritic folding in `_normalize`, and exact>containment>fuzzy `_best_osm_match` (live repro caught "Ginkaku-ji" being pinned as "Kinkaku-ji" via first-fuzzy-hit).
-2. **Pin inclusion made structural** (`itinerary_chain._enforce_pins`): tag repair, duplicate untagging, dropped-pin injection after generation on every path. Live inclusion/stability now 1.00 on every pinned case.
-3. **Expansion prompt**: anti-distractor rule (RF-001 Borough Market) + heritage-quarter allowance (RF-014 Fontainhas).
-4. **Repeat live run**: fidelity 0.904 · recall 0.854 · inclusion 0.938 · stability 0.938 · precision 0.917 · honesty 4/4. Both baseline reports regenerated in `eval/out/`. 219 unit tests pass; offline gate 1.000.
+1. **Clean live rerun (2026-07-14, gemini-2.5-flash):** fidelity 0.975 · recall 0.938 · inclusion 1.000 · stability 1.000 · precision 0.979 · honesty 4/4. RF-010 Singapore 0.00 → 1.00 (transient-503 diagnosis confirmed); RF-012 Mumbai 0.33 → 0.67 with no code change. Remaining recall misses: RF-001 London / RF-009 LA / RF-012 Mumbai, all 0.67 (expansion doesn't propose one truth-set place each).
+2. **Published `docs/eval-results/`:** comparison piece ("Can your AI travel planner prove it listened?") + verbatim reports vs ChatGPT and vs Claude Sonnet, dated 2026-07-14. Piece includes recording protocol, the mandatory Claude verbal-honesty disclosure, and a "what we are NOT claiming" section. **Founder action: adapt/post externally** (blog, r/travel, IH — GTM §6).
+3. **Trust-critical audit fixes (v10.20.0):**
+   - `travel_tips.py` — fabricated provenance removed; "General tip" labelling enforced in code (source/score/post_url overridden regardless of model output); 4 new unit tests lock the rule; frontend renders no-URL tips as plain cards.
+   - Booking deep-links — Google Flights on supported `?q=` natural-language format; NEW `lib/cityCodes.ts` (~75-city static IATA map) gives Skyscanner/MMT real deep-links (verified: `del/tyo/261114/261116`, `DEL-TYO-14/11/2026_TYO-DEL-16/11/2026`, correct `intl` flag) with honest search-page fallback + dynamic sidebar copy when codes/dates are missing.
+   - Dev fixture now seeds Delhi origin + real dates (prefill path exercisable locally); rickroll mock id removed (audit §3.4).
+4. 223 unit tests pass · tsc clean · eval rescore label no longer nests.
 
-## ⏭️ Remaining Phase 1 items (in execution order)
+## ⏭️ Remaining items (in suggested order)
 
-### 1. One clean live rerun, then publish — NEXT UP
+### 1. UI/UX audit follow-ups — remaining items ([UI_UX_AUDIT_2026-07-13.md](UI_UX_AUDIT_2026-07-13.md))
 
-- **RF-010 Singapore scored 0.00 purely from persistent Gemini 503s** during expansion (log line: "interest expansion failed for 'hawker centres'"). Rerun `python -m eval.run_refinement_eval --live` (~$0.40, `GEMINI_MODEL=gemini-2.5-flash` process override) at a less congested hour; expect recall ≈0.90+.
-- Optional recall chase before publishing: **RF-012 Mumbai (0.33)** — live expansion proposed Film City but not Mannat/Prithvi Theatre; consider whether the tightened anti-distractor rule is now too conservative for celebrity-home/theatre venues, or accept and disclose.
-- Then `--results ... --baseline` for both baselines and **publish deliberately**: commit the two reports out of gitignored `eval/out/` + write the comparison piece. Must state the Claude verbal-honesty nuance and the recording protocol — credibility depends on not overclaiming.
+§1.1/§1.2/§3.4 are done. Suggested fix order from the audit:
 
-### 2. UI/UX + copy audit follow-ups (2026-07-13 audit — identified only, NOT yet fixed; founder to prioritise)
+- **§2.1 dark-mode gaps + §2.2 error copy** as one polish pass: `ItineraryOverview.tsx:66`, `ExpenseBreakupCard.tsx:39`, `FeasibilityCard.tsx:124`, `BookingLinksSection.tsx` (tabs/cards still `#1E40AF`/light-only), `PdfDownloadButton.tsx`, `ErrorState.tsx` (old palette + "backend is running" copy; also `ConversationalWizard.tsx:1270`). Deleting dead `WizardForm.tsx` first shrinks the surface (old wizard sections carry the pre-rebrand palette).
+- **§2.3–§2.5**: on-demand PDF generation (`pdf().toBlob()` on click), human dates ("Fri, 14 Nov") in day tabs + share page, one `Intl.NumberFormat('en-IN')` currency formatter app-wide, soften `CurrencyWidget` failure copy, clarify BestTime "Peak" vs "Best" labels.
+- **§3.2 share-page SSR + OG tags** (own milestone — the viral surface unfurls blank in WhatsApp/Slack; 📌/💎 badges also missing there).
+- **§3.1/§3.3**: per-page `<title>`/metadata for `/login` `/signup` `/account` `/t/[slug]`; aria-labels for icon-only buttons.
 
-Full audit with file-level detail and suggested fix order: [UI_UX_AUDIT_2026-07-13.md](UI_UX_AUDIT_2026-07-13.md). Summary:
+### 2. Optional eval recall chase (only if publishing follow-ups need it)
 
-**Trust-critical (fix before any public push — they contradict the verified-truth wedge):**
-- `routers/travel_tips.py` — the Gemini prompt generates tips that *"read like they come from real travelers"* and labels them `r/travel` / `TripAdvisor` / `Lonely Planet` / `Nomadic Matt`; `_fallback_tips` hardcodes fake upvote counts (127/94/156/203). **Fabricated provenance on a production surface.** Real Reddit tips (also fetched) are fine — label LLM/fallback tips honestly ("General tip") or drop them.
-- Booking deep-links likely broken: Google Flights uses the retired `#search;f=...` fragment syntax (opens bare homepage); Skyscanner/MakeMyTrip URL templates expect IATA/city codes but receive raw city names. The sidebar promises "Links open pre-filled with your trip details." Affiliate tracking (item 3 below) builds on these — fix formats first.
+RF-001/RF-009/RF-012 all miss on the same mode: interest expansion not proposing one truth-set place. The anti-distractor rule may be too conservative for celebrity-home/theatre venues (Mannat, Prithvi Theatre). Decide: tune expansion or accept + already-disclosed. Any change = rerun live (~$0.40) before touching the published numbers.
 
-**High (visible polish/correctness):**
-- Dark mode gaps — hardcoded light-only styling in `ItineraryOverview.tsx:66`, `ExpenseBreakupCard.tsx:39`, `FeasibilityCard.tsx:124`, `BookingLinksSection.tsx:162`, `PdfDownloadButton.tsx` (slate-100/200), `ErrorState.tsx` (also uses the OLD `#1E40AF` palette, not `--_primary`).
-- Developer-speak in user-facing errors: "Check that the backend is running and retry" (`ErrorState.tsx:19`), "please make sure the backend is running" (`ConversationalWizard.tsx:1270`).
-- `PDFDownloadLink` renders the PDF document eagerly on every dashboard mount (CPU cost on load) — switch to on-demand generation.
-- Raw ISO dates in UI: day tabs (`ItineraryTimeline.tsx:190`) and share page show `2026-11-14` instead of "Fri, 14 Nov".
-- Currency display inconsistent: metrics show `INR 150,000` (`Column1Metrics.tsx:63`) vs landing's `₹1,50,000` (Indian grouping); pick one formatter app-wide.
-- `CurrencyWidget` surfaces raw "Currency rates unavailable." in the sidebar — degrade silently or soften copy.
+### 3. Affiliate tracking — blocked on founder
 
-**Medium (a11y + metadata):**
-- `/login`, `/signup`, `/account`, share page don't set per-page `<title>`/metadata (all render the landing title; hurts SEO + tab identification). Share page (`/t/[slug]`) is client-fetched — no OG tags, so shared links unfurl blank in WhatsApp/Slack; it's a growth surface, consider SSR + OG image.
-- Unnamed icon-only buttons (no aria-label): currency refresh (`Column1Metrics` area), BookingHub tab buttons, `/dev` page cards.
-- Share page doesn't render 📌 pinned / 💎 gem badges — the differentiating features are invisible on the viral surface.
-- Mock/dev YouTube link is a rickroll (`dev/mockData.ts`, `dQw4w9WgXcQ`) — harmless in dev, embarrassing if mock path ever serves prod.
+Register Viator / GetYourGuide / Skyscanner affiliate programs and supply IDs. Link formats are now fixed (v10.20.0), so the code side is a small param-append in `BookingLinksSection.tsx` + `cityCodes.ts` coverage check.
 
-**Verified OK (no action):** mobile bottom-tab layout (Itinerary/Overview/Map & Tips, no horizontal overflow), landing copy + FAQ, wizard conversational flow + chips, account page (delete confirmation done right), share-page expired-link state, PolaroidCard theming (an automation-pane artifact initially looked like a dark-mode bug — it isn't one).
+## 🔧 Operational / hygiene items (carried over)
 
-### 3. Affiliate tracking on existing deep-links
-
-- **Blocked on founder action**: register for Viator, GetYourGuide, Skyscanner affiliate programs, then supply the IDs.
-- Code side is small: append affiliate params to the booking deep-links — but fix the broken link formats (audit item above) first.
-
-## 🔧 Operational / hygiene items
-
-- **GEMINI_MODEL note:** local `.env` still says `gemini-2.5-flash-lite` (503-congested on 2026-07-13 again); both live evals ran with process-level `GEMINI_MODEL=gemini-2.5-flash`. Consider switching the default.
-- **E2E of the pinned-POI positive path with real data**: needs `osm_pois` ingested + signed-in session. Flow: sign in → London trip → Anya: "I'm a huge Harry Potter fan" → confirm 📌 pins, in-place regeneration, diff chips. (The v10.19 themes-backstop path could also be E2E'd: "add some zen gardens to my trip".)
-- **Run corpus ingestion once locally** (`ingest_itinerary_corpus()`, needs `GEMINI_API_KEY`) so v10.15 retrieval, gem intel and pin verification have real data.
-- **E2E check of gems in a real generation** (crowd dial = Hidden Gems → 💎 items with provenance).
-- **`WizardForm.tsx` is dead code** (`LLMWizard` is live) — decide delete vs mount; crowd-dial UI in `PaceBudgetSection.tsx` unreachable until then. (Old wizard sections also carry the pre-rebrand `#1E40AF` palette — deleting them shrinks the dark-mode fix surface.)
-- **Dependabot: google-genai → 2.10.0**: when merged, add `ThinkingConfig(thinking_budget=0)` to `interest_expansion_chain.py` (cap back to ~512) and consider same for `extract_trip_chain.py`.
-- `HIDDEN_GEM`/`PINNED` admin metrics once real traffic exists · optional §4U extension: point `run_rag_eval.py` at `retrieve_context()`.
+- **GEMINI_MODEL:** local `.env` still `gemini-2.5-flash-lite` (503-congested repeatedly); live evals use process-level `gemini-2.5-flash`. Consider switching the default.
+- **E2E pinned-POI positive path with real data** (needs `osm_pois` ingested + signed-in session): London trip → "I'm a huge Harry Potter fan" → 📌 pins, in-place regen, diff chips. Also the themes-backstop path ("add some zen gardens to my trip").
+- **Corpus ingestion once locally** (`ingest_itinerary_corpus()`, needs `GEMINI_API_KEY`) for v10.15 retrieval/gem intel/pin verification with real data.
+- **E2E gems check** (crowd dial = Hidden Gems → 💎 with provenance).
+- **`WizardForm.tsx` dead code** — decide delete vs mount (crowd-dial UI in `PaceBudgetSection.tsx` unreachable until then).
+- **Dependabot google-genai → 2.10.0**: when merged, add `ThinkingConfig(thinking_budget=0)` to `interest_expansion_chain.py` (cap back to ~512); consider same for `extract_trip_chain.py`.
+- `HIDDEN_GEM`/`PINNED` admin metrics once real traffic exists · optional §4U: point `run_rag_eval.py` at `retrieve_context()`.
+- Windows gotcha: `git commit -m` with embedded double quotes breaks in PowerShell 5.1 — write message to a file, use `git commit -F`.
 
 ## 💰 Deferred by cost decision (revisit later)
 
 - **BestTime.app live crowd-forecast layer** (paid API) — premium/B2B upsell candidate.
-- **Booking.com affiliate pricing for accommodation** — blocked on partner-account approval.
+- **Booking.com affiliate accommodation pricing** — blocked on partner approval.
 
-## 📋 Phase 2 preview (don't start until Phase 1 publish is done)
+## 📋 Phase 2 preview (publish is done — Phase 2 can start once founder signs off on the piece)
 
 Agent mode (branded PDF export, markup field, client-shareable link) · live budget grounding (Amadeus free tier, IRCTC fare tables) · hand-onboard 10 agents. Full detail + kill/go criteria in [GTM_STRATEGY.md](GTM_STRATEGY.md) §5.

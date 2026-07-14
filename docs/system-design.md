@@ -820,6 +820,9 @@ Parameters: budget_fit, weather, visa_ease, family_fit, romance, food_scene,
 ```
 Response: { tips: TravelTip[], reddit_highlights: RedditHighlight[] }
 Cached: 1 hour per destination
+Provenance (v10.20): only live-fetched Reddit tips carry a community source
+label and score; LLM/template tips are forced to source="General tip",
+score=0, post_url="" in code — fabricated provenance is structurally impossible.
 ```
 
 #### `GET /api/best-time/{city}`

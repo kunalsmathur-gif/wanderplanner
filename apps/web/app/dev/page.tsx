@@ -15,11 +15,15 @@ export default function DevPage() {
   const closeWizard = useAppStore((state) => state.closeWizard)
   const setStep3View = useAppStore((state) => state.setStep3View)
   const setDestination = useTripConfigStore((state) => state.setDestination)
+  const setOrigin = useTripConfigStore((state) => state.setOrigin)
   const updateConfig = useTripConfigStore((state) => state.updateConfig)
   const updateBudget = useTripConfigStore((state) => state.updateBudget)
+  const updateDates = useTripConfigStore((state) => state.updateDates)
 
   useEffect(() => {
     setDestination({ city: 'Tokyo', country: 'JP', lat: 35.6762, lon: 139.6503 })
+    setOrigin({ city: 'Delhi', iata: '', lat: 28.6139, lon: 77.209 })
+    updateDates({ start: '2026-11-14', end: '2026-11-16', flexible: false })
     updateConfig({
       purpose: 'explore',
       personas: ['adventure_seeker', 'foodie'],
@@ -28,7 +32,7 @@ export default function DevPage() {
     updateBudget({ amount: 150000, currency: 'INR' })
     setDays(MOCK_DAYS, 87)
     setStatus('success')
-  }, [setDays, setDestination, setStatus, updateBudget, updateConfig])
+  }, [setDays, setDestination, setOrigin, setStatus, updateBudget, updateConfig, updateDates])
 
   function goHome(mode: 'wizard' | 'itinerary' | 'comparison') {
     if (mode === 'wizard') {
