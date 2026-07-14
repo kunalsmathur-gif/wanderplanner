@@ -50,16 +50,16 @@ export function FeasibilityCard() {
 
   if (loading) {
     return (
-      <div className="border border-slate-200 rounded-lg p-4 flex items-center gap-3 bg-slate-50">
-        <div className="w-4 h-4 border-2 border-[#1E40AF] border-t-transparent rounded-full animate-spin shrink-0" />
-        <p className="text-sm text-slate-500">Checking budget feasibility…</p>
+      <div className="border border-[var(--_border)] rounded-lg p-4 flex items-center gap-3 bg-[var(--_muted)]">
+        <div className="w-4 h-4 border-2 border-[var(--_primary)] border-t-transparent rounded-full animate-spin shrink-0" />
+        <p className="text-sm text-[var(--_muted-fg)]">Checking budget feasibility…</p>
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="border border-amber-200 rounded-lg p-4 bg-amber-50 text-sm text-amber-700">
+      <div className="border border-amber-200 rounded-lg p-4 bg-amber-50 text-sm text-amber-700 dark:border-amber-800/40 dark:bg-amber-950/30 dark:text-amber-400">
         ⚠️ Could not fetch cost estimate. Proceed with caution.
       </div>
     )
@@ -74,39 +74,39 @@ export function FeasibilityCard() {
       className={[
         'border rounded-lg p-4 space-y-3',
         feasible
-          ? 'border-green-200 bg-green-50'
-          : 'border-red-200 bg-red-50',
+          ? 'border-green-200 bg-green-50 dark:border-green-800/40 dark:bg-green-950/30'
+          : 'border-red-200 bg-red-50 dark:border-red-800/40 dark:bg-red-950/30',
       ].join(' ')}
     >
       {/* Verdict */}
-      <p className={`text-sm font-semibold ${feasible ? 'text-green-800' : 'text-red-800'}`}>
+      <p className={`text-sm font-semibold ${feasible ? 'text-green-800 dark:text-green-300' : 'text-red-800 dark:text-red-300'}`}>
         {verdict}
       </p>
 
       {/* Cost breakdown */}
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-        <span className="text-slate-500">✈️ Flights (round-trip)</span>
-        <span className="text-right font-medium text-slate-700">{fmt(breakdown.flights_inr)}</span>
-        <span className="text-slate-500">🛂 Visa fees</span>
-        <span className="text-right font-medium text-slate-700">{fmt(breakdown.visa_inr)}</span>
-        <span className="text-slate-500">🏨 Accommodation</span>
-        <span className="text-right font-medium text-slate-700">{fmt(breakdown.accommodation_inr)}</span>
-        <span className="text-slate-500">🍜 Daily expenses</span>
-        <span className="text-right font-medium text-slate-700">{fmt(breakdown.daily_expenses_inr)}</span>
-        <span className="font-semibold text-slate-700 pt-1 border-t border-slate-200">Total estimate</span>
-        <span className={`text-right font-bold pt-1 border-t border-slate-200 ${feasible ? 'text-green-700' : 'text-red-700'}`}>
+        <span className="text-[var(--_muted-fg)]">✈️ Flights (round-trip)</span>
+        <span className="text-right font-medium text-[var(--_fg)]">{fmt(breakdown.flights_inr)}</span>
+        <span className="text-[var(--_muted-fg)]">🛂 Visa fees</span>
+        <span className="text-right font-medium text-[var(--_fg)]">{fmt(breakdown.visa_inr)}</span>
+        <span className="text-[var(--_muted-fg)]">🏨 Accommodation</span>
+        <span className="text-right font-medium text-[var(--_fg)]">{fmt(breakdown.accommodation_inr)}</span>
+        <span className="text-[var(--_muted-fg)]">🍜 Daily expenses</span>
+        <span className="text-right font-medium text-[var(--_fg)]">{fmt(breakdown.daily_expenses_inr)}</span>
+        <span className="font-semibold text-[var(--_fg)] pt-1 border-t border-[var(--_border)]">Total estimate</span>
+        <span className={`text-right font-bold pt-1 border-t border-[var(--_border)] ${feasible ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
           {fmt(breakdown.total_estimated_inr)}
         </span>
       </div>
 
       {/* Buffer or shortfall */}
       {feasible && buffer_inr > 0 && (
-        <p className="text-xs text-green-700">
+        <p className="text-xs text-green-700 dark:text-green-400">
           🟢 Remaining budget: <strong>{fmt(buffer_inr)}</strong> for emergencies & extras
         </p>
       )}
       {!feasible && shortfall_inr > 0 && (
-        <p className="text-xs text-red-700">
+        <p className="text-xs text-red-700 dark:text-red-400">
           🔴 Budget short by <strong>{fmt(shortfall_inr)}</strong>
         </p>
       )}
@@ -114,24 +114,24 @@ export function FeasibilityCard() {
       {/* Alternatives */}
       {alternatives.length > 0 && (
         <div>
-          <p className="text-xs font-semibold text-slate-600 mb-1.5">
+          <p className="text-xs font-semibold text-[var(--_fg-muted)] mb-1.5">
             {feasible ? '💡 Similar destinations to consider:' : '💡 Destinations that fit your budget:'}
           </p>
           <div className="space-y-2">
             {alternatives.map((alt) => (
               <div
                 key={alt.city}
-                className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs"
+                className="bg-[var(--_card)] border border-[var(--_border)] rounded-lg px-3 py-2 text-xs"
               >
                 <div className="flex justify-between items-start">
-                  <span className="font-semibold text-slate-700">{alt.city}, {alt.country}</span>
-                  <span className="text-[#047857] font-semibold">{fmt(alt.estimated_total_inr)}</span>
+                  <span className="font-semibold text-[var(--_fg)]">{alt.city}, {alt.country}</span>
+                  <span className="text-[var(--_success)] font-semibold">{fmt(alt.estimated_total_inr)}</span>
                 </div>
-                <p className="text-slate-500 mt-0.5">{alt.why_cheaper}</p>
+                <p className="text-[var(--_muted-fg)] mt-0.5">{alt.why_cheaper}</p>
                 {alt.similar_experiences.length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-1">
                     {alt.similar_experiences.map((exp) => (
-                      <span key={exp} className="bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">{exp}</span>
+                      <span key={exp} className="bg-[var(--_muted)] text-[var(--_muted-fg)] rounded px-1.5 py-0.5">{exp}</span>
                     ))}
                   </div>
                 )}
@@ -141,7 +141,7 @@ export function FeasibilityCard() {
         </div>
       )}
 
-      <p className="text-xs text-slate-400 italic">{disclaimer}</p>
+      <p className="text-xs text-[var(--_muted-fg)] italic">{disclaimer}</p>
     </div>
   )
 }

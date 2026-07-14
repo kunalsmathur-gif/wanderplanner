@@ -17,7 +17,7 @@ export function PdfDownloadButton() {
   if (!days.length) return (
     <button
       disabled
-      className="w-full h-9 rounded-lg text-xs font-semibold bg-slate-100 text-slate-400 cursor-not-allowed"
+      className="w-full h-9 rounded-lg text-xs font-semibold bg-[var(--_muted)] text-[var(--_muted-fg)] cursor-not-allowed"
     >
       ⬇️ Download PDF
     </button>
@@ -41,8 +41,8 @@ export function PdfDownloadButton() {
           className={[
             'w-full h-9 rounded-lg text-xs font-semibold transition-all',
             loading
-              ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-              : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200',
+              ? 'bg-[var(--_muted)] text-[var(--_muted-fg)] cursor-not-allowed'
+              : 'bg-[var(--_muted)] text-[var(--_fg)] hover:bg-[var(--_border)]/40 border border-[var(--_border)]',
           ].join(' ')}
         >
           {loading ? 'Preparing PDF…' : '⬇️ Download PDF'}

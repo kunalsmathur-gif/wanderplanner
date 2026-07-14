@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-13 (v10.19.0)
 **Scope:** Landing, auth pages, conversational wizard, itinerary workspace (desktop + mobile + dark mode), chat panel, share page, account page, and the API surfaces they render. Reviewed against the running app (dev servers, mock Tokyo itinerary via `/dev`) plus source.
-**Status:** §1.1 + §1.2 (trust-critical) and §3.4 **fixed in v10.20.0 (2026-07-14)** — honest tip provenance enforced in code, flight deep-links rebuilt on working formats (`lib/cityCodes.ts` static IATA map + honest fallback copy), rickroll mock id removed. All other items remain findings only. Tracking summary lives in [NEXT_SESSION_TODO.md](NEXT_SESSION_TODO.md) §2; this doc is the full record.
+**Status:** §1.1 + §1.2 (trust-critical) and §3.4 **fixed in v10.20.0 (2026-07-14)** — honest tip provenance enforced in code, flight deep-links rebuilt on working formats (`lib/cityCodes.ts` static IATA map + honest fallback copy), rickroll mock id removed. §2.1 + §2.2 **fixed in v10.21.0 (2026-07-15)** — all six flagged components moved onto the `--_*` token system (semantic colors via `dark:` variants), error copy de-jargonised, dead `WizardForm.tsx` + sections deleted; BookingHub tab `aria-label`s (part of §3.3) done in passing. All other items remain findings only. Tracking summary lives in [NEXT_SESSION_TODO.md](NEXT_SESSION_TODO.md) §2; this doc is the full record.
 
 ---
 

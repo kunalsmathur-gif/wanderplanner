@@ -151,30 +151,31 @@ export function BookingLinksSection() {
   })()
 
   return (
-    <div className="border-t border-slate-200 pt-4 space-y-3">
-      <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+    <div className="border-t border-[var(--_border)] pt-4 space-y-3">
+      <h3 className="text-xs font-semibold text-[var(--_muted-fg)] uppercase tracking-wide">
         🔗 Book This Trip
       </h3>
 
       {/* Pre-fill summary */}
-      <p className="text-xs text-slate-400 leading-relaxed">
-        {origin} → <span className="font-medium text-slate-600">{dest}</span>
+      <p className="text-xs text-[var(--_muted-fg)] leading-relaxed">
+        {origin} → <span className="font-medium text-[var(--_fg)]">{dest}</span>
         {checkin && ` · ${checkin}`}
         {nightCount && ` (${nightCount}n)`}
         {` · ${adults} adult${adults > 1 ? 's' : ''}`}
       </p>
 
       {/* Tabs */}
-      <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+      <div className="flex rounded-lg border border-[var(--_border)] overflow-hidden text-xs">
         {TABS.map((t) => (
           <button
             key={t.id}
             onClick={() => setActiveTab(t.id)}
+            aria-label={t.label}
             className={[
               'flex-1 py-1.5 font-medium transition-colors flex items-center justify-center gap-1',
               activeTab === t.id
-                ? 'bg-[#1E40AF] text-white'
-                : 'text-slate-500 hover:bg-slate-50',
+                ? 'bg-[var(--_primary)] text-[var(--_on-primary)]'
+                : 'text-[var(--_muted-fg)] hover:bg-[var(--_muted)]',
             ].join(' ')}
           >
             <span>{t.icon}</span>
@@ -191,18 +192,18 @@ export function BookingLinksSection() {
             href={link.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-between w-full px-3 py-2.5 rounded-lg border border-slate-200 bg-white hover:border-[#1E40AF] hover:bg-blue-50 transition-all group"
+            className="flex items-center justify-between w-full px-3 py-2.5 rounded-lg border border-[var(--_border)] bg-[var(--_card)] hover:border-[var(--_primary)] hover:bg-[var(--_muted)] transition-all group"
           >
             <div className="flex items-center gap-2">
               <span className="text-base">{link.logo}</span>
-              <span className="text-sm font-medium text-slate-700 group-hover:text-[#1E40AF]">
+              <span className="text-sm font-medium text-[var(--_fg)] group-hover:text-[var(--_primary)]">
                 {link.name}
               </span>
             </div>
             <svg
               width="14" height="14" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-              className="text-slate-400 group-hover:text-[#1E40AF] shrink-0"
+              className="text-[var(--_muted-fg)] group-hover:text-[var(--_primary)] shrink-0"
             >
               <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
               <polyline points="15 3 21 3 21 9" />
@@ -212,7 +213,7 @@ export function BookingLinksSection() {
         ))}
       </div>
 
-      <p className="text-xs text-slate-400">
+      <p className="text-xs text-[var(--_muted-fg)]">
         {allPrefilled
           ? 'Links open pre-filled with your trip details.'
           : 'Some links open as a search page — pre-fill isn’t available for this route yet.'}

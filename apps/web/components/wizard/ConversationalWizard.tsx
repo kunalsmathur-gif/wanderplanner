@@ -1267,7 +1267,7 @@ export function ConversationalWizard() {
       const isNetworkError = err instanceof TypeError || (err as { code?: string })?.code === 'ECONNREFUSED'
         || String(err).includes('Network Error') || String(err).includes('fetch')
       if (isNetworkError) {
-        addMessage(botMessage('⚠️ Could not reach the server. Please make sure the backend is running and try again.', { inputType: currentInputType }))
+        addMessage(botMessage('⚠️ Could not reach WanderPlanner. Please check your internet connection and try again.', { inputType: currentInputType }))
       } else if (currentField === 'origin' || (currentField === 'destination' && useTripConfigStore.getState().config.destination_mode === 'fixed')) {
         addMessage(botMessage("I couldn't find that location, please try again", { inputType: 'text' }))
       } else {

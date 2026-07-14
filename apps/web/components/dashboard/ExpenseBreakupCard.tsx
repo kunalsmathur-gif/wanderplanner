@@ -36,20 +36,20 @@ export function ExpenseBreakupCard() {
   const shortfall = breakdown.total_inr - budget.amount
 
   return (
-    <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
+    <div className="border border-[var(--_border)] rounded-lg overflow-hidden bg-[var(--_card)]">
       {/* Header — collapsible */}
       <button
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between px-3 py-2.5 bg-slate-50 hover:bg-slate-100 transition-colors"
+        className="w-full flex items-center justify-between px-3 py-2.5 bg-[var(--_muted)] hover:bg-[var(--_border)]/40 transition-colors"
       >
-        <span className="text-xs font-semibold text-slate-700">💰 Expense Breakup</span>
-        <span className="text-slate-400 text-xs">{open ? '▲' : '▼'}</span>
+        <span className="text-xs font-semibold text-[var(--_fg)]">💰 Expense Breakup</span>
+        <span className="text-[var(--_muted-fg)] text-xs">{open ? '▲' : '▼'}</span>
       </button>
 
       {open && (
         <div className="px-3 py-3 space-y-3">
           {/* Per-person / Group toggle */}
-          <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+          <div className="flex rounded-lg border border-[var(--_border)] overflow-hidden text-xs">
             {(['group', 'person'] as const).map((v) => (
               <button
                 key={v}
@@ -57,8 +57,8 @@ export function ExpenseBreakupCard() {
                 className={[
                   'flex-1 py-1 font-medium transition-colors',
                   view === v
-                    ? 'bg-[#1E40AF] text-white'
-                    : 'text-slate-500 hover:bg-slate-50',
+                    ? 'bg-[var(--_primary)] text-[var(--_on-primary)]'
+                    : 'text-[var(--_muted-fg)] hover:bg-[var(--_muted)]',
                 ].join(' ')}
               >
                 {v === 'group' ? `Group (${people})` : 'Per Person'}
@@ -74,10 +74,10 @@ export function ExpenseBreakupCard() {
               return (
                 <div
                   key={key}
-                  className="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0"
+                  className="flex items-center justify-between py-1.5 border-b border-[var(--_border)]/50 last:border-0"
                 >
-                  <span className="text-xs text-slate-500">{icon} {label}</span>
-                  <span className="text-xs font-medium text-slate-700">
+                  <span className="text-xs text-[var(--_muted-fg)]">{icon} {label}</span>
+                  <span className="text-xs font-medium text-[var(--_fg)]">
                     {fmtInr(Math.round(raw / divisor))}
                   </span>
                 </div>
@@ -86,14 +86,14 @@ export function ExpenseBreakupCard() {
           </div>
 
           {/* Total */}
-          <div className="flex items-center justify-between pt-1 border-t border-slate-300">
-            <span className="text-xs font-bold text-slate-800">Total</span>
+          <div className="flex items-center justify-between pt-1 border-t border-[var(--_border)]">
+            <span className="text-xs font-bold text-[var(--_fg)]">Total</span>
             <div className="text-right">
-              <p className="text-sm font-bold text-[#0F172A]">
+              <p className="text-sm font-bold text-[var(--_fg)]">
                 {fmtInr(Math.round(breakdown.total_inr / divisor))}
               </p>
               {breakdown.destination_currency_code && breakdown.total_destination_currency > 0 && (
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-[var(--_muted-fg)]">
                   ≈ {breakdown.destination_currency_code}{' '}
                   {Math.round(breakdown.total_destination_currency / divisor).toLocaleString()}
                 </p>
@@ -103,19 +103,19 @@ export function ExpenseBreakupCard() {
 
           {/* Budget warning */}
           {overBudget && (
-            <div className="bg-red-50 border border-red-200 rounded-lg px-2.5 py-2 text-xs text-red-700">
+            <div className="bg-red-50 border border-red-200 rounded-lg px-2.5 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:border-red-800/40 dark:text-red-400">
               ⚠️ Estimate exceeds your budget by{' '}
               <strong>{fmtInr(shortfall)}</strong>. Consider adjusting dates or accommodation.
             </div>
           )}
           {!overBudget && budget.amount > 0 && (
-            <div className="bg-green-50 border border-green-200 rounded-lg px-2.5 py-2 text-xs text-green-700">
+            <div className="bg-green-50 border border-green-200 rounded-lg px-2.5 py-2 text-xs text-green-700 dark:bg-green-950/30 dark:border-green-800/40 dark:text-green-400">
               ✅ Within budget — buffer of{' '}
               <strong>{fmtInr(budget.amount - breakdown.total_inr)}</strong>
             </div>
           )}
 
-          <p className="text-xs text-slate-400 italic">
+          <p className="text-xs text-[var(--_muted-fg)] italic">
             Estimates are approximate and based on average market rates.
           </p>
         </div>

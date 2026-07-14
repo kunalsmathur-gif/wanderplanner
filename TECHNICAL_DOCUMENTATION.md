@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.20.0 (Clean live run published — fidelity 0.975; trust-critical UI fixes: honest tip provenance + working booking deep-links)
+**Version:** 10.21.0 (UI/UX audit §2.1+§2.2: dark-mode token pass on six light-only components, plain-language error copy, dead WizardForm wizard deleted)
 **Last Updated:** July 13, 2026  
 **Status:** Production-ready MVP
 
@@ -1416,7 +1416,18 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.21.0 Changes (July 2026) — UI/UX audit §2.1+§2.2: dark-mode polish pass + plain-language error copy + dead-code deletion
+
+First of the remaining UI/UX-audit milestones (2026-07-13 audit, §2.1 dark-mode gaps + §2.2 developer-speak error copy), done as one polish pass. All changes are zero-LLM, CSS/copy-level — no behaviour or API changes.
+
+| Change | Detail |
+|---|---|
+| **DELETED** `components/wizard/WizardForm.tsx` + `components/wizard/sections/*` (8 files) | The legacy structured wizard was mounted nowhere (`LLMWizard` is the live path) and its sections carried the pre-rebrand `#1E40AF` palette — deleting it shrank the dark-mode fix surface, as the audit suggested. The crowd-style dial it contained is not lost product surface: `crowd_preference` is set conversationally via the live wizard/refine chain; the store default (`balanced`) is unchanged. |
+| **FIXED (dark mode)** `ItineraryOverview.tsx`, `ExpenseBreakupCard.tsx`, `FeasibilityCard.tsx`, `BookingLinksSection.tsx`, `PdfDownloadButton.tsx`, `ErrorState.tsx` | All six components moved off hardcoded light-only styling (`bg-white`, `border-slate-200`, pre-rebrand `#1E40AF`/`#0F172A`) onto the design-system tokens (`var(--_card)`, `var(--_border)`, `var(--_fg)`, `var(--_primary)`, …) so the `.dark` overrides apply. Semantic status colors (feasibility green/red, budget warnings, amber error) use explicit `dark:` variants matching the existing `ItineraryTimeline`/`BookingHub` idiom. BookingHub category tab buttons also gained `aria-label`s (audit §3.3, done in passing while touching the markup). |
+| **FIXED (copy)** `ErrorState.tsx` LLM_ERROR hint + `ConversationalWizard.tsx` network-error message | "Check that the backend is running and retry" → "Something went wrong on our side while generating your itinerary — please try again in a moment"; "please make sure the backend is running" → "check your internet connection and try again". Users don't run backends. |
+| **Verified** | `tsc --noEmit` clean · web suite 36 passed · dark-mode verified live on the dev dashboard via computed styles (card `#071522`, border `#0E3A57`, active tab `#38BDF8` under `.dark`) — note the browser-automation pane freezes CSS transitions (the audit's known artifact), so verification disabled `transition` per element before sampling. Backend untouched (no pytest run needed). |
 
 ### v10.20.0 Changes (July 2026) — Clean live run PUBLISHED (fidelity 0.975) + trust-critical audit fixes (honest tip provenance, working booking deep-links)
 
