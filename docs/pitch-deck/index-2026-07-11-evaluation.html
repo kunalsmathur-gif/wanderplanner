@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WanderPlanner · Startup Pitch Deck</title>
+<title>WanderPlanner · Product & Startup Evaluation</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700;800;900&family=JetBrains+Mono:wght@300;400;500;600&family=Noto+Sans+SC:wght@200;300;400;500;700;900&display=swap" rel="stylesheet">
@@ -1218,186 +1218,67 @@
 
 <div id="deck">
 
-<!-- ============================================================
-     SLIDES 插入区 · 在此处填充所有 <section class="slide ..."> 页面
-     页面骨架参考 references/layouts-swiss.md
-     主题色配置参考 references/themes-swiss.md
-     ============================================================ -->
-<!-- SLIDES_HERE · 在此处粘贴 <section class="slide ..."> 页面块
-     - 页面骨架直接从 references/layouts-swiss.md 拷贝
-     - data-animate="..." 必须命中下方 RECIPES 字典里的已有 recipe 名之一(P23/P24 可复用 grid-reveal)
-     - 主题色配置参考 references/themes-swiss.md (默认 IKB 克莱因蓝) -->
-
-<!-- ============ 示例:第 1 页 · Hero Cover · IKB 满屏 + ASCII 呼吸场(默认推荐) ============
-     ⚠️ P0 对齐法则(每页都要过):
-     1. .canvas-card 已自带 padding:5.6vh 5vw 4.4vh,所有页面内容直接放在 canvas-card 子元素里,
-        子元素**不要再加水平 padding**,否则会比 chrome-min 内缩一圈、左右不对齐.
-     2. .slide.split .canvas-card{padding:0} 已被 CSS 覆盖,
-        split 模式下两个 .half 自己控制 padding(常用 5.6vh 3.6vw 4.4vh),与本规则不冲突.
-     3. 大字号一律用双约束 font-size:min(Xvw, Yvh),Y ≥ X * 1.6 才不会在 16:9 屏被高度截断.
-     4. kicker 必须在大标题"上方",不是左侧——禁止 grid-template-columns:auto 1fr 把它们压成左右.
-
-     封面/封底设计语言(默认 IKB 满屏 + ASCII 呼吸场):
-     - section 用 .slide.accent (满屏 IKB,不是 light 白底)
-     - canvas-card 内首位插入 <canvas class="ascii-bg" aria-hidden="true">,本文件底部 IIFE 自动启动
-     - 主标题反白 weight 200,强调字用斜体而非 var(--accent)(底已是蓝,蓝压蓝看不见)
-     - 不要再放编号大字"01"——chrome-min 已经标 01/NN -->
-<!-- SLIDE 01 · S01 Cover -->
-<section data-layout="S01" class="slide accent" data-animate="hero">
+<section class="slide accent hero dark" data-layout="S01" data-animate="hero">
   <div class="canvas-card">
     <canvas class="ascii-bg" aria-hidden="true"></canvas>
     <div class="chrome-min">
-      <div class="l">WanderPlanner · Founder Pitch Deck</div>
-      <div class="r">SS · 2026.07.14 · 01 / 15</div>
+      <div class="l">WanderPlanner · Product &amp; Startup Evaluation</div>
+      <div class="r">IKB SWISS · 26.07.03 · 01 / 14</div>
     </div>
-    <div style="flex:1;padding:0;display:grid;grid-template-rows:auto 1fr auto;gap:2.6vh">
-      <div data-anim="kicker" class="t-meta" style="color:rgba(255,255,255,.78);letter-spacing:.22em">INDIA · AI TRIP PLANNING · SEED-STAGE</div>
-      <h1 data-anim="title" style="align-self:end;font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(10vw,17vh);line-height:.94;letter-spacing:-.025em;color:#fff">Wander<span style="font-style:italic;font-weight:300">Planner</span></h1>
+    <div style="flex:1;padding:0;display:grid;grid-template-rows:auto auto 1fr auto;gap:2.2vh">
+      <div data-anim="kicker" class="t-meta" style="color:rgba(255,255,255,.78);letter-spacing:.22em">AI TRAVEL CONCIERGE · INDIA-FIRST WEDGE</div>
+      <div style="display:flex;flex-direction:column;gap:1.6vh;max-width:22ch">
+        <h1 data-anim="title" style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(11vw,18vh);line-height:.92;letter-spacing:-.03em;color:#fff">WanderPlanner</h1>
+        <div data-anim="lead" style="font-family:var(--sans),var(--sans-zh);font-size:min(3.2vw,5.8vh);line-height:1.08;letter-spacing:-.02em;font-weight:300;color:rgba(255,255,255,.92);max-width:18ch">AI Travel Concierge — Built for India, Ready for the World</div>
+      </div>
+      <div></div>
       <div data-anim="bottom" style="display:grid;grid-template-rows:auto auto;gap:1.6vh;border-top:1px solid rgba(255,255,255,.22);padding-top:2vh">
-        <div data-anim="lead" class="lead" style="max-width:58ch;color:rgba(255,255,255,.86);font-weight:300">AI trip planning built for how India actually plans &mdash; and books &mdash; a trip. One engine, two surfaces: a free Hinglish concierge for travellers, and the AI copilot India's 50,000+ offline travel agents can't get anywhere else.</div>
-        <div style="display:flex;justify-content:space-between;align-items:end">
-          <div class="t-meta" style="color:rgba(255,255,255,.6)">Solo founder &middot; nights &amp; weekends &middot; pre-revenue</div>
-          <div class="t-meta" style="color:rgba(255,255,255,.6)">&rarr; swipe / arrow keys</div>
+        <div class="lead" style="max-width:60ch;color:rgba(255,255,255,.86);font-weight:400">A product overview and independent startup evaluation — covering positioning, target users, pain points, pilot scope, commercial roadmap, and an honest go/no-go verdict.</div>
+        <div style="display:flex;justify-content:space-between;align-items:end;gap:2vw">
+          <div class="t-meta" style="color:rgba(255,255,255,.6)">Product &amp; Startup Evaluation · July 2026 · Solo-built, pre-launch MVP</div>
+          <div class="t-meta" style="color:rgba(255,255,255,.6)">→ swipe / arrow keys</div>
         </div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- SLIDE 02 · S03 Statement (two-half) · What is WanderPlanner -->
-<section data-layout="S03" class="slide hero light" data-animate="statement">
+<section class="slide light" data-layout="S13" data-animate="three-forces">
   <div class="canvas-card">
-    <div class="chrome-min">
-      <div class="l">01 &middot; What is WanderPlanner</div>
-      <div class="r">02 / 15</div>
+    <div class="chrome-min"><div class="l">Positioning</div><div class="r">02 / 14</div></div>
+    <div data-anim="line" style="display:flex;flex-direction:column;gap:1.2vh">
+      <div class="t-cat">S13 · Three Forces Cards</div>
+      <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(6.6vw,11.6vh);line-height:.96;letter-spacing:-.03em">What is WanderPlanner?</div>
     </div>
-    <div class="split-half" style="margin-top:2vh">
-      <div class="half" style="padding:0 4vw 0 0">
-        <div class="t-cat">THE PRODUCT</div>
-        <h2 class="h-hero" style="font-size:min(6.6vw,12vh);margin-top:2vh">An AI travel<br>concierge, not<br>a form.</h2>
-        <p class="lead" style="margin-top:3vh;max-width:34ch">Anya is a conversational AI &mdash; type or talk to her in English or Hinglish &mdash; that turns "yaar Bali trip 7 days, budget 1.5 lakh types" into a day-by-day itinerary, then stays on as a live chat to refine it.</p>
+    <div data-anim="up" style="flex:1;display:grid;grid-template-columns:5fr 11fr;gap:1.6vw;align-items:stretch;margin-top:4vh">
+      <div class="card-ink" style="padding:3vh 1.8vw;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;border-radius:0">
+        <span class="dot-mat dense" style="position:absolute;right:-1vw;top:-2vh;width:14vw;height:18vh;opacity:.22"></span>
+        <div style="position:relative;z-index:1;display:flex;flex-direction:column;gap:1.6vh">
+          <div class="t-cat on-dark">Anya · Concierge Layer</div>
+          <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(3.6vw,6.4vh);line-height:1.02;letter-spacing:-.02em;color:#fff">WanderPlanner is a free, no-signup AI travel concierge.</div>
+        </div>
+        <div style="position:relative;z-index:1;font-family:var(--sans),var(--sans-zh);font-size:clamp(18px,1.2vw,24px);line-height:1.55;color:rgba(255,255,255,.82)">Talk to Anya — by voice or text — and get a complete day-by-day itinerary in minutes.</div>
       </div>
-      <div class="half r-border" style="padding:0 0 0 4vw">
-        <div class="t-cat">WHAT SHIPS TODAY</div>
-        <ul class="body" style="margin-top:2vh;display:flex;flex-direction:column;gap:1.6vh;list-style:none;opacity:1">
-          <li class="t-body">&mdash; Voice-first wizard (Anya), free account required, Google SSO or email</li>
-          <li class="t-body">&mdash; RAG-grounded generation: Reddit + Wikivoyage + a real-traveller itinerary corpus</li>
-          <li class="t-body">&mdash; Hidden-gem crowd dial: Iconic &harr; Off-beat, with visible community provenance</li>
-          <li class="t-body">&mdash; Hard-pinned refinements: named interests become verified, must-include stops</li>
-          <li class="t-body">&mdash; Maps, budget tracking, booking hub, scrapbook PDF export, shareable trip link</li>
-        </ul>
-        <div class="t-meta" style="margin-top:auto;padding-top:2vh;border-top:1px solid var(--border-subtle)">Next.js 16 + FastAPI + Gemini 2.5 Flash + Qdrant hybrid search</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- SLIDE 03 · S19 Four Cards · Segments -->
-<section data-layout="S19" class="slide light" data-animate="four-cards">
-  <div class="canvas-card">
-    <div class="chrome-min">
-      <div class="l">02 &middot; Who WanderPlanner Serves</div>
-      <div class="r">03 / 15</div>
-    </div>
-    <div data-anim="line" style="display:flex;flex-direction:column;gap:2vh;margin-bottom:5vh">
-      <div style="width:80px;height:3px;background:var(--accent)"></div>
-      <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(4.4vw,8vh);line-height:1.02;letter-spacing:-.02em">Four segments,<br>one generation engine</div>
-    </div>
-    <div data-anim="up" style="display:grid;grid-template-columns:repeat(4,1fr);gap:2.6vw;flex:1">
-      <div class="fc-col">
-        <div class="t-meta">&mdash; 01 / B2C</div>
-        <h3 class="h-md" style="margin-top:2vh">Self-planning travellers</h3>
-        <p class="body-sm" style="margin-top:1.6vh">Urban 20s&ndash;30s planning a group/family trip, comfortable in Hinglish, today juggling 5&ndash;6 tabs (Skyscanner, a blog, YouTube, a group chat).</p>
-      </div>
-      <div class="fc-col">
-        <div class="t-meta">&mdash; 02 / B2B</div>
-        <h3 class="h-md" style="margin-top:2vh">Small travel agencies &amp; solo agents</h3>
-        <p class="body-sm" style="margin-top:1.6vh">2&ndash;8 person agencies selling over WhatsApp &amp; phone; ~50,000&ndash;100,000+ in India, redrafting quotes by hand 2&ndash;4 times per lead.</p>
-      </div>
-      <div class="fc-col">
-        <div class="t-meta">&mdash; 03 / B2B2C</div>
-        <h3 class="h-md" style="margin-top:2vh">State tourism boards &amp; DMOs</h3>
-        <p class="body-sm" style="margin-top:1.6vh">~28 states + UTs need a branded AI concierge to justify marketing budgets against visitor-growth targets. Mindtrip's playbook, unclaimed in India.</p>
-      </div>
-      <div class="fc-col">
-        <div class="t-meta">&mdash; 04 / B2B2C</div>
-        <h3 class="h-md" style="margin-top:2vh">Banks &amp; fintechs</h3>
-        <p class="body-sm" style="margin-top:1.6vh">Card issuers (HDFC/ICICI/Axis-type) wanting an AI trip-planning perk to lift travel-card engagement and retention. Later-stage expansion.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- SLIDE 04 · S08 Duo Compare · Pain points -->
-<section data-layout="S08" class="slide dark" data-animate="duo-mirror">
-  <div class="canvas-card">
-    <div class="chrome-min">
-      <div class="l">02 &middot; How Trips Get Planned Today</div>
-      <div class="r">04 / 15</div>
-    </div>
-    <div data-anim="line" style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(3.2vw,6vh);line-height:1.1;letter-spacing:-.02em;max-width:42ch">Neither path is built for how Indians actually decide a trip.</div>
-    <div class="duo-compare">
-      <div class="col">
-        <div class="col-tag"><span class="num">01</span> SELF-PLANNERS</div>
-        <div class="col-ttl">5+ tabs,<br>0 certainty</div>
-        <div class="col-desc">Cross-referencing Skyscanner, a blog, a YouTube video and a group chat &mdash; then asking ChatGPT or Gemini, which hands back a generic, touristy top-10 list.</div>
-        <ul class="col-list">
-          <li>Switches between 5&ndash;6 tools per trip</li>
-          <li>Generic listicle output, no hidden gems</li>
-          <li>"I'm a Harry Potter fan" gets ignored &mdash; refinements don't bite</li>
-        </ul>
-      </div>
-      <span class="vrule"></span>
-      <div class="col accent">
-        <div class="col-tag" style="color:var(--accent-bright)"><span class="num" style="color:var(--accent-bright);border-color:var(--accent-bright)">02</span> OFFLINE AGENCY-GOERS</div>
-        <div class="col-ttl" style="color:var(--accent-bright)">Manual, slow,<br>redone 2&ndash;4x</div>
-        <div class="col-desc">A WhatsApp inquiry lands, and the agent hand-drafts an itinerary in Excel/Canva &mdash; redoing it 2&ndash;4 times before the customer commits, or goes cold.</div>
-        <ul class="col-list" style="--accent:var(--accent-bright)">
-          <li>Every quote is drafted close to scratch</li>
-          <li>2&ndash;4 revision rounds per booking</li>
-          <li>The owner-agent is the bottleneck, not the tech</li>
-        </ul>
-      </div>
-    </div>
-    <div class="t-meta" style="margin-top:2vh">Source: STARTUP_EVALUATION.md &middot; MARKET_RESEARCH.md &middot; July 2026 user interviews</div>
-  </div>
-</section>
-
-<!-- SLIDE 05 · S13 Three Forces · How WanderPlanner solves it -->
-<section data-layout="S13" class="slide light" data-animate="three-forces">
-  <div class="canvas-card">
-    <div class="chrome-min">
-      <div class="l">03 &middot; How WanderPlanner Solves It</div>
-      <div class="r">05 / 15</div>
-    </div>
-    <div data-anim="line" style="margin-bottom:1vh">
-      <div class="t-meta">THE MOAT</div>
-    </div>
-    <div data-anim="up" style="display:grid;grid-template-columns:5fr 11fr;gap:3vw;flex:1;margin-top:2vh">
-      <div style="display:flex;flex-direction:column;justify-content:center;gap:2vh;padding-right:1.6vw;border-right:1px solid var(--border-subtle)">
-        <div class="h-xl" style="font-size:min(3.4vw,6.2vh)">Three compounding assets, not one feature.</div>
-        <p class="body-sm">Every replicable feature (chatbot, voice, maps) a funded rival could clone in a sprint. These three can't be.</p>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:1.4vh">
-        <div class="card-fill" style="display:grid;grid-template-columns:auto 1fr;gap:2vw;align-items:center;padding:2.4vh 2vw">
-          <div style="font-family:var(--sans);font-weight:200;font-size:min(4.6vw,8vh);color:var(--accent);line-height:.9">01</div>
+      <div style="display:grid;grid-template-rows:repeat(3,1fr);gap:1.4vh">
+        <div class="card-fill" style="padding:2.2vh 1.4vw;display:grid;grid-template-columns:auto 1fr;gap:1.4vw;align-items:start;border-radius:0">
+          <div style="font-family:var(--sans);font-weight:200;font-size:min(5.4vw,9.6vh);line-height:.88;color:var(--accent)">01</div>
           <div>
-            <h4 class="t-body-emp" style="font-size:max(18px,1.4vw)">A proprietary, verified India-context corpus</h4>
-            <p class="body-sm" style="margin-top:.6vh">Hidden-gem POIs scored from Reddit signal, verified against OSM; IRCTC train fares, veg-meal and family cost math no global LLM models.</p>
+            <div style="font-family:var(--sans),var(--sans-zh);font-size:max(18px,1.45vw);font-weight:500;line-height:1.2;letter-spacing:-.01em;margin-bottom:.8vh">Conversational, not form-based</div>
+            <div class="t-body-sm">Anya (Gemini 2.5 Flash) fills all 6 required trip fields from a single natural message, in English or Hinglish (for example: “Bali trip 7 days, budget 1.5L types”).</div>
           </div>
         </div>
-        <div class="card-fill" style="display:grid;grid-template-columns:auto 1fr;gap:2vw;align-items:center;padding:2.4vh 2vw">
-          <div style="font-family:var(--sans);font-weight:200;font-size:min(4.6vw,8vh);color:var(--accent);line-height:.9">02</div>
+        <div class="card-fill" style="padding:2.2vh 1.4vw;display:grid;grid-template-columns:auto 1fr;gap:1.4vw;align-items:start;border-radius:0">
+          <div style="font-family:var(--sans);font-weight:200;font-size:min(5.4vw,9.6vh);line-height:.88;color:var(--accent)">02</div>
           <div>
-            <h4 class="t-body-emp" style="font-size:max(18px,1.4vw)">Measurable personalization fidelity</h4>
-            <p class="body-sm" style="margin-top:.6vh">Published evals proving itineraries obey constraints ("Harry Potter fan", "less-crowded beaches") &mdash; live fidelity 0.904 vs. ChatGPT's 0.74 unverifiable-claim rate.</p>
+            <div style="font-family:var(--sans),var(--sans-zh);font-size:max(18px,1.45vw);font-weight:500;line-height:1.2;letter-spacing:-.01em;margin-bottom:.8vh">RAG-grounded authenticity</div>
+            <div class="t-body-sm">Recommendations are grounded in Reddit discussions, Wikivoyage community guides, and OpenStreetMap points of interest via hybrid BM25 + semantic retrieval.</div>
           </div>
         </div>
-        <div class="card-fill" style="display:grid;grid-template-columns:auto 1fr;gap:2vw;align-items:center;padding:2.4vh 2vw">
-          <div style="font-family:var(--sans);font-weight:200;font-size:min(4.6vw,8vh);color:var(--accent);line-height:.9">03</div>
+        <div class="card-fill" style="padding:2.2vh 1.4vw;display:grid;grid-template-columns:auto 1fr;gap:1.4vw;align-items:start;border-radius:0">
+          <div style="font-family:var(--sans);font-weight:200;font-size:min(5.4vw,9.6vh);line-height:.88;color:var(--accent)">03</div>
           <div>
-            <h4 class="t-body-emp" style="font-size:max(18px,1.4vw)">Distribution funded rivals ignore</h4>
-            <p class="body-sm" style="margin-top:.6vh">India's offline travel-agent channel &mdash; lakhs of agents who already get paid when a trip books &mdash; not another consumer chat app competing with Mindtrip.</p>
+            <div style="font-family:var(--sans),var(--sans-zh);font-size:max(18px,1.45vw);font-weight:500;line-height:1.2;letter-spacing:-.01em;margin-bottom:.8vh">India-first cultural fluency</div>
+            <div class="t-body-sm">₹ shorthand (25k/1L), family and veg/Jain preference handling, and genuine Hinglish understanding — a gap no global or Indian competitor has filled today.</div>
           </div>
         </div>
       </div>
@@ -1405,418 +1286,323 @@
   </div>
 </section>
 
-<!-- SLIDE 06 · S21 Tech Spec Sheet · Why better than Google/ChatGPT -->
-<section data-layout="S21" class="slide dark" data-animate="tech-spec">
+<section class="slide dark" data-layout="S04" data-animate="grid-reveal">
   <div class="canvas-card">
-    <div class="chrome-min">
-      <div class="l">04 &middot; Why Not Just Google or ChatGPT</div>
-      <div class="r">06 / 15</div>
+    <div class="chrome-min"><div class="l">Target Users</div><div class="r">03 / 14</div></div>
+    <div data-anim="line" style="display:flex;flex-direction:column;gap:1.2vh">
+      <div class="t-cat on-dark">S04 · Six Cells</div>
+      <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(6vw,10.8vh);line-height:.98;letter-spacing:-.03em;color:#fff">Who is it for? Six traveler personas</div>
     </div>
-    <div data-anim="line" style="margin-bottom:2vh">
-      <div class="t-meta">BENCHMARKED, NOT VIBES</div>
-    </div>
-    <div data-anim="up" style="display:grid;grid-template-columns:5fr 3fr 3fr 3fr;gap:2.4vw;flex:1;align-items:start">
-      <div>
-        <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(3.4vw,6.4vh);line-height:1.08;letter-spacing:-.02em">A published eval suite, not a demo.</div>
-        <div style="margin-top:2vh;font-family:var(--sans),var(--sans-zh);font-size:max(15px,1vw);line-height:1.6;color:rgba(255,255,255,.72);max-width:30ch">Free ChatGPT/Gemini/Google are the real competition &mdash; both are ambient and free. Refinement-fidelity evals (docs/eval-set.csv) score whether named-interest requests actually land.</div>
-      </div>
-      <div>
-        <div style="height:2px;background:var(--accent-bright);width:100%"></div>
-        <div class="kpi-num" style="margin-top:1.6vh;font-family:var(--sans);font-weight:200;font-size:min(4.2vw,7.6vh);color:var(--accent-bright)">0.904</div>
-        <div class="t-meta" style="margin-top:.8vh">WanderPlanner fidelity score</div>
-      </div>
-      <div>
-        <div style="height:2px;background:rgba(255,255,255,.3);width:100%"></div>
-        <div class="kpi-num" style="margin-top:1.6vh;font-family:var(--sans);font-weight:200;font-size:min(4.2vw,7.6vh);color:#fff">0.74</div>
-        <div class="t-meta" style="margin-top:.8vh">ChatGPT free-tier unverifiable-claim rate</div>
-      </div>
-      <div>
-        <div style="height:2px;background:rgba(255,255,255,.3);width:100%"></div>
-        <div class="kpi-num" style="margin-top:1.6vh;font-family:var(--sans);font-weight:200;font-size:min(4.2vw,7.6vh);color:#fff">0/4</div>
-        <div class="t-meta" style="margin-top:.8vh">ChatGPT honesty score (vs. our 4/4)</div>
-      </div>
-    </div>
-    <div data-anim="hero" style="margin-top:auto;padding-top:2.4vh;border-top:1px solid rgba(255,255,255,.22);display:grid;grid-template-columns:auto 1fr auto;gap:2.4vw;align-items:end">
-      <div class="bottom-hero" style="font-family:var(--sans);font-weight:200;font-size:min(6vw,11vh);line-height:.9;color:#fff">1.00<span style="font-size:.3em;opacity:.6;margin-left:.15em">pins</span></div>
-      <div>
-        <div style="display:flex;gap:1.2vw;flex-wrap:wrap;margin-bottom:1.2vh">
-          <span class="t-meta" style="background:var(--ink);padding:.5em 1em;border:1px solid rgba(255,255,255,.3)">RECALL 0.854</span>
-          <span class="t-meta" style="background:var(--ink);padding:.5em 1em;border:1px solid rgba(255,255,255,.3)">STABILITY 0.938</span>
-          <span class="t-meta" style="background:var(--ink);padding:.5em 1em;border:1px solid rgba(255,255,255,.3)">vs CLAUDE 0.98 recall / 0.79 unverifiable</span>
-        </div>
-        <div style="font-family:var(--sans),var(--sans-zh);font-size:max(14px,.86vw);color:rgba(255,255,255,.7)">Pin inclusion on every hard-pinned refinement case &mdash; a hallucinated "gem" never ships because it's OSM/Wikivoyage-verified first.</div>
-      </div>
-      <div style="display:flex;gap:.3vw;align-items:end" data-anim="bars">
-        <div class="vbar" style="width:5px;height:14vh;background:rgba(255,255,255,.5)"></div>
-        <div class="vbar" style="width:5px;height:20vh;background:rgba(255,255,255,.5)"></div>
-        <div class="vbar" style="width:5px;height:11vh;background:rgba(255,255,255,.35)"></div>
-        <div class="vbar" style="width:5px;height:24vh;background:var(--accent-bright)"></div>
-        <div class="vbar" style="width:5px;height:17vh;background:rgba(255,255,255,.5)"></div>
-        <div class="vbar" style="width:5px;height:9vh;background:rgba(255,255,255,.35)"></div>
-        <div class="vbar" style="width:5px;height:22vh;background:rgba(255,255,255,.5)"></div>
-        <div class="vbar" style="width:5px;height:13vh;background:rgba(255,255,255,.35)"></div>
-        <div class="vbar" style="width:5px;height:19vh;background:var(--accent-bright)"></div>
-      </div>
+    <div class="sub-grid-3-2" style="margin-top:4vh">
+      <div class="sub-card" style="border-radius:0" data-anim="up"><i data-lucide="users"></i><div class="nb-corner">01</div><div class="ttl">Group Coordinator</div><div class="desc">Balances mixed ages, group finances, and transit stress.</div></div>
+      <div class="sub-card" style="border-radius:0" data-anim="up"><i data-lucide="camera"></i><div class="nb-corner">02</div><div class="ttl">Aesthetic Explorer</div><div class="desc">Wants photogenic, Instaworthy spots — not generic itineraries.</div></div>
+      <div class="sub-card" style="border-radius:0" data-anim="up"><i data-lucide="paw-print"></i><div class="nb-corner">03</div><div class="ttl">Pet Parent</div><div class="desc">Needs pet-friendly stays with no surprise fees or exclusions.</div></div>
+      <div class="sub-card" style="border-radius:0" data-anim="up"><i data-lucide="shield-check"></i><div class="nb-corner">04</div><div class="ttl">Retired / Long-Stay Traveler</div><div class="desc">Needs low-intensity routing, safety, and 2–3 month immersion.</div></div>
+      <div class="sub-card" style="border-radius:0" data-anim="up"><i data-lucide="dumbbell"></i><div class="nb-corner">05</div><div class="ttl">Sports &amp; Fitness Enthusiast</div><div class="desc">Needs training windows, safe running paths, and live sports access.</div></div>
+      <div class="sub-card" style="border-radius:0" data-anim="up"><i data-lucide="laptop"></i><div class="nb-corner">06</div><div class="ttl">Digital Nomad</div><div class="desc">Depends on reliable Wi-Fi, ergonomic workspaces, and power access.</div></div>
     </div>
   </div>
 </section>
 
-<!-- SLIDE 07 · S18 Why Now -->
-<section data-layout="S18" class="slide dark" data-animate="why-now">
-  <div class="canvas-card">
-    <div class="chrome-min">
-      <div class="l">05 &middot; The Travel Industry In India, Why Now</div>
-      <div class="r">07 / 15</div>
-    </div>
-    <div data-anim="line" style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(3.6vw,6.6vh);line-height:1.06;letter-spacing:-.02em;max-width:44ch;margin-bottom:5vh">Three facts about India travel that weren't true three years ago.</div>
-    <div data-anim="up" style="display:grid;grid-template-columns:repeat(3,1fr);gap:3vw;flex:1">
-      <div style="display:flex;flex-direction:column;height:100%">
-        <div>
-          <div class="t-cat" style="color:rgba(255,255,255,.6)">MARKET</div>
-          <h4 class="h-md" style="margin-top:1.2vh;font-size:min(1.9vw,3.4vh)">Tourism is already a $231.6B industry</h4>
-          <p class="body-sm" style="margin-top:1.2vh;color:rgba(255,255,255,.68)">8th-largest tourism economy globally (2024), projected toward $3T by 2047 &mdash; verified, Invest India.</p>
-        </div>
-        <div class="why-num-bottom" style="margin-top:auto;font-family:var(--sans);font-weight:200;font-size:min(4.6vw,8.4vh);color:#fff">$231.6B</div>
-      </div>
-      <div style="display:flex;flex-direction:column;height:100%">
-        <div>
-          <div class="t-cat" style="color:rgba(255,255,255,.6)">CAPITAL</div>
-          <h4 class="h-md" style="margin-top:1.2vh;font-size:min(1.9vw,3.4vh)">B2B travel-tech just overtook B2C</h4>
-          <p class="body-sm" style="margin-top:1.2vh;color:rgba(255,255,255,.68)">First time in 2024 &mdash; funding rotated toward agent/DMO tooling. Vacay.io, a free consumer AI planner, has since shut down.</p>
-        </div>
-        <div class="why-num-bottom" style="margin-top:auto;font-family:var(--sans);font-weight:200;font-size:min(4.6vw,8.4vh);color:#fff">51%</div>
-      </div>
-      <div style="display:flex;flex-direction:column;height:100%">
-        <div>
-          <div class="t-cat" style="color:var(--accent-bright)">THE GAP</div>
-          <h4 class="h-md" style="margin-top:1.2vh;font-size:min(1.9vw,3.4vh);color:var(--accent-bright)">Nobody has built India-first AI-native planning</h4>
-          <p class="body-sm" style="margin-top:1.2vh;color:rgba(255,255,255,.68)">MakeMyTrip's Ingo is a buried chatbot; Pickyourtrail/Thrillophilia are human-hybrid; Sembark/TravClan sell agent software that isn't AI-native.</p>
-        </div>
-        <div class="why-num-bottom" style="margin-top:auto;font-family:var(--sans);font-weight:200;font-size:min(4.6vw,8.4vh);color:var(--accent-bright)">Zero</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- SLIDE 08 · S06 KPI Tower · TAM / SAM / SOM -->
-<section data-layout="S06" class="slide light" data-animate="measure-up">
-  <div class="canvas-card">
-    <div class="chrome-min">
-      <div class="l">05 &middot; Market Size</div>
-      <div class="r">08 / 15</div>
-    </div>
-    <div data-anim="line" style="margin-bottom:1vh">
-      <div class="h-xl" style="font-size:min(3.2vw,5.8vh)">India leisure-travel spend, sized four ways</div>
-      <p class="body-sm" style="margin-top:1vh;max-width:70ch">All figures are quick-mode hypotheses per MARKET_RESEARCH.md &mdash; directionally sound, field-validation pending (see doc Appendix A/B).</p>
-    </div>
-    <div class="bar-towers">
-      <div class="bar-tower">
-        <div class="lbl">SOM &middot; Yr-3 B2B ARR</div>
-        <div class="body-block h-1">
-          <div class="nb">$120K&ndash;900K</div>
-          <div class="sub">200&ndash;500 agencies &times; $50&ndash;150/mo</div>
-        </div>
-      </div>
-      <div class="bar-tower">
-        <div class="lbl">SAM &middot; digital planners/yr</div>
-        <div class="body-block h-2">
-          <div class="nb">6&ndash;10M</div>
-          <div class="sub">Digitally-native trip planners</div>
-        </div>
-      </div>
-      <div class="bar-tower">
-        <div class="lbl">TAM &middot; addressable spend/yr</div>
-        <div class="body-block h-3">
-          <div class="nb">$100&ndash;150B</div>
-          <div class="sub">Outbound + planned domestic trips</div>
-        </div>
-      </div>
-      <div class="bar-tower">
-        <div class="lbl">Ceiling &middot; total tourism GDP</div>
-        <div class="body-block h-4 b-accent">
-          <div class="nb">$231.6B</div>
-          <div class="sub">2024, all travel spend &mdash; not our market</div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- SLIDE 09 · Multi-card monetization brief (card-fill grid) -->
-<section data-layout="S16" class="slide dark" data-animate="field-notes">
-  <div class="canvas-card">
-    <div class="chrome-min">
-      <div class="l">06 &middot; How WanderPlanner Makes Money</div>
-      <div class="r">09 / 15</div>
-    </div>
-    <div data-anim="line" style="margin-bottom:1vh">
-      <div class="h-xl" style="font-size:min(3.2vw,5.8vh)">B2C, B2B, B2B2C &mdash; one engine, layered revenue</div>
-    </div>
-    <div data-anim="up" style="display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr);gap:1.4vw;flex:1;margin-top:2vh">
-      <div class="card-fill" style="padding:2.2vh 1.8vw;display:flex;flex-direction:column;justify-content:space-between;color:var(--ink)">
-        <div>
-          <div class="t-meta" style="color:var(--ink);opacity:.6">B2C &middot; NOW</div>
-          <h4 class="t-body-emp" style="margin-top:1vh;color:var(--ink)">Free front door</h4>
-        </div>
-        <p class="body-sm" style="color:var(--ink);opacity:.85">No paywall. Anya is the lead-gen engine, eval showcase, and SEO/content surface &mdash; not the revenue line.</p>
-      </div>
-      <div class="card-fill" style="padding:2.2vh 1.8vw;display:flex;flex-direction:column;justify-content:space-between;color:var(--ink)">
-        <div>
-          <div class="t-meta" style="color:var(--ink);opacity:.6">B2C &middot; LATER</div>
-          <h4 class="t-body-emp" style="margin-top:1vh;color:var(--ink)">&#8377;99/mo premium</h4>
-        </div>
-        <p class="body-sm" style="color:var(--ink);opacity:.85">Unlimited refinements + live budget alerts &mdash; deliberately gated until after B2B revenue exists.</p>
-      </div>
-      <div class="card-accent" style="background:var(--accent);color:var(--accent-on);padding:2.2vh 1.8vw;display:flex;flex-direction:column;justify-content:space-between">
-        <div>
-          <div class="t-meta" style="color:var(--accent-on);opacity:.85">B2B &middot; PRIMARY ENGINE</div>
-          <h4 class="t-body-emp" style="margin-top:1vh;color:var(--accent-on)">Anya for Agents</h4>
-        </div>
-        <p class="body-sm" style="color:var(--accent-on);opacity:.92">&#8377;1,500&ndash;3,000/mo/seat. WhatsApp-style Hinglish brief &rarr; branded, costed, PDF-ready itinerary in ~5 minutes.</p>
-      </div>
-      <div class="card-fill" style="padding:2.2vh 1.8vw;display:flex;flex-direction:column;justify-content:space-between;color:var(--ink)">
-        <div>
-          <div class="t-meta" style="color:var(--ink);opacity:.6">B2B2C</div>
-          <h4 class="t-body-emp" style="margin-top:1vh;color:var(--ink)">Tourism boards / DMOs</h4>
-        </div>
-        <p class="body-sm" style="color:var(--ink);opacity:.85">$50K&ndash;200K/yr branded-concierge license &mdash; the Mindtrip playbook (30+ DMO deals), unclaimed in India.</p>
-      </div>
-      <div class="card-fill" style="padding:2.2vh 1.8vw;display:flex;flex-direction:column;justify-content:space-between;color:var(--ink)">
-        <div>
-          <div class="t-meta" style="color:var(--ink);opacity:.6">B2B2C &middot; LATER</div>
-          <h4 class="t-body-emp" style="margin-top:1vh;color:var(--ink)">Bank co-brand perk</h4>
-        </div>
-        <p class="body-sm" style="color:var(--ink);opacity:.85">$50K&ndash;150K/yr &mdash; travel-card issuers wanting an AI planning benefit. Long procurement cycle, not an opener.</p>
-      </div>
-      <div class="card-fill" style="padding:2.2vh 1.8vw;display:flex;flex-direction:column;justify-content:space-between;color:var(--ink)">
-        <div>
-          <div class="t-meta" style="color:var(--ink);opacity:.6">AFFILIATE &middot; NOW</div>
-          <h4 class="t-body-emp" style="margin-top:1vh;color:var(--ink)">Deep-link commissions</h4>
-        </div>
-        <p class="body-sm" style="color:var(--ink);opacity:.85">Viator/GetYourGuide ~8&ndash;10%, Skyscanner CPC. Near-zero lift to turn on &mdash; a layer, not a strategy.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- SLIDE 10 · S11 Horizontal Timeline · GTM -->
-<section data-layout="S11" class="slide light" data-animate="timeline-walk">
-  <div class="canvas-card">
-    <div class="chrome-min">
-      <div class="l">07 &middot; Go-To-Market</div>
-      <div class="r">10 / 15</div>
-    </div>
-    <div data-anim="line" style="margin-bottom:2vh">
-      <div class="h-xl" style="font-size:min(3.2vw,5.8vh)">Agents first. Consumer stays the front door.</div>
-      <p class="body-sm" style="margin-top:1vh">Full plan with kill/go gates in GTM_STRATEGY.md.</p>
-    </div>
-    <div class="timeline-h" style="margin-top:6vh">
-      <div class="tl-row">
-        <div class="th-node up">
-          <div class="label"><span class="yr">M0&ndash;3</span><span class="name">Prove the wedge</span><span class="desc">Corpus + gems + hard pins + fidelity evals</span></div>
-          <span class="dot"></span>
-        </div>
-        <div class="th-node down">
-          <div class="label"><span class="yr">M3&ndash;6</span><span class="name">First revenue</span><span class="desc">Agent mode, live budget grounding, 10 free onboards</span></div>
-          <span class="dot"></span>
-        </div>
-        <div class="th-node up accent">
-          <div class="label"><span class="yr">GATE</span><span class="name">5 paying agents</span><span class="desc">&rarr; build multi-tenant. 0/25 demos &rarr; pivot</span></div>
-          <span class="dot"></span>
-        </div>
-        <div class="th-node down">
-          <div class="label"><span class="yr">M6&ndash;12</span><span class="name">Scale the channel</span><span class="desc">Widget/API, 1 tourism-board pilot, creator licensing</span></div>
-          <span class="dot"></span>
-        </div>
-        <div class="th-node up">
-          <div class="label"><span class="yr">LATER</span><span class="name">Consumer premium</span><span class="desc">&#8377;99/mo &mdash; only after B2B revenue exists</span></div>
-          <span class="dot"></span>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- SLIDE 11 · S09 Dot Matrix Statement · Moat quote (breather) -->
-<section data-layout="S09" class="slide accent hero" data-animate="statement">
-  <div class="canvas-card" style="position:relative">
-    <span class="ring-mat" style="position:absolute;left:4vw;bottom:6vh;width:16vw;height:16vw;color:rgba(255,255,255,.5)"></span>
-    <span class="dot-mat" style="position:absolute;right:0;top:0;width:32vw;height:32vw;color:rgba(255,255,255,.4)"></span>
-    <div class="chrome-min">
-      <div class="l">Mid-deck &middot; The Thesis</div>
-      <div class="r">11 / 15</div>
-    </div>
-    <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:3vh">
-      <h1 data-anim="line" style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(4.6vw,8.4vh);line-height:1.08;letter-spacing:-.03em;color:#fff;max-width:20ch">The moat is not the chatbot. It's the <span style="font-style:italic;font-weight:300">corpus</span>, the <span style="font-style:italic;font-weight:300">proof</span>, and the <span style="font-style:italic;font-weight:300">channel</span> funded rivals ignore.</h1>
-      <div data-anim="foot" class="t-meta" style="color:rgba(255,255,255,.68)">&mdash; GTM_STRATEGY.md, WanderPlanner, July 2026</div>
-    </div>
-  </div>
-</section>
-
-<!-- SLIDE 12 · S02 Vertical Timeline + KPI · Roadmap if PMF found -->
-<section data-layout="S02" class="slide dark" data-animate="progression">
-  <div class="canvas-card">
-    <div class="chrome-min">
-      <div class="l">08 &middot; Product Roadmap If PMF Is Found</div>
-      <div class="r">12 / 15</div>
-    </div>
-    <div data-anim="line" style="margin-bottom:1vh">
-      <div class="h-xl" style="font-size:min(3vw,5.4vh)">Phase 1 is already shipping. Phase 2&ndash;3 follow the gates.</div>
-    </div>
-    <div class="timeline-v">
-      <div class="tl-node accent">
-        <span class="tl-axis"><span class="dot" style="background:var(--accent-bright)"></span></span>
-        <span class="yr" style="color:var(--accent-bright)">2026-07</span>
-        <span class="multi" style="color:var(--accent-bright)">3<span class="unit">/3</span></span>
-        <p class="desc" style="color:var(--paper)">Corpus retrieval + hidden-gem crowd dial + hard-constraint refinements shipped (v10.15&ndash;10.17) &mdash; done.</p>
-      </div>
-      <div class="tl-node accent">
-        <span class="tl-axis"><span class="dot" style="background:var(--accent-bright)"></span></span>
-        <span class="yr" style="color:var(--accent-bright)">2026-07</span>
-        <span class="multi" style="color:var(--accent-bright)">0.904</span>
-        <p class="desc" style="color:var(--paper)">Refinement-fidelity eval gate passed vs. ChatGPT/Claude baselines (v10.19) &mdash; kill-criterion cleared.</p>
-      </div>
-      <div class="tl-node">
-        <span class="tl-axis"><span class="dot"></span></span>
-        <span class="yr">M3&ndash;6</span>
-        <span class="multi">10<span class="unit">agents</span></span>
-        <p class="desc">Agent copilot: branded PDF export, live budget grounding (flights, IRCTC fares, hotel medians), hand-onboard 10 agents free.</p>
-      </div>
-      <div class="tl-node">
-        <span class="tl-axis"><span class="dot"></span></span>
-        <span class="yr">M6&ndash;12</span>
-        <span class="multi">1<span class="unit">pilot</span></span>
-        <p class="desc">Embeddable widget/API + first state-tourism-board pilot + creator-itinerary licensing into the corpus.</p>
-      </div>
-      <div class="tl-node">
-        <span class="tl-axis"><span class="dot"></span></span>
-        <span class="yr">LATER</span>
-        <span class="multi">&#8377;99</span>
-        <p class="desc">Consumer premium subscription &mdash; unlocked only once B2B revenue exists, not before.</p>
-      </div>
-    </div>
-    <div class="kpi-row-4">
-      <div class="kpi-cell"><div class="lbl">Fidelity</div><div class="nb">0.904</div><div class="note">vs ChatGPT 0.74 unverifiable</div></div>
-      <div class="kpi-cell"><div class="lbl">Recall</div><div class="nb">0.854</div><div class="note">named-interest POIs surfaced</div></div>
-      <div class="kpi-cell"><div class="lbl">Pin inclusion</div><div class="nb">1.00</div><div class="note">on every hard-pinned case</div></div>
-      <div class="kpi-cell"><div class="lbl">Honesty</div><div class="nb">4<span class="unit">/4</span></div><div class="note">vs ChatGPT's 0/4</div></div>
-    </div>
-  </div>
-</section>
-
-<!-- SLIDE 13 · S20 Stacked KPI Ledger · Back-of-envelope profitability -->
-<section data-layout="S20" class="slide light" data-animate="stacked-ledger">
-  <div class="canvas-card">
-    <div class="chrome-min">
-      <div class="l">09 &middot; Back-Of-The-Envelope: Path To Profitable</div>
-      <div class="r">13 / 15</div>
-    </div>
-    <div data-anim="line" style="margin-bottom:2vh">
-      <div class="h-xl" style="font-size:min(3vw,5.4vh)">Cost per itinerary is a rounding error. Agents pay for time saved.</div>
-    </div>
-    <div data-anim="ledger" class="stacked-ledger" style="flex:1;display:flex;flex-direction:column;justify-content:center">
-      <div class="ledger-row" style="display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:2vw;padding:1.8vh 0;border-bottom:1px solid var(--border-subtle)">
-        <div class="ledger-label body">Cost per itinerary generation (Gemini 2.5 Flash, happy path)</div>
-        <div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(4.4vw,6vh)">$0.003&ndash;0.007</div>
-        <i class="ledger-icon" data-lucide="cpu" style="width:1.6vw;height:1.6vw"></i>
-      </div>
-      <div class="ledger-row" style="display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:2vw;padding:1.8vh 0;border-bottom:1px solid var(--border-subtle)">
-        <div class="ledger-label body">Realistic iterations per session (wizard turns + regen + refine)</div>
-        <div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(4.4vw,6vh)">&times;3&ndash;5</div>
-        <i class="ledger-icon" data-lucide="repeat" style="width:1.6vw;height:1.6vw"></i>
-      </div>
-      <div class="ledger-row" style="display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:2vw;padding:1.8vh 0;border-bottom:1px solid var(--border-subtle)">
-        <div class="ledger-label body">Effective cost per active user, per month</div>
-        <div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(4.4vw,6vh)">~$0.02&ndash;0.03</div>
-        <i class="ledger-icon" data-lucide="wallet" style="width:1.6vw;height:1.6vw"></i>
-      </div>
-      <div class="ledger-row" style="display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:2vw;padding:1.8vh 0;border-bottom:1px solid var(--border-subtle)">
-        <div class="ledger-label body">Year-3 paid agents &times; &#8377;2,000/mo &asymp; $145K ARR (gate: 5 paying &rarr; multi-tenant)</div>
-        <div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(4.4vw,6vh);color:var(--accent)">500 agents</div>
-        <i class="ledger-icon" data-lucide="users" style="width:1.6vw;height:1.6vw;color:var(--accent)"></i>
-      </div>
-      <div class="ledger-row" style="display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:2vw;padding:1.8vh 0">
-        <div class="ledger-label body">Gross margin at agent-tier pricing &mdash; before affiliate/DMO layers stack on top</div>
-        <div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(4.4vw,6vh)">~85&ndash;90%</div>
-        <i class="ledger-icon" data-lucide="trending-up" style="width:1.6vw;height:1.6vw"></i>
-      </div>
-    </div>
-    <div class="t-meta" style="margin-top:1.6vh">Source: scaling-tech-challenges.md (LLM cost) &middot; MARKET_RESEARCH.md (agency count &amp; pricing) &mdash; directional, not audited</div>
-  </div>
-</section>
-
-<!-- SLIDE 14 · S12 Manifesto + Ink Banner · Nirvana state -->
-<section data-layout="S12" class="slide accent hero" data-animate="manifesto">
-  <div class="canvas-card">
-    <div class="chrome-min">
-      <div class="l">10 &middot; The Nirvana State</div>
-      <div class="r">14 / 15</div>
-    </div>
-    <div data-anim="line" style="display:flex;flex-direction:column;gap:1.6vh;flex:1;justify-content:center">
-      <div class="t-cat" style="color:rgba(255,255,255,.78)">THE VISION</div>
-      <h2 style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(4.4vw,8vh);line-height:1.1;letter-spacing:-.025em;color:#fff;max-width:24ch">Anya becomes the AI layer every Indian traveller <span style="font-style:italic;font-weight:300">talks to</span>, and every Indian travel agent <span style="font-style:italic;font-weight:300">runs their business on.</span></h2>
-    </div>
-    <div data-anim="up" class="ink-banner-full" style="margin:0 -5vw -4.4vh;background:var(--ink);padding:4vh 5vw;display:flex;justify-content:space-between;align-items:center;gap:3vw">
-      <div style="flex:1;min-width:0;font-family:var(--sans),var(--sans-zh);font-weight:300;font-size:max(18px,1.6vw);color:#fff">One brain. Every itinerary in India, planned with it &mdash; no seam between planning and booking.</div>
-      <div style="display:flex;gap:2vw;flex-shrink:0">
-        <i data-lucide="map-pin" style="width:2vw;height:2vw;color:rgba(255,255,255,.75)"></i>
-        <i data-lucide="message-circle" style="width:2vw;height:2vw;color:rgba(255,255,255,.75)"></i>
-        <i data-lucide="briefcase" style="width:2vw;height:2vw;color:rgba(255,255,255,.75)"></i>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- SLIDE 15 · S10 Split Closing -->
-<section data-layout="S10" class="slide split" data-animate="split-statement">
+<section class="slide split hero light" data-layout="S03" data-animate="statement">
   <div class="canvas-card">
     <div class="split-half">
-      <div class="half b-accent" style="padding:5.6vh 3.6vw 4.4vh;justify-content:space-between;position:relative;overflow:hidden">
-        <canvas class="ascii-bg" aria-hidden="true"></canvas>
-        <div class="chrome-min" style="margin-bottom:0;position:relative;z-index:1">
-          <div class="l">15 / 15</div>
-          <div class="r">CLOSING</div>
-        </div>
-        <div data-anim="manifesto" style="display:flex;flex-direction:column;gap:2vh;position:relative;z-index:1">
-          <div class="t-meta" style="color:rgba(255,255,255,.78);letter-spacing:.22em;margin-bottom:1.6vh">MANIFESTO</div>
-          <h2 style="font-family:var(--sans),var(--sans-zh);font-size:min(6.6vw,12vh);line-height:.98;letter-spacing:-.025em;font-weight:200;color:#fff">Plan it once.<br>Anya remembers <span style="font-style:italic;font-weight:300">everyone</span><br>who plans like you.</h2>
-        </div>
-        <div data-anim="signature" style="display:flex;justify-content:space-between;align-items:end;border-top:1px solid rgba(255,255,255,.22);padding-top:2vh;position:relative;z-index:1">
-          <div class="t-meta" style="color:rgba(255,255,255,.62)">Founder &middot; WanderPlanner</div>
-          <div class="t-meta" style="color:rgba(255,255,255,.62)">26.07.14</div>
-        </div>
-      </div>
       <div class="half" style="padding:5.6vh 3.6vw 4.4vh;justify-content:space-between">
-        <div class="chrome-min">
-          <div class="l">THE ASK</div>
-          <div class="r">03 MOVES</div>
+        <div class="chrome-min" style="margin-bottom:0"><div class="l">Pain Point Thesis</div><div class="r">04 / 14</div></div>
+        <div data-anim="manifesto" style="display:flex;flex-direction:column;gap:2vh">
+          <div class="t-cat">S03 · Statement</div>
+          <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(8.2vw,14.4vh);line-height:.92;letter-spacing:-.035em">Planning a trip means twelve browser tabs.<br/>WanderPlanner is one conversation.</div>
         </div>
-        <div data-anim="rules" style="display:flex;flex-direction:column;gap:0">
-          <div style="display:grid;grid-template-columns:auto 1fr;gap:2vw;align-items:start;padding:2.6vh 0;border-top:1px solid var(--border-subtle)">
-            <div style="font-family:var(--sans);font-weight:200;font-size:min(4.4vw,7.8vh);line-height:.9;color:var(--text-primary)">01</div>
-            <div>
-              <h3 style="font-family:var(--sans),var(--sans-zh);font-weight:400;font-size:max(18px,1.8vw);line-height:1.2;letter-spacing:-.015em;color:var(--text-primary);margin-bottom:1vh">Ask</h3>
-              <p style="font-family:var(--sans),var(--sans-zh);font-size:max(16px,.94vw);line-height:1.6;color:var(--text-secondary);font-weight:400">Validate with 2&ndash;3 real agencies in the next two weeks &mdash; run it manually, ask what they'd pay before writing integration code.</p>
-            </div>
-          </div>
-          <div style="display:grid;grid-template-columns:auto 1fr;gap:2vw;align-items:start;padding:2.6vh 0;border-top:1px solid var(--border-subtle)">
-            <div style="font-family:var(--sans);font-weight:200;font-size:min(4.4vw,7.8vh);line-height:.9;color:var(--text-primary)">02</div>
-            <div>
-              <h3 style="font-family:var(--sans),var(--sans-zh);font-weight:400;font-size:max(18px,1.8vw);line-height:1.2;letter-spacing:-.015em;color:var(--text-primary);margin-bottom:1vh">Build</h3>
-              <p style="font-family:var(--sans),var(--sans-zh);font-size:max(16px,.94vw);line-height:1.6;color:var(--text-secondary);font-weight:400">Agent mode + live budget grounding &mdash; Phase 1 &rarr; 2, months 0&ndash;6, gated on 5 paying agents.</p>
-            </div>
-          </div>
-          <div style="display:grid;grid-template-columns:auto 1fr;gap:2vw;align-items:start;padding:2.6vh 0;border-top:1px solid var(--border-subtle);border-bottom:2px solid var(--accent)">
-            <div style="font-family:var(--sans);font-weight:200;font-size:min(4.4vw,7.8vh);line-height:.9;color:var(--accent)">03</div>
-            <div>
-              <h3 style="font-family:var(--sans),var(--sans-zh);font-weight:400;font-size:max(18px,1.8vw);line-height:1.2;letter-spacing:-.015em;color:var(--accent);margin-bottom:1vh">Bet</h3>
-              <p style="font-family:var(--sans),var(--sans-zh);font-size:max(16px,.94vw);line-height:1.6;color:var(--text-secondary);font-weight:400">India's offline travel-agent channel is the revenue engine. The consumer app stays the free front door &mdash; not the other way around.</p>
-            </div>
-          </div>
+        <div class="t-meta">AI-native planning flow</div>
+      </div>
+      <div class="half b-grey r-border" style="padding:5.6vh 3.6vw 4.4vh;justify-content:flex-end">
+        <div data-anim="signature" style="display:flex;flex-direction:column;gap:2vh;max-width:34ch">
+          <div class="t-cat">Anchor</div>
+          <div class="t-body">Maps, booking sites, spreadsheets, travel blogs — consolidated into a single AI-native flow.</div>
+          <div class="t-helper">No signup. No form maze. One conversational surface to gather preferences and output a usable itinerary.</div>
         </div>
-        <div data-anim="foot" class="t-meta" style="color:var(--text-helper);text-align:right">&rarr; 完 &middot; END OF DECK</div>
       </div>
     </div>
+  </div>
+</section>
+
+<section class="slide light" data-layout="S05" data-animate="stack-build">
+  <div class="canvas-card">
+    <div class="chrome-min"><div class="l">Problem Framing</div><div class="r">05 / 14</div></div>
+    <div data-anim="line" style="display:grid;grid-template-columns:4fr 8fr;gap:2vw;align-items:end">
+      <div style="display:flex;flex-direction:column;gap:1.2vh">
+        <div class="t-cat">Three Forces</div>
+        <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(5.8vw,10vh);line-height:.98;letter-spacing:-.03em">The pain points WanderPlanner targets</div>
+      </div>
+      <div class="t-body-sm" style="max-width:46ch;justify-self:end">What is broken today is not a lack of travel content — it is the planning workflow itself.</div>
+    </div>
+    <div class="stack-row" data-anim="up" style="margin-top:5vh">
+      <div class="stack-block b-grey" style="border-radius:0">
+        <div class="layer-nb">01</div>
+        <i data-lucide="layers-3" class="lucide"></i>
+        <div class="layer-ttl">Fragmentation</div>
+        <div class="layer-desc">Users juggle Google Maps, Skyscanner, Reddit threads, and spreadsheets just to plan one trip.</div>
+      </div>
+      <div class="stack-block b-accent" style="border-radius:0">
+        <div class="layer-nb">02</div>
+        <i data-lucide="sparkles" class="lucide"></i>
+        <div class="layer-ttl">Generic recommendations</div>
+        <div class="layer-desc">Most AI trip planners give the same static, inauthentic suggestions to every traveler.</div>
+      </div>
+      <div class="stack-block b-ink" style="border-radius:0">
+        <div class="layer-nb">03</div>
+        <i data-lucide="languages" class="lucide"></i>
+        <div class="layer-ttl">No cultural fluency</div>
+        <div class="layer-desc">Indian travelers plan in Hinglish and think in lakhs — no mainstream travel-AI tool understands this today.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="slide dark" data-layout="S11" data-animate="timeline-walk">
+  <div class="canvas-card">
+    <div class="chrome-min"><div class="l">Product Scope</div><div class="r">06 / 14</div></div>
+    <div data-anim="line" style="display:grid;grid-template-columns:auto 1fr;gap:2.6vw;align-items:end">
+      <div class="t-cat on-dark">S11 · Horizontal Timeline</div>
+      <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(5.6vw,9.6vh);line-height:.98;letter-spacing:-.03em;color:#fff">What's built: pilot / pre-launch scope</div>
+    </div>
+    <div class="timeline-h nav-safe-bottom-tight" style="margin-top:4vh" data-anim="up">
+      <div class="tl-row" style="grid-template-columns:repeat(4,1fr)">
+        <div class="th-node up accent">
+          <span class="dot"></span>
+          <div class="label">
+            <div class="yr">V5.0</div>
+            <div class="name">LLM Wizard + Voice</div>
+            <div class="desc">Conversational onboarding, Hinglish-aware extraction, voice input/output.</div>
+          </div>
+        </div>
+        <div class="th-node down">
+          <span class="dot"></span>
+          <div class="label">
+            <div class="yr">V5.2</div>
+            <div class="name">RAG Itinerary Engine</div>
+            <div class="desc">Hybrid BM25 + semantic Qdrant retrieval, HyDE, reranking, cache → OSM → mock fallback.</div>
+          </div>
+        </div>
+        <div class="th-node up">
+          <span class="dot"></span>
+          <div class="label">
+            <div class="yr">V6–V9</div>
+            <div class="name">Maps, Compare, Budget, PDF</div>
+            <div class="desc">Interactive maps, comparisons, expense tracking, currency conversion, PDF export, booking hub.</div>
+          </div>
+        </div>
+        <div class="th-node down accent">
+          <span class="dot"></span>
+          <div class="label">
+            <div class="yr">V10.0</div>
+            <div class="name">Security Hardening</div>
+            <div class="desc">Rate limiting, prompt-injection guard, SSRF protection, and CORS hardening for a production-ready MVP.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="t-meta">Current state: technically polished, still pre-launch</div>
+  </div>
+</section>
+
+<section class="slide light" data-layout="S19" data-animate="four-cards">
+  <div class="canvas-card">
+    <div class="chrome-min"><div class="l">Architecture</div><div class="r">07 / 14</div></div>
+    <div data-anim="line" style="display:flex;flex-direction:column;gap:1.4vh">
+      <div style="width:80px;height:2px;background:var(--accent)"></div>
+      <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(6vw,10.8vh);line-height:.96;letter-spacing:-.03em">Tech stack</div>
+    </div>
+    <div data-anim="up" style="display:grid;grid-template-columns:repeat(4,1fr);gap:1.6vw;flex:1;margin-top:5vh;align-items:stretch">
+      <div class="card-fill" style="padding:2.6vh 1.4vw;border-radius:0;display:flex;flex-direction:column;gap:1.4vh"><div class="t-meta">— 01 / FRONTEND</div><div style="font-family:var(--sans),var(--sans-zh);font-weight:300;font-size:min(2.3vw,4.3vh);line-height:1.04">Next.js 16 + TypeScript</div><div class="t-body-sm">Tailwind CSS v4, Zustand, react-leaflet.</div></div>
+      <div class="card-fill" style="padding:2.6vh 1.4vw;border-radius:0;display:flex;flex-direction:column;gap:1.4vh"><div class="t-meta">— 02 / BACKEND</div><div style="font-family:var(--sans),var(--sans-zh);font-weight:300;font-size:min(2.3vw,4.3vh);line-height:1.04">FastAPI (Python 3.9+)</div><div class="t-body-sm">Pydantic v2 and async REST API foundations.</div></div>
+      <div class="card-fill" style="padding:2.6vh 1.4vw;border-radius:0;display:flex;flex-direction:column;gap:1.4vh"><div class="t-meta">— 03 / AI + RAG</div><div style="font-family:var(--sans),var(--sans-zh);font-weight:300;font-size:min(2.3vw,4.3vh);line-height:1.04">Gemini 2.5 Flash + Qdrant</div><div class="t-body-sm">Sentence-transformers embeddings, BM25 + Reciprocal Rank Fusion.</div></div>
+      <div class="card-fill" style="padding:2.6vh 1.4vw;border-radius:0;display:flex;flex-direction:column;gap:1.4vh"><div class="t-meta">— 04 / INFRA</div><div style="font-family:var(--sans),var(--sans-zh);font-weight:300;font-size:min(2.3vw,4.3vh);line-height:1.04">Vercel + Railway</div><div class="t-body-sm">Docker, Qdrant deployment, and GitHub Actions CI.</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide dark" data-layout="S18" data-animate="why-now">
+  <div class="canvas-card">
+    <div class="chrome-min"><div class="l">Market Timing</div><div class="r">08 / 14</div></div>
+    <div data-anim="line" style="display:flex;flex-direction:column;gap:1.2vh">
+      <div class="t-cat on-dark">S18 · Why Now</div>
+      <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(6vw,10.8vh);line-height:.96;letter-spacing:-.03em;color:#fff">Why now</div>
+    </div>
+    <div data-anim="up" style="display:grid;grid-template-columns:repeat(3,1fr);gap:2vw;flex:1;margin-top:4vh;align-items:end">
+      <div style="display:flex;flex-direction:column;justify-content:space-between;height:100%">
+        <div style="display:flex;flex-direction:column;gap:1.2vh">
+          <div class="t-cat on-dark">01 · Market size</div>
+          <div class="t-body" style="color:#fff">India's tourism economy hit ₹21 trillion (~$252B) in 2024 — 8th largest globally, up from 10th.</div>
+        </div>
+        <div style="font-family:var(--sans);font-weight:200;font-size:min(8.4vw,14vh);line-height:.9;letter-spacing:-.04em;color:#fff">₹21T</div>
+      </div>
+      <div style="display:flex;flex-direction:column;justify-content:space-between;height:100%">
+        <div style="display:flex;flex-direction:column;gap:1.2vh">
+          <div class="t-cat on-dark">02 · White space</div>
+          <div class="t-body" style="color:#fff">No global or Indian competitor has built Hinglish-native AI trip planning — a confirmed, currently uncontested white space.</div>
+        </div>
+        <div style="font-family:var(--sans);font-weight:200;font-size:min(8.4vw,14vh);line-height:.9;letter-spacing:-.04em;color:#fff">0</div>
+      </div>
+      <div style="display:flex;flex-direction:column;justify-content:space-between;height:100%">
+        <div style="display:flex;flex-direction:column;gap:1.2vh">
+          <div class="t-cat" style="color:var(--accent)">03 · Capital shift</div>
+          <div class="t-body" style="color:#fff">B2B travel funding overtook B2C for the first time in 2024 — capital now rewards licensing models over pure consumer apps.</div>
+        </div>
+        <div style="font-family:var(--sans);font-weight:200;font-size:min(8.4vw,14vh);line-height:.9;letter-spacing:-.04em;color:var(--accent)">$3T</div>
+      </div>
+    </div>
+    <div class="t-meta" style="color:rgba(255,255,255,.68)">$3 trillion — India's projected tourism economy by 2047</div>
+  </div>
+</section>
+
+<section class="slide hero light" data-layout="S07" data-animate="bar-grow">
+  <div class="canvas-card">
+    <div class="chrome-min"><div class="l">Funding Benchmarks</div><div class="r">09 / 14</div></div>
+    <div data-anim="line" style="display:flex;flex-direction:column;gap:1.2vh">
+      <div class="t-cat">S07 · Horizontal Bar Chart</div>
+      <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(5.8vw,10.2vh);line-height:.98;letter-spacing:-.03em">Competitive funding landscape</div>
+    </div>
+    <div data-anim="up" style="display:grid;grid-template-columns:auto 1fr;gap:1.2vw;align-items:center;margin-top:3.4vh">
+      <div class="t-cat">Scale bars vs. $22.5M leader</div>
+      <div style="height:1px;background:var(--grey-2)"></div>
+    </div>
+    <div class="h-bar-chart" style="margin-top:4vh;align-content:start;flex:1">
+      <div class="row-lbl">Mindtrip</div><div class="row-track"><div class="row-fill accent" style="width:100%"></div></div><div class="row-val">$22.5M</div>
+      <div class="row-lbl">Pickyourtrail</div><div class="row-track"><div class="row-fill" style="width:8%"></div></div><div class="row-val">$1.7M+</div>
+      <div class="row-lbl">Wanderlog</div><div class="row-track"><div class="row-fill grey" style="width:4%"></div></div><div class="row-val">Undisclosed</div>
+      <div class="row-lbl">WanderPlanner</div><div class="row-track"><div class="row-fill" style="width:0%"></div></div><div class="row-val">$0</div>
+    </div>
+    <div class="grid-4" style="display:grid;grid-template-columns:repeat(4,1fr);gap:1vw;flex:0 0 auto;margin-top:2vh;align-content:start">
+      <div class="t-helper">Mindtrip — 1.5M monthly users, B2B DMO model</div>
+      <div class="t-helper">Pickyourtrail — profitable, human + tech hybrid</div>
+      <div class="t-helper">Wanderlog — subscription revenue, ~10M+ users estimate</div>
+      <div class="t-helper">WanderPlanner — solo, pre-launch, no funding</div>
+    </div>
+  </div>
+</section>
+
+<section class="slide light" data-layout="S06" data-animate="measure-up">
+  <div class="canvas-card">
+    <div class="chrome-min"><div class="l">Commercial Roadmap</div><div class="r">10 / 14</div></div>
+    <div data-anim="line" style="display:grid;grid-template-columns:4fr 8fr;gap:2vw;align-items:end">
+      <div style="display:flex;flex-direction:column;gap:1.2vh">
+        <div class="t-cat">S06 · KPI Tower</div>
+        <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(5.6vw,9.8vh);line-height:.98;letter-spacing:-.03em">Commercial ask: what we need next</div>
+      </div>
+      <div class="t-body-sm" style="max-width:42ch;justify-self:end">Priority order, not size precision. The tower heights deliberately encode what should happen first.</div>
+    </div>
+    <div class="bar-towers nav-safe-bottom-tight" style="margin-top:4vh" data-anim="up">
+      <div class="bar-tower">
+        <div class="cap"><i data-lucide="message-square-more"></i></div>
+        <div class="body-block h-4 b-accent">
+          <div class="lbl">01 · Validate</div>
+          <div class="nb">8–10</div>
+          <div class="sub">Run customer interviews with target Indian travelers before building further.</div>
+        </div>
+      </div>
+      <div class="bar-tower">
+        <div class="cap"><i data-lucide="link"></i></div>
+        <div class="body-block h-3">
+          <div class="lbl">02 · Activate</div>
+          <div class="nb">0→1</div>
+          <div class="sub">Turn on affiliate tracking on current Skyscanner, Booking.com, and Viator deep-links.</div>
+        </div>
+      </div>
+      <div class="bar-tower">
+        <div class="cap"><i data-lucide="handshake"></i></div>
+        <div class="body-block h-2">
+          <div class="lbl">03 · Partner</div>
+          <div class="nb">1</div>
+          <div class="sub">Open one pilot B2B/DMO or travel-agency licensing conversation.</div>
+        </div>
+      </div>
+      <div class="bar-tower">
+        <div class="cap"><i data-lucide="target"></i></div>
+        <div class="body-block h-1">
+          <div class="lbl">04 · Focus</div>
+          <div class="nb">India</div>
+          <div class="sub">Narrow positioning to India-first conversational planning before adding features.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="slide dark" data-layout="S20" data-animate="stacked-ledger">
+  <div class="canvas-card">
+    <div class="chrome-min"><div class="l">Go / No-Go</div><div class="r">11 / 14</div></div>
+    <div style="display:flex;flex-direction:column;gap:1.2vh;margin-bottom:3vh">
+      <div class="t-cat on-dark">S20 · Stacked KPI Ledger</div>
+      <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(5.6vw,9.8vh);line-height:.98;letter-spacing:-.03em;color:#fff">Startup evaluation scorecard</div>
+    </div>
+    <div data-anim="ledger" style="display:flex;flex-direction:column;gap:0;flex:1;justify-content:center">
+      <div class="ledger-row" style="display:grid;grid-template-columns:2.4fr 6.8fr auto;gap:1.6vw;align-items:center;padding:2.1vh 0;border-top:1px solid rgba(255,255,255,.16)"><div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(4vw,7.2vh);line-height:.9;color:#fff">Large</div><div class="ledger-label"><div class="t-cat on-dark">Market size</div><div class="t-body-sm" style="color:rgba(255,255,255,.82)">Large &amp; growing (₹21T tourism economy, 8th globally)</div></div><div class="ledger-icon"><i data-lucide="globe"></i></div></div>
+      <div class="ledger-row" style="display:grid;grid-template-columns:2.4fr 6.8fr auto;gap:1.6vw;align-items:center;padding:2.1vh 0;border-top:1px solid rgba(255,255,255,.16)"><div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(4vw,7.2vh);line-height:.9;color:#fff">High</div><div class="ledger-label"><div class="t-cat on-dark">Competitive intensity</div><div class="t-body-sm" style="color:rgba(255,255,255,.82)">Funded rival Mindtrip, incumbent Wanderlog, and free ChatGPT / Gemini alternatives.</div></div><div class="ledger-icon"><i data-lucide="swords"></i></div></div>
+      <div class="ledger-row" style="display:grid;grid-template-columns:2.4fr 6.8fr auto;gap:1.6vw;align-items:center;padding:2.1vh 0;border-top:1px solid rgba(255,255,255,.16)"><div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(4vw,7.2vh);line-height:.9;color:var(--accent)">Narrow</div><div class="ledger-label"><div class="t-cat on-dark">Differentiation</div><div class="t-body-sm" style="color:rgba(255,255,255,.82)">Real but narrow: India-Hinglish fluency remains the confirmed uncontested edge.</div></div><div class="ledger-icon"><i data-lucide="languages"></i></div></div>
+      <div class="ledger-row" style="display:grid;grid-template-columns:2.4fr 6.8fr auto;gap:1.6vw;align-items:center;padding:2.1vh 0;border-top:1px solid rgba(255,255,255,.16)"><div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(4vw,7.2vh);line-height:.9;color:#fff">None</div><div class="ledger-label"><div class="t-cat on-dark">Monetization readiness</div><div class="t-body-sm" style="color:rgba(255,255,255,.82)">No accounts, no payment infrastructure, no revenue system live today.</div></div><div class="ledger-icon"><i data-lucide="wallet-cards"></i></div></div>
+      <div class="ledger-row" style="display:grid;grid-template-columns:2.4fr 6.8fr auto;gap:1.6vw;align-items:center;padding:2.1vh 0;border-top:1px solid rgba(255,255,255,.16)"><div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(4vw,7.2vh);line-height:.9;color:#fff">Solo</div><div class="ledger-label"><div class="t-cat on-dark">Founder capacity</div><div class="t-body-sm" style="color:rgba(255,255,255,.82)">Nights &amp; weekends only, no funding, no room to win on feature breadth.</div></div><div class="ledger-icon"><i data-lucide="user-round"></i></div></div>
+      <div class="ledger-row" style="display:grid;grid-template-columns:2.4fr 6.8fr auto;gap:1.6vw;align-items:center;padding:2.1vh 0;border-top:1px solid rgba(255,255,255,.16);border-bottom:1px solid rgba(255,255,255,.16)"><div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(4vw,7.2vh);line-height:.9;color:#fff">High</div><div class="ledger-label"><div class="t-cat on-dark">Technical quality</div><div class="t-body-sm" style="color:rgba(255,255,255,.82)">RAG, hybrid search, and security hardening point to a strong production-minded build.</div></div><div class="ledger-icon"><i data-lucide="shield-check"></i></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide hero light" data-layout="S12" data-animate="manifesto">
+  <div class="canvas-card">
+    <div class="chrome-min"><div class="l">Verdict</div><div class="r">12 / 14</div></div>
+    <div data-anim="line" style="display:grid;grid-template-columns:8fr 4fr;gap:2vw;align-items:start;flex:1">
+      <div style="display:flex;flex-direction:column;gap:1.4vh">
+        <div class="t-cat">S12 · Manifesto + Ink Banner</div>
+        <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(7.2vw,12.4vh);line-height:.92;letter-spacing:-.035em">Significant concerns.<br/>Not a clear yes.</div>
+      </div>
+      <div class="t-body-sm" style="padding-top:1.2vw;max-width:28ch">The product quality is impressive, but the business wedge is still too broad and unvalidated for a confident production push.</div>
+    </div>
+    <div data-anim="up" style="margin:0 -5vw -4.4vh;background:var(--ink);color:var(--paper);padding:3vh 5vw 4vh;display:grid;grid-template-columns:1fr auto;gap:2vw;align-items:end">
+      <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(4.8vw,8.4vh);line-height:.96;letter-spacing:-.03em">SCORE 5 / 10 — Proceed only with a narrowed wedge</div>
+      <div style="display:grid;grid-template-columns:repeat(3,auto);gap:1vw;align-items:center">
+        <i data-lucide="triangle-alert"></i>
+        <i data-lucide="target"></i>
+        <i data-lucide="users"></i>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="slide split dark" data-layout="S10" data-animate="split-statement">
+  <div class="canvas-card">
+    <div class="split-half">
+      <div class="half b-ink" style="padding:5.6vh 3.6vw 4.4vh;justify-content:space-between">
+        <div class="chrome-min" style="margin-bottom:0"><div class="l">Recommendations</div><div class="r">13 / 14</div></div>
+        <div style="display:flex;flex-direction:column;gap:1.8vh">
+          <div class="t-cat on-dark">S10 · Split Closing</div>
+          <div style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(7.2vw,12.8vh);line-height:.92;letter-spacing:-.035em;color:#fff">Five moves before writing more code</div>
+        </div>
+        <div class="t-meta" style="color:rgba(255,255,255,.62)">Customers first. Feature growth later.</div>
+      </div>
+      <div class="half" style="padding:5.6vh 3.6vw 4.4vh;justify-content:center">
+        <div class="chrome-min"><div class="l">Next actions</div><div class="r">5 items</div></div>
+        <div class="takeaway-list" style="display:flex;flex-direction:column;gap:0;list-style:none">
+          <div style="display:grid;grid-template-columns:auto 1fr;gap:1.6vw;align-items:start;padding:2.1vh 0;border-top:1px solid var(--border-subtle)"><div style="font-family:var(--sans);font-weight:200;font-size:min(4.2vw,7.4vh);line-height:.9">01</div><div><div class="t-h-prod">Narrow the wedge</div><div class="t-body-sm">India-first conversational planning, not an all-in-one platform.</div></div></div>
+          <div style="display:grid;grid-template-columns:auto 1fr;gap:1.6vw;align-items:start;padding:2.1vh 0;border-top:1px solid var(--border-subtle)"><div style="font-family:var(--sans);font-weight:200;font-size:min(4.2vw,7.4vh);line-height:.9">02</div><div><div class="t-h-prod">Talk to 8–10 users</div><div class="t-body-sm">Validate that Hinglish and cultural fluency create switching value.</div></div></div>
+          <div style="display:grid;grid-template-columns:auto 1fr;gap:1.6vw;align-items:start;padding:2.1vh 0;border-top:1px solid var(--border-subtle)"><div style="font-family:var(--sans);font-weight:200;font-size:min(4.2vw,7.4vh);line-height:.9">03</div><div><div class="t-h-prod">Turn on affiliate tracking now</div><div class="t-body-sm">Near-zero effort, immediate signal on clicks and intent.</div></div></div>
+          <div style="display:grid;grid-template-columns:auto 1fr;gap:1.6vw;align-items:start;padding:2.1vh 0;border-top:1px solid var(--border-subtle)"><div style="font-family:var(--sans);font-weight:200;font-size:min(4.2vw,7.4vh);line-height:.9">04</div><div><div class="t-h-prod">Explore B2B / DMO licensing</div><div class="t-body-sm">Follow the only model clearly validated in this category.</div></div></div>
+          <div style="display:grid;grid-template-columns:auto 1fr;gap:1.6vw;align-items:start;padding:2.1vh 0;border-top:1px solid var(--border-subtle);border-bottom:2px solid var(--accent)"><div style="font-family:var(--sans);font-weight:200;font-size:min(4.2vw,7.4vh);line-height:.9;color:var(--accent)">05</div><div><div class="t-h-prod" style="color:var(--accent)">Add DPDP consent before wider Booking Hub release</div><div class="t-body-sm">Consent + delete-my-data flow is the minimum safe path.</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="slide hero light" data-layout="S09" data-animate="statement">
+  <div class="canvas-card" style="position:relative">
+    <span class="ring-mat lg" style="position:absolute;left:5vw;bottom:10vh;width:16vw;height:16vw;color:var(--grey-2)"></span>
+    <span class="dot-mat xl" style="position:absolute;right:0;top:8vh;width:28vw;height:28vw;color:var(--accent);opacity:.22"></span>
+    <div class="chrome-min"><div class="l">Closing</div><div class="r">14 / 14</div></div>
+    <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:2.2vh;position:relative;z-index:1">
+      <div class="t-cat">S09 · Dot Matrix Statement</div>
+      <div data-anim="manifesto" style="font-family:var(--sans),var(--sans-zh);font-weight:200;font-size:min(7.2vw,12.2vh);line-height:.94;letter-spacing:-.035em;max-width:15ch">Built well.<br/>Not yet proven.<br/>The next step is customers, not code.</div>
+    </div>
+    <div class="t-meta" style="position:relative;z-index:1">WanderPlanner · Startup Evaluation · July 2026</div>
   </div>
 </section>
 
