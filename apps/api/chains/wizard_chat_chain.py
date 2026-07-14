@@ -650,6 +650,25 @@ def _infer_purpose_from_chip_tap(last_user_text: str | None) -> str | None:
     return _PURPOSE_CHIP_VALUES.get(stripped)
 
 
+def _is_destination_mode_chip_tap(last_user_text: str | None) -> bool:
+    """True when the user's last message was a tap of one of the destination
+    MODE chips ("Suggest me!" / "I have a destination in mind") rather than
+    an actual place name. Used to suppress those same chips from reappearing
+    under the very next question — once the mode is picked, the follow-up
+    ("Where are you thinking of going?" / "Could you tell me the
+    destination?") expects free-form text (a city/country name), not another
+    tap of the mode choice the user already made (see bug: mode chips
+    re-rendered verbatim under the destination-name follow-up)."""
+    if not last_user_text:
+        return False
+    stripped = re.sub(r"[\U0001F300-\U0001FAFF]", "", last_user_text).strip().lower()
+    canonical = {
+        re.sub(r"[\U0001F300-\U0001FAFF]", "", c).strip().lower()
+        for c in _FIELD_CHIP_SETS["destination"]
+    }
+    return stripped in canonical
+
+
 def _is_stale_chips(chips: list[str], config: dict[str, Any]) -> bool:
     """True if `chips` matches a field's canonical set but CURRENT_STATE says
     that field is already filled — i.e. the model echoed an old question's
@@ -1174,6 +1193,15 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             _, fresh_chips = _next_missing_field_prompt(merged)
             chips_list = fresh_chips
 
+        # Bug fix: the user just tapped a destination-MODE chip ("Suggest
+        # me!" / "I have a destination in mind") — the very next question
+        # ("Where are you thinking of going?" / "Could you tell me the
+        # destination?") expects a free-form place name, not another tap of
+        # the mode they already picked. Drop the mode chips if the LLM
+        # echoed them verbatim under this follow-up.
+        if chips_list and _is_destination_mode_chip_tap(last_user_text) and frozenset(chips_list) == _FIELD_CHIP_SETS["destination"]:
+            chips_list = []
+
         # Safety net (general, any turn): the same "LLM asks the right
         # question but drops the chips" failure mode observed above for the
         # opening purpose question also happens later in the conversation —
@@ -1183,9 +1211,17 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # canonical chip set (see _next_missing_field_prompt); if chips are
         # still empty and the next actually-missing field is one of those,
         # backfill just the chips — the LLM's own wording is left untouched.
+        # Exception: don't backfill the destination-MODE chips right after
+        # the user already tapped one of them (see above) — that would
+        # reintroduce the same bug via this fallback path instead.
         if not chips_list and not ready:
             _, fallback_chips = _next_missing_field_prompt(merged)
-            if fallback_chips and fallback_chips != ["Just generate it! 🚀"]:
+            is_destination_mode_fallback = frozenset(fallback_chips) == _FIELD_CHIP_SETS["destination"]
+            if (
+                fallback_chips
+                and fallback_chips != ["Just generate it! 🚀"]
+                and not (is_destination_mode_fallback and _is_destination_mode_chip_tap(last_user_text))
+            ):
                 chips_list = fallback_chips
 
         return WizardChatResponse(
@@ -1274,7 +1310,12 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # with; the fixed-enum fields still deserve their canonical chips).
         if not extracted_chips:
             _, fallback_chips = _next_missing_field_prompt(fallback_config)
-            if fallback_chips and fallback_chips != ["Just generate it! 🚀"]:
+            is_destination_mode_fallback = frozenset(fallback_chips) == _FIELD_CHIP_SETS["destination"]
+            if (
+                fallback_chips
+                and fallback_chips != ["Just generate it! 🚀"]
+                and not (is_destination_mode_fallback and _is_destination_mode_chip_tap(last_user_text))
+            ):
                 extracted_chips = fallback_chips
 
         # Anti-hallucination safety net (see the JSON-success path above for
@@ -1291,6 +1332,11 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # old chip set embedded in the leaked text.
         if extracted_chips and _is_stale_chips(extracted_chips, fallback_config):
             _, extracted_chips = _next_missing_field_prompt(fallback_config)
+
+        # Bug fix (see JSON-success path above): don't echo the destination
+        # MODE chips right back after the user just tapped one of them.
+        if extracted_chips and _is_destination_mode_chip_tap(last_user_text) and frozenset(extracted_chips) == _FIELD_CHIP_SETS["destination"]:
+            extracted_chips = []
 
         return WizardChatResponse(
             reply=clean_raw or "I'm on it! Just a moment…",
