@@ -622,6 +622,33 @@ _FIELD_CHIP_SETS: dict[str, frozenset[str]] = {
     "pace": frozenset({"Relaxed 🧘", "Moderate 🚶", "Packed 🏃"}),
 }
 
+# Purpose chip label -> canonical config value, keyed by the label with
+# emoji/whitespace stripped and lowercased. Used as a deterministic fallback
+# (see _infer_purpose_from_chip_tap below) for when the LLM's own reply
+# clearly moves on to the next question (e.g. "Where are you dreaming of
+# heading?") but omits `purpose` from config_patch — observed in the wild as
+# the purpose chips reappearing under a reply that had already moved past
+# purpose, because CURRENT_STATE never actually recorded it.
+_PURPOSE_CHIP_VALUES: dict[str, str] = {
+    "leisure": "leisure",
+    "adventure": "adventure",
+    "honeymoon": "honeymoon",
+    "family vacation": "family vacation",
+    "friends trip": "friends trip",
+    "solo": "solo",
+}
+
+
+def _infer_purpose_from_chip_tap(last_user_text: str | None) -> str | None:
+    """Deterministically resolve a purpose value from a user message that's
+    just a canonical purpose-chip tap (emoji and case aside). Returns None
+    for free-form text — the LLM remains responsible for extracting purpose
+    from longer, descriptive answers."""
+    if not last_user_text:
+        return None
+    stripped = re.sub(r"[\U0001F300-\U0001FAFF]", "", last_user_text).strip().lower()
+    return _PURPOSE_CHIP_VALUES.get(stripped)
+
 
 def _is_stale_chips(chips: list[str], config: dict[str, Any]) -> bool:
     """True if `chips` matches a field's canonical set but CURRENT_STATE says
@@ -1103,6 +1130,19 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             else:
                 merged[k] = v
 
+        # Safety net: the LLM occasionally acknowledges a purpose-chip tap in
+        # its reply text and moves on to the next question, without actually
+        # emitting `purpose` in config_patch — leaving CURRENT_STATE never
+        # recording it. Since _is_stale_chips (below) only replaces stale
+        # chips when the field looks filled, this silently reproduces the
+        # purpose chips under a reply that already asked about destination.
+        # Deterministically backfill from the raw chip tap when possible.
+        if not merged.get("purpose"):
+            inferred_purpose = _infer_purpose_from_chip_tap(last_user_text)
+            if inferred_purpose:
+                merged["purpose"] = inferred_purpose
+                patch["purpose"] = inferred_purpose
+
         # Server-side override: only allow ready=true if all required fields present
         ready = data.get("ready_to_generate", False) and _has_all_required(merged)
 
@@ -1162,6 +1202,21 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         clean_raw = raw or ""
         extracted_chips: list[str] = []
 
+        # Safety net: same purpose-chip-tap inference as the JSON-success
+        # path above. This except branch is, in practice, the one actually
+        # hit whenever Gemini's JSON is malformed (e.g. duplicated/truncated
+        # output) — request.partial_config never gets a `purpose` patch
+        # applied client-side in that case either, so every fallback below
+        # that reads request.partial_config would otherwise re-offer the
+        # purpose chips forever, even after the user already tapped one.
+        fallback_config = dict(request.partial_config)
+        fallback_patch: dict[str, Any] = {}
+        if not fallback_config.get("purpose"):
+            inferred_purpose = _infer_purpose_from_chip_tap(last_user_text)
+            if inferred_purpose:
+                fallback_config["purpose"] = inferred_purpose
+                fallback_patch["purpose"] = inferred_purpose
+
         # Pattern 1: Chips: ["A", "B"]
         chips_match = _re_fb.search(r'\s*(?:Chips?|Options?|chip\s*options?):\s*(\[[\s\S]*?\])', clean_raw, flags=_re_fb.IGNORECASE)
         if chips_match:
@@ -1210,7 +1265,7 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # above: a plain-text (non-JSON) greeting response on the very first
         # turn should still offer the standard purpose chips rather than
         # leaving the user with no way to respond except free text.
-        if not extracted_chips and not request.partial_config.get("purpose") and len(request.messages) <= 1:
+        if not extracted_chips and not fallback_config.get("purpose") and len(request.messages) <= 1:
             extracted_chips = ["Leisure 🌴", "Adventure 🏔️", "Honeymoon 💑", "Family Vacation 👨‍👩‍👧", "Friends Trip 🎉", "Solo 🧳"]
 
         # General any-turn chip backfill — same rationale as the JSON-success
@@ -1218,7 +1273,7 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # wasn't valid JSON at all, so it never had a `chips` field to begin
         # with; the fixed-enum fields still deserve their canonical chips).
         if not extracted_chips:
-            _, fallback_chips = _next_missing_field_prompt(request.partial_config)
+            _, fallback_chips = _next_missing_field_prompt(fallback_config)
             if fallback_chips and fallback_chips != ["Just generate it! 🚀"]:
                 extracted_chips = fallback_chips
 
@@ -1228,12 +1283,19 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # would be even more misleading since there's no backing config_patch
         # either.
         if clean_raw and _HALLUCINATED_GENERATION_RE.search(clean_raw):
-            clean_raw, extracted_chips = _next_missing_field_prompt(request.partial_config)
+            clean_raw, extracted_chips = _next_missing_field_prompt(fallback_config)
+
+        # Safety net: strip a stale echoed chip set (e.g. purpose chips under
+        # a reply that's already moved on) the same way the JSON-success
+        # path does — the plain-text extraction above can still surface an
+        # old chip set embedded in the leaked text.
+        if extracted_chips and _is_stale_chips(extracted_chips, fallback_config):
+            _, extracted_chips = _next_missing_field_prompt(fallback_config)
 
         return WizardChatResponse(
             reply=clean_raw or "I'm on it! Just a moment…",
             chips=extracted_chips,
-            config_patch={},
+            config_patch=fallback_patch,
             ready_to_generate=False,
             multi_select=_is_multi_select_chips(extracted_chips),
         )

@@ -1,3 +1,5 @@
+import { useId } from 'react'
+
 interface Props {
   size?: 'sm' | 'md' | 'lg'
   /** On dark background: brighter gold + gold wordmark.
@@ -37,8 +39,11 @@ export function WanderplannerLogo({ size = 'md', inverted = false, wordmark = tr
   const wordmarkClr = inverted ? '#E8C060' : '#0C4A6E'
   const taglineClr  = inverted ? '#D4AF3799' : '#64748B'
 
-  // Unique-per-size gradient ID (at most one of each size on any page)
-  const gId = `wp-gold-${size}`
+  // Unique-per-instance gradient ID — guards against duplicate-id gradients
+  // going invisible when the same size/inverted combo renders more than once
+  // on a page (browsers only resolve url(#id) against the first match).
+  const reactId = useId()
+  const gId = `wp-gold-${size}-${reactId}`
   const sw  = size === 'lg' ? 2 : 1.6   // stroke width
 
   // Diamond node radius scales with stroke width
