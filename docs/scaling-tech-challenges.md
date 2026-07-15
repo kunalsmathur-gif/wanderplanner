@@ -185,13 +185,60 @@ These are the concrete, runnable-in-principle validation scenarios that should b
 | **Bulk-purge performance for large user counts** | Seed tens of thousands of non-admin users, each with refresh tokens and analytics rows, plus a small number of admins that must survive. | Run `POST /api/admin/users/purge-all` with the correct `DELETE ALL USERS` phrase and measure statement time, lock duration, and replication lag/DB CPU. | Endpoint should delete only `is_admin=false` rows, preserve admin accounts, and return an accurate `deleted_count` without timing out. | The code path is a single bulk `DELETE ... WHERE is_admin = false`, which is the right shape for scale. However, `users.is_admin` is **not** indexed, so very large tables require a full scan; FK side-effects also matter (`refresh_tokens` cascade-delete, `events.user_id` set to `NULL`). For six-figure+ user counts, transaction/lock duration should be measured before running this in production hours. |
 | **Local SQLite dev testing — FK cascade enforcement** ⭐ NEW | Local dev only: `apps/api/dev.db` (SQLite) instead of Postgres, seeded with a user that has `refresh_tokens`/`password_reset_tokens` rows. | Delete the user via `DELETE /api/auth/me`, then check whether the child rows were actually removed. | Cascade should remove all child rows, exactly as it does on Postgres in prod. | **Found and fixed during live local testing**: SQLite does not enforce foreign keys by default, so `ON DELETE CASCADE`/`SET NULL` clauses were silently no-ops against `dev.db`, even though the automated pytest suite's `conftest.py` fixture already enabled FK enforcement (masking the gap from CI). Fixed in `apps/api/db.py` with a SQLite-only `PRAGMA foreign_keys=ON` connection-level event listener, gated on `engine.url.get_backend_name() == "sqlite"` — zero effect on Postgres/prod, but required for correct cascade behavior whenever a contributor tests locally against SQLite. |
 
+## 8. Global Destination Coverage — What Breaks Trying to Pre-Ingest "All Countries/Cities/Locations"
+
+A natural-sounding growth plan — "ingest every country, state, city, and POI on Earth upfront" — looks like it just needs a bigger Qdrant tier. It doesn't. It breaks on three independent axes at once, and the fix is an architecture change (demand-driven ingestion), not a bigger free-tier plan.
+
+### The math, grounded in this repo's actual chunking
+
+Current baseline: `KNOWN_DESTINATIONS` (`apps/api/scrapers/reddit.py`) is a curated **134-destination** list. Wiki chunks are ~400–600 chars, Reddit chunks are per-paragraph, OSM POIs are capped at ~300/destination (`services/gems.py`'s bound). That's an estimated **~500K–800K vectors total** across the `wiki`/`reddit`/`osm_pois`/`itinerary_cache` collections today — comfortably inside Qdrant Cloud's 1GB free tier.
+
+"All 195 countries → ~3,000–5,000 states/provinces → ~150,000–200,000 cities (standard population threshold) → POIs in each" is roughly a **1,000x increase in destination count** over today's curated list. Holding the same per-destination chunk volume constant, that's **~500M–800M vectors**, which means:
+
+| Constraint | Today (134 destinations) | At ~150K destinations |
+|---|---|---|
+| Storage (vectors + HNSW index + payload, ~2–4KB/point) | ~1–3GB | **~1–3 TB** |
+| Qdrant Cloud free tier (1GB) | Fits | Breaks by ~1,000–3,000x |
+| OSM ingestion time (`osm_ingest_delay_seconds`, serial, polite to the free Overpass API) | 134 × 2s ≈ 4.5 min | 150,000 × 2s ≈ **83+ hours continuous — Overpass will very likely rate-limit/IP-ban long before this completes** |
+| Embedding + corpus-extraction compute (Gemini calls, `all-MiniLM-L6-v2` batches) | Minutes, near-free | Real, sustained $ and hours — comparable to embedding a large slice of Wikipedia |
+| Qdrant Cloud monthly cost at that storage tier | $0 | Likely **$1,000s–$10,000s/month** — this is enterprise-tier pricing, not "the next plan up" |
+
+**This isn't a "which vector DB" problem — eager global pre-ingestion doesn't scale on any provider**, self-hosted or managed, because the underlying corpus size and ingestion-source rate limits are the bottleneck, not Qdrant specifically.
+
+### The fix: demand-driven ingestion, not an eager global crawl
+
+No real travel-RAG product eagerly ingests every populated place on Earth upfront — the overwhelming majority would never be requested, and you'd be paying to store and periodically refresh dead weight. The corpus should grow with **actual user demand**, converging on a long tail of a few thousand real destinations, not hundreds of thousands of speculative ones.
+
+Concretely, against this repo's existing structure:
+
+1. **Track ingestion state durably in Postgres** (the existing durable-state store — avoid adding a new DB layer per the principle in section 5 above):
+   ```sql
+   CREATE TABLE destination_ingestion_state (
+       destination TEXT PRIMARY KEY,
+       osm_last_ingested_at TIMESTAMPTZ,
+       wiki_last_ingested_at TIMESTAMPTZ,
+       request_count INTEGER DEFAULT 0,
+       last_requested_at TIMESTAMPTZ
+   );
+   ```
+2. **Add an `ensure_destination_ingested(destination)` gatekeeper**, called wherever `retrieve_context()` / `get_gem_intel()` currently fire in the itinerary-generation path. On a first-ever request for a destination: geocode-validate via Nominatim (rejects junk/misspelled input before spending Overpass/embedding budget), then run `ingest_osm_pois()` (`scrapers/osm.py`, already idempotent and per-destination) and `ingest_wikivoyage()` (`scrapers/wikivoyage.py` — already written per-destination, but currently **not wired into any calling path**, scheduled or on-demand) inline, accepting one-time added latency for that first user, then write the timestamp row. Reuse the same per-destination `asyncio.Lock` stampede-guard pattern already used in `services/gems.py` so a demand spike on one new destination doesn't trigger duplicate concurrent ingestion.
+3. **Stop looping the scheduler over a static list.** `core/scheduler.py::_refresh_osm_pois` currently iterates the fixed `KNOWN_DESTINATIONS` on a timer; it should instead refresh only rows in `destination_ingestion_state` past their staleness window (`WHERE osm_last_ingested_at < now() - interval`) — i.e. refresh what's actually been requested, not the entire static list (and never the entire globe).
+4. **Widen Reddit's destination matching.** `scrapers/reddit.py::_extract_destination()` currently only recognizes names already in the static `KNOWN_DESTINATIONS` list, so organically-mentioned destinations outside that curated set are silently dropped even as OSM/wiki coverage grows on demand elsewhere — it should match against `destination_ingestion_state` (or geocode-normalized extraction) instead.
+5. **Guard against cost/abuse.** Rate-limit new-destination cold starts per IP/session (e.g., max 5/hour) so garbage input can't run up Overpass/Gemini spend. `request_count`/`last_requested_at` also gives a natural demand signal for later prioritizing "popular but currently thin" destinations for deeper ingestion, without ever having to eagerly crawl the long tail nobody asks for.
+
+**Net effect:** corpus size tracks real usage, not the size of the world. Even at 1M MAU, realistically you converge on a few thousand actively-requested destinations — staying inside Qdrant Cloud's free-to-low-paid tiers indefinitely, rather than needing a multi-TB self-hosted cluster to cover places no user ever visits.
+
+**Right time to solve:** this is the same milestone as the "expand and prioritize ingestion by demand" bullet already in section 6 above — do it once you have real telemetry on which destinations are actually being requested (post-observability rollout), and *before* anyone attempts a "let's just ingest everywhere" expansion. It's substantially cheaper to build demand-driven ingestion from the start than to walk back a global pre-crawl later.
+
+---
+
 ## Summary: Sequencing Recommendation
 
 | Phase | Trigger | Key work |
 |---|---|---|
 | **Now (any traffic)** | Zero-cost / cheap fixes with high risk reduction | Fix SSRF (extract-trip), add rate limiting on LLM endpoints, sanitize error responses, pin dependencies + add dependency/secret scanning to CI, add structured logging + basic observability (Sentry/APM), treat AGENTS.md/CLAUDE.md changes as high-scrutiny in review. |
 | **Before 1,000 concurrent users** | Approaching real concurrent load / first marketing push | Move Qdrant off `:memory:` to managed/persistent, move share-store + caches to Redis, add uvicorn worker scaling + connection pooling, decouple ingestion scheduler from API instances, add basic auth to gate expensive endpoints, fix share-link token entropy. |
-| **Before/at 10k-50k MAU** | Enough real usage data to validate cost/cache assumptions | Validate itinerary-cache hit rate & iteration cost with real telemetry, add iteration caps/tiered model routing, expand ingestion coverage by demand, add cache quality feedback loop, add server-side session persistence. |
+| **Before/at 10k-50k MAU** | Enough real usage data to validate cost/cache assumptions | Validate itinerary-cache hit rate & iteration cost with real telemetry, add iteration caps/tiered model routing, **switch destination ingestion to demand-driven (`destination_ingestion_state` + `ensure_destination_ingested()`, section 8) instead of the static `KNOWN_DESTINATIONS` loop** — do this *before* any push toward broader geographic coverage, not after, add cache quality feedback loop, add server-side session persistence. |
 | **Before 1M MAU** | Committing to large-scale growth | Full re-architecture: stateless multi-instance API + real autoscaling/load balancer, Postgres for accounts/itineraries/share-links, multi-provider LLM failover, paid tiers for all third-party APIs, multi-region hosting, user accounts + long-term preference memory, dedicated embedding/reranking service scaled independently. |
 
 This assessment should be revisited once real production telemetry (post-observability rollout) is available — several of the cost and cache-hit-rate assumptions here are extrapolated from the small-scale numbers already documented in `rag-strategy.md` / `system-design.md` and should be validated against actual data as soon as it exists.

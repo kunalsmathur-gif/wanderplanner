@@ -989,10 +989,12 @@ Populated by `scrapers/osm.py::ingest_osm_pois()` from the free Overpass API (no
 Key: `embed(f"{destination} {duration_days}d {pace} {purpose} trip")`. Written by `services/itinerary_cache.py::store_itinerary()` after every successful LLM generation (best-effort, never blocks the response; strips any `_`-prefixed fallback markers so degraded fallback output is never cached). Read by `get_cached_itinerary()` with `score_threshold=0.88` as Tier 1 of the fallback chain.
 
 ### Ingestion Schedule
-- **Reddit**: APScheduler, every 6h. Subreddits: `travel`, `solotravel`, `digitalnomad`, `backpacking`.
-- **Wiki**: On-demand, triggered at itinerary generation time for the destination if not cached.
-- **OSM POIs**: APScheduler, weekly (`osm_refresh_days` setting). Iterates `KNOWN_DESTINATIONS` with a polite delay (`osm_ingest_delay_seconds`) between Overpass calls.
+- **Reddit**: APScheduler, every 6h. Subreddits: `travel`, `solotravel`, `digitalnomad`, `backpacking`. Destination matching (`scrapers/reddit.py::_extract_destination()`) is limited to names already in the static `KNOWN_DESTINATIONS` list.
+- **Wiki**: `scrapers/wikivoyage.py::ingest_wikivoyage(destination)` exists and is per-destination/idempotent, but as of this writing is **not called from any scheduled job or request path** — it's not currently wired into live ingestion (⚠️ doc/code drift: this was previously described as "on-demand, triggered at itinerary generation time," which does not reflect the current call graph).
+- **OSM POIs**: APScheduler, weekly (`osm_refresh_days` setting). Iterates the static `KNOWN_DESTINATIONS` (134 curated destinations) with a polite delay (`osm_ingest_delay_seconds`) between Overpass calls.
 - **Itinerary cache**: Event-driven — written on every successful itinerary generation, no separate scheduled job.
+
+**Scaling caveat:** the OSM/Reddit ingestion loop above is a static, curated 134-destination list — it does not and should not scale by simply extending `KNOWN_DESTINATIONS` to cover every country/state/city on Earth (storage, ingestion-source rate limits, and embedding cost all break well before Qdrant's free tier does; see `docs/scaling-tech-challenges.md` §8 for the full math and the demand-driven `destination_ingestion_state` design that should replace this static loop before any broad geographic expansion).
 
 ---
 
