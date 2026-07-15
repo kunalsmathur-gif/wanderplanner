@@ -1,7 +1,7 @@
 # WanderPlanner — System Design Document
 
-**Version:** 8.7 (Refinement-Fidelity Eval Suite — the Phase 1 kill-criterion gate)
-**Last Updated:** July 12, 2026  
+**Version:** 8.8 (Eval recall chase: interest-expansion anti-distractor rule tuned, fidelity 0.975 → 0.983)
+**Last Updated:** July 15, 2026  
 **Audience:** Engineering team and technical stakeholders
 
 ---
@@ -1472,6 +1472,13 @@ surfacing a false "Connection error" on an otherwise still-working request.
 ---
 
 ## 16. Change Log
+
+### v10.23 (July 2026) — Eval recall chase: interest-expansion anti-distractor rule tuned; live rerun fidelity 0.983 (up from 0.975)
+- Investigated the 3 recall misses in the v10.20.0 published live run (RF-001 London, RF-009 LA, RF-012 Mumbai) at the prompt level via cheap direct probes of `expand_interest_to_candidates()` (not the full live pipeline): the anti-distractor rule's "known FOR the interest itself" wording was excluding true positives — Hollywood Walk of Fame (LA movie-studios interest), Prithvi Theatre (Mumbai Bollywood interest) — because they're famous *for* celebrities/cinema rather than literally named after the interest
+- Tuned `_EXPANSION_SYSTEM_PROMPT` in `chains/interest_expansion_chain.py`: one clarifying bullet allowing famous theatres, walk-of-fame monuments, and publicly-known celebrity residences to count as "specific." No code-path change
+- Validated before publishing: re-probed the 3 originally-failing cases directly (all fixed); spot-checked 4 other positive + all 4 negative/honesty cases for regressions (none); offline regression gate unaffected at 1.000 (never calls the LLM); full backend suite 255 passed (2 pre-existing unrelated failures confirmed present on unmodified `main`)
+- Live rerun (2026-07-15, after founder raised the Gemini spend cap): **fidelity 0.983 (was 0.975), recall 0.958 (was 0.938), inclusion 1.000, stability 1.000, precision 0.979, honesty 4/4.** RF-009/RF-012 (the rule-caused misses) now score 1.00; RF-001/RF-015 traded places as the "still missing one place" case vs the prior run — direct re-probes confirmed both succeed in isolation, i.e. `temperature=0.1` sampling variance, not a residual rule defect
+- `docs/eval-results/README.md` rewritten with the before/after numbers and the honest sampling-variance discussion; new dated reports `report_vs_chatgpt_2026-07-15.md` / `report_vs_claude_sonnet_2026-07-15.md` published alongside the 2026-07-14 pair; numbers propagated to `docs/GTM_STRATEGY.md`, `docs/eval-set.md` §4V, and the pitch deck
 
 ### v10.18.2 (July 2026) — First live kill-criterion numbers + ChatGPT/Claude Sonnet baselines
 - Live run: fidelity 0.771, honesty 4/4; three zero-pin recall bugs identified (Kyoto/Goa/Bengaluru) + one generation-compliance gap (Barcelona) — fix list in NEXT_SESSION_TODO

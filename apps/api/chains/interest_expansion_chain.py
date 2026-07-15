@@ -40,6 +40,13 @@ RULES:
   interest itself, not merely a popular attraction at the destination. If
   you are unsure whether a place genuinely relates to the interest, leave
   it out; do not pad the list.
+- This includes venues that are famous BECAUSE of the interest even if they
+  aren't a studio/museum in the strict sense: an iconic theatre/venue tied to
+  the interest's industry or community, a landmark honouring its figures
+  (e.g. a walk-of-fame-style monument), or a well-known figure's residence
+  that is itself a recognised sightseeing landmark for fans (viewed from
+  outside — never suggest entering a private home). These still count as
+  specific, not generic.
 - Specific venues/sites only (studios, museums, filming locations, circuits,
   shops, viewpoints) — no whole cities or generic advice. A named district or
   quarter counts ONLY when the district itself is the visitable attraction

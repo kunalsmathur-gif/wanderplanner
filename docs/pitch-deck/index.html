@@ -1390,7 +1390,7 @@
           <div style="font-family:var(--sans);font-weight:200;font-size:min(4.6vw,8vh);color:var(--accent);line-height:.9">02</div>
           <div>
             <h4 class="t-body-emp" style="font-size:max(18px,1.4vw)">Measurable personalization fidelity</h4>
-            <p class="body-sm" style="margin-top:.6vh">Published evals proving itineraries obey constraints ("Harry Potter fan", "less-crowded beaches") &mdash; live fidelity 0.904 vs. ChatGPT's 0.74 unverifiable-claim rate.</p>
+            <p class="body-sm" style="margin-top:.6vh">Published evals proving itineraries obey constraints ("Harry Potter fan", "less-crowded beaches") &mdash; live fidelity 0.983 (up from 0.975 pre-tweak, 0.904 first live run) vs. ChatGPT's 0.74 unverifiable-claim rate.</p>
           </div>
         </div>
         <div class="card-fill" style="display:grid;grid-template-columns:auto 1fr;gap:2vw;align-items:center;padding:2.4vh 2vw">
@@ -1422,8 +1422,8 @@
       </div>
       <div>
         <div style="height:2px;background:var(--accent-bright);width:100%"></div>
-        <div class="kpi-num" style="margin-top:1.6vh;font-family:var(--sans);font-weight:200;font-size:min(4.2vw,7.6vh);color:var(--accent-bright)">0.904</div>
-        <div class="t-meta" style="margin-top:.8vh">WanderPlanner fidelity score</div>
+        <div class="kpi-num" style="margin-top:1.6vh;font-family:var(--sans);font-weight:200;font-size:min(4.2vw,7.6vh);color:var(--accent-bright)">0.983</div>
+        <div class="t-meta" style="margin-top:.8vh">WanderPlanner fidelity score (up from 0.975)</div>
       </div>
       <div>
         <div style="height:2px;background:rgba(255,255,255,.3);width:100%"></div>
@@ -1440,8 +1440,8 @@
       <div class="bottom-hero" style="font-family:var(--sans);font-weight:200;font-size:min(6vw,11vh);line-height:.9;color:#fff">1.00<span style="font-size:.3em;opacity:.6;margin-left:.15em">pins</span></div>
       <div>
         <div style="display:flex;gap:1.2vw;flex-wrap:wrap;margin-bottom:1.2vh">
-          <span class="t-meta" style="background:var(--ink);padding:.5em 1em;border:1px solid rgba(255,255,255,.3)">RECALL 0.854</span>
-          <span class="t-meta" style="background:var(--ink);padding:.5em 1em;border:1px solid rgba(255,255,255,.3)">STABILITY 0.938</span>
+          <span class="t-meta" style="background:var(--ink);padding:.5em 1em;border:1px solid rgba(255,255,255,.3)">RECALL 0.958 (was 0.938)</span>
+          <span class="t-meta" style="background:var(--ink);padding:.5em 1em;border:1px solid rgba(255,255,255,.3)">STABILITY 1.000</span>
           <span class="t-meta" style="background:var(--ink);padding:.5em 1em;border:1px solid rgba(255,255,255,.3)">vs CLAUDE 0.98 recall / 0.79 unverifiable</span>
         </div>
         <div style="font-family:var(--sans),var(--sans-zh);font-size:max(14px,.86vw);color:rgba(255,255,255,.7)">Pin inclusion on every hard-pinned refinement case &mdash; a hallucinated "gem" never ships because it's OSM/Wikivoyage-verified first.</div>
@@ -1673,8 +1673,8 @@
       <div class="tl-node accent">
         <span class="tl-axis"><span class="dot" style="background:var(--accent-bright)"></span></span>
         <span class="yr" style="color:var(--accent-bright)">2026-07</span>
-        <span class="multi" style="color:var(--accent-bright)">0.904</span>
-        <p class="desc" style="color:var(--paper)">Refinement-fidelity eval gate passed vs. ChatGPT/Claude baselines (v10.19) &mdash; kill-criterion cleared.</p>
+        <span class="multi" style="color:var(--accent-bright)">0.983</span>
+        <p class="desc" style="color:var(--paper)">Refinement-fidelity eval gate passed vs. ChatGPT/Claude baselines (v10.20 &rarr; v10.23 anti-distractor tweak) &mdash; kill-criterion cleared, then improved.</p>
       </div>
       <div class="tl-node">
         <span class="tl-axis"><span class="dot"></span></span>
@@ -1696,8 +1696,8 @@
       </div>
     </div>
     <div class="kpi-row-4">
-      <div class="kpi-cell"><div class="lbl">Fidelity</div><div class="nb">0.904</div><div class="note">vs ChatGPT 0.74 unverifiable</div></div>
-      <div class="kpi-cell"><div class="lbl">Recall</div><div class="nb">0.854</div><div class="note">named-interest POIs surfaced</div></div>
+      <div class="kpi-cell"><div class="lbl">Fidelity</div><div class="nb">0.983</div><div class="note">vs ChatGPT 0.74 unverifiable &middot; up from 0.975</div></div>
+      <div class="kpi-cell"><div class="lbl">Recall</div><div class="nb">0.958</div><div class="note">named-interest POIs surfaced &middot; up from 0.938</div></div>
       <div class="kpi-cell"><div class="lbl">Pin inclusion</div><div class="nb">1.00</div><div class="note">on every hard-pinned case</div></div>
       <div class="kpi-cell"><div class="lbl">Honesty</div><div class="nb">4<span class="unit">/4</span></div><div class="note">vs ChatGPT's 0/4</div></div>
     </div>

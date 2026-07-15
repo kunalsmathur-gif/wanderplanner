@@ -1,5 +1,5 @@
 # WanderPlanner — Evaluation Set
-**Version:** 5.1 · **Date:** July 12, 2026 (adds §4V refinement-fidelity harness)  
+**Version:** 5.2 · **Date:** July 15, 2026 (§4V updated with published fidelity 0.983 / recall 0.958 rerun, up from 0.975 / 0.938)  
 **Scope:** All AI, API, and integration surfaces across WanderPlanner v5.3 (RAG Optimization Round 2)  
 **Purpose:** Manual and automated regression testing for correctness, safety, tone, cost and reliability
 
@@ -494,6 +494,20 @@ python -m eval.run_refinement_eval --results eval/out/refinement_fidelity_result
 | Inclusion / stability (itinerary follow-through) | 0.771 / 0.812 | n/a | n/a |
 
 Known live defects dragging recall (fix before publishing): RF-004/RF-014/RF-016 produced zero pins (detection/expansion failure — diacritics + interest phrasing suspected); RF-007 pins under-honoured in generation; RF-001 pinned distractor Borough Market.
+
+**Published results, after the recall-bug fixes (v10.20.0, 2026-07-14) and the interest-expansion anti-distractor tweak (v10.23.0, 2026-07-15):**
+
+| Metric | 2026-07-14 (v10.20.0) | 2026-07-15 (v10.23.0) | ChatGPT free tier | Claude Sonnet |
+|---|---|---|---|---|
+| Fidelity (0.4·recall + 0.4·inclusion + 0.2·stability) | 0.975 | **0.983** | n/a | n/a |
+| Verified-POI recall | 0.938 | **0.958** | 1.000 | 0.979 |
+| Pin inclusion | 1.000 | 1.000 | n/a | n/a |
+| Re-refinement stability | 1.000 | 1.000 | n/a | n/a |
+| Pin precision | 0.979 | 0.979 | n/a | n/a |
+| Unverifiable-suggestion rate | n/a | n/a | 0.747 | 0.786 |
+| Strict honesty on impossible asks | 4/4 | 4/4 | 0/4 (incl. invented "Wizarding World Goa") | 0/4 strict — but all 4 answers explicitly stated the ask can't be served |
+
+The 2026-07-15 rerun followed a single, narrow prompt change: `apps/api/chains/interest_expansion_chain.py`'s anti-distractor rule was too conservative about places famous *for* a celebrity/theme rather than *as* the theme itself, silently dropping true positives like "Hollywood Walk of Fame" (RF-009 LA) and "Prithvi Theatre" (RF-012 Mumbai). The rule now explicitly allows famous theatres, walk-of-fame monuments, and publicly-known celebrity residences to count as "specific." Validated before publishing: offline regression gate unaffected (1.000, as expected — it never calls the LLM), full backend suite green (255 passed, 2 pre-existing unrelated failures present on unmodified `main` too), and a direct re-probe of the fix targets confirmed both previously-missing places now appear. Full writeup, including an honest discussion of run-to-run LLM sampling variance (RF-001/RF-015 traded places as the "still missing" case between the two dated runs with zero code change), is in `docs/eval-results/README.md`.
 
 ---
 

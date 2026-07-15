@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.22.0 (UI/UX audit §2.3–§2.5: on-demand PDF generation, app-wide en-IN currency + human day-date formatters, BestTime label clarity)
+**Version:** 10.23.0 (Eval recall chase: interest-expansion anti-distractor rule tuned, live rerun published — fidelity 0.983, up from 0.975)
 **Last Updated:** July 13, 2026  
 **Status:** Production-ready MVP
 
@@ -1416,7 +1416,20 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.23.0 Changes (July 2026) — Eval recall chase: anti-distractor rule tuned; live rerun PUBLISHED (fidelity 0.983, up from 0.975)
+
+Follow-up to v10.20.0's published live run. The published report's 3 recall misses (RF-001 London, RF-009 LA, RF-012 Mumbai) were investigated at the prompt level rather than accepted as noise.
+
+| Change | Detail |
+|---|---|
+| **INVESTIGATED** `chains/interest_expansion_chain.py` misses | Cheap direct probes of `expand_interest_to_candidates()` (not the full $0.40 live pipeline) on the 3 failing cases showed the anti-distractor rule's "known FOR the interest itself" wording was too conservative: it was excluding **Hollywood Walk of Fame** (RF-009 LA movie-studios interest) and **Prithvi Theatre** (RF-012 Mumbai Bollywood interest) — both true positives in the truth-set, dropped because they're famous *for* celebrities/cinema rather than literally named after the interest. |
+| **TUNED** `_EXPANSION_SYSTEM_PROMPT` | Added a clarifying bullet to the anti-distractor rule explicitly allowing famous theatres, walk-of-fame monuments, and publicly-known celebrity residences to count as "specific" to a named interest. One prompt-text change, no code-path change. |
+| **Validated before touching the published numbers** | Re-probed all 3 originally-failing cases directly (all fixed); spot-checked 4 other positive cases and all 4 negative/honesty cases for regressions (none — the pre-existing Kyoto scuba-diving cross-city candidate issue is unrelated, filtered by verification not this prompt); offline regression gate unaffected at 1.000 (by construction — it never calls the LLM); full backend suite **255 passed** (2 pre-existing unrelated failures — `test_auth.py::test_signup_rejects_duplicate_email`, `test_rag.py::test_fallback_tier2_rag_skeleton_builds_from_osm_pois` — confirmed present on unmodified `main` via `git stash`, not caused by this change). |
+| **Live rerun** (gemini-2.5-flash, 2026-07-15, after founder raised the Gemini spend cap) | **Fidelity 0.983 (was 0.975) · recall 0.958 (was 0.938) · inclusion 1.000 · stability 1.000 · precision 0.979 · honesty 4/4.** RF-009 and RF-012 (the rule-caused misses) now score 1.00. RF-001 still missed one place and a new miss appeared at RF-015 (Amritsar Sikh heritage, missing "Golden Temple") — re-probing both directly afterward confirmed they succeed in isolation, i.e. these are `temperature=0.1` sampling-variance misses, not a residual defect in the tuned rule. The aggregate trend (0.975→0.983, 0.938→0.958) is real; which specific 3 cases miss on any single run is noisy by design. |
+| **PUBLISHED** `docs/eval-results/` updated | `README.md` rewritten with the 2026-07-15 numbers, the tuning rationale, the 3-way validation done before publishing, and an explicit honest explanation of why the miss set shifted case-by-case. New dated verbatim reports `report_vs_chatgpt_2026-07-15.md` / `report_vs_claude_sonnet_2026-07-15.md` added alongside the original 2026-07-14 pair (kept for the historical record). Propagated the before/after numbers into `docs/GTM_STRATEGY.md` §5 Phase 1 item 4, `docs/eval-set.md` §4V, and the pitch deck (`docs/pitch-deck/index.html`, which had drifted to a stale pre-v10.20 figure). |
+| **Verified** | See validation row above; no frontend changes this entry, `tsc`/web suite not applicable. |
 
 ### v10.22.0 Changes (July 2026) — UI/UX audit §2.3–§2.5: on-demand PDF, one currency/date formatter app-wide, BestTime label clarity
 
