@@ -996,6 +996,21 @@ Key: `embed(f"{destination} {duration_days}d {pace} {purpose} trip")`. Written b
 
 **Scaling caveat:** the OSM/Reddit ingestion loop above is a static, curated 134-destination list — it does not and should not scale by simply extending `KNOWN_DESTINATIONS` to cover every country/state/city on Earth (storage, ingestion-source rate limits, and embedding cost all break well before Qdrant's free tier does; see `docs/scaling-tech-challenges.md` §8 for the full math and the demand-driven `destination_ingestion_state` design that should replace this static loop before any broad geographic expansion).
 
+### Production setup runbook (⭐ NEW — Qdrant Cloud, July 2026)
+
+Prior to this pass, both local dev and Railway prod used `QDRANT_URL=:memory:` — an in-process, non-persistent store. That's fine for a single local dev process, but in prod it means **every restart/redeploy silently wiped all ingested RAG data** (wiki/reddit/OSM/itinerary-cache collections), and it can't be shared between the API process and any one-off ingestion script. Both are now pointed at a shared, persistent **Qdrant Cloud** cluster (free tier, 1GB) instead:
+
+1. **Create a free cluster** at [cloud.qdrant.io](https://cloud.qdrant.io/signup) (email, Google, or GitHub sign-in). Pick a region close to Railway's for lower retrieval latency.
+2. **Generate an API key** from the cluster's "API Keys" tab — shown once; store it securely (a new key can always be generated later if lost, no need to invalidate the old one).
+3. **Set two env vars** in both places:
+   - Local: `apps/api/.env` → `QDRANT_URL=https://<cluster-id>.<region>.aws.cloud.qdrant.io`, `QDRANT_API_KEY=<key>`
+   - Railway: `railway variables --service api --set "QDRANT_URL=..." --set "QDRANT_API_KEY=..."` (or via the dashboard's Variables tab) — triggers an automatic redeploy.
+4. **No manual schema/collection setup needed** — `core/qdrant.py::_ensure_collections()` creates all 4 collections (`wiki`, `reddit`, `osm_pois`, `itinerary_cache`) automatically on first connect, same as it did against `:memory:`.
+5. **Verify**: `curl -X GET "https://<cluster-url>/collections" --header "api-key: <key>"` should return the collection list; both the local process and the Railway prod process connecting to the same cluster will show up in the same collection list, since it's now one shared store instead of two isolated in-memory ones.
+6. **Anything running local Colima/Docker Qdrant purely for this purpose can be torn down** (`docker compose down`) once the cloud cluster is verified working — Docker was only ever a local-dev stand-in for a persistent Qdrant instance, not a requirement.
+
+**Free-tier caveat** (same shape as the Supabase one below): Qdrant Cloud's free 1GB cluster comfortably covers the current ~134-destination curated corpus (an estimated 500K–800K vectors) many times over — it is **not** sized for eagerly ingesting global destination coverage (see `docs/scaling-tech-challenges.md` §8).
+
 ---
 
 ## 9A. Admin Analytics & Cost Tracking
@@ -1272,7 +1287,8 @@ Breaking any link in this chain prevents scrolling. `<main className="h-full">` 
 | `RESEND_API_KEY` | — | ✅ for password reset | Resend HTTP API key |
 | `EMAIL_FROM_ADDRESS` | `Wanderplanner <no-reply@wanderplanner.app>` | — | Password-reset sender |
 | `PASSWORD_RESET_TOKEN_TTL_MINUTES` | `30` | — | Reset-link expiration |
-| `QDRANT_URL` | `:memory:` | — | Qdrant instance URL |
+| `QDRANT_URL` | `:memory:` (local-only fallback) | ✅ in production | Qdrant instance URL — local dev may use `:memory:` (ephemeral, single-process); production uses a persistent Qdrant Cloud cluster URL (see §9 production runbook) so data survives restarts/redeploys and is shared across processes |
+| `QDRANT_API_KEY` | — | ✅ in production | API key for the Qdrant Cloud cluster; blank/unused for local `:memory:` mode |
 | `ITINERARY_CORPUS_RETRIEVAL_ENABLED` | `true` | — | Few-shot grounding from real traveller itineraries in generation prompts (⭐ NEW v8.4, docs/rag-strategy.md §9) |
 | `ALLOWED_ORIGINS` | `["http://localhost:3000"]` | ✅ | CORS whitelist — **must be JSON-array format** (pydantic-settings list parsing), `"*"` is rejected by a validator (⭐ NEW v10.0) |
 | `PEXELS_API_KEY` | — | — | Optional Pexels API key for itinerary day hero photos; generation degrades gracefully without it |
