@@ -164,6 +164,10 @@ async def extract_trip_from_text(text: str) -> ExtractedTrip:
                     config=genai_types.GenerateContentConfig(
                         system_instruction=_EXTRACT_SYSTEM_PROMPT,
                         temperature=0.1,
+                        # thinking_budget=0 turns off 2.5-flash's hidden
+                        # pre-JSON thinking (same fix as interest_expansion_chain.py)
+                        # so the token cap covers only the visible JSON output.
+                        thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
                         max_output_tokens=512,
                     ),
                 )

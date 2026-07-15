@@ -118,11 +118,11 @@ async def expand_interest_to_candidates(interest: str, destination: str) -> list
                         # 2.5-flash spends max_output_tokens on hidden thinking
                         # BEFORE the visible JSON, so a tight cap returns
                         # truncated JSON (live-verified: 256 died mid-list).
-                        # google-genai 1.2.0 has no thinking_budget knob to
-                        # turn thinking off — when the dependabot bump to
-                        # >=2.x lands, add ThinkingConfig(thinking_budget=0)
-                        # and this cap can drop back to ~512.
-                        max_output_tokens=2048,
+                        # thinking_budget=0 turns thinking off entirely
+                        # (google-genai >=2.x), so the cap covers only the
+                        # visible JSON output.
+                        thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+                        max_output_tokens=512,
                     ),
                 )
 

@@ -655,6 +655,13 @@ async def generate_itinerary(trip_config: TripConfig) -> ItineraryResponse:
     if settings.llm_provider == "mock":
         raw = _mock_itinerary(trip_config)
     else:
+        dest = trip_config.destination.city if trip_config.destination else ""
+        if dest:
+            try:
+                from services.destination_ingestion import ensure_destination_ingested
+                await ensure_destination_ingested(dest)
+            except Exception:
+                logger.warning("destination ingestion gatekeeper failed for %r", dest, exc_info=True)
         try:
             if settings.llm_provider == "gemini":
                 raw = await _gemini_itinerary(trip_config)

@@ -32,20 +32,48 @@ async def _refresh_itinerary_corpus():
 
 
 async def _refresh_osm_pois():
-    """Weekly OSM POI ingestion for all known travel destinations (docs §3I).
+    """Refresh OSM POI + Wikivoyage data for destinations actually requested
+    by users (docs/scaling-tech-challenges.md §8), instead of looping a fixed
+    global destination list. `services/destination_ingestion.py` writes a
+    `destination_ingestion_state` row on first request; this job re-ingests
+    only rows whose data has gone stale (past `osm_refresh_days`), keeping
+    corpus size and Overpass/Wikivoyage traffic proportional to real demand.
 
-    Sequential with a small delay between destinations — Overpass is a free
-    shared public service, so this avoids hammering it with a burst of
-    concurrent requests.
+    Sequential with a small delay between destinations — Overpass/Wikivoyage
+    are free shared public services, so this avoids hammering them with a
+    burst of concurrent requests.
     """
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from db import AsyncSessionLocal
+    from db_models import DestinationIngestionState
     from scrapers.osm import ingest_osm_pois
-    from scrapers.reddit import KNOWN_DESTINATIONS
+    from scrapers.wikivoyage import ingest_wikivoyage
 
-    for destination in KNOWN_DESTINATIONS:
+    stale_before = datetime.now(timezone.utc) - timedelta(days=settings.osm_refresh_days)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(DestinationIngestionState.destination).where(
+                DestinationIngestionState.osm_last_ingested_at < stale_before
+            )
+        )
+        stale_destinations = [row[0] for row in result.all()]
+
+    for destination in stale_destinations:
+        now = datetime.now(timezone.utc)
         try:
             await ingest_osm_pois(destination)
+            await ingest_wikivoyage(destination)
         except Exception as e:
-            logger.warning("OSM POI ingestion failed for %s: %s", destination, e)
+            logger.warning("Refresh ingestion failed for %s: %s", destination, e)
+        else:
+            async with AsyncSessionLocal() as db:
+                row = await db.get(DestinationIngestionState, destination)
+                if row is not None:
+                    row.osm_last_ingested_at = now
+                    row.wiki_last_ingested_at = now
+                    await db.commit()
         await asyncio.sleep(settings.osm_ingest_delay_seconds)
 
 
