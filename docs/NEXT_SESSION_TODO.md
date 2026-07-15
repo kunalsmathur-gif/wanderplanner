@@ -28,6 +28,7 @@ Register Viator / GetYourGuide / Skyscanner affiliate programs and supply IDs. L
 
 ## 🔧 Operational / hygiene items (carried over)
 
+- **Force RAG data refresh (one-off, requested 2026-07-15 — bypass the weekly/monthly cadence):** run the three scheduler jobs from `core/scheduler.py` directly instead of waiting for their `IntervalTrigger`s: `ingest_reddit()` (6-hourly cadence), `ingest_osm_pois(dest)` looped over `KNOWN_DESTINATIONS` (weekly cadence — ~135 destinations × (Overpass query + 2s politeness delay), expect a long sequential run), and `ingest_itinerary_corpus()` (monthly cadence — needs `GEMINI_API_KEY`, costs Gemini calls for extraction+embedding). **Blocked when attempted: Qdrant was not running on `localhost:6333`** (all three jobs upsert into it) — start Qdrant first, then run a one-off script with the backend venv. `GEMINI_API_KEY` is confirmed set in `apps/api/.env`. This also unblocks the carried-over corpus-ingestion and E2E-with-real-data items below.
 - **GEMINI_MODEL:** local `.env` still `gemini-2.5-flash-lite` (503-congested repeatedly); live evals use process-level `gemini-2.5-flash`. Consider switching the default.
 - **E2E pinned-POI positive path with real data** (needs `osm_pois` ingested + signed-in session): London trip → "I'm a huge Harry Potter fan" → 📌 pins, in-place regen, diff chips. Also the themes-backstop path ("add some zen gardens to my trip").
 - **Corpus ingestion once locally** (`ingest_itinerary_corpus()`, needs `GEMINI_API_KEY`) for v10.15 retrieval/gem intel/pin verification with real data.
