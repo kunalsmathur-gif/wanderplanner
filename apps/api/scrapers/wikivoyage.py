@@ -32,7 +32,11 @@ def _sentence_boundary_chunks(text: str, max_chars: int = 500) -> list[str]:
 
 async def scrape_wikivoyage(destination: str) -> list[dict]:
     url = BASE_URL.format(destination=destination.replace(" ", "_").title())
-    async with httpx.AsyncClient(timeout=15) as client:
+    # Wikimedia's API etiquette asks for an identifiable User-Agent on every
+    # request; some network paths in front of wikivoyage.org also reject
+    # requests missing one with a bare 403.
+    headers = {"User-Agent": settings.nominatim_user_agent}
+    async with httpx.AsyncClient(timeout=15, headers=headers) as client:
         try:
             resp = await client.get(url)
             resp.raise_for_status()

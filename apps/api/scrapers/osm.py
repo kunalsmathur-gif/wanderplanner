@@ -85,7 +85,13 @@ async def fetch_osm_pois(destination: str, lat: float | None = None, lon: float 
 
     query = _build_overpass_query(lat, lon, settings.osm_poi_radius_m)
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    # Overpass's usage policy asks for an identifiable User-Agent; some
+    # network paths (corporate proxies/CDNs in front of overpass-api.de)
+    # also reject POST requests missing an explicit Accept header with a
+    # bare 406, so send both defensively.
+    headers = {"User-Agent": settings.nominatim_user_agent, "Accept": "*/*"}
+
+    async with httpx.AsyncClient(timeout=30, headers=headers) as client:
         try:
             resp = await client.post(settings.osm_overpass_url, data={"data": query})
             resp.raise_for_status()

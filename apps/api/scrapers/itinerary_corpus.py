@@ -158,7 +158,11 @@ async def scrape_wikivoyage_itinerary(title: str) -> dict[str, Any] | None:
         "prop": "text",
         "redirects": "1",
     }
-    async with httpx.AsyncClient(timeout=15) as client:
+    # Wikimedia's API etiquette asks for an identifiable User-Agent on every
+    # request; some network paths in front of wikivoyage.org also reject
+    # requests missing one with a bare 403.
+    headers = {"User-Agent": settings.nominatim_user_agent}
+    async with httpx.AsyncClient(timeout=15, headers=headers) as client:
         try:
             resp = await client.get(WIKIVOYAGE_API_URL, params=params)
             resp.raise_for_status()

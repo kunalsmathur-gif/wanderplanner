@@ -120,7 +120,13 @@ async def extract_itinerary_doc(raw_text: str) -> ItineraryCorpusDoc | None:
                     config=genai_types.GenerateContentConfig(
                         system_instruction=_EXTRACTION_SYSTEM_PROMPT,
                         temperature=0.1,
-                        max_output_tokens=1024,
+                        # 1024 was too tight — multi-day itineraries (each day
+                        # carrying a theme/places/tips) routinely hit
+                        # MAX_TOKENS mid-JSON, producing an unparseable
+                        # truncated response and silently dropping otherwise
+                        # good documents. 3072 covers even long multi-week
+                        # itineraries (Trans-Siberian, Grand Tour of Europe).
+                        max_output_tokens=3072,
                     ),
                 )
 
