@@ -2410,6 +2410,7 @@ function CounterCard({
         <button
           type="button"
           onClick={onDecrease}
+          aria-label={`Decrease ${label.toLowerCase()}`}
           className="focus-ring inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-slate-300 bg-white text-xl font-bold text-slate-700 transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] dark:border-slate-500 dark:bg-slate-600 dark:text-slate-100 dark:hover:border-[var(--color-primary)] dark:hover:text-[var(--color-primary)]"
         >
           −
@@ -2420,6 +2421,7 @@ function CounterCard({
         <button
           type="button"
           onClick={onIncrease}
+          aria-label={`Increase ${label.toLowerCase()}`}
           className="focus-ring inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-slate-300 bg-white text-xl font-bold text-slate-700 transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] dark:border-slate-500 dark:bg-slate-600 dark:text-slate-100 dark:hover:border-[var(--color-primary)] dark:hover:text-[var(--color-primary)]"
         >
           +

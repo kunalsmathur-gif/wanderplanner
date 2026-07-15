@@ -15,10 +15,11 @@
 
 ## ⏭️ Remaining items (in suggested order)
 
-### 1. UI/UX audit follow-ups — §3 only ([UI_UX_AUDIT_2026-07-13.md](UI_UX_AUDIT_2026-07-13.md))
+### 1. UI/UX audit follow-ups — §3 ([UI_UX_AUDIT_2026-07-13.md](UI_UX_AUDIT_2026-07-13.md)) — ✅ DONE this session
 
-- **§3.2 share-page SSR + OG tags** (own milestone — the viral surface unfurls blank in WhatsApp/Slack; 📌/💎 badges also missing there). Share data is public → server-render `t/[slug]` with OG title/description (+ OG image if cheap), and render pinned/gem badges in the shared view.
-- **§3.1/§3.3**: per-page `<title>`/metadata for `/login` `/signup` `/account` `/t/[slug]`; aria-labels for remaining icon-only buttons (note: audit's "CurrencyWidget refresh button" no longer exists — widget has no refresh control; `/dev` cards are dev-only/low priority).
+- **§3.2 share-page SSR + OG tags** — done. `app/t/[slug]/page.tsx` is now an async Server Component (`params` awaited as `Promise<{slug}>`, per Next 16); fetches the share payload server-side via new `lib/sharedTrip.ts::getSharedTrip()` for both `generateMetadata` and the render. OG/Twitter tags carry destination + duration; a dynamic `opengraph-image.tsx` (`next/og` `ImageResponse`, 1200×630 gradient card) renders per-trip so unfurls in WhatsApp/Slack are no longer blank. 📌/💎/📸 tag badges now render in the shared view (same style as `ItineraryTimeline`). Verified end-to-end against a live local backend: correct `<title>`/OG meta, 200 PNG from the OG image route, badge markup present, and the "expired or doesn't exist" fallback still works for unknown slugs.
+- **§3.1/§3.3** — done. Added `layout.tsx` (Server Component, since the pages themselves are `'use client'`) exporting per-route `metadata` for `/login`, `/signup`, `/account` (also `noindex` on `/account`, it's private); `/t/[slug]` gets metadata via `generateMetadata` above (also `noindex` — shared links aren't meant to rank). Audited all `<button>`s app-wide for icon-only instances missing `aria-label`; found and fixed the two adult/kids counter +/− stepper buttons in `ConversationalWizard.tsx`'s `CounterCard` (previously nothing announced what was being incremented/decremented). Everything else icon-only already had labels; confirmed audit's note that CurrencyWidget's refresh button no longer exists and `/dev` cards are correctly out of scope.
+- 44 web tests pass · `tsc --noEmit` clean · production build (`next build`) succeeds, `/t/[slug]` and its `opengraph-image` route both correctly marked dynamic (`ƒ`, server-rendered on demand).
 
 ### 2. Optional eval recall chase (only if publishing follow-ups need it)
 
