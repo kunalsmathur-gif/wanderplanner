@@ -11,7 +11,7 @@
 
 The moat is **not** the chatbot, the voice UX, or any single feature — all replicable by a funded competitor in a sprint. The moat is three compounding assets:
 
-1. **A proprietary, verified India-context corpus** — hidden-gem POIs scored from Reddit signal, verified against OSM; grounded India cost data (trains, veg meals, family math) no global player models.
+1. **A proprietary, verified India-context corpus** — hidden-gem POIs scored from Reddit + (planned) YouTube comment signal, verified against OSM; grounded India cost data (trains, veg meals, family math) no global player models. Reddit ingestion is currently blocked in prod (403s, approval pending) — see item 2 below and `docs/NEXT_SESSION_TODO.md` for the multi-source diversification plan that keeps this bet alive independent of Reddit's approval status.
 2. **Measurable personalization fidelity** — published evals proving WanderPlanner itineraries respond to constraints ("I'm a Harry Potter fan", "less crowded beaches") when ChatGPT/Gemini output doesn't.
 3. **Distribution in a channel funded players ignore** — India's offline travel agents.
 
@@ -23,9 +23,9 @@ User feedback (July 2026) was not "add features" — it was "make the intelligen
 
 ### Bet 1 — Crowd-aware planning ("hidden gems")
 
-Generic LLMs regurgitate top-10 lists — a structural weakness of every ChatGPT-wrapper competitor. The Reddit corpus already contains the antidote.
+Generic LLMs regurgitate top-10 lists — a structural weakness of every ChatGPT-wrapper competitor. The Reddit corpus already contains the antidote — though Reddit ingestion is currently broken in production (403s since the Cloud migration, formal API approval pending, no ETA); a YouTube Data API v3 comment-mining source is planned to keep this bet shipping regardless of that approval's outcome (see `docs/NEXT_SESSION_TODO.md`).
 
-- **Gem scoring:** rank POIs by high sentiment × low mention volume in the Reddit corpus (a beach praised in 4 comments = gem signal; one appearing in 400 = crowd signal). Verify every candidate against OSM so a hallucinated place never ships.
+- **Gem scoring:** rank POIs by high sentiment × low mention volume, blended across the Reddit corpus and (planned) YouTube comment threads (a beach praised in 4 mentions = gem signal; one appearing in 400 = crowd signal). Verify every candidate against OSM so a hallucinated place never ships. A composite authenticity weight (account/channel age, engagement corroboration, temporal-clustering and duplicate-text penalties) is planned to prevent low-volume-but-fake signal (e.g. paid reviews) from being mistaken for a genuine hidden gem — see `docs/NEXT_SESSION_TODO.md`.
 - **Crowd dial in the wizard:** Touristy ↔ Balanced ↔ Off-beat, a first-class preference alongside budget tier.
 - **Optional live layer:** crowd forecasts for top venues via BestTime.app foot-traffic API / Google Popular Times.
 - **Provenance UI:** "Recommended by 6 travellers on r/phuket" — the receipts are what make it believable and shareable.
@@ -86,7 +86,7 @@ An agent copilot that turns a WhatsApp-style Hinglish conversation into a **bran
 | # | Item | Notes | Status |
 |---|---|---|---|
 | 1 | **Wire `itinerary_corpus` retrieval into generation** | The biggest pending unlock; ingestion already ships | ✅ Done (v10.15, 2026-07-11) |
-| 2 | Hidden-gem scoring + crowd dial | Reddit signal × OSM verification | ✅ Done (v10.16, 2026-07-11) — BestTime live-crowd layer deferred (paid API) |
+| 2 | Hidden-gem scoring + crowd dial | Reddit signal × OSM verification | ✅ Done (v10.16, 2026-07-11) — BestTime live-crowd layer deferred (paid API). ⚠️ Reddit ingestion currently down in prod (403s, approval pending); multi-source diversification (YouTube comments now, Google Places/TripAdvisor on roadmap) planned to de-risk this bet — see `docs/NEXT_SESSION_TODO.md` |
 | 3 | Refinement hard-constraints + visible diff UI | Interest→entity→verify→pin pipeline | ✅ Done (v10.17, 2026-07-12) — pins verified vs OSM/wiki, hard-pinned in the prompt, in-place regeneration + diff chips in Anya panel |
 | 4 | Refinement-fidelity eval suite; publish vs-ChatGPT results | Builds on `docs/eval-set.csv` | ✅ Done (v10.20.0, 2026-07-14 → v10.23.0, 2026-07-15) — clean live run: fidelity **0.975**, recall 0.938, inclusion/stability **1.000**, honesty 4/4 (RF-010 recovered from the transient 503s; RF-012 improved to 0.67 untouched). Anti-distractor rule in `interest_expansion_chain.py` tuned to allow famous theatres/walk-of-fame monuments/celebrity residences as "specific" (was silently dropping true positives like Hollywood Walk of Fame, Prithvi Theatre); rerun 2026-07-15: fidelity **0.983** (+0.008), recall **0.958** (+0.020), inclusion/stability still **1.000**, honesty still 4/4 — **improvement confirmed, no regressions** (offline gate unaffected at 1.000, full backend suite green, 3-way manual re-probe validation before publishing). **Published** in `docs/eval-results/`: comparison piece + both dated verbatim report sets (2026-07-14 and 2026-07-15), with the Claude verbal-honesty disclosure, the recording protocol, and a "what we are NOT claiming" section. Founder to adapt for external channels |
 | 5 | Turn on affiliate tracking on existing deep-links | Viator / GetYourGuide / Skyscanner | Pending — blocked on founder affiliate-program registrations. Link formats fixed in v10.20.0 (audit §1.2): Google Flights on supported `?q=` syntax, Skyscanner/MMT on IATA deep-links via static city-code map with honest search-page fallback — affiliate params can now be appended to working links |

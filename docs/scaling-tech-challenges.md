@@ -232,6 +232,44 @@ Concretely, against this repo's existing structure:
 
 ---
 
+## 8a. Hidden-Gem Source Diversification & India-Specific Coverage Policy (2026-07-16 evaluation)
+
+Full research and roadmap sequencing lives in `docs/NEXT_SESSION_TODO.md`; this section records the architectural reasoning so it isn't re-derived from scratch.
+
+**Problem:** `services/gems.py` derives 100% of its community sentiment signal from the single `reddit` Qdrant collection. Reddit ingestion is confirmed broken in production (403s since the Cloud migration) with no ETA on formal API approval. Without a second source, this differentiator degrades to an honest-but-empty result indefinitely if approval never arrives.
+
+**Important distinction — this is separate from §8's demand-driven ingestion.** §8 covers OSM POI + Wikivoyage content, which is *already* demand-driven via `ensure_destination_ingested()` — no popularity cap exists there, any requested destination gets ingested regardless of India/global split. The coverage gap addressed here is in the three **curated, popularity-capped seed/tagging lists** that are a separate mechanism from demand-driven ingestion:
+
+1. `KNOWN_DESTINATIONS` (`scrapers/reddit.py`, 134 entries total, only 11 India-specific) — used to tag scraped Reddit posts by destination for gem-sentiment mining.
+2. `WIKIVOYAGE_ITINERARY_TITLES` (`scrapers/itinerary_corpus.py`, 5 entries, only 1 India-specific).
+3. The planned YouTube video-discovery destination/query seed list (not yet built).
+
+**Asymmetric India-coverage policy:** every curated/seed list above keeps the rest-of-the-world set capped by global popularity as today, but carries a deliberately larger India-specific subset, since India is the primary user cohort and domestic tier-2/3 destinations (hill stations, pilgrimage towns, heritage towns) are exactly this feature's target market. This is a list-expansion exercise, not a new architecture — cheap to do, asymmetric by design. Two concrete, zero-cost gaps found while investigating this: `scrapers/reddit.py`'s `SUBREDDITS` list (used for gem-sentiment mining) has no India subreddit at all, while `scrapers/itinerary_corpus.py`'s separate `ITINERARY_SUBREDDITS` list already includes `"IndiaTravel"` — the two lists should be reconciled. The sentiment lexicon (`_POSITIVE_WORDS`/`_NEGATIVE_WORDS`) is also English-only today, silently under-weighting Hindi/Hinglish commentary common in domestic-travel YouTube comments.
+
+**Sequencing caution:** expanding the India destination set increases how many *new* destinations hit first-request OSM ingestion (`ensure_destination_ingested`) as real traffic arrives, funneling through the same Overpass rate-limiting problem already tracked in the `osm-poi-refresh-big-cities` todo (Mumbai/Delhi already confirmed problematic). Sequence the India list expansion after or alongside that fix, not before.
+
+**Source evaluation summary (full table in `docs/NEXT_SESSION_TODO.md`):**
+- **Build now, free:** YouTube transcripts (already partially wired), YouTube Data API v3 comment mining (free 10k-units/day quota — `search.list` 100 units/query, `commentThreads.list` 1 unit/call), expanded travel-blog RSS feeds.
+- **Roadmap, paid, similar cost tier:** Google Places API (Text Search Pro $32/1,000, Place Details Pro $17/1,000, first 5,000/mo free — est. $170-320 one-time for a full destination-set refresh, then infrequent); TripAdvisor Content API (confirmed self-serve on sign-up, exact per-call rate not yet priced out — includes real review text, which Google's cheaper tiers omit).
+- **Roadmap, lower priority:** X/Twitter API v2 (flat $200-5,000/mo subscription, noisy firehose — last-published pricing, unverified), Foursquare (public consumer tips/ratings API deprecated, now enterprise-sales-gated), Yelp Fusion (free but weak coverage outside US/UK/Canada), Pinterest (free but weak signal fit), Atlas Obscura (best editorial fit, no public API, needs a ToS check).
+- **India-specific roadmap:** LBB (Little Black Book, no public API, ToS check needed), Thrillophilia (fold into existing affiliate-outreach list, same partner-gated shape as Viator/GetYourGuide).
+- **Rejected — no viable access path:** Instagram (ToS/legal risk, Meta actively pursues scrapers), TikTok (Research API is academic-only, not for commercial use), Zomato (API closed to new developers since ~2019), Swiggy (no public API), MakeMyTrip/Yatra/Goibibo/Cleartrip (no self-serve developer APIs), Quora (no content API, ToS-prohibited scraping).
+
+**Review/mention authenticity — no source hands us a single clean "reviewer trust" field.** Even Google's official Places API (New) Review resource has no reviewer account-age/tenure/Local-Guide-level field — only `authorAttribution.displayName/.uri/.photoUri`, `rating`, `text`, `publishTime`. Replicating the "click into a reviewer's profile" trick a human does on Google Maps would require scraping individual profile pages, which is out of scope (same ToS-risk category as the rejected sources above). The design instead builds a **composite, cross-platform authenticity weight** from signals each source's official API genuinely exposes, applied as a 0-1 multiplier on each mention's contribution to `mentions`/`pos_total`/`neg_total` (never a binary filter — the existing honesty guarantee that zero real mentions never produces a recommendation is preserved):
+
+| Source | Signal | Cost |
+|---|---|---|
+| Reddit | Author account age, karma (via `/user/{username}/about.json`, public, unauthenticated) | Free |
+| Reddit | Post score (already captured), temporal clustering, duplicate-text similarity | Free (derived from existing data) |
+| YouTube | Commenter channel age, subscriber count, video count (via batched `channels.list`, 1 unit/call) | Free within quota |
+| YouTube | Comment `likeCount` (already returned by `commentThreads.list`) | Free |
+| Google Places (future) | Rating-velocity anomaly + rating-distribution shape, derived from `publishTime`/`rating` already being pulled | Free (no extra calls) |
+| Google Places (future) | Reviewer account age / review-history depth | **Not available via official API** — out of scope, documented so it isn't re-explored |
+
+**Rollout gate:** per explicit direction, none of the above build-now/roadmap-prep engineering work starts until this plan is committed to `docs/NEXT_SESSION_TODO.md` and both `main` and `feat/frontend-scaffold` carry the commit.
+
+---
+
 ## Summary: Sequencing Recommendation
 
 | Phase | Trigger | Key work |

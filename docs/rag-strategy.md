@@ -30,7 +30,7 @@ Itinerary generations  ──▶  itinerary_cache (384-dim) ─▶  Fallback Tie
 | City recommender | ❌ No | LLM-only |
 | Destination comparison | ❌ No | LLM-only |
 | Best time (seasonal data) | ⚠️ Partial | Scrapes Wikivoyage live — not yet cached in Qdrant |
-| Reddit tagging | ✅ Fixed | `_extract_destination()` now matches against 200+ known destinations |
+| Reddit tagging | ✅ Fixed | `_extract_destination()` matches against `KNOWN_DESTINATIONS` — **134 entries as of 2026-07-16** (not 200+, correcting a stale figure here); only 11 are India-specific despite India being the primary user cohort — expansion planned, see `docs/NEXT_SESSION_TODO.md` |
 | Itinerary fallback (LLM down) | ✅ New | 3-tier fallback chain: cache → RAG skeleton (OSM POIs) → enhanced mock |
 
 ---
@@ -548,17 +548,20 @@ This is fundamentally different from the existing wiki/reddit collections:
 | **Nomadic Matt / The Planet D** | Blog itineraries with day breakdowns | `feedparser` (RSS) + `BeautifulSoup` for full page | Free | Monthly |
 | **Lonely Planet** (lonelyplanet.com/itineraries) | Structured `n-day` itinerary pages | `httpx` + BeautifulSoup; `<section>` tags are clean | Free | Monthly |
 | **Wikivoyage** | Authoritative destination guides | Official **Wikimedia API** (`action=parse`) — structured, stable, no scraping | Free | Quarterly |
-| **Reddit trip reports** (r/travel, r/solotravel, r/indiatravel) | "My X-day trip to Y" self-posts | **PRAW** (`praw` library, OAuth, 100 req/min free) — filter `flair:trip-report`; grab post + top 5 parent comments | Free | Daily |
+| **Reddit trip reports** (r/travel, r/solotravel, r/indiatravel) | "My X-day trip to Y" self-posts | **As actually implemented: keyless public JSON feed** (`reddit.com/r/{sub}/top.json`), not PRAW/OAuth — correcting this table, which described an earlier plan rather than the shipped code (`scrapers/reddit.py`) | Free | Daily |
 | **YouTube captions** | Travel vlog day-by-day descriptions | **`youtube-transcript-api`** — extracts manual/auto-generated captions by video ID; **no API key needed** | Free | Weekly |
+| **YouTube comments** (planned, 2026-07-16) | Place mentions + sentiment from travel-video comment threads — same signal shape as Reddit posts | Official **YouTube Data API v3**: `search.list` (100 units/query) to discover destination videos, `commentThreads.list` (1 unit/call) to pull top comments | Free (10k units/day quota) | Weekly, alongside Reddit refresh |
 
 **Phase v1 — Premium, high-fidelity sources (add after v0 pipeline is stable):**
 
 | Source | Content type | Scrape method | Cost | Refresh |
 |---|---|---|---|---|
-| **TripAdvisor** (reviews, ratings) | Current ratings, user reviews, recent tips | **Apify** / **Bright Data** / ScrapeLabs with residential proxies (bypasses Cloudflare) | Paid per 1k results | Weekly |
+| **Google Places API** (ratings + review count) | Structured rating/review-count signal — low count + high rating = gem, no lexicon needed | Official **Places API (New)** — Text Search Pro / Place Details Pro | First 5,000 calls/mo free, then $17-32/1,000 depending on endpoint. Est. ~$170-320 one-time for a full destination-set refresh (~50 destinations × 300 POIs), near-zero after (infrequent refresh) | Quarterly-ish (ratings change slowly) |
+| **TripAdvisor Content API** | Location details + up to 5 reviews/photos per location, including real review text | Official, **self-serve** (sign up at tripadvisor.com/developers, generate a key immediately — correcting an earlier assumption in this doc that it needed partner approval) | Pay-as-you-go; exact rate needs a sign-up to view, treat as similar cost tier to Google Places until priced | Weekly |
 | **YouTube (no captions)** | Niche travel vlogger content | **`yt-dlp`** to download audio → **OpenAI Whisper** or **Deepgram** STT transcription | Paid per minute of audio | Weekly |
-| **Instagram & TikTok** | Trending visual travel reels, captions, geotags | Aggregator platforms: **Octolens**, **Prowlo**, or unofficial Graph API scrapers | Paid subscription | Weekly |
-| **X / Twitter** | Real-time disruptions (strikes, delays, closures, weather) | Official **X Basic/Pro API** | $100+/month | Real-time |
+| ~~**Instagram & TikTok**~~ | ~~Trending visual travel reels, captions, geotags~~ | ~~Aggregator platforms: Octolens, Prowlo, or unofficial Graph API scrapers~~ | **❌ Rejected (2026-07-16 evaluation)** — Instagram: Graph API only covers content you own, scraping public content violates ToS and Meta actively pursues scrapers legally. TikTok: "Research API" is academic-only, not available for commercial products; scraping is technically obstructed and ToS-prohibited. No viable access path for either — see `docs/NEXT_SESSION_TODO.md`. | N/A |
+| **X / Twitter** | Real-time disruptions (strikes, delays, closures, weather) | Official **X Basic/Pro API** | Basic ≈ $200/mo (~10-15k reads), Pro ≈ $5,000/mo (last-published figures) — flat subscription regardless of usage, plus a noisy firehose needing heavy filtering; documented as evaluated but lower priority than Google Places/TripAdvisor for the same budget | Real-time |
+| ~~**Foursquare**~~ | ~~Tips/ratings~~ | — | Public docs have pivoted to enterprise geospatial products; the old consumer tips/ratings API is marked Deprecated with no public price. Needs a founder-level sales inquiry, not an engineering spike. | — |
 
 > **Transition milestone (v0 → v1):** Do not move to v1 until the v0 pipeline can consistently take a multi-day query (e.g., "4-day budget food tour of Hanoi"), filter out data from irrelevant cities, and output a logically sequenced itinerary without chronological errors. Once that logic is reliable, add the paid data layers.
 

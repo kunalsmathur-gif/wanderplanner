@@ -1,9 +1,9 @@
 # WanderPlanner — Evaluation Set
-**Version:** 5.2 · **Date:** July 15, 2026 (§4V updated with published fidelity 0.983 / recall 0.958 rerun, up from 0.975 / 0.938)  
+**Version:** 5.3 · **Date:** July 16, 2026 (added §4W — planned multi-source gem blending & authenticity weighting stub cases, RAG-091–100)  
 **Scope:** All AI, API, and integration surfaces across WanderPlanner v5.3 (RAG Optimization Round 2)  
 **Purpose:** Manual and automated regression testing for correctness, safety, tone, cost and reliability
 
-RAG eval coverage: **RAG-001 to RAG-090** (90 cases — 74 implemented ✅, 1 partial ⚠️, 15 pending ❌)  
+RAG eval coverage: **RAG-001 to RAG-100** (100 cases — 74 implemented ✅, 1 partial ⚠️, 25 pending ❌)  
 Also see: **Golden Dataset & Automated Retrieval Metrics** (§4U below) for the separate `run_rag_eval.py` scoring suite (not individually numbered test cases — a single automated harness with 12 labeled queries against a 40-chunk curated corpus).  
 Non-RAG coverage: **ANYA-W, ANYA-V, ITN, CITIES, CMP, CHAT, SCORE, EXT, COST, BOOKING, WIKI, MOB, THEME** (160+ cases)
 
@@ -508,6 +508,25 @@ Known live defects dragging recall (fix before publishing): RF-004/RF-014/RF-016
 | Strict honesty on impossible asks | 4/4 | 4/4 | 0/4 (incl. invented "Wizarding World Goa") | 0/4 strict — but all 4 answers explicitly stated the ask can't be served |
 
 The 2026-07-15 rerun followed a single, narrow prompt change: `apps/api/chains/interest_expansion_chain.py`'s anti-distractor rule was too conservative about places famous *for* a celebrity/theme rather than *as* the theme itself, silently dropping true positives like "Hollywood Walk of Fame" (RF-009 LA) and "Prithvi Theatre" (RF-012 Mumbai). The rule now explicitly allows famous theatres, walk-of-fame monuments, and publicly-known celebrity residences to count as "specific." Validated before publishing: offline regression gate unaffected (1.000, as expected — it never calls the LLM), full backend suite green (255 passed, 2 pre-existing unrelated failures present on unmodified `main` too), and a direct re-probe of the fix targets confirmed both previously-missing places now appear. Full writeup, including an honest discussion of run-to-run LLM sampling variance (RF-001/RF-015 traded places as the "still missing" case between the two dated runs with zero code change), is in `docs/eval-results/README.md`.
+
+---
+
+### 4W — Multi-Source Gem Blending & Authenticity Weighting (`services/gems.py`) ❌ NOT YET IMPLEMENTED
+
+Planned stub cases for the hidden-gems source-diversification work (2026-07-16 evaluation, full detail in `docs/NEXT_SESSION_TODO.md`). `gems.py` today reads only the `reddit` Qdrant collection; these cases specify the target behaviour once it's generalized to blend `reddit` + `youtube_comments`, with India-specific subreddit coverage and authenticity-weighted mentions. None of this is implemented yet — recorded now so the design isn't re-derived from scratch next session.
+
+| ID | Scenario | Expected | Pass criteria | Priority |
+|---|---|---|---|---|
+| RAG-091 | POI mentioned only in `reddit` collection (YouTube silent) | `gem_score` computed from Reddit mentions alone, unchanged from today's behaviour | `gem_score` matches single-source calculation | P0 |
+| RAG-092 | POI mentioned only in `youtube_comments` collection (Reddit silent, e.g. Reddit is down) | `gem_score` computed from YouTube mentions alone — feature still produces a real signal with zero Reddit data | `gem_score > 0` using only `youtube_comments` input | P0 |
+| RAG-093 | POI mentioned in both `reddit` and `youtube_comments` | Mentions/sentiment blended across both sources into one score; `gem_prompt_block()` cites both (e.g. "3 traveller posts on r/japantravel and 5 YouTube comments") | Combined `mentions` count == sum across sources; provenance string names both sources | P0 |
+| RAG-094 | `IndiaTravel` subreddit present in `SUBREDDITS` | Scrape config includes India-specific subreddit(s) | `"IndiaTravel" in SUBREDDITS` (parity with `ITINERARY_SUBREDDITS`) | P0 |
+| RAG-095 | Hinglish/Hindi sentiment terms | Mention text containing e.g. "bahut accha" / "overrated hai" | Contributes non-zero sentiment, not silently dropped as neutral | `pos_total` or `neg_total` incremented for recognized Hinglish terms | P1 |
+| RAG-096 | Low mention count, all from newly-created accounts within a tight time window (temporal clustering) | Composite authenticity weight is reduced relative to an equivalent mention set spread over time from older accounts | Weighted `mentions` contribution < unweighted count | P1 |
+| RAG-097 | Near-duplicate text across "different" authors | Duplicate-text penalty applied; does not count as independent corroborating signal | Second near-duplicate mention's weight < 1.0 | P1 |
+| RAG-098 | Reddit author trust signal available (`author_created_utc`, `author_karma` present in payload) | Older/higher-karma accounts weighted higher than brand-new zero-karma accounts, bounded (never zero, never unbounded) | Weight monotonically non-decreasing with account age, capped | P2 |
+| RAG-099 | YouTube channel trust signal available (`channel_age_days`, `channel_subscriber_count`, `like_count` in payload) | Same bounded weighting logic applied to YouTube commenters as Reddit authors | Weight computed from channel metadata without new paid API calls beyond `channels.list` batch (free quota) | P2 |
+| RAG-100 | Zero real mentions across all sources (Reddit down, no YouTube data ingested yet) | POI never recommended as a gem — honesty guarantee preserved, no fabricated mention | `gem_score` absent/POI excluded, no synthetic data introduced | P0 |
 
 ---
 
