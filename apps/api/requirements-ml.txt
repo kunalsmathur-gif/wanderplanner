@@ -4,3 +4,10 @@ langchain==0.2.5
 langchain-groq==0.1.6
 langchain-community==0.2.5
 sentence-transformers==3.0.0
+
+# Only needed to run eval/run_model_comparison.py (docs/eval-set.md §8,
+# model-selection eval) against the respective provider — not used by the
+# production app. Install only the ones matching the API keys you have.
+groq==0.9.0
+openai==1.51.0
+anthropic==0.36.0

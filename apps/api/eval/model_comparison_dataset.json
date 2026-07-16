@@ -1,0 +1,135 @@
+{
+  "version": "1.0",
+  "description": "Model-selection eval — compares candidate LLMs (Gemini/Groq/OpenAI/Anthropic) on the REAL production itinerary-generation prompt (chains.itinerary_chain.SYSTEM_PROMPT + RAG context), not a generic benchmark. Built in response to the 2026-07-16 'should we use MMLU/GPQA to pick a model' discussion — those benchmarks don't measure itinerary-JSON fidelity, budget adherence, POI grounding, or cost/latency at WanderPlanner's actual request shape, so this harness measures those directly instead. See docs/eval-set.md Section 8 and run_model_comparison.py for the runner.",
+  "criteria_weights": {
+    "schema_valid": 0.30,
+    "day_count_match": 0.25,
+    "theme_coverage": 0.25,
+    "budget_adherence": 0.20
+  },
+  "cases": [
+    {
+      "id": "MC-001",
+      "label": "Tokyo — 4-day solo foodie, moderate pace",
+      "destination": "Tokyo",
+      "destination_country": "Japan",
+      "dest_lat": 35.6762,
+      "dest_lon": 139.6503,
+      "dates": {"start": "2026-11-10", "end": "2026-11-14", "flexible": false},
+      "personas": ["foodie"],
+      "themes": ["food", "culture"],
+      "pace": "moderate",
+      "group": {"adults": 1},
+      "budget": {"amount": 180000, "currency": "INR"},
+      "expected_num_days": 4,
+      "required_theme_keywords": ["food", "restaurant", "market", "street food", "ramen", "sushi", "izakaya", "culinary"],
+      "known_pois": [
+        "Senso-ji Temple", "Shibuya Crossing", "Tsukiji Outer Market", "Tokyo Tower",
+        "Meiji Shrine", "Shinjuku Gyoen", "Ameya-Yokocho", "Omoide Yokocho"
+      ]
+    },
+    {
+      "id": "MC-002",
+      "label": "Paris — 5-day family with young kids, budget-conscious",
+      "destination": "Paris",
+      "destination_country": "France",
+      "dest_lat": 48.8566,
+      "dest_lon": 2.3522,
+      "dates": {"start": "2026-12-05", "end": "2026-12-10", "flexible": false},
+      "personas": ["family"],
+      "themes": ["family-friendly", "budget"],
+      "pace": "relaxed",
+      "group": {"adults": 2, "kids": [4, 7]},
+      "budget": {"amount": 220000, "currency": "INR"},
+      "expected_num_days": 5,
+      "required_theme_keywords": ["kid", "family", "park", "playground", "free", "budget"],
+      "known_pois": [
+        "Eiffel Tower", "Louvre Museum", "Jardin du Luxembourg", "Notre-Dame Cathedral",
+        "Disneyland Paris", "Champs-Elysees", "Musee d'Orsay", "Sacre-Coeur"
+      ]
+    },
+    {
+      "id": "MC-003",
+      "label": "Rome — 3-day offbeat honeymoon couple",
+      "destination": "Rome",
+      "destination_country": "Italy",
+      "dest_lat": 41.9028,
+      "dest_lon": 12.4964,
+      "dates": {"start": "2026-09-14", "end": "2026-09-17", "flexible": false},
+      "personas": ["couple"],
+      "themes": ["romantic", "offbeat"],
+      "crowd_preference": "offbeat",
+      "pace": "relaxed",
+      "group": {"adults": 2},
+      "budget": {"amount": 150000, "currency": "INR"},
+      "expected_num_days": 3,
+      "required_theme_keywords": ["romantic", "hidden", "local", "quiet", "sunset", "wine"],
+      "known_pois": [
+        "Colosseum", "Trevi Fountain", "Pantheon", "Trastevere",
+        "Vatican Museums", "Roman Forum", "Villa Borghese", "Campo de' Fiori"
+      ]
+    },
+    {
+      "id": "MC-004",
+      "label": "New York — 2-day packed business-extension trip",
+      "destination": "New York",
+      "destination_country": "United States",
+      "dest_lat": 40.7128,
+      "dest_lon": -74.0060,
+      "dates": {"start": "2026-10-02", "end": "2026-10-04", "flexible": false},
+      "personas": ["business_extension"],
+      "themes": ["iconic", "efficient"],
+      "pace": "packed",
+      "group": {"adults": 1},
+      "budget": {"amount": 120000, "currency": "INR"},
+      "expected_num_days": 2,
+      "required_theme_keywords": ["efficient", "iconic", "must-see", "quick", "central"],
+      "known_pois": [
+        "Times Square", "Central Park", "Statue of Liberty", "Empire State Building",
+        "Brooklyn Bridge", "Metropolitan Museum of Art", "High Line", "One World Observatory"
+      ]
+    },
+    {
+      "id": "MC-005",
+      "label": "Bali — 6-day backpacker group, tight budget",
+      "destination": "Bali",
+      "destination_country": "Indonesia",
+      "dest_lat": -8.3405,
+      "dest_lon": 115.0920,
+      "dates": {"start": "2026-08-01", "end": "2026-08-07", "flexible": true},
+      "personas": ["backpacker"],
+      "themes": ["budget", "nature", "social"],
+      "pace": "moderate",
+      "group": {"adults": 4},
+      "budget": {"amount": 90000, "currency": "INR"},
+      "expected_num_days": 6,
+      "required_theme_keywords": ["hostel", "budget", "waterfall", "beach", "cheap", "local warung"],
+      "known_pois": [
+        "Uluwatu Temple", "Tegalalang Rice Terrace", "Kuta Beach", "Mount Batur",
+        "Tanah Lot", "Ubud Monkey Forest", "Sekumpul Waterfall", "Seminyak Beach"
+      ]
+    },
+    {
+      "id": "MC-006",
+      "label": "Cape Town — 5-day adventure splurge, senior-inclusive",
+      "destination": "Cape Town",
+      "destination_country": "South Africa",
+      "dest_lat": -33.9249,
+      "dest_lon": 18.4241,
+      "dates": {"start": "2026-11-20", "end": "2026-11-25", "flexible": false},
+      "personas": ["adventure"],
+      "themes": ["adventure", "luxury", "wildlife"],
+      "pace": "moderate",
+      "group": {"adults": 2, "seniors": 1},
+      "splurge_categories": ["accommodation", "activities"],
+      "budget": {"amount": 350000, "currency": "INR"},
+      "expected_num_days": 5,
+      "required_theme_keywords": ["safari", "wine", "hike", "wildlife", "scenic", "accessible"],
+      "known_pois": [
+        "Table Mountain", "Robben Island", "Cape of Good Hope", "V&A Waterfront",
+        "Boulders Beach", "Kirstenbosch Gardens", "Stellenbosch", "Chapman's Peak Drive"
+      ]
+    }
+  ],
+  "fixtures_note": "run_model_comparison.py auto-derives minimal OSM + Wikivoyage fixture payloads for each case's known_pois list and seeds them into an in-memory Qdrant (:memory:), mirroring eval/run_refinement_eval.py's seed_fixtures() pattern — so every candidate model sees the SAME retrieved RAG context (fair comparison), and known_pois doubles as the hallucination-detection whitelist."
+}
