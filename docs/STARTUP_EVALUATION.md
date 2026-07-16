@@ -160,7 +160,7 @@ Based on: (a) a line-level audit of the codebase after 10 commits landed post-ev
 ### User feedback findings (first interviews, July 2026)
 
 1. **"What's the moat? There are many travel planners."** — Differentiation is not yet legible to users.
-2. **Itineraries are touristy** — top-10-list output; no off-beat/less-crowded discovery despite the Reddit corpus containing exactly that signal.
+2. **Itineraries are touristy** — top-10-list output; no off-beat/less-crowded discovery despite the Reddit corpus containing exactly that signal. **Update (2026-07-16):** Reddit ingestion is currently broken in production (403s since the Cloud migration, formal API approval pending, no ETA) — meaning this signal is presently at zero, not just under-wired. A multi-source diversification plan (YouTube Data API v3 comment mining now, Google Places/TripAdvisor Content API on the paid roadmap, plus an India-specific subreddit/lexicon gap fix and a review-authenticity weighting design) is documented in `docs/NEXT_SESSION_TODO.md` to de-risk this root cause from depending on Reddit's approval outcome.
 3. **Refinements don't bite** — e.g. "I'm a Harry Potter fan" should verifiably add WB Studio Tour / Bodleian to a UK itinerary; "less crowded beaches in Phuket" should surface verified hidden gems. Currently refinements are prompt nudges, not hard constraints.
 4. **Budget is the #1 planning primitive for Indian users** — the deterministic tier-based estimator is a good skeleton but not grounded in live prices and cannot plan *from* a budget.
 
