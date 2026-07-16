@@ -17,12 +17,22 @@ from core.llm_usage import record_usage
 logger = logging.getLogger("wanderplanner.llm_cost")
 
 # (input_$_per_1M_tokens, output_$_per_1M_tokens) — approximate public pricing.
+# Non-Gemini entries added for eval/run_model_comparison.py (docs/eval-set.md
+# §8, model-selection eval) — same "directional signal, not a billing
+# reconciliation" caveat applies; re-verify against each provider's current
+# published rate card before treating a comparison as final.
 _PRICING: dict[str, tuple[float, float]] = {
     "gemini-2.0-flash": (0.10, 0.40),
     "gemini-2.5-flash": (0.30, 2.50),
     "gemini-2.5-flash-lite-preview-06-17": (0.10, 0.40),
     "gemini-1.5-flash": (0.075, 0.30),
     "gemini-1.5-pro": (1.25, 5.00),
+    "llama-3.1-70b-versatile": (0.59, 0.79),      # Groq
+    "llama-3.3-70b-versatile": (0.59, 0.79),      # Groq
+    "gpt-4o": (2.50, 10.00),                       # OpenAI
+    "gpt-4o-mini": (0.15, 0.60),                   # OpenAI
+    "claude-3-5-sonnet-20241022": (3.00, 15.00),   # Anthropic
+    "claude-3-5-haiku-20241022": (0.80, 4.00),     # Anthropic
 }
 _DEFAULT_PRICING = (0.10, 0.40)
 

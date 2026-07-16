@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
     llm_provider: str = "groq"  # "groq" | "gemini" | "ollama" | "mock"
+    # Only used by eval/run_model_comparison.py (docs/eval-set.md §8) to call
+    # OpenAI/Anthropic directly for model-selection comparison — not wired
+    # into the production generate_itinerary() provider switch above.
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
     llm_timeout_seconds: int = 30

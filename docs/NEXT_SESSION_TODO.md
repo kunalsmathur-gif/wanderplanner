@@ -13,6 +13,17 @@
 
 ## ⏭️ Remaining items (in suggested order — items 1-3 are POC-readiness priorities per 2026-07-16 discussion)
 
+### 0. Run the new LLM model-selection + red-team evals (built 2026-07-16, not yet executed)
+
+In response to a "should we use MMLU/GPQA to pick the LLM?" discussion, two eval harnesses were built this session but **deliberately not run** (live API calls cost real money): `apps/api/eval/run_model_comparison.py` (accuracy/hallucination/latency/cost across candidate models on the real production itinerary prompt — see `docs/eval-set.md` §8) and `apps/api/eval/run_red_team_eval.py` (injection/exfiltration/kids-safety-bypass/cost-abuse robustness per model — §9). Both were import/smoke-tested against synthetic data only.
+
+To actually run them next session:
+- Add `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` to `.env` for whichever of OpenAI/Anthropic should be in the comparison (Gemini + Groq already have keys configured).
+- `pip install -r requirements-ml.txt` (adds the new optional `groq`/`openai`/`anthropic` SDKs).
+- Run both: `python -m eval.run_model_comparison --models <ids>` and `python -m eval.run_red_team_eval --models <ids>` from `apps/api` (each prints a cost estimate and asks to confirm — pass `--yes` to skip).
+- Review `eval/out/model_comparison_report.md` and `eval/out/red_team_report.md`, decide whether to switch `gemini_model`/`llm_provider` based on the results.
+- Related gap surfaced while building this: **no unit test exists for `core/prompt_guard.py`** (the regex-level injection-neutralization logic) — worth a quick `tests/unit/test_prompt_guard.py` alongside or before the red-team run.
+
 ### 1. Security checks before any real (even POC) traffic
 
 Not reviewed this session — needs a fresh pass before opening the app to real testers, even a small POC group. `docs/scaling-tech-challenges.md`'s risk-tiering table has a "Now (any traffic)" bucket that should be re-verified against current code, not assumed still valid: SSRF protection on `extract-trip`'s URL-fetching path, rate limiting on LLM-calling endpoints, sanitized error responses (no raw provider stack traces reaching the client — `core/errors.py::sanitize_error()` exists, confirm it's applied everywhere it should be), pinned dependencies + dependency/secret scanning in CI, structured logging/basic observability (Sentry/APM) so a POC session's failures are actually visible. Also worth a quick check that no secrets leaked into git history from this session's `.env` edits (they shouldn't have — `.env` is gitignored and nothing in the diff touched it — but worth a `git log -p -- apps/api/.env` sanity check).
