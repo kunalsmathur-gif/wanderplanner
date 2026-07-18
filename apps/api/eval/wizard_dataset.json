@@ -1,0 +1,46 @@
+{
+  "description": "Scripted multi-turn conversations against chains.wizard_chat_chain.wizard_chat. Each case replays a fixed sequence of user turns (optionally starting from a seeded partial_config to shortcut earlier fields) and every turn is checked with eval/wizard_checks.py's deterministic invariants -- chip/topic alignment, chip schema shape, ready_to_generate honesty, and no-inline-JSON-leak. This is a state-machine correctness eval, not a quality/preference eval -- see docs/eval-set.md Section 1 (Anya Wizard Chatbot) for the manual-QA equivalents this automates.",
+  "conversations": [
+    {
+      "id": "budget_recommend_then_breakdown_regression",
+      "note": "Reproduces the exact 2026-07-18 production bug: user asks Anya to recommend a budget, then asks for a cost breakdown -- the reply both times is about BUDGET, but the fallback chip-backfill logic was showing PACE chips underneath because config_patch.budget got set prematurely on the recommendation turn. Regression-checked by check_chip_topic_alignment.",
+      "seed_partial_config": {
+        "purpose": "leisure",
+        "destination": {"city": "Tirthan Valley", "country": "India"},
+        "dates": {"start": "2026-11-10", "end": "2026-11-15", "duration_days": 6}
+      },
+      "turns": [
+        "you tell me, i have no idea",
+        "my wife and 3 yr old son",
+        "can you give me a breakup of the expenses?"
+      ]
+    },
+    {
+      "id": "happy_path_all_fields",
+      "note": "Full 6-field walk from scratch, checking structural chip validity at each step and that ready_to_generate is only ever true once every required field is actually present (ANYA-W-011/016 equivalents).",
+      "seed_partial_config": {},
+      "turns": [
+        "leisure trip",
+        "goa, india",
+        "first week of december, 5 days",
+        "budget of 1 lakh",
+        "just me and my partner",
+        "relaxed pace"
+      ]
+    },
+    {
+      "id": "pace_question_offers_pace_chips",
+      "note": "Direct ANYA-W-022 equivalent: once every field but pace is known, the very next reply must offer pace chips, not stale chips from an earlier field.",
+      "seed_partial_config": {
+        "purpose": "adventure",
+        "destination": {"city": "Manali", "country": "India"},
+        "dates": {"start": "2026-12-01", "end": "2026-12-06", "duration_days": 6},
+        "budget": {"amount": 80000, "currency": "INR"},
+        "group": {"adults": 2}
+      },
+      "turns": [
+        "what's next?"
+      ]
+    }
+  ]
+}

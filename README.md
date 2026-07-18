@@ -221,8 +221,9 @@ Open `http://localhost:3000`.
 
 ## Documentation
 
-- **[Technical Documentation](TECHNICAL_DOCUMENTATION.md)** — Full tech stack, APIs, models, architecture
-- **[System Design](docs/system-design.md)** — Detailed system design with data flows and API contracts
+- **[Technical Documentation](TECHNICAL_DOCUMENTATION.md)** — Full tech stack, APIs, models, architecture, and eval harness coverage (§8A)
+- **[System Design](docs/system-design.md)** — Detailed system design with data flows, API contracts, and eval infrastructure (§15A)
+- **[Evaluation Set](docs/eval-set.md)** — Manual + automated test-case coverage and the eval "Quality Flywheel" methodology (§7)
 
 ---
 
@@ -275,6 +276,13 @@ Open `http://localhost:3000`.
 ---
 
 ## Changelog
+
+### v5.10 — Eval Infrastructure Hardening: Wizard Harness, LLM-as-Judge, Compare/Analyze Tools (July 2026)
+- ✅ **NEW: Anya wizard flow now has automated eval coverage.** `eval/run_wizard_eval.py` replays scripted multi-turn conversations against the live wizard, checking chip/reply topic alignment, stale-chip backfill, and `ready_to_generate` correctness — regression-checks the exact budget/pace chip-mismatch bug fixed this session in `wizard_chat_chain.py`.
+- ✅ **NEW: LLM-as-judge quality metric.** `eval/judge_metrics.py` scores generated itineraries on tone/personalization/coherence via a fixed judge model (independent of the model under test), now shown alongside deterministic accuracy/hallucination metrics in the model-comparison report.
+- ✅ **NEW: baseline-vs-candidate comparison + failure clustering.** `eval/compare_results.py` diffs two timestamped eval runs metric-by-metric and flags regressions; `eval/analyze_results.py` clusters failing cases by category/check/reason. Both harness runners now write timestamped output files instead of overwriting a single fixed filename each run.
+- ✅ **NEW: externalized eval config.** `eval/eval_config.json` (+ `config_loader.py`) centralizes which wizard checks run, the judge model/toggle, and default run parameters/thresholds — tunable without touching runner code.
+- Docs updated: `docs/eval-set.md` (§7 — Quality Flywheel methodology + process discipline), `docs/PRD.md` (§10 — types of evals), `docs/system-design.md` (§15A — eval architecture), `TECHNICAL_DOCUMENTATION.md` (§8A + v10.25 changelog), `docs/itinerary-generation-flow.md`, `docs/GTM_STRATEGY.md` (roadmap).
 
 ### v5.9 — Local Testing Fixes: Event-Loop Hangs, Budget Feasibility, Google SSO Gating, Duplicate Keys, Generation Watchdog (July 2026)
 - ✅ **FIXED: signup (and every other request) could hang indefinitely** — a synchronous embedding-model call inside an async request handler and a startup background task was blocking the whole event loop. Offloaded to worker threads everywhere; also fixed a resulting Apple Silicon (MPS) thread-safety crash by forcing CPU-only inference.

@@ -40,6 +40,7 @@ import asyncio
 import json
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from core.config import settings
@@ -75,6 +76,8 @@ from eval.model_comparison_scoring import (  # noqa: E402
     hallucination_rate,
     render_report,
 )
+from eval.judge_metrics import JUDGE_MODEL, judge_available, judge_itinerary_quality  # noqa: E402
+from eval.config_loader import load_eval_config  # noqa: E402
 from models.trip import Budget, DestinationInput, GroupComposition, TripConfig  # noqa: E402
 from services.search import retrieve_context, summarise_context  # noqa: E402
 
@@ -167,7 +170,15 @@ async def build_prompt(trip_config: TripConfig) -> tuple[str, str]:
     return prompt, context_text
 
 
-async def run_one_call(model: str, prompt: str, context_text: str, case: dict, weights: dict) -> dict:
+async def run_one_call(
+    model: str,
+    prompt: str,
+    context_text: str,
+    case: dict,
+    weights: dict,
+    trip_config: TripConfig,
+    judge_cfg: dict | None = None,
+) -> dict:
     loop = asyncio.get_event_loop()
     start = time.perf_counter()
     try:
@@ -185,6 +196,12 @@ async def run_one_call(model: str, prompt: str, context_text: str, case: dict, w
     acc = accuracy_score(raw, case, weights)
     hall = hallucination_rate(raw, case.get("known_pois", []), context_text)
     cost = estimate_cost_usd(model, prompt_tokens, output_tokens)
+    judge_cfg = judge_cfg or {}
+    judge = (
+        await judge_itinerary_quality(raw, case, trip_config.model_dump(), model=judge_cfg.get("model", JUDGE_MODEL))
+        if judge_cfg.get("enabled", True)
+        else None
+    )
     return {
         "error": None,
         "accuracy": acc,
@@ -194,6 +211,7 @@ async def run_one_call(model: str, prompt: str, context_text: str, case: dict, w
         "prompt_tokens": prompt_tokens,
         "output_tokens": output_tokens,
         "cost_usd": cost,
+        "judge": judge,  # None when GEMINI_API_KEY unavailable -- see judge_metrics.judge_available()
     }
 
 
@@ -202,6 +220,9 @@ async def main_async(models: list[str], runs: int, monthly_volumes: list[int]) -
     cases = dataset["cases"]
     weights = dataset["criteria_weights"]
     seed_fixtures(cases)
+    cfg = load_eval_config()
+    mc_cfg = cfg.get("model_comparison", {})
+    judge_cfg = mc_cfg.get("judge", {})
 
     per_model_results: dict[str, list[dict]] = {m: [] for m in models}
     per_model_case_details: dict[str, list[dict]] = {m: [] for m in models}
@@ -220,29 +241,41 @@ async def main_async(models: list[str], runs: int, monthly_volumes: list[int]) -
                 continue
             for run_idx in range(runs):
                 print(f"  > {model} | {case['id']} | run {run_idx + 1}/{runs}...")
-                result = await run_one_call(model, prompt, context_text, case, weights)
+                result = await run_one_call(model, prompt, context_text, case, weights, trip_config, judge_cfg)
                 per_model_results[model].append(result)
                 per_model_case_details[model].append({"case_id": case["id"], "run": run_idx, **result})
 
     summaries = {model: aggregate_model(results) for model, results in per_model_results.items()}
 
     OUT_DIR.mkdir(exist_ok=True)
-    (OUT_DIR / "model_comparison_results.json").write_text(
-        json.dumps({"summaries": summaries, "details": per_model_case_details}, indent=2, default=str),
-        encoding="utf-8",
-    )
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    results_blob = json.dumps({"summaries": summaries, "details": per_model_case_details}, indent=2, default=str)
     report = render_report(summaries, monthly_volumes)
+    # Timestamped file is the durable record for `eval/compare_results.py`
+    # (baseline-vs-candidate diffing); the fixed `model_comparison_results.json`
+    # / `.md` names are kept in sync as a "latest" alias.
+    (OUT_DIR / f"model_comparison_results_{ts}.json").write_text(results_blob, encoding="utf-8")
+    (OUT_DIR / f"model_comparison_report_{ts}.md").write_text(report, encoding="utf-8")
+    (OUT_DIR / "model_comparison_results.json").write_text(results_blob, encoding="utf-8")
     (OUT_DIR / "model_comparison_report.md").write_text(report, encoding="utf-8")
     print("\n" + report)
-    print(f"Full results: {OUT_DIR / 'model_comparison_results.json'}")
-    print(f"Report:       {OUT_DIR / 'model_comparison_report.md'}")
+    print(f"Full results: {OUT_DIR / f'model_comparison_results_{ts}.json'} (latest alias: model_comparison_results.json)")
+    print(f"Report:       {OUT_DIR / f'model_comparison_report_{ts}.md'} (latest alias: model_comparison_report.md)")
 
 
 def main() -> None:
+    mc_defaults = load_eval_config().get("model_comparison", {})
+    default_scale = ",".join(str(v) for v in mc_defaults.get("default_scale", [10000, 100000, 1000000]))
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--models", required=True, help="Comma-separated model ids, e.g. gemini-2.5-flash,gpt-4o-mini")
-    parser.add_argument("--runs", type=int, default=3, help="Repeats per case, for latency percentiles (default 3)")
-    parser.add_argument("--scale", default="10000,100000,1000000", help="Comma-separated monthly request volumes for cost projection")
+    parser.add_argument(
+        "--runs", type=int, default=mc_defaults.get("default_runs", 3),
+        help=f"Repeats per case, for latency percentiles (default from eval_config.json: {mc_defaults.get('default_runs', 3)})",
+    )
+    parser.add_argument(
+        "--scale", default=default_scale,
+        help=f"Comma-separated monthly request volumes for cost projection (default from eval_config.json: {default_scale})",
+    )
     parser.add_argument("--yes", action="store_true", help="Skip the cost-estimate confirmation prompt")
     args = parser.parse_args()
 
@@ -254,6 +287,16 @@ def main() -> None:
     print(f"This will make up to {num_calls} live LLM API calls across {len(models)} model(s) "
           f"({len(dataset['cases'])} cases x {args.runs} runs). Models without a configured API "
           f"key are skipped automatically (no cost, no call).")
+    judge_cfg = mc_defaults.get("judge", {})
+    judge_model_name = judge_cfg.get("model", JUDGE_MODEL)
+    if judge_cfg.get("enabled", True) and judge_available():
+        print(f"LLM-judge quality scoring (tone/personalization/coherence) is ENABLED via "
+              f"{judge_model_name} -- adds one extra judge call per case/run/model.")
+    elif not judge_cfg.get("enabled", True):
+        print("LLM-judge quality scoring is DISABLED via eval_config.json (model_comparison.judge.enabled=false).")
+    else:
+        print("LLM-judge quality scoring is DISABLED (GEMINI_API_KEY unset or llm_provider=mock) "
+              "-- judge fields will be null in the report.")
     if not args.yes:
         confirm = input("Proceed? [y/N] ").strip().lower()
         if confirm != "y":

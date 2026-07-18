@@ -1,0 +1,34 @@
+{
+  "_comment": "Central config for apps/api/eval/*. Lets metrics/thresholds be tuned without editing runner code, per the agents-cli eval skill's guidance to externalize metrics config. CLI flags on individual runners still take precedence over these defaults.",
+
+  "model_comparison": {
+    "default_runs": 3,
+    "default_scale": [10000, 100000, 1000000],
+    "metrics_to_run": ["accuracy", "hallucination_rate", "cost", "latency", "judge_quality"],
+    "judge": {
+      "enabled": true,
+      "model": "gemini-2.5-flash",
+      "_comment": "Fixed judge model, independent of models-under-test, so comparisons aren't biased by a model judging itself."
+    }
+  },
+
+  "red_team": {
+    "metrics_to_run": ["attack_success_rate", "robustness_score", "by_category_success_rate"]
+  },
+
+  "wizard": {
+    "checks_to_run": [
+      "chips_is_list",
+      "no_inline_json_leak",
+      "chip_topic_alignment",
+      "no_stale_chips_for_filled_field",
+      "ready_to_generate_is_backed"
+    ]
+  },
+
+  "analyze": {
+    "accuracy_threshold": 0.7,
+    "hallucination_threshold": 0.2,
+    "judge_threshold": 0.6
+  }
+}

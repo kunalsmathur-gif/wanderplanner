@@ -18,6 +18,7 @@
 7. [API Reference](#7-api-reference)
 7A. [Admin Analytics Dashboard](#7a-admin-analytics-dashboard)
 8. [AI Models, Prompts & RAG](#8-ai-models-prompts--rag)
+8A. [Evaluation & Quality Assurance](#8a-evaluation--quality-assurance)
 9. [Key Frontend Components](#9-key-frontend-components)
 10. [Hooks & Utilities](#10-hooks--utilities)
 11. [Voice Features](#11-voice-features)
@@ -1109,6 +1110,38 @@ TRIP CONFIGURATION:
 
 ---
 
+## 8A. Evaluation & Quality Assurance
+
+All AI surfaces above (wizard chat, itinerary generation, refinement) are
+non-deterministic and can't be fully covered by traditional pass/fail unit
+tests. `apps/api/eval/` holds a set of live-LLM eval harnesses, one per
+surface, all following the same **dataset → inference → grading → failure
+analysis → optimize** loop ("Quality Flywheel" — see `docs/eval-set.md` §7
+for the full methodology and process-discipline rules, `docs/system-design.md`
+§15A for architecture detail, `docs/PRD.md` §10 for the product-facing
+"types of evals" breakdown).
+
+| Harness | Surface | Grading |
+|---|---|---|
+| `run_wizard_eval.py` | Anya wizard multi-turn chat | Deterministic invariant checks (`wizard_checks.py`) replaying scripted conversations — e.g. catches chips shown for the wrong field after a topic-shifting reply |
+| `run_rag_eval.py` | RAG retrieval (§8 above) | IR metrics (precision/recall/MRR) against a labeled golden query→chunk dataset |
+| `run_refinement_eval.py` | Pinned-POI refinement (§8/§12) | Recall/precision/inclusion/stability + honesty, reusing the production fuzzy name matcher |
+| `run_red_team_eval.py` | Injection/safety surfaces (`core/prompt_guard.py`) | Canary/keyword/cost-abuse checks per adversarial case |
+| `run_model_comparison.py` | Itinerary generation model selection | Deterministic accuracy/hallucination + **LLM-as-judge** (`judge_metrics.py`: tone/personalization/coherence, scored by a model fixed independently of whichever model is under test) + cost/latency |
+
+**Supporting tools** (⭐ NEW 2026-07-18): `compare_results.py` diffs two
+timestamped result files metric-by-metric to flag regressions between a
+baseline and a candidate run; `analyze_results.py` clusters failing cases
+by category/check/reason instead of leaving them in a flat list;
+`eval_config.json` (loaded via `config_loader.py`) externalizes which
+wizard checks run, the judge model and enabled/disabled toggle, default
+`--runs`/`--scale`, and failure-analysis thresholds, so these can be tuned
+without editing runner code. Every harness run now writes a timestamped
+`out/<harness>_results_<ts>.json`/`.md` pair (plus a fixed-name "latest"
+alias) instead of overwriting a single fixed filename each time.
+
+---
+
 ## 9. Key Frontend Components
 
 ### `LandingHero.tsx`
@@ -1416,7 +1449,19 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.25.0 Changes (July 2026) — Eval infrastructure hardening: wizard harness, LLM-as-judge, compare/analyze tools, externalized config
+
+A review of the existing eval harnesses (`run_rag_eval.py`/`run_red_team_eval.py`/`run_model_comparison.py`) against the standard "Quality Flywheel" methodology (dataset → inference → grading → failure analysis → optimize) surfaced 6 gaps; all 6 fixed this session. See §8A above for the new architecture and `docs/eval-set.md` §7 for the full process-discipline write-up.
+
+| Change | Detail |
+|---|---|
+| **NEW** Anya wizard multi-turn eval harness | `eval/run_wizard_eval.py` + `wizard_dataset.json` + `wizard_checks.py` — first automated coverage of the wizard chat flow (previously only manually tested per `docs/eval-set.md`). Replicates `LLMWizard.tsx`'s one-level-deep `config_patch` → `partial_config` merge exactly in Python. Regression-checks the exact 2026-07-18 production bug (budget-confirmation reply showing stale pace chips). Live-verified 10/10 turns passing. |
+| **NEW** LLM-as-judge quality metric | `eval/judge_metrics.py` — scores tone/personalization/coherence (1-5) via a fixed `gemini-2.5-flash` judge, independent of whichever model is under test in `run_model_comparison.py`, so judging can't bias one candidate. Returns `None` (not a zero score) on any failure so a missing API key doesn't tank a model's aggregate. Wired into `model_comparison_scoring.py`'s aggregation and report rendering. |
+| **NEW** Baseline/candidate compare + failure-analysis tools | `eval/compare_results.py` diffs two timestamped result files metric-by-metric (auto-detects wizard vs. red-team/model-comparison result shape, correct "higher/lower is better" polarity per metric, exit code 1 on regression). `eval/analyze_results.py` clusters failing cases by category (red-team), failure reason (model-comparison), or check name (wizard) instead of a flat per-case list. Both harness runners now write timestamped `out/<name>_results_<ts>.json`/`.md` (plus a fixed-name "latest" alias) instead of overwriting one file per run. |
+| **NEW** Externalized metrics config | `eval/eval_config.json` + `config_loader.py` — which wizard checks run, judge enabled/model, default `--runs`/`--scale`, and failure-analysis thresholds are now all in one file, overridable per-invocation via CLI flags without editing runner code. |
+| **DOCS** | Process-discipline rules (don't lower thresholds to pass, don't skip flaky cases, don't fix the expected output instead of the agent, don't self-judge, don't treat judge=None as zero) documented in `docs/eval-set.md` §7; product-facing "types of evals" framing added to `docs/PRD.md` §10; architecture documented in `docs/system-design.md` §15A and here in §8A; noted in `docs/itinerary-generation-flow.md` and `docs/GTM_STRATEGY.md` roadmap. |
 
 ### v10.24.0 Changes (July 2026) — Critical Qdrant payload-index fix (RAG retrieval was silently broken since the Cloud migration); demand-driven ingestion implemented; google-genai 2.10.0 upgrade
 

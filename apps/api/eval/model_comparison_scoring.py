@@ -225,7 +225,8 @@ def aggregate_model(results: list[dict]) -> dict:
     costs = [r["cost_usd"] for r in ok]
     prompt_tokens = [r["prompt_tokens"] for r in ok]
     output_tokens = [r["output_tokens"] for r in ok]
-    return {
+    judged = [r["judge"] for r in ok if r.get("judge")]
+    summary = {
         "calls": len(results),
         "errors": len(errored),
         "error_rate": round(len(errored) / len(results), 4) if results else 0.0,
@@ -237,6 +238,17 @@ def aggregate_model(results: list[dict]) -> dict:
         "prompt_tokens_mean": round(statistics.mean(prompt_tokens), 1),
         "output_tokens_mean": round(statistics.mean(output_tokens), 1),
     }
+    if judged:
+        # judge["overall"] is already normalized 0-1 (see judge_metrics.py);
+        # tone/personalization/coherence stay on their native 1-5 scale so
+        # the report can show them alongside the judge's own rationale-free
+        # rubric, without a second unit conversion here.
+        summary["judge_quality_mean"] = round(statistics.mean(j["overall"] for j in judged), 4)
+        summary["judge_tone_mean"] = round(statistics.mean(j["tone"] for j in judged), 2)
+        summary["judge_personalization_mean"] = round(statistics.mean(j["personalization"] for j in judged), 2)
+        summary["judge_coherence_mean"] = round(statistics.mean(j["coherence"] for j in judged), 2)
+        summary["judge_calls"] = len(judged)
+    return summary
 
 
 def project_scale_cost(cost_usd_mean_per_request: float, monthly_volumes: list[int]) -> dict[str, float]:
@@ -254,19 +266,34 @@ def render_report(model_summaries: dict[str, dict], monthly_volumes: list[int]) 
         "context (not MMLU/GPQA — see docs/eval-set.md §8 for why). Hallucination",
         "rate is a proxy (see model_comparison_scoring.py docstring).",
         "",
-        "| Model | Accuracy | Hallucination Rate | p50 Latency (ms) | p95 Latency (ms) | Cost/Request (USD) | Error Rate |",
-        "|---|---|---|---|---|---|---|",
+        "| Model | Accuracy | Hallucination Rate | Judge Quality (0-1) | p50 Latency (ms) | p95 Latency (ms) | Cost/Request (USD) | Error Rate |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for model, summary in model_summaries.items():
         if "accuracy_mean" not in summary:
-            lines.append(f"| {model} | SKIPPED/FAILED ({summary.get('errors', 0)} errors) | - | - | - | - | {summary.get('error_rate', 1.0)} |")
+            lines.append(f"| {model} | SKIPPED/FAILED ({summary.get('errors', 0)} errors) | - | - | - | - | - | {summary.get('error_rate', 1.0)} |")
             continue
+        judge_cell = summary.get("judge_quality_mean", "n/a (no judge)")
         lines.append(
-            f"| {model} | {summary['accuracy_mean']} | {summary['hallucination_rate_mean']} | "
+            f"| {model} | {summary['accuracy_mean']} | {summary['hallucination_rate_mean']} | {judge_cell} | "
             f"{summary['latency_ms_p50']} | {summary['latency_ms_p95']} | "
             f"{summary['cost_usd_mean_per_request']} | {summary['error_rate']} |"
         )
     lines.append("")
+    if any("judge_quality_mean" in s for s in model_summaries.values()):
+        lines.append("## LLM-judge sub-scores (1-5 scale, mean across judged calls)")
+        lines.append("")
+        lines.append("| Model | Tone | Personalization | Coherence | Judged Calls |")
+        lines.append("|---|---|---|---|---|")
+        for model, summary in model_summaries.items():
+            if "judge_quality_mean" not in summary:
+                lines.append(f"| {model} | - | - | - | 0 |")
+                continue
+            lines.append(
+                f"| {model} | {summary['judge_tone_mean']} | {summary['judge_personalization_mean']} | "
+                f"{summary['judge_coherence_mean']} | {summary['judge_calls']} |"
+            )
+        lines.append("")
     lines.append("## Projected cost at scale (USD/month)")
     lines.append("")
     header = "| Model | " + " | ".join(f"{v:,} req/mo" for v in monthly_volumes) + " |"

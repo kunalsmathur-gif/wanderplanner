@@ -1,7 +1,24 @@
 # Next-Session TODO — Post-Cloud-migration cleanup → Reddit approval → Phase 2
 
-**Last updated:** 2026-07-16 (critical Qdrant payload-index fix + demand-driven ingestion + google-genai upgrade — see v10.24.0 in TECHNICAL_DOCUMENTATION.md §14 for full detail; plus a same-day follow-up session's full hidden-gems source-diversification + authenticity-scoring + India-coverage research, folded into item 3 below)
+**Last updated:** 2026-07-18 (eval infrastructure hardening — wizard eval harness, LLM-as-judge metric, compare/analyze tools, externalized eval config; see "This session" section immediately below, and v10.25.0 in `TECHNICAL_DOCUMENTATION.md` §14 for full detail)
 **Context:** A routine dependency-bump task (`google-genai` 1.2.0→2.10.0, dependabot PR #8) led to discovering that Qdrant Cloud has been silently rejecting every `destination`-filtered RAG query since the Cloud migration (2026-07-15) — meaning real research context has likely not been reaching the live LLM prompt at all, degrading itinerary quality invisibly (the failure was swallowed by the fallback chain, never surfaced as an error). **This is fixed in code but needs a Railway redeploy/restart to actually take effect in production** — see "Do this first" below. The user is targeting a POC round of real testers soon; items 1-3 in the "Remaining items" list below are what came out of a 2026-07-16 discussion about what's actually needed before that.
+
+---
+
+## 🆕 This session (2026-07-18) — Eval infrastructure hardening
+
+Reviewed the existing eval harnesses against the standard "Quality Flywheel" methodology (dataset → inference → grading → failure analysis → optimize) and closed all 6 gaps found:
+
+- ✅ `eval/run_wizard_eval.py` + `wizard_dataset.json` + `wizard_checks.py` — first automated coverage of the Anya wizard multi-turn flow; live-verified 10/10 turns passing, regression-checks the exact 2026-07-18 budget/pace chip-mismatch bug (`wizard_chat_chain.py` fix).
+- ✅ `eval/judge_metrics.py` — LLM-as-judge tone/personalization/coherence scoring wired into `run_model_comparison.py`, judge fixed independent of model-under-test.
+- ✅ `eval/compare_results.py` + `eval/analyze_results.py` — baseline-vs-candidate diff and failure clustering, tested against real wizard output and synthetic red-team/model-comparison data. Both harness runners now write timestamped output.
+- ✅ `eval/eval_config.json` + `config_loader.py` — externalizes wizard checks-to-run, judge model/toggle, default run params, and analyze thresholds.
+- ✅ Docs: `docs/eval-set.md` §7 (process discipline), `docs/PRD.md` §10 (types of evals), `docs/system-design.md` §15A, `TECHNICAL_DOCUMENTATION.md` §8A, plus pointers in `docs/itinerary-generation-flow.md` and `docs/GTM_STRATEGY.md`.
+
+**Not done yet — carry forward:**
+- **Actually run `run_model_comparison.py`/`run_red_team_eval.py` live with the new judge metric enabled**, across real candidate models (still cost-gated, deliberately not run this session beyond the tooling's own synthetic/live-wizard verification — see item 0 below, now updated to reflect the judge/compare/analyze additions).
+- **No unit tests yet for the new eval tooling itself** (`compare_results.py`, `analyze_results.py`, `config_loader.py`, `judge_metrics.py`) — only ad hoc manual verification (synthetic fixtures + one live wizard run) was done this session. Worth a `tests/unit/test_eval_tooling.py` pass if these become load-bearing for CI gating later.
+- **`eval_config.json`'s `metrics_to_run` lists are currently descriptive, not yet enforced** — `run_rag_eval.py`/`run_red_team_eval.py`'s scoring functions don't actually branch on them yet (only `wizard.checks_to_run` is wired to gate real behavior). Low priority unless a specific metric needs to be toggled off in practice.
 
 ---
 
@@ -13,15 +30,16 @@
 
 ## ⏭️ Remaining items (in suggested order — items 1-3 are POC-readiness priorities per 2026-07-16 discussion)
 
-### 0. Run the new LLM model-selection + red-team evals (built 2026-07-16, not yet executed)
+### 0. Run the new LLM model-selection + red-team evals live (harnesses now include a judge metric + compare/analyze tooling, built 2026-07-16 → hardened 2026-07-18, still not run live end-to-end)
 
-In response to a "should we use MMLU/GPQA to pick the LLM?" discussion, two eval harnesses were built this session but **deliberately not run** (live API calls cost real money): `apps/api/eval/run_model_comparison.py` (accuracy/hallucination/latency/cost across candidate models on the real production itinerary prompt — see `docs/eval-set.md` §8) and `apps/api/eval/run_red_team_eval.py` (injection/exfiltration/kids-safety-bypass/cost-abuse robustness per model — §9). Both were import/smoke-tested against synthetic data only.
+In response to a "should we use MMLU/GPQA to pick the LLM?" discussion, two eval harnesses were built 2026-07-16 but **deliberately not run** (live API calls cost real money): `apps/api/eval/run_model_comparison.py` (accuracy/hallucination/latency/cost — and, as of 2026-07-18, LLM-as-judge tone/personalization/coherence — across candidate models on the real production itinerary prompt, see `docs/eval-set.md` §8) and `apps/api/eval/run_red_team_eval.py` (injection/exfiltration/kids-safety-bypass/cost-abuse robustness per model — §9). Both were import/smoke-tested against synthetic data only; the 2026-07-18 session additionally live-verified the new wizard harness and the judge metric individually, but did **not** run a full multi-model sweep with either harness.
 
 To actually run them next session:
 - Add `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` to `.env` for whichever of OpenAI/Anthropic should be in the comparison (Gemini + Groq already have keys configured).
 - `pip install -r requirements-ml.txt` (adds the new optional `groq`/`openai`/`anthropic` SDKs).
 - Run both: `python -m eval.run_model_comparison --models <ids>` and `python -m eval.run_red_team_eval --models <ids>` from `apps/api` (each prints a cost estimate and asks to confirm — pass `--yes` to skip).
-- Review `eval/out/model_comparison_report.md` and `eval/out/red_team_report.md`, decide whether to switch `gemini_model`/`llm_provider` based on the results.
+- Review the timestamped `eval/out/model_comparison_report_<ts>.md` and `eval/out/red_team_report_<ts>.md` (or the `_latest`-aliased fixed filenames), decide whether to switch `gemini_model`/`llm_provider` based on the results — the judge's tone/personalization/coherence sub-scores now sit alongside the deterministic accuracy/hallucination numbers, so a cheaper model that's structurally "accurate" but reads generically won't look artificially good.
+- Once a second run exists, try `python eval/compare_results.py <first-run>.json <second-run>.json` and `python eval/analyze_results.py <run>.json` — this session verified both tools against real wizard-eval output and synthetic red-team/model-comparison fixtures, but neither has been exercised against a real multi-model run yet.
 - Related gap surfaced while building this: **no unit test exists for `core/prompt_guard.py`** (the regex-level injection-neutralization logic) — worth a quick `tests/unit/test_prompt_guard.py` alongside or before the red-team run.
 
 ### 1. Security checks before any real (even POC) traffic
