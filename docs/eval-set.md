@@ -1,11 +1,12 @@
 # WanderPlanner — Evaluation Set
-**Version:** 5.4 · **Date:** July 16, 2026 (added §8 — LLM model-selection eval and §9 — adversarial/red-team eval, both built in response to a "should we use MMLU/GPQA to pick a model" discussion; harnesses built and smoke-tested, not yet run live)  
+**Version:** 5.5 · **Date:** July 18, 2026 (added §7 — Eval Process Discipline / Quality Flywheel methodology, plus `eval/compare_results.py`, `eval/analyze_results.py`, `eval/eval_config.json`, and LLM-as-judge scoring in `eval/judge_metrics.py`)  
 **Scope:** All AI, API, and integration surfaces across WanderPlanner v5.3 (RAG Optimization Round 2)  
 **Purpose:** Manual and automated regression testing for correctness, safety, tone, cost and reliability
 
 RAG eval coverage: **RAG-001 to RAG-100** (100 cases — 74 implemented ✅, 1 partial ⚠️, 25 pending ❌)  
 Also see: **Golden Dataset & Automated Retrieval Metrics** (§4U below) for the separate `run_rag_eval.py` scoring suite (not individually numbered test cases — a single automated harness with 12 labeled queries against a 40-chunk curated corpus).  
-Non-RAG coverage: **ANYA-W, ANYA-V, ITN, CITIES, CMP, CHAT, SCORE, EXT, COST, BOOKING, WIKI, MOB, THEME** (160+ cases)
+Non-RAG coverage: **ANYA-W, ANYA-V, ITN, CITIES, CMP, CHAT, SCORE, EXT, COST, BOOKING, WIKI, MOB, THEME** (160+ cases)  
+Also see: `docs/PRD.md` §10 (product-facing "types of evals" framing), `docs/system-design.md` §15A (harness architecture), `TECHNICAL_DOCUMENTATION.md` §8A (surface-by-surface coverage table).
 
 ---
 
@@ -1030,6 +1031,80 @@ curl "http://localhost:8000/api/best-time/Tokyo"
 # Token usage (add to wizard_chat_chain.py logging)
 grep "token_count" /tmp/api.log | tail -20
 ```
+
+---
+
+## Section 7 — Eval Process Discipline (the "Quality Flywheel")
+
+Applies to every automated harness in `apps/api/eval/`: `run_rag_eval.py`,
+`run_red_team_eval.py`, `run_model_comparison.py`, `run_wizard_eval.py`,
+`run_refinement_eval.py`. The methodology (dataset → inference → grading →
+failure analysis → optimize, then repeat) comes from the same discipline
+codified in `agents-cli`'s `eval` skill — it's followed here without
+depending on that CLI.
+
+### 7A — The loop
+
+1. **Dataset** — a fixed, versioned set of cases (`*_dataset.json`). Add
+   cases when a real bug or edge case is found; don't invent synthetic
+   cases that don't reflect production traffic.
+2. **Inference** — run the harness against the model/prompt under test
+   (`python eval/run_*.py --models ... `). Every run writes a *new*
+   timestamped `out/*_results_<ts>.json` + `.md` (see §7C) — nothing gets
+   silently overwritten.
+3. **Grading** — deterministic checks where possible (schema validity,
+   canary/keyword matches, invariant checks); `eval/judge_metrics.py`'s
+   LLM-as-judge for subjective axes (tone, personalization, coherence) that
+   can't be scored by a rule.
+4. **Failure analysis** — `python eval/analyze_results.py out/<file>.json`
+   clusters failures by category/case/check so a systemic regression (one
+   check or one injection vector failing everywhere) is visible instead of
+   buried in a flat per-case list.
+5. **Optimize** — fix the prompt/chain/retrieval, not the test. Then go
+   back to step 2 and re-run; use `python eval/compare_results.py
+   <baseline.json> <candidate.json>` to confirm the fix actually improved
+   the metrics it was meant to, without regressing anything else.
+
+### 7B — Shortcuts to avoid
+
+These are the failure modes the flywheel exists to prevent. If you catch
+yourself doing one of these, stop and fix the underlying agent/prompt
+instead:
+
+- **Don't lower a threshold to make a run pass.** If `attack_success_rate`
+  or `accuracy_threshold` needs raising/lowering to get a green run, that's
+  a signal the model or prompt regressed — fix that, don't move the goalpost
+  in `eval/eval_config.json`.
+- **Don't skip or delete a flaky case.** A case that fails intermittently
+  (common here since wizard/itinerary calls run at `temperature=0.4`, not
+  0) is telling you the prompt isn't robust to reasonable phrasing
+  variance — that's exactly what `run_wizard_eval.py`'s soft pass/fail
+  reporting (per-turn ✅/❌, not a hard assert) is designed to surface over
+  several runs, not paper over.
+- **Don't fix the expected output to match a bad actual output.** If a
+  generated itinerary/reply is wrong, fix the chain/prompt in
+  `chains/*.py`; only update a dataset's expected value when the *previous*
+  expectation was itself incorrect (e.g. a stale canary string), and say so
+  in the commit message.
+- **Don't judge a model with itself.** `eval/judge_metrics.py` intentionally
+  pins `JUDGE_MODEL` to a fixed model independent of whichever model is
+  under test in `run_model_comparison.py` — swapping the judge to match the
+  candidate would bias every comparison in that candidate's favor.
+- **Don't treat judge/None as zero.** A `None` from `judge_itinerary_quality`
+  means "unavailable" (no API key, parse failure) — aggregation must
+  exclude it from the mean, not count it as a failing score.
+
+### 7C — Where this is implemented
+
+| Flywheel step | File |
+|---|---|
+| Dataset | `eval/*_dataset.json` |
+| Inference | `eval/run_rag_eval.py`, `run_red_team_eval.py`, `run_model_comparison.py`, `run_wizard_eval.py`, `run_refinement_eval.py` |
+| Grading (deterministic) | `eval/*_scoring.py`, `eval/wizard_checks.py` |
+| Grading (LLM-as-judge) | `eval/judge_metrics.py` |
+| Failure analysis | `eval/analyze_results.py` |
+| Compare baseline vs. candidate | `eval/compare_results.py` |
+| Metrics/thresholds config | `eval/eval_config.json` (loaded via `eval/config_loader.py`) |
 
 ---
 

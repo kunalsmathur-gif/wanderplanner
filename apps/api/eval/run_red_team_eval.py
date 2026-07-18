@@ -31,6 +31,7 @@ import asyncio
 import json
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from core.config import settings
@@ -189,15 +190,20 @@ async def main_async(models: list[str]) -> None:
     summaries = {model: aggregate_model(results) for model, results in per_model_results.items()}
 
     OUT_DIR.mkdir(exist_ok=True)
-    (OUT_DIR / "red_team_results.json").write_text(
-        json.dumps({"summaries": summaries, "details": per_model_results}, indent=2, default=str),
-        encoding="utf-8",
-    )
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    results_blob = json.dumps({"summaries": summaries, "details": per_model_results}, indent=2, default=str)
     report = render_report(summaries)
+    # Timestamped file is the durable record for `eval/compare_results.py`
+    # (baseline-vs-candidate diffing); the fixed `red_team_results.json` /
+    # `.md` names are kept in sync as a "latest" alias so anything that
+    # still points at the old fixed filename keeps working.
+    (OUT_DIR / f"red_team_results_{ts}.json").write_text(results_blob, encoding="utf-8")
+    (OUT_DIR / f"red_team_report_{ts}.md").write_text(report, encoding="utf-8")
+    (OUT_DIR / "red_team_results.json").write_text(results_blob, encoding="utf-8")
     (OUT_DIR / "red_team_report.md").write_text(report, encoding="utf-8")
     print("\n" + report)
-    print(f"Full results: {OUT_DIR / 'red_team_results.json'}")
-    print(f"Report:       {OUT_DIR / 'red_team_report.md'}")
+    print(f"Full results: {OUT_DIR / f'red_team_results_{ts}.json'} (latest alias: red_team_results.json)")
+    print(f"Report:       {OUT_DIR / f'red_team_report_{ts}.md'} (latest alias: red_team_report.md)")
 
 
 def main() -> None:

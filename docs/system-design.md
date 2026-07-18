@@ -28,6 +28,7 @@
 13. [Environment Variables Reference](#13-environment-variables-reference)
 14. [Performance & Cost Analysis](#14-performance--cost-analysis)
 15. [Resilience & Retry Architecture](#15-resilience--retry-architecture)
+15A. [Evaluation Infrastructure & Quality Flywheel](#15a-evaluation-infrastructure--quality-flywheel)
 
 ---
 
@@ -1473,7 +1474,92 @@ surfacing a false "Connection error" on an otherwise still-working request.
 
 ---
 
+## 15A. Evaluation Infrastructure & Quality Flywheel
+
+Companion to `docs/eval-set.md` (test-case-level coverage) and
+`docs/PRD.md` §10 (product-facing "types of evals" framing) — this section
+covers the architecture of `apps/api/eval/`.
+
+### Directory shape
+
+```
+eval/
+├── *_dataset.json              # versioned input cases per harness
+├── run_rag_eval.py             # retrieval-quality harness
+├── run_red_team_eval.py        # adversarial/injection/safety harness
+├── run_model_comparison.py     # model-selection harness (accuracy + judge + cost/latency)
+├── run_refinement_eval.py      # interest→pinned-POI fidelity harness
+├── run_wizard_eval.py          # multi-turn Anya wizard invariant harness
+├── *_scoring.py                # deterministic scoring per harness
+├── judge_metrics.py            # LLM-as-judge subjective quality metric
+├── wizard_checks.py            # per-turn invariant checks for the wizard harness
+├── compare_results.py          # baseline-vs-candidate diff across two timestamped runs
+├── analyze_results.py          # failure clustering (by category/check/reason)
+├── config_loader.py            # loads eval_config.json with built-in fallback defaults
+├── eval_config.json            # externalized metrics/thresholds/toggles
+└── out/                        # gitignored; timestamped results/report per run
+```
+
+### Result flow
+
+```
+run_*.py (live LLM/RAG calls)
+  → *_scoring.py / wizard_checks.py (deterministic grading)
+  → judge_metrics.py (LLM-as-judge, model-comparison harness only)
+  → out/<harness>_results_<ts>.json + <harness>_report_<ts>.md
+      (a fixed-name "latest" alias is also written for anything still
+      pointing at the old un-timestamped filename)
+  → analyze_results.py <file>            (failure clustering, ad hoc)
+  → compare_results.py <old> <new>       (regression check between two runs, ad hoc)
+```
+
+### Key design decisions
+
+- **Timestamped, non-overwriting output.** Every run gets its own
+  `..._results_<ts>.json`/`.md` pair so a prior run's numbers are never
+  silently lost — required for `compare_results.py` to have something to
+  diff against.
+- **LLM-as-judge uses a fixed, cheap model** (`gemini-2.5-flash`,
+  configurable via `eval_config.json`'s `model_comparison.judge.model`)
+  independent of whichever model is under test in
+  `run_model_comparison.py`. Judging a candidate with itself (or
+  inconsistently across candidates) would bias every comparison.
+- **Judge failures return `None`, never a zero score.** A missing
+  `GEMINI_API_KEY` or a judge parse failure must not silently tank a
+  model's aggregate — callers/aggregation treat `None` as "unavailable."
+- **Metrics/thresholds are externalized**, not hardcoded: `eval_config.json`
+  controls which wizard checks run, whether the judge is enabled and which
+  model it uses, default `--runs`/`--scale` for the model-comparison
+  harness, and the failure-analysis thresholds `analyze_results.py` uses —
+  all overridable per-invocation via CLI flags, with the config file only
+  supplying defaults.
+- **The wizard harness (`run_wizard_eval.py`) is stateless like the
+  production endpoint it tests** — it replicates the frontend's one-level-
+  deep `config_patch` → `partial_config` merge (`LLMWizard.tsx`) exactly in
+  Python, so a merge-logic bug can't hide behind a harness that merges
+  differently than production.
+- **`compare_results.py`/`analyze_results.py` are shape-agnostic**: they
+  auto-detect whether a results file came from the wizard harness
+  (`{"results": [...]}`) or the red-team/model-comparison harnesses
+  (`{"summaries": {...}, "details": {...}}`) and apply the appropriate
+  diff/clustering logic, so one pair of tools covers all harnesses instead
+  of one per harness.
+
+See `docs/eval-set.md` §7 for the process-discipline rules (don't lower a
+threshold to pass, don't skip a flaky case, don't "fix" the expected output
+instead of the agent) that govern how these tools are meant to be used.
+
+---
+
 ## 16. Change Log
+
+### v10.25 (July 2026) — Eval infrastructure hardening: wizard harness, LLM-as-judge, compare/analyze tools, externalized config
+- New `eval/run_wizard_eval.py` + `wizard_dataset.json` + `wizard_checks.py`: first automated (not just manual `docs/eval-set.md`) coverage of the multi-turn Anya wizard flow, replicating the frontend's `config_patch` merge exactly; regression-checks the 2026-07-18 budget/pace chip-mismatch bug (§2's `wizard_chat_chain.py` fix) directly
+- New `eval/judge_metrics.py`: LLM-as-judge subjective quality metric (tone/personalization/coherence, fixed `gemini-2.5-flash` judge independent of model-under-test) wired into `run_model_comparison.py`; `model_comparison_scoring.py` aggregates judge sub-scores alongside the existing deterministic accuracy/hallucination metrics
+- New `eval/compare_results.py` (baseline-vs-candidate metric diff, shape-agnostic across all three harness output formats) and `eval/analyze_results.py` (failure clustering by category/check/reason) — both harness output-writers (`run_red_team_eval.py`, `run_model_comparison.py`) now write timestamped `_results_<ts>.json`/`_report_<ts>.md` files (plus a fixed-name "latest" alias) instead of overwriting a single fixed filename every run
+- New `eval/eval_config.json` + `config_loader.py`: externalizes which wizard checks run, judge enabled/model, default `--runs`/`--scale`, and failure-analysis thresholds, so these can be tuned without editing runner code (CLI flags still override)
+- Documented the "Quality Flywheel" methodology and process-discipline rules (don't lower thresholds to pass, don't skip flaky cases, don't fix the expected output instead of the agent, don't self-judge, don't treat judge=None as zero) in `docs/eval-set.md` §7, product-facing "types of evals" framing in `docs/PRD.md` §10, and this section (§15A)
+- All new/changed eval files compile cleanly under the project's `.venv`; wizard harness verified live end-to-end (10/10 turns passing) both before and after the config-loader wiring
 
 ### v10.24 (July 2026) — Critical Qdrant payload-index fix; demand-driven ingestion implemented; google-genai 2.10.0
 - **Critical fix**: Qdrant Cloud rejects filtered `scroll`/`search` queries with no payload index on the filtered field (400 "Index required but not found") — `:memory:` mode doesn't enforce this, so every `destination`-filtered RAG query (`retrieve_context`, gem intel, RAG fallback) has likely been silently failing since the Cloud migration, degrading to zero real context reaching the LLM prompt without any visible error (swallowed by the fallback chain). `core/qdrant.py::_ensure_collections()` now creates the required `KEYWORD` index on every connect; **Railway needs a restart/redeploy for it to take effect**

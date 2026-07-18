@@ -323,6 +323,14 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
           TOTAL and the PER-PERSON figure, and mention it covers flights + stay + food as a bare minimum
           (activities/shopping/local transport are extra). Briefly mention any flagged assumptions
           (trip length, comfort level, season) so the user can correct them.
+        - Do NOT set config_patch.budget yet when you first present this recommended figure (or when
+          the user asks a follow-up like "give me a breakup/breakdown of that") — it is only a proposal,
+          not yet the user's confirmed budget. Setting config_patch.budget here marks the budget field as
+          done, which incorrectly advances the wizard to the NEXT field's chips (e.g. pace) underneath a
+          reply that is still just discussing/confirming the budget — a jarring mismatch for the user.
+          Only set config_patch.budget once the user actually accepts a figure (e.g. "sounds good",
+          "yes", "let's go with that", or a specific number of their own) — until then, keep asking
+          "Does that work for you?" (or similar) with no chips, exactly like the normal budget question.
 
     FEASIBILITY CHECK (user states/proposes their OWN number — as the initial figure, in response to
     "is X feasible?", or by asking to lower a previously discussed budget):
