@@ -9,6 +9,7 @@
 ## Table of Contents
 
 1. [High-Level Architecture](#1-high-level-architecture)
+1A. [Architecture Pattern: Single-Agent, Multi-Chain (Not Multi-Agent)](#1a-architecture-pattern-single-agent-multi-chain-not-multi-agent)
 2. [Data Flow: LLM Anya Wizard](#2-data-flow-llm-anya-wizard)
 3. [Data Flow: Start Anywhere](#3-data-flow-start-anywhere)
 3A. [Data Flow: Authentication (Signup / Login / Google SSO / Password Reset)](#3a-data-flow-authentication-signup--login--google-sso--password-reset)
@@ -126,6 +127,52 @@
 
 Embedding Model: sentence-transformers/all-MiniLM-L6-v2 (local, 384 dims)
 ```
+
+---
+
+## 1A. Architecture Pattern: Single-Agent, Multi-Chain (Not Multi-Agent)
+
+**Classification:** WanderPlanner is a **single-agent, multi-chain** system,
+not a multi-agent system. One LLM (Google Gemini) is invoked through 8
+independently-prompted "chains" (`apps/api/chains/*.py`), each with its own
+hardcoded system prompt and temperature (see §10), dispatched by
+**deterministic FastAPI routers** based on which frontend endpoint is
+called — not by an autonomous agent framework, and not via any
+agent-to-agent handoff protocol. Routing between chains is
+user-navigation-driven (which screen/button the user is on), never an LLM
+deciding to delegate to another LLM.
+
+| Chain | Responsibility |
+|---|---|
+| `wizard_chat_chain.py` | Conversational wizard — extracts required trip fields |
+| `chat_refine_chain.py` | Post-generation chat — patches config, answers questions |
+| `interest_expansion_chain.py` | Expands a named interest into verifiable places |
+| `itinerary_chain.py` | Core itinerary generation |
+| `extract_trip_chain.py` | Extracts trip intent from pasted URL/blog/Reddit text |
+| `recommend_cities_chain.py` | Destination-city suggestions |
+| `feasibility_chain.py` | Trip feasibility checks |
+| `itinerary_corpus_extraction_chain.py` | Offline ingestion of scraped content into few-shot corpus |
+
+**Why single-agent is the right call at current scope (not an accident of
+history):** the product moat (verified India corpus, measurable
+personalization fidelity, offline-agent distribution — `docs/GTM_STRATEGY.md`)
+doesn't require inter-agent orchestration; the 15–20s generation latency
+budget (`docs/PRD.md`) leaves little room for multi-hop planner→critic→executor
+loops; cost discipline matters for a pre-revenue, pay-per-token product;
+and deterministic Python (safety filters, persona injection, the 3-tier
+fallback chain in §15) is more testable/debuggable than delegating those
+decisions to an LLM agent. The one place that resembles "agentic routing" —
+`docs/rag-strategy.md` §12's proposed static-vs-realtime query classifier —
+is a single lightweight classification call, not a multi-agent framework,
+and remains a **pending roadmap item**, not shipped.
+
+**When multi-agent would start to earn its keep:** autonomous multi-step
+booking/negotiation across live third-party APIs with re-planning; genuine
+per-market behavioral specialization at scale (not just prompt swaps); a
+dedicated "verifier" role — though today this is handled more cheaply via
+deterministic OSM/wiki verification code than a second LLM call. Concrete
+scaling trigger conditions are tracked in `docs/scaling-tech-challenges.md`
+§9.
 
 ---
 

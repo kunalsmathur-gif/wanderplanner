@@ -264,6 +264,13 @@ Real government/institutional budget lines exist for "attract more tourists" (ma
 
 > **What to build to deliver this — features, delivery format, cost, the exact Aha Moment — is `$nmt-craft-value-proposition`'s job**, already discussed conversationally earlier in this session (the WhatsApp hand-off at the itinerary-draft moment). This report stops at the underserved criteria and the mechanic direction.
 
+### Confirmed mechanic: consumer → agent hook & white-label decision (2026-07-19)
+
+Following on from the hand-off direction above, two implementation decisions are now settled (full detail + rationale in `docs/GTM_STRATEGY.md`):
+
+- **Consumer-app hook:** a contextual CTA on the generated itinerary — **"Get This Itinerary Booked by a Local Expert"** — not a cold "request a quotation" ask, placed alongside the existing OTA booking-links section. Contact mode is **WhatsApp** (`wa.me/` deep link, prefilled with trip details), matching where both Indian travelers and offline agents already operate, rather than a form-then-email flow. This is the literal mechanism that removes the "information loss" hand-off cost called out above — the agent receives a pre-qualified, half-built spec instead of a blank page.
+- **Branding for the B2B agent product:** default to **white-label, tiered by price**, not permanent co-branding. An agency's own end customer needs to trust the agency, not an unfamiliar SaaS name on the document — visible co-branding risks signalling "this could be self-served next time" and undercuts the agency's own trust proposition. Base tier keeps a small "Powered by WanderPlanner AI" footer tag; a premium tier (unlocked once ≥5 paying agencies validate willingness-to-pay, per the roadmap below) removes all attribution and adds custom-domain support. This mirrors the proven global white-label B2B pattern (mTrip, Sygic, Simplified.Travel) already flagged in the market landscape.
+
 ---
 
 ## 4. Strategic recommendation & pivot options

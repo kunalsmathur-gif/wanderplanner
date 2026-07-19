@@ -19,6 +19,7 @@
 7A. [Admin Analytics Dashboard](#7a-admin-analytics-dashboard)
 8. [AI Models, Prompts & RAG](#8-ai-models-prompts--rag)
 8A. [Evaluation & Quality Assurance](#8a-evaluation--quality-assurance)
+8B. [Single-Agent vs. Multi-Agent Architecture](#8b-single-agent-vs-multi-agent-architecture--why-single-agent-today)
 9. [Key Frontend Components](#9-key-frontend-components)
 10. [Hooks & Utilities](#10-hooks--utilities)
 11. [Voice Features](#11-voice-features)
@@ -1139,6 +1140,49 @@ wizard checks run, the judge model and enabled/disabled toggle, default
 without editing runner code. Every harness run now writes a timestamped
 `out/<harness>_results_<ts>.json`/`.md` pair (plus a fixed-name "latest"
 alias) instead of overwriting a single fixed filename each time.
+
+---
+
+## 8B. Single-Agent vs. Multi-Agent Architecture — Why Single-Agent Today
+
+A recurring demo-day question: is this a multi-agent system? **No — it's a
+single-agent, multi-chain architecture.** One LLM (Gemini) is invoked through
+8 independently-prompted chains (§8 table above), each with its own system
+prompt and temperature, dispatched by deterministic FastAPI routers based on
+which endpoint the frontend calls — there is no autonomous agent framework,
+no agent-to-agent negotiation, and no LLM-driven handoff between chains.
+Orchestration is plain backend code, not an orchestrator agent.
+
+**Why this is the right call at current scope, not just an accident of
+history:**
+- **The product moat doesn't require it.** Per `docs/GTM_STRATEGY.md`, the
+  moat is the verified India corpus, measurable personalization fidelity,
+  and offline-agent distribution — none of that is unlocked by inter-agent
+  orchestration.
+- **Latency budget is already tight.** The PRD's 15–20s generation window
+  leaves little room for multi-hop planner→critic→executor loops, which
+  multiply LLM round-trips.
+- **Cost discipline.** Solo-founder, pre-revenue, pay-per-token — every
+  extra agent hop is a directly billed cost for marginal benefit already
+  captured cheaply via prompt/temperature specialization on one model.
+- **Operability.** Multi-agent systems compound failure modes and are
+  harder to eval; the current eval suite (§8A) already catches real bugs
+  (e.g. RAG silently returning nothing in prod for months) in the *simple*
+  architecture — that diagnostic clarity would be harder to preserve with
+  multiple interacting agents.
+- **Determinism where it matters.** Safety filters (`chains/safety.py`),
+  persona injection, and the 3-tier fallback chain are deterministic Python,
+  not agent decisions — more testable and debuggable than delegating them
+  to an LLM.
+
+**When multi-agent would start to earn its keep (explicitly not now):**
+autonomous multi-step booking/negotiation across live third-party APIs with
+re-planning; per-market behavioral specialization at real scale (not just
+prompt swaps); a "verifier" agent role — though this is already handled more
+cheaply today via deterministic OSM/wiki verification code rather than a
+second LLM call. See `docs/system-design.md` §1A and
+`docs/scaling-tech-challenges.md` §9 for the fuller architecture rationale
+and the concrete trigger conditions that would justify revisiting this.
 
 ---
 
