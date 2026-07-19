@@ -45,6 +45,20 @@ export async function fetchCurrentUser(): Promise<AuthUser | null> {
   }
 }
 
+/** Silently exchanges the longer-lived refresh-token cookie for a fresh
+ * access token when the 15-minute access token has expired but the user is
+ * still genuinely signed in (refresh token lasts 30 days). Returns null on
+ * any failure (no refresh cookie, revoked/expired session, network error) —
+ * callers should treat that the same as "not signed in", never throw. */
+export async function refreshSession(): Promise<AuthUser | null> {
+  try {
+    const { data } = await authApi.post('/api/auth/refresh')
+    return data as AuthUser
+  } catch {
+    return null
+  }
+}
+
 /** Public, non-secret capability flags for the auth UI (e.g. whether Google
  * OAuth is configured on the backend). Defaults to disabled on any failure
  * so the UI fails closed (hides the button) rather than showing a broken one. */

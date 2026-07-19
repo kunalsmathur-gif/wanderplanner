@@ -161,7 +161,7 @@ async def check_feasibility(trip_config: TripConfig) -> FeasibilityResponse:
         cleaned = "\n".join(cleaned.split("\n")[:-1])
 
     data = json.loads(cleaned)
-    bare_minimum = _safe_bare_minimum(trip_config)
+    bare_minimum = await _safe_bare_minimum(trip_config)
     return _build_response(data, budget_inr, bare_minimum, trip_config)
 
 
@@ -177,13 +177,13 @@ def _traveller_level_hint_text(trip_config: TripConfig) -> str:
     return " ".join(parts)
 
 
-def _safe_bare_minimum(trip_config: TripConfig) -> dict | None:
+async def _safe_bare_minimum(trip_config: TripConfig) -> dict | None:
     """Best-effort deterministic bare-minimum estimate (flights+stay+food) used
     as a floor against the LLM's own cost guess — never blocks the feasibility
     check if it fails for any reason (e.g. group size still unknown)."""
     try:
         hint_text = _traveller_level_hint_text(trip_config)
-        return estimate_bare_minimum_budget(trip_config.model_dump(), hint_text)
+        return await estimate_bare_minimum_budget(trip_config.model_dump(), hint_text)
     except Exception:
         return None
 

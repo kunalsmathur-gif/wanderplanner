@@ -171,87 +171,101 @@ export function streamItinerary(
 
   const controller = new AbortController()
 
-  fetch(`${baseUrl}/api/generate-itinerary`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ trip_config: tripConfig }),
-    signal: controller.signal,
-    // Required to send the httpOnly session cookie — generation now
-    // requires authentication (see /api/generate-itinerary auth gate).
-    credentials: 'include',
-  })
-    .then(async (res) => {
-      // Handle non-2xx responses before trying to read SSE stream
-      if (!res.ok) {
-        let detail = `HTTP ${res.status}`
-        try {
-          const body = await res.json()
-          const raw = body?.detail ?? body?.message
-          if (raw !== undefined) {
-            if (typeof raw === 'string') {
-              detail = raw
-            } else if (Array.isArray(raw)) {
-              // FastAPI validation errors: [{loc, msg, type}, ...]
-              detail = raw.map((e: { msg?: string }) => e.msg ?? JSON.stringify(e)).join('; ')
-            } else {
-              detail = JSON.stringify(raw)
-            }
-          }
-        } catch { /* ignore parse errors */ }
-        // Distinguish "please sign in" from other errors so callers (e.g.
-        // the wizard's generate action) can redirect to /signup instead of
-        // showing a generic retry-able error banner.
-        onError(res.status === 401 ? 'AUTH_REQUIRED' : 'HTTP_ERROR', detail, res.status >= 500)
-        return
+  async function attempt(alreadyRetriedAfterRefresh: boolean): Promise<void> {
+    const res = await fetch(`${baseUrl}/api/generate-itinerary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trip_config: tripConfig }),
+      signal: controller.signal,
+      // Required to send the httpOnly session cookie — generation now
+      // requires authentication (see /api/generate-itinerary auth gate).
+      credentials: 'include',
+    })
+
+    // The 15-minute access-token cookie may have expired mid-conversation
+    // even though the user is genuinely still signed in — try one silent
+    // refresh via the longer-lived refresh-token cookie before giving up
+    // and sending them back to the sign-in screen.
+    if (res.status === 401 && !alreadyRetriedAfterRefresh) {
+      const { refreshSession } = await import('@/lib/authApi')
+      const refreshed = await refreshSession()
+      if (refreshed) {
+        return attempt(true)
       }
+    }
 
-      const reader = res.body?.getReader()
-      if (!reader) {
-        onError('STREAM_ERROR', 'No response body from server.', true)
-        return
-      }
-
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let receivedData = false
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-
-        const parts = buffer.split('\n\n')
-        buffer = parts.pop() ?? ''
-
-        for (const part of parts) {
-          const eventMatch = part.match(/^event: (\w+)/)
-          const dataMatch = part.match(/^data: (.+)$/m)
-          if (!eventMatch || !dataMatch) continue
-
-          const event = eventMatch[1]
-          const payload = JSON.parse(dataMatch[1])
-
-          if (event === 'status') {
-            onStatus(payload.message, payload.step, payload.total_steps)
-          } else if (event === 'data') {
-            receivedData = true
-            onData(payload)
-          } else if (event === 'error') {
-            onError(payload.code, payload.message, payload.retryable)
+    // Handle non-2xx responses before trying to read SSE stream
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`
+      try {
+        const body = await res.json()
+        const raw = body?.detail ?? body?.message
+        if (raw !== undefined) {
+          if (typeof raw === 'string') {
+            detail = raw
+          } else if (Array.isArray(raw)) {
+            // FastAPI validation errors: [{loc, msg, type}, ...]
+            detail = raw.map((e: { msg?: string }) => e.msg ?? JSON.stringify(e)).join('; ')
+          } else {
+            detail = JSON.stringify(raw)
           }
         }
-      }
+      } catch { /* ignore parse errors */ }
+      // Distinguish "please sign in" from other errors so callers (e.g.
+      // the wizard's generate action) can redirect to /signup instead of
+      // showing a generic retry-able error banner.
+      onError(res.status === 401 ? 'AUTH_REQUIRED' : 'HTTP_ERROR', detail, res.status >= 500)
+      return
+    }
 
-      // Stream ended without sending a data event — treat as a generation failure
-      if (!receivedData) {
-        onError('NO_DATA', 'Itinerary generation did not complete. Please try again.', true)
+    const reader = res.body?.getReader()
+    if (!reader) {
+      onError('STREAM_ERROR', 'No response body from server.', true)
+      return
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let receivedData = false
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() ?? ''
+
+      for (const part of parts) {
+        const eventMatch = part.match(/^event: (\w+)/)
+        const dataMatch = part.match(/^data: (.+)$/m)
+        if (!eventMatch || !dataMatch) continue
+
+        const event = eventMatch[1]
+        const payload = JSON.parse(dataMatch[1])
+
+        if (event === 'status') {
+          onStatus(payload.message, payload.step, payload.total_steps)
+        } else if (event === 'data') {
+          receivedData = true
+          onData(payload)
+        } else if (event === 'error') {
+          onError(payload.code, payload.message, payload.retryable)
+        }
       }
-    })
-    .catch((err) => {
-      if (err.name !== 'AbortError') {
-        onError('NETWORK_ERROR', 'Connection failed. Please try again.', true)
-      }
-    })
+    }
+
+    // Stream ended without sending a data event — treat as a generation failure
+    if (!receivedData) {
+      onError('NO_DATA', 'Itinerary generation did not complete. Please try again.', true)
+    }
+  }
+
+  attempt(false).catch((err) => {
+    if (err.name !== 'AbortError') {
+      onError('NETWORK_ERROR', 'Connection failed. Please try again.', true)
+    }
+  })
 
   return () => controller.abort()
 }

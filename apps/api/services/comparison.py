@@ -93,7 +93,7 @@ async def build_comparison(
     # free-tools-only — same core.budget_estimator used in the wizard chat's
     # budget recommendations, so "which destination is cheaper" isn't left
     # purely to the LLM's qualitative "Cost of Living" guess below).
-    budget_param = _compare_bare_minimum_budget(destinations, trip_config)
+    budget_param = await _compare_bare_minimum_budget(destinations, trip_config)
     if budget_param:
         params.append(budget_param)
 
@@ -108,7 +108,7 @@ async def build_comparison(
     return ComparisonResponse(comparison=params, partial_failures=partial_failures)
 
 
-def _compare_bare_minimum_budget(
+async def _compare_bare_minimum_budget(
     destinations: list[DestinationInput], trip_config: TripConfig
 ) -> ComparisonParameter | None:
     """Real computed (not LLM-guessed) bare-minimum flights+stay+food estimate
@@ -117,15 +117,19 @@ def _compare_bare_minimum_budget(
     recommendation: never guess headcount)."""
     from core.budget_estimator import estimate_bare_minimum_budget
 
-    values: dict[str, str] = {}
-    totals: dict[str, float] = {}
-    for dest in destinations:
+    async def _estimate_for(dest: DestinationInput):
         try:
             config_dict = trip_config.model_dump()
             config_dict["destination"] = {"city": dest.city, "country": dest.country}
-            estimate = estimate_bare_minimum_budget(config_dict)
+            return await estimate_bare_minimum_budget(config_dict)
         except Exception:
-            estimate = None
+            return None
+
+    estimates = await asyncio.gather(*[_estimate_for(dest) for dest in destinations])
+
+    values: dict[str, str] = {}
+    totals: dict[str, float] = {}
+    for dest, estimate in zip(destinations, estimates):
         if estimate is None:
             return None  # group size unknown — skip this parameter entirely
         values[dest.city] = f"~₹{estimate['total_inr']:,} total (₹{estimate['per_person_inr']:,}/person)"

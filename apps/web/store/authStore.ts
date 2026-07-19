@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { fetchCurrentUser, login as apiLogin, logout as apiLogout, signup as apiSignup, type AuthUser } from '@/lib/authApi'
+import { fetchCurrentUser, login as apiLogin, logout as apiLogout, refreshSession, signup as apiSignup, type AuthUser } from '@/lib/authApi'
 
 interface AuthStore {
   user: AuthUser | null
@@ -22,7 +22,13 @@ export const useAuthStore = create<AuthStore>((set) => ({
 
   hydrate: async () => {
     set({ status: 'loading' })
-    const user = await fetchCurrentUser()
+    // The 15-minute access token may have expired since the user's last
+    // visit even though they're still genuinely signed in (refresh token
+    // lasts 30 days) — try a silent refresh before concluding logged-out.
+    let user = await fetchCurrentUser()
+    if (!user) {
+      user = await refreshSession()
+    }
     set({ user, status: user ? 'authenticated' : 'unauthenticated' })
   },
 

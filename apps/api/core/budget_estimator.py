@@ -11,16 +11,40 @@ Design constraints (per product decision): free tools only, no paid pricing
 APIs. Everything here is either arithmetic or a hand-authored lookup table —
 consistent with `core/budget_tiers.py` and `core/cost_grounding.py`.
 
-The estimate deliberately requires group size to be known before it will
-produce a number — if group size is missing, `budget_estimate_prompt_hint()`
-returns clarifying-question guidance instead of a number, so the LLM asks
-before it quotes (this is the actual UX bug being fixed: Anya was quoting
-a flat 40,000 INR "budget trip" figure before even knowing headcount).
+The estimate deliberately requires group size AND departure city to be known
+before `budget_estimate_prompt_hint()` will hand the LLM a number — if either
+is missing it returns clarifying-question guidance instead, so the LLM asks
+before it quotes. Two UX bugs are fixed this way: Anya used to quote a flat
+40,000 INR "budget trip" figure before even knowing headcount, and separately
+used one hand-authored flight number per destination tier regardless of
+departure city (a Delhi-Colombo and a Chennai-Colombo trip got the exact same
+"flight" line, wildly wrong for both). Once origin+destination are geocoded
+(lat/lon available), the flight component switches to the real-distance band
+from `core/distance_pricing.py` (shared with `core/cost_grounding.py`)
+instead of the flat per-tier number — see `flight_distance_based` in the
+returned dict.
+
+Stay and food work the same way, one level further: `_grounded_or_flat()`
+tries a real per-destination figure first — the median of community-reported
+nightly-rate/daily-spend mentions pulled from the app's existing free RAG
+collections (Reddit/Wikivoyage, via `core/cost_grounding.py` +
+`core/price_extraction.py`'s deterministic regex extraction, NOT an LLM
+call — reintroducing LLM guessing here would recreate the exact problem this
+module exists to avoid) — and only falls back to the hand-authored flat
+_COST_MATRIX number when that comes up empty. As of 2026-07-20 the Reddit/
+Wikivoyage Qdrant collections are empty in production (ingestion has been
+broken for months — see project history), so this falls back to the flat
+number for virtually every destination today; the plumbing is in place for
+when ingestion is fixed. See `stay_community_based` / `food_community_based`
+in the returned dict.
 """
 from __future__ import annotations
 
 from datetime import date
 from typing import Any
+
+from core.cost_grounding import community_median_price_inr
+from core.distance_pricing import flight_band_inr
 
 # ---------------------------------------------------------------------------
 # Destination cost tier (hand-authored — reflects real-world cost of living +
@@ -113,32 +137,54 @@ def is_peak_season(city: str | None, country: str | None, start_date: str | None
 
 # ---------------------------------------------------------------------------
 # Bare-minimum per-person cost matrix: [destination_tier][traveller_level].
-# flight_roundtrip_pp is one-time per traveller; stay_per_night_pp and
-# food_per_day_pp are daily rates. INR, hand-authored (free-tools-only —
-# no live pricing API), deliberately conservative "bare minimum" figures
-# (e.g. shared double-occupancy budget-to-mid stay, not resort pricing).
+# flight_roundtrip_pp is one-time per traveller (used only when the real
+# distance band above isn't available yet); stay_per_night_pp and
+# food_per_day_pp are daily rates, used only when community grounding above
+# comes up empty (currently the common case). INR, hand-authored (free-tools-
+# only — no live pricing API), deliberately conservative "bare minimum"
+# figures (e.g. shared double-occupancy budget-to-mid stay, not resort
+# pricing).
+#
+# food_per_day_pp recalibrated 2026-07-20 against real research for Sri
+# Lanka (budget tier): mid-range dining runs ~$20-25/person/day (₹1,660-
+# 2,075) — cafe/curry spots at $5-10/meal, beach cafes $10-20/meal — while
+# the original figure here (₹800/day) was undershooting that by ~2-2.5x, in
+# the same direction as the flight bug. The budget-tier mid_range cell is the
+# one hard anchor; economical/premium within that tier and the other two
+# destination tiers are scaled proportionally (not independently verified —
+# recalibrate the same way once a real data point turns up for one of them).
+# stay_per_night_pp was checked against the same research (~$50/night
+# Colombo double room, ~₹2,075/person) and found close to the existing
+# ₹2,000 mid_range figure — left unchanged rather than "fixed" without
+# evidence it was actually wrong.
 # ---------------------------------------------------------------------------
 
 _COST_MATRIX: dict[str, dict[str, dict[str, int]]] = {
     "budget": {
-        "economical": {"flight_roundtrip_pp": 8000,  "stay_per_night_pp": 1000, "food_per_day_pp": 500},
-        "mid_range":  {"flight_roundtrip_pp": 10000, "stay_per_night_pp": 2000, "food_per_day_pp": 800},
-        "premium":    {"flight_roundtrip_pp": 14000, "stay_per_night_pp": 3500, "food_per_day_pp": 1300},
+        "economical": {"flight_roundtrip_pp": 8000,  "stay_per_night_pp": 1000, "food_per_day_pp": 900},
+        "mid_range":  {"flight_roundtrip_pp": 10000, "stay_per_night_pp": 2000, "food_per_day_pp": 1800},
+        "premium":    {"flight_roundtrip_pp": 14000, "stay_per_night_pp": 3500, "food_per_day_pp": 3200},
     },
     "moderate": {
-        "economical": {"flight_roundtrip_pp": 15000, "stay_per_night_pp": 2000, "food_per_day_pp": 700},
-        "mid_range":  {"flight_roundtrip_pp": 20000, "stay_per_night_pp": 3500, "food_per_day_pp": 1200},
-        "premium":    {"flight_roundtrip_pp": 28000, "stay_per_night_pp": 6000, "food_per_day_pp": 2000},
+        "economical": {"flight_roundtrip_pp": 15000, "stay_per_night_pp": 2000, "food_per_day_pp": 1200},
+        "mid_range":  {"flight_roundtrip_pp": 20000, "stay_per_night_pp": 3500, "food_per_day_pp": 2200},
+        "premium":    {"flight_roundtrip_pp": 28000, "stay_per_night_pp": 6000, "food_per_day_pp": 3800},
     },
     "premium": {
-        "economical": {"flight_roundtrip_pp": 28000, "stay_per_night_pp": 4000,  "food_per_day_pp": 1200},
-        "mid_range":  {"flight_roundtrip_pp": 38000, "stay_per_night_pp": 8000,  "food_per_day_pp": 2000},
-        "premium":    {"flight_roundtrip_pp": 55000, "stay_per_night_pp": 15000, "food_per_day_pp": 3500},
+        "economical": {"flight_roundtrip_pp": 28000, "stay_per_night_pp": 4000,  "food_per_day_pp": 2000},
+        "mid_range":  {"flight_roundtrip_pp": 38000, "stay_per_night_pp": 8000,  "food_per_day_pp": 3800},
+        "premium":    {"flight_roundtrip_pp": 55000, "stay_per_night_pp": 15000, "food_per_day_pp": 6500},
     },
 }
 
 _TIER_ORDER = {"budget": 0, "moderate": 1, "premium": 2}
 _PEAK_SEASON_MULTIPLIER = 1.25  # applied to flight + stay only, not food
+
+# When origin+destination coordinates are known, the real-distance band from
+# core.distance_pricing (shared with core/cost_grounding.py) replaces the flat
+# _COST_MATRIX flight figure — traveller_level then picks where in that band
+# to land, instead of selecting a whole separate hand-authored number.
+_LEVEL_BAND_FRACTION = {"economical": 0.15, "mid_range": 0.5, "premium": 0.9}
 
 # Domestic-India trips are much cheaper than the "budget" international
 # tier above (no international flight, no visa/forex overhead) — halve the
@@ -198,7 +244,36 @@ def _duration_days(dates: dict[str, Any] | None) -> tuple[int, bool]:
     return 5, True
 
 
-def estimate_bare_minimum_budget(trip_config: dict[str, Any], hint_text: str | None = None) -> dict[str, Any] | None:
+# Sanity bounds for community-extracted stay/food amounts (INR) — a snippet
+# match outside these ranges is almost certainly not actually a nightly rate
+# / daily food spend and gets discarded by core.price_extraction.
+_STAY_PP_BOUNDS = (300, 50_000)
+_FOOD_PP_BOUNDS = (100, 10_000)
+
+
+async def _grounded_or_flat(
+    city: str | None, country: str | None, query_suffix: str, flat_default: float, bounds: tuple[float, float]
+) -> tuple[float, bool]:
+    """Real per-destination community-reported figure (INR) if the free RAG
+    collections have enough signal for it, else the hand-authored flat
+    default. Best-effort — a retrieval hiccup or empty corpus (the common
+    case today, see core/cost_grounding.py) just falls back, never blocks
+    the estimate."""
+    dest_city = city or country
+    if not dest_city:
+        return flat_default, False
+    try:
+        grounded = await community_median_price_inr(dest_city, query_suffix, bounds[0], bounds[1])
+    except Exception:
+        grounded = None
+    if grounded is not None:
+        return grounded, True
+    return flat_default, False
+
+
+async def estimate_bare_minimum_budget(
+    trip_config: dict[str, Any], hint_text: str | None = None
+) -> dict[str, Any] | None:
     """Computes a bare-minimum (flights + stay + food) budget estimate.
 
     Returns None if group size is unknown (0 adults and 0 of everything else)
@@ -231,11 +306,30 @@ def estimate_bare_minimum_budget(trip_config: dict[str, Any], hint_text: str | N
     season_multiplier = _PEAK_SEASON_MULTIPLIER if peak else 1.0
 
     rates = _COST_MATRIX[tier][traveller_level]
-    flight_pp = rates["flight_roundtrip_pp"] * season_multiplier
+
+    origin = trip_config.get("origin") or {}
+    band = flight_band_inr(origin.get("lat"), origin.get("lon"), destination.get("lat"), destination.get("lon"))
+    if band:
+        low, high = band
+        frac = _LEVEL_BAND_FRACTION[traveller_level]
+        flight_pp_base = low + (high - low) * frac
+        flight_distance_based = True
+    else:
+        flight_pp_base = rates["flight_roundtrip_pp"]
+        flight_distance_based = False
+
+    flight_pp = flight_pp_base * season_multiplier
     if scope == "domestic":
         flight_pp *= _DOMESTIC_FLIGHT_DISCOUNT
-    stay_pp_per_night = rates["stay_per_night_pp"] * season_multiplier
-    food_pp_per_day = rates["food_per_day_pp"]
+
+    stay_pp_base, stay_community_based = await _grounded_or_flat(
+        city, country, "hotel accommodation nightly rate per person", rates["stay_per_night_pp"], _STAY_PP_BOUNDS
+    )
+    food_pp_base, food_community_based = await _grounded_or_flat(
+        city, country, "food meal daily cost per person", rates["food_per_day_pp"], _FOOD_PP_BOUNDS
+    )
+    stay_pp_per_night = stay_pp_base * season_multiplier
+    food_pp_per_day = food_pp_base
 
     # Already-booked flights/accommodation (⭐ user explicitly told Anya they've
     # already paid for these): use the user's REAL total instead of our
@@ -291,17 +385,21 @@ def estimate_bare_minimum_budget(trip_config: dict[str, Any], hint_text: str | N
         "headcount": total_known_people,
         "flights_prebooked": prebooked_flights is not None,
         "accommodation_prebooked": prebooked_accommodation is not None,
+        "flight_distance_based": flight_distance_based,
+        "origin_city": origin.get("city"),
+        "stay_community_based": stay_community_based,
+        "food_community_based": food_community_based,
     }
 
 
-def budget_estimate_prompt_hint(trip_config: dict[str, Any], hint_text: str | None = None) -> str:
+async def budget_estimate_prompt_hint(trip_config: dict[str, Any], hint_text: str | None = None) -> str:
     """Renders either (a) an instruction to ask for group size first, or
     (b) the computed estimate the LLM should present verbatim (in its own
     words), formatted for direct interpolation into the wizard system prompt.
     Best-effort — returns an empty string on any failure so a bug here never
     blocks the conversation."""
     try:
-        estimate = estimate_bare_minimum_budget(trip_config, hint_text)
+        estimate = await estimate_bare_minimum_budget(trip_config, hint_text)
     except Exception:
         return ""
 
@@ -311,6 +409,19 @@ def budget_estimate_prompt_hint(trip_config: dict[str, Any], hint_text: str | No
             "but group size (who's travelling) is not yet known. Do NOT quote any number yet — "
             "ask for group composition first (e.g. 'Just me', 'Me + partner', 'Family with kids', "
             "'Group of friends'), THEN a follow-up turn will give you a real computed estimate to use."
+        )
+
+    # Flight cost varies hugely by departure city (a flat per-destination
+    # number was the actual bug being fixed here — see budget_estimator.py's
+    # module docstring). Skip this gate when the flight component is already
+    # the user's real prebooked figure, since no flight estimate is needed then.
+    if not estimate["origin_city"] and not estimate["flights_prebooked"]:
+        return (
+            "BUDGET RECOMMENDATION GUIDANCE: The user wants you to suggest/recommend a budget. Group size and "
+            "destination are known, but their DEPARTURE CITY is not yet known — flight cost varies hugely by "
+            "departure city, so do NOT quote any number yet. Ask which city they'll be flying from (e.g. "
+            "'Which city will you be flying out of?'), THEN a follow-up turn will give you a real computed "
+            "estimate to use."
         )
 
     b = estimate["breakdown"]
@@ -323,6 +434,15 @@ def budget_estimate_prompt_hint(trip_config: dict[str, Any], hint_text: str | No
         assumptions.append("travel month unknown, so no peak-season adjustment applied")
     elif estimate["peak_season"]:
         assumptions.append("peak season for this destination — flights/stay skewed ~25% higher")
+    if not estimate["flight_distance_based"] and not estimate["flights_prebooked"]:
+        assumptions.append(
+            "couldn't pin down real flight distance for this departure city yet, so flights use a generic "
+            "destination-tier estimate rather than a route-specific one"
+        )
+    if estimate["stay_community_based"]:
+        assumptions.append("stay cost is grounded in real traveller-reported rates for this destination")
+    if estimate["food_community_based"]:
+        assumptions.append("food cost is grounded in real traveller-reported spend for this destination")
     if estimate["flights_prebooked"]:
         assumptions.append("using the user's real already-booked flight cost instead of an estimate")
     if estimate["accommodation_prebooked"]:

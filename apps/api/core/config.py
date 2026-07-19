@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 
 
 class Settings(BaseSettings):
@@ -134,6 +134,35 @@ class Settings(BaseSettings):
         if v == "change-me-in-production" and os.getenv("ENVIRONMENT", "development") == "production":
             raise ValueError("JWT_SECRET must be set to a strong random value in production.")
         return v
+
+    @model_validator(mode="after")
+    def _validate_cookie_settings_for_prod(self) -> "Settings":
+        # This deployment model is frontend (Vercel) + backend (Railway) on
+        # different origins in production, so session cookies MUST be
+        # SameSite=None (with Secure=True — browsers reject None without
+        # Secure) or every cross-site request silently drops them, which
+        # then masquerades as three separate-looking bugs: an authenticated
+        # user gets asked to sign in again, signup fails claiming a
+        # duplicate account (it's not wrong — they really do have one, the
+        # app just can't see the session), and signing back in appears to
+        # loop forever. Fails loudly at startup instead of shipping this
+        # silently, the same way `jwt_secret` above already does.
+        import os
+
+        if os.getenv("ENVIRONMENT", "development") != "production":
+            return self
+        if self.cookie_samesite.lower() == "lax":
+            raise ValueError(
+                "COOKIE_SAMESITE=lax will not work in production — frontend and backend are on "
+                "different origins, and browsers drop SameSite=Lax cookies on cross-site requests. "
+                "Set COOKIE_SAMESITE=none (and COOKIE_SECURE=true, which is already the default)."
+            )
+        if self.cookie_samesite.lower() == "none" and not self.cookie_secure:
+            raise ValueError(
+                "COOKIE_SAMESITE=none requires COOKIE_SECURE=true — browsers reject SameSite=None "
+                "cookies that aren't also marked Secure."
+            )
+        return self
 
 
 settings = Settings()
