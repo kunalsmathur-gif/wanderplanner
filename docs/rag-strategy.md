@@ -1055,4 +1055,27 @@ More context signal, fewer tokens, better output.
 
 ---
 
+## 16. RAG Failure Modes & Where It Shines (Demo Day Reference)
+
+Layman framing for non-technical stakeholders: an LLM only knows what it was trained on — asked to plan a trip to a smaller destination, it will confidently invent plausible-sounding restaurants and "hidden gems" that don't exist. RAG fixes this by handing the model real, ingested source material (Wikivoyage, Reddit, OSM) before it writes anything, the way you'd hand an intern real research instead of asking them to imagine it. It measurably reduces hallucination — it does not, by itself, guarantee truth (see failure modes below).
+
+### Where RAG shines today
+- **Grounds generation in verifiable content, not parametric guesses** — the itinerary chain injects real retrieved Wikivoyage/Reddit/OSM snippets (§2) instead of relying on Gemini's own training-data memory of a destination.
+- **Multi-tier fallback keeps the product usable under failure** — cache → RAG-skeleton (pure OSM data, no LLM) → enhanced mock (§4) means an LLM outage or a retrieval miss degrades gracefully instead of returning a hard error.
+- **Objective, repeatable evaluation** — `eval/run_rag_eval.py`'s golden-dataset IR metrics (Precision@10, Recall@10, MRR, nDCG@10) catch retrieval regressions before users do, and this exact harness is what surfaced the real production bug where RAG silently returned nothing for months (missing Qdrant payload index, fixed in `core/qdrant.py::_ensure_collections()`).
+- **Multi-query, hybrid retrieval catches what pure semantic search misses** — the BM25 + semantic RRF fusion (§2/§3) specifically catches literal nouns ("Tsukiji", "anime cafes") that embeddings alone sometimes rank lower than they should.
+
+### Where RAG starts failing
+- **Thin/long-tail destination coverage.** The curated corpus spans ~134 destinations, only 11 India-specific despite India being the primary user cohort (§8a in `docs/scaling-tech-challenges.md`). Outside that list, retrieval returns little-to-no real content and the model silently falls back to ungrounded general knowledge — the exact hallucination risk RAG exists to prevent, reappearing for precisely the requests where it matters most.
+- **Storage ceiling.** The free 1GB Qdrant Cloud cluster comfortably fits today's corpus (~500K–800K vectors) many times over, but is explicitly not sized for eager global destination ingestion (§8 of `docs/scaling-tech-challenges.md`) — broader coverage requires either a paid tier or smarter demand-driven ingestion, not just "add more."
+- **Live ingestion-source breakage.** Reddit ingestion is currently returning 403s in production (API approval pending, no ETA) — a real, present-day gap in hidden-gem/community-tip signal, not a hypothetical one (§8a). Every additional ingestion source (YouTube, blogs) is one more independent failure point that can silently degrade a slice of retrieval quality.
+- **Freshness decay.** The 18-month half-life time-decay means content that isn't periodically refreshed quietly loses relevance and eventually gets filtered out of results — a destination that stops getting re-ingested slowly goes "stale" without anyone noticing.
+- **Latency/throughput tradeoff.** Cross-encoder reranking (best quality) measurably drops throughput ~3x under load, which is why it's deliberately scoped to only the final itinerary-generation call site rather than applied everywhere (§3J) — quality and scale genuinely trade off against each other here.
+- **Garbage-in-garbage-out.** RAG only grounds the model in whatever is in the database — if scraped source content itself is wrong, outdated, or low-quality, RAG will retrieve and repeat it with the same confidence as good content. This is why the composite authenticity-weighting design in `docs/scaling-tech-challenges.md` §8a (account age, engagement corroboration, duplicate-text penalties) exists — RAG reduces hallucination, it doesn't validate truth on its own.
+- **Silent failure by design (a double-edged property).** Every retrieval call is wrapped in a try/except that falls back rather than erroring — which is good for uptime but means retrieval degradation doesn't surface as a visible bug unless it's specifically instrumented and eval'd, exactly as happened with the payload-index gap above.
+
+Full scale-sequencing implications (which of these to fix when, and in what order relative to other infra work) are tracked in `docs/scaling-tech-challenges.md` §6a.
+
+---
+
 *Maintainer: Engineering · Last updated: July 2, 2026 · Version 4.0*

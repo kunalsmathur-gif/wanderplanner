@@ -77,6 +77,24 @@ An agent copilot that turns a WhatsApp-style Hinglish conversation into a **bran
 - **Channels:** TAAI/TAFI chapters, agent WhatsApp communities, travel trade shows (OTM Mumbai, SATTE Delhi).
 - **Consumer app's role:** validation lab, eval showcase, SEO/content engine. Same backend serves both surfaces — every intelligence improvement ships to both.
 
+### Consumer → agent hook (the bridge between the two surfaces)
+
+The consumer app's real job isn't just SEO/eval showcase — it's the **top of the agent-lead funnel**. Once an itinerary is generated, add a contextual CTA — **"Get This Itinerary Booked by a Local Expert"** — placed alongside the existing OTA deep-link section (`BookingLinksSection.tsx`), not a disruptive modal. Deliberately not framed as "request a quotation": that reads cold/transactional and implies price uncertainty right at the moment trust in the plan is highest.
+
+- **Best mode of contact: WhatsApp**, not a form-then-email flow — `wa.me/<agent_number>?text=<prefilled itinerary summary>` (destination, dates, pax, budget tier, shareable itinerary link). Matches where Indian users and offline agents already operate; a generic web form loses this audience.
+- **Implementation shape:** new `AgentHandoffCard.tsx` component (same pattern as `BookingLinksSection.tsx`) + `POST /api/agent-leads` (destination, trip config, contact info → `agent_leads` table) + simple destination-based round-robin routing to onboarded paying agents. **Don't build automated matching before there's real agent supply** — Phase 1 routes to a single manually-handled concierge number or the initial 5 hand-onboarded agents; automate only once the Phase 2 go-criterion (5 paying agents) is hit.
+- **Incentive fit:** this is what makes an agent's ₹1,500–3,000/seat feel like more than "faster drafting software" — it's warm consumer demand bundled into (or later, monetized alongside) the subscription, a differentiator neither Sembark nor TravClan offers.
+- **Metrics to add to the existing admin dashboard** (same pattern as Gemini/Pexels usage tracking): CTA click-through rate, lead → agent-response rate, lead → booked-trip conversion.
+
+### White-label vs. co-branded — decision for the agent product
+
+**Default to white-label, tiered by price — not a permanent co-brand.** An agency's own customer needs to trust the agency, not an unfamiliar SaaS name riding along on their itinerary PDF; visible WanderPlanner branding on agency output subtly plants "this could be self-served next time," which undercuts the exact trust the agency is paying to project. This isn't a novel risk — it's the reason mTrip (300+ agencies, 35 countries), Sygic, and Simplified.Travel are all white-label B2B; the gap is India-native execution, not the format.
+
+- **Tier 1 (base subscription, ~₹1,500/mo):** agency logo + brand colors on the PDF export (extend the existing `react-pdf` design-token system) and shareable link page; keep only a small "Powered by WanderPlanner AI" footer tag — standard, low-cost, doesn't materially break agency trust.
+- **Tier 2 (premium seat, unlocked once the 5-paying-agent go-criterion is hit):** true white-label — zero attribution anywhere, optional custom subdomain (`plans.youragencyname.com`) — a natural, proven upsell lever (same "remove our branding" economics as Shopify apps/Intercom/Calendly) at the top of the existing ₹1,500–3,000 pricing band.
+- **Consumer app stays 100% WanderPlanner-branded** regardless — white-labeling only applies to the B2B "Anya for Agents" surface and its outputs, so the consumer brand/lead-gen engine isn't fragmented.
+- **Don't build the full white-label engine (custom domains, zero-attribution theming) before Phase 2's paying-agent validation** — the tiered approach lets the base tier ship cheaply now while holding the expensive version for proven demand.
+
 ---
 
 ## 5. Roadmap with kill/go criteria

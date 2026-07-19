@@ -172,6 +172,28 @@ Yes, in two distinct senses, both currently lightweight and both will surface pr
 
 ---
 
+## 6a. RAG Failure Modes at Scale — Where It Shines and Where It Breaks
+
+RAG (retrieval-augmented generation, `docs/rag-strategy.md`) is what keeps itinerary generation grounded in real destination content instead of the LLM's parametric memory. It's genuinely earning its place today, but every strength has a corresponding scale-driven failure mode worth naming explicitly for demo/investor Q&A.
+
+**Where it shines (today, at current scale):**
+- Grounds itinerary generation in real, ingested Wikivoyage/Reddit/OSM content instead of LLM hallucination — directly measurable via the golden-dataset IR-metric eval (`eval/run_rag_eval.py`: Precision@10/Recall@10/MRR/nDCG).
+- The 3-tier fallback chain (cache → RAG-skeleton → enhanced mock, §4 of `rag-strategy.md`) means an LLM outage or retrieval failure degrades quality gracefully instead of hard-failing the request.
+- The eval harness already caught a real, live production bug — RAG silently returning nothing for months because of a missing Qdrant payload index — which is the strongest evidence this approach has real operational value, not just theoretical appeal.
+
+**Where it starts failing as usage/geography scales:**
+- **Long-tail destination coverage collapses first.** The curated corpus covers ~134 destinations (only 11 India-specific, despite India being the primary cohort — §8a). At meaningfully higher MAU with a longer geographic tail, retrieval returns `"No pre-fetched research available"` far more often for exactly the users driving incremental growth, and the model silently reverts to un-grounded general knowledge — the RAG safety net disappears precisely where new-destination demand is highest.
+- **Storage ceiling is real, not theoretical.** The free 1GB Qdrant Cloud cluster comfortably covers today's ~134-destination corpus (~500K–800K vectors) many times over but is explicitly not sized for eager global ingestion (§8). Scaling coverage means either a paid tier or smarter demand-driven ingestion — not "just add more."
+- **Ingestion pipeline fragility compounds at scale.** Reddit ingestion is currently 403'd in production (approval pending) — a live, present-day gap in the "hidden gems" signal, not a hypothetical one. More ingestion sources (YouTube, blogs, OSM) means more independent failure points, each silently degrading a slice of retrieval quality without surfacing as a user-facing error (the same failure-swallowing behavior that hid the payload-index bug for months).
+- **Freshness decay under-refreshed at volume.** Time-decay scoring (18-month half-life) deprioritizes stale content; if ingestion refresh cadence doesn't scale with corpus size and destination count, a growing fraction of the corpus silently ages out of relevance without being replaced.
+- **Cache pollution risk grows with volume** (already covered in §6 above) — low-quality generations written into `itinerary_cache` can get served to unrelated users above the similarity threshold, and there's no quality feedback loop yet gating what stays cached.
+- **Reranking's throughput cost gets worse, not better, at scale.** Cross-encoder reranking causes a measured ~3x throughput drop under load — already forcing it to be scoped to a single call site rather than applied everywhere; at higher concurrency this tradeoff sharpens further and may need a dedicated, independently-scaled reranking service (already flagged as a scale-time item in §6).
+- **RAG only reduces hallucination, it doesn't guarantee truth.** As more sources are ingested at scale (more Reddit posts, more blogs), the probability of ingesting stale, wrong, or low-quality source content rises — RAG will confidently retrieve and repeat bad source material with the same authority as good material, unless a source-quality/authenticity weighting system (already scoped in §8a) is built out ahead of ingestion-source growth, not after.
+
+**Sequencing implication:** RAG's failure modes scale in lockstep with the same demand-driven-ingestion and vector-DB-hardening work already sequenced in §6 and §8 — there's no separate "RAG scaling" workstream to plan, but the corpus-coverage and source-diversification gaps (§8a) should be treated as directly limiting how far RAG's current benefits actually extend today, not just a future nice-to-have.
+
+---
+
 
 ## 7. Auth / Database Scale-Test Scenarios
 
@@ -267,6 +289,25 @@ Full research and roadmap sequencing lives in `docs/NEXT_SESSION_TODO.md`; this 
 | Google Places (future) | Reviewer account age / review-history depth | **Not available via official API** — out of scope, documented so it isn't re-explored |
 
 **Rollout gate:** per explicit direction, none of the above build-now/roadmap-prep engineering work starts until this plan is committed to `docs/NEXT_SESSION_TODO.md` and both `main` and `feat/frontend-scaffold` carry the commit.
+
+---
+
+## 9. Single-Agent vs. Multi-Agent — When (If Ever) to Reconsider
+
+WanderPlanner today is a **single-agent, multi-chain architecture**: one LLM (Gemini) invoked through 8 independently-prompted chains dispatched by deterministic backend routing — not an autonomous multi-agent framework (full classification in `docs/system-design.md` §1A and `TECHNICAL_DOCUMENTATION.md` §8B). This section exists to give explicit, concrete trigger conditions for when that assessment should be revisited, rather than leaving "should we go multi-agent" as an open judgment call at every scale milestone.
+
+**Why single-agent holds at every scale tier currently roadmapped (up to 1M MAU, §2):**
+- None of the scaling bottlenecks identified in this document (Qdrant `:memory:`, in-process ingestion, auth/session persistence, cost growth) are solved or made worse by introducing multiple interacting agents — they're infra/data problems, not orchestration problems.
+- Multi-agent patterns (planner→critic→executor loops, tool-calling round-trips between agents) directly worsen two of this document's named risks: **API cost growth at scale** (§4 — each agent hop is a separately billed LLM call) and **latency** (the PRD's 15–20s generation budget is already tight with a single model call chain).
+- The eval infrastructure (`apps/api/eval/`) that currently gives confidence in output quality is scoped to single-chain, single-model outputs; multi-agent interactions would need a materially more complex eval harness (tracing which agent caused which failure) before they could be trusted in production — that investment doesn't exist yet and isn't cheap to build.
+
+**Concrete trigger conditions that would justify revisiting (none met today):**
+1. **Autonomous multi-step execution** — e.g. an agent that actually books flights/hotels across multiple third-party APIs, handles failures, and re-plans mid-transaction. This is genuine multi-step tool-use with real state and rollback needs, materially different from today's single-shot generation calls.
+2. **Per-market behavioral divergence at real scale** — if expansion beyond India requires substantively different reasoning/behavior per region (not just prompt/language swaps), a per-market agent split could be justified, but only once that expansion is actually funded and scoped.
+3. **Verification workload outgrowing deterministic code** — today's OSM/wiki hallucination verification (`chat_refine_chain.py`'s interest→entity→verify→pin pipeline) is deterministic and cheap; if verification logic becomes complex enough that an LLM genuinely outperforms rule-based checks, a dedicated verifier call (not necessarily a full "agent") might be warranted — evaluate via the existing eval harness before shipping, not by assumption.
+4. **Proven eval maturity for multi-step traces** — don't adopt multi-agent patterns until the eval infrastructure can attribute failures to a specific step/agent; shipping multi-agent before this exists would regress the diagnostic clarity that caught the RAG payload-index bug (§6a) in the current architecture.
+
+**Bottom line:** treat multi-agent as a deliberate future architecture tied to a specific new capability (autonomous booking, deep per-market specialization) — not a default "more sophisticated = better" upgrade path. Re-run this assessment when any of the four trigger conditions above is concretely on the roadmap, not on a fixed time/MAU schedule.
 
 ---
 
