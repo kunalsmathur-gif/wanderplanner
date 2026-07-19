@@ -1,7 +1,7 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.23.0 (Eval recall chase: interest-expansion anti-distractor rule tuned, live rerun published — fidelity 0.983, up from 0.975)
-**Last Updated:** July 13, 2026  
+**Version:** 10.26.0 (Budget estimator distance/RAG-grounding overhaul + production cross-origin auth cookie fix)
+**Last Updated:** July 20, 2026  
 **Status:** Production-ready MVP
 
 ---
@@ -1493,7 +1493,33 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.26.0 Changes (July 2026) — Budget estimator distance/RAG-grounding overhaul + production cross-origin auth cookie fix
+
+Two independent bug investigations from live user testing on the production Vercel/Railway deployment.
+
+**1. Budget estimator: flight/stay/food no longer ignore real geography.**
+
+| Change | Detail |
+|---|---|
+| **FIXED** Flight cost ignored departure city entirely | `core/budget_estimator.py` used one flat hand-authored number per destination cost tier, regardless of where the traveller was flying from — a Delhi→Colombo and a Chennai→Colombo trip got the exact same "flight" line item. Real user report: app quoted ~₹9,166/person for Bengaluru→Colombo when the real fare (checked by the user for Nov 2026) was ~₹27,000 round trip, a ~2.4x miss, and Anya never even asked which city the user was flying from. |
+| **NEW** `core/distance_pricing.py` | Extracted the haversine distance-band heuristic (previously private to `core/cost_grounding.py`) into a shared pure module. Bands recalibrated against the real ₹27,000 Bengaluru→Colombo data point (near-neighbour band widened from ₹7,000–15,000 to ₹12,000–30,000); other bands nudged up to preserve monotonic ordering but are NOT independently verified — recalibrate the same way once a real fare turns up for one of them. |
+| **NEW** Origin-required gate | `budget_estimate_prompt_hint()` now blocks quoting a flight-inclusive number until departure city is known, mirroring the existing group-size gate (skipped if the user's flights are already prebooked). `chains/wizard_chat_chain.py` geocodes origin+destination server-side (reusing `services/geocode.py`, the existing Nominatim proxy) once group+destination+origin-city are all known — not every turn, to avoid hammering the rate-limited free geocoder — and persists the resolved coordinates back into `config_patch` so it's a one-time cost per conversation. |
+| **NEW** `core/price_extraction.py` + RAG grounding for stay/food | `core/budget_estimator.py`'s stay/food components now try a real per-destination figure first — the median of community-reported nightly-rate/daily-spend mentions pulled from the app's existing free RAG collections (Reddit/Wikivoyage), via deterministic regex extraction (NOT an LLM call — an LLM call here would recreate the exact "let the model guess a number" problem this module exists to avoid) — falling back to the hand-authored flat table when that comes up empty. **As of this session the Reddit/Wikivoyage Qdrant collections are empty in production** (0 points each, verified live against the real cluster — Reddit ingestion has been broken for months, see `docs/NEXT_SESSION_TODO.md`), so this falls back to the flat number for virtually every destination today; the plumbing is in place for when ingestion is fixed. |
+| **FIXED** Food estimate was ~2-2.5x low | Real research (Sri Lanka, budget tier): mid-range dining runs ~$20-25/person/day vs. the old flat ₹800/day. `food_per_day_pp` recalibrated across all three destination tiers off that one anchor point (budget/mid_range). `stay_per_night_pp` was checked against the same research (~$50/night Colombo double room ≈ ₹2,075/person) and found already close to the existing ₹2,000 figure — left unchanged rather than "fixed" without evidence it was wrong. |
+| **Async propagation** | `estimate_bare_minimum_budget()`/`budget_estimate_prompt_hint()` are now `async` (the RAG lookup requires it) — updated call sites: `chains/wizard_chat_chain.py`, `chains/feasibility_chain.py::_safe_bare_minimum()`, `services/comparison.py::_compare_bare_minimum_budget()` (now runs per-destination estimates concurrently via `asyncio.gather`). |
+| **Tests** | 27 new unit tests (`test_budget_estimator.py`, `test_price_extraction.py`, `test_wizard_budget_geocode.py`) — full backend suite green (258 passed, 6 skipped). |
+
+**2. Production auth loop: cross-origin session cookies were being silently dropped.**
+
+| Change | Detail |
+|---|---|
+| **ROOT CAUSE** `COOKIE_SAMESITE=lax` in a cross-origin deployment | Frontend (Vercel) and backend (Railway) are different origins, but the session cookie config (`core/config.py`) defaulted to `SameSite=Lax` — browsers don't attach `SameSite=Lax` cookies to cross-site fetch/XHR requests, only top-level navigations. This one misconfiguration explained three separate-looking user reports: a signed-in user got asked to sign in again during generation (`/auth/me` 401'd despite a valid cookie in the jar), signup then correctly rejected the resulting duplicate-account attempt (the user genuinely already had an account — the app just couldn't see the session), and signing back in appeared to loop forever (the local Zustand auth store was set to `authenticated` from the login response body without ever confirming the cookie round-tripped, so the very next authenticated call — `/api/generate-itinerary` — 401'd the same way). |
+| **FIXED in Railway env vars** | `COOKIE_SAMESITE` set to `none` in production (confirmed working after redeploy). |
+| **NEW** Startup safety validator | `core/config.py` gained a `model_validator` (same pattern as the existing `jwt_secret` production check) that now refuses to start if `ENVIRONMENT=production` and `COOKIE_SAMESITE=lax`, or if `COOKIE_SAMESITE=none` without `COOKIE_SECURE=true` — fails loudly at deploy time instead of shipping this silently again. `.env.example` and `docs/system-design.md`'s env var table corrected to stop suggesting `lax` is fine in production. |
+| **NEW** Silent token-refresh-on-401 (independent secondary bug) | The 15-minute access token had a working `/auth/refresh` endpoint on the backend that nothing on the frontend ever called — any session idle past 15 minutes (an easy threshold for a multi-turn wizard conversation) would reproduce the same symptoms even with SameSite fixed. `lib/authApi.ts` gained `refreshSession()`; `store/authStore.ts`'s `hydrate()` now tries it before concluding logged-out; `lib/api.ts`'s `streamItinerary()` now retries once via silent refresh on a 401 before surfacing `AUTH_REQUIRED`. |
+| **Tests** | New `tests/unit/test_config_validation.py` (4 tests) for the validator; full existing `tests/integration/test_auth.py` + `test_itinerary_gating.py` suites still green except one **pre-existing, unrelated** failure (`test_signup_rejects_duplicate_email` expects a generic error string; the actual code intentionally returns a more specific message per an existing product-decision comment — stale test, not introduced this session, not yet fixed). Frontend type-checks clean; manually verified signup → reload → session-recognized flow in a live browser. |
 
 ### v10.25.0 Changes (July 2026) — Eval infrastructure hardening: wizard harness, LLM-as-judge, compare/analyze tools, externalized config
 

@@ -1,11 +1,33 @@
 # Next-Session TODO — Post-Cloud-migration cleanup → Reddit approval → Phase 2
 
-**Last updated:** 2026-07-18 (eval infrastructure hardening — wizard eval harness, LLM-as-judge metric, compare/analyze tools, externalized eval config; see "This session" section immediately below, and v10.25.0 in `TECHNICAL_DOCUMENTATION.md` §14 for full detail)
+**Last updated:** 2026-07-20 (budget estimator distance/RAG-grounding overhaul + production cross-origin auth cookie fix; see "This session" section immediately below, and v10.26.0 in `TECHNICAL_DOCUMENTATION.md` §14 for full detail)
 **Context:** A routine dependency-bump task (`google-genai` 1.2.0→2.10.0, dependabot PR #8) led to discovering that Qdrant Cloud has been silently rejecting every `destination`-filtered RAG query since the Cloud migration (2026-07-15) — meaning real research context has likely not been reaching the live LLM prompt at all, degrading itinerary quality invisibly (the failure was swallowed by the fallback chain, never surfaced as an error). **This is fixed in code but needs a Railway redeploy/restart to actually take effect in production** — see "Do this first" below. The user is targeting a POC round of real testers soon; items 1-3 in the "Remaining items" list below are what came out of a 2026-07-16 discussion about what's actually needed before that.
 
 ---
 
-## 🆕 This session (2026-07-18) — Eval infrastructure hardening
+## 🆕 This session (2026-07-20) — Budget estimator overhaul + production auth fix
+
+Two live-user-reported bug investigations, both root-caused and fixed. Full detail in `TECHNICAL_DOCUMENTATION.md` §14 v10.26.0.
+
+**Budget estimator:**
+- ✅ Flight cost now requires departure city (previously never asked) and uses a real haversine-distance band (`core/distance_pricing.py`) instead of one flat number per destination tier — recalibrated against a real ₹27,000 Bengaluru→Colombo fare the user found.
+- ✅ Stay/food now attempt real per-destination community-reported data via the existing free RAG collections (`core/price_extraction.py` + `core/cost_grounding.py`, deterministic regex extraction, no LLM call) before falling back to the flat table.
+- ✅ Food's flat fallback recalibrated ~2-2.5x upward per real research (was undershooting real mid-range dining costs); stay's flat fallback checked against research and left unchanged (was already close).
+- ✅ 27 new tests; full backend suite green (258 passed, 6 skipped).
+
+**Production auth loop (signed-in users asked to sign in again; signup then "already have an account"; sign-in appeared to loop):**
+- ✅ Root cause: `COOKIE_SAMESITE=lax` on a cross-origin (Vercel + Railway) deployment silently drops session cookies on every credentialed request. Fixed by setting `COOKIE_SAMESITE=none` in Railway's env — **confirmed working in production.**
+- ✅ Added a `core/config.py` startup validator so this can't silently regress again (refuses to boot in production with the wrong value).
+- ✅ Added the missing token-refresh-on-401 flow client-side (`lib/authApi.ts::refreshSession()`, wired into `authStore.hydrate()` and `api.ts::streamItinerary()`) — a second, independent bug (15-min access token, working backend `/auth/refresh` endpoint, nothing on the frontend ever called it).
+
+**Not done yet — carry forward (see new items 9-11 below):**
+- The RAG-grounding path for stay/food is real but currently a no-op everywhere — verified live against the real Qdrant Cloud cluster that `wiki`/`reddit` collections have 0 points. Re-verify it actually fires once Reddit/Wikivoyage ingestion is unblocked (item 4 below).
+- Only the "budget" destination-tier / mid_range flight+food figures have a real research anchor. The other distance bands (regional/long-haul/ultra-long-haul) and destination tiers (moderate/premium) were extrapolated, not independently verified — recalibrate the same way (find a real fare/cost data point, anchor to it) as more come up.
+- Found (not caused) a **pre-existing stale test**: `tests/integration/test_auth.py::test_signup_rejects_duplicate_email` expects a generic error message; the actual code intentionally returns a more specific one per an existing product-decision comment in `routers/auth.py`. Needs either the test or the comment/behavior reconciled — wasn't in scope to fix this session.
+
+---
+
+## 🆕 2026-07-18 — Eval infrastructure hardening
 
 Reviewed the existing eval harnesses against the standard "Quality Flywheel" methodology (dataset → inference → grading → failure analysis → optimize) and closed all 6 gaps found:
 
@@ -105,6 +127,18 @@ Reran `ingest_itinerary_corpus()` this session against the corrected Cloud clust
 ### 8. Affiliate tracking — blocked on founder
 
 Register Viator / GetYourGuide / Skyscanner affiliate programs and supply IDs. Link formats fixed since v10.20.0, so the code side is a small param-append in `BookingLinksSection.tsx` + `cityCodes.ts` coverage check.
+
+### 9. Fix stale duplicate-signup test (found 2026-07-20, not caused this session)
+
+`tests/integration/test_auth.py::test_signup_rejects_duplicate_email` asserts `detail == "Unable to sign up with these details."`, but `routers/auth.py::signup()` intentionally returns `"An account with this email already exists. Try logging in instead."` (per an explicit product-decision comment right above the raise). Either the test predates that product decision and just needs updating, or something regressed the other way — 15-minute check to confirm which, then fix the mismatched side.
+
+### 10. Recalibrate the rest of the budget-estimator's hand-authored figures as real data points turn up
+
+Only one cell has a real research anchor so far (budget-tier / mid_range: Bengaluru→Colombo flight fare, Sri Lanka food/stay costs — see v10.26.0). Everything else in `core/distance_pricing.py`'s `DISTANCE_BANDS` (regional/long-haul/ultra-long-haul) and `core/budget_estimator.py`'s `_COST_MATRIX` (moderate/premium destination tiers) was extrapolated to preserve ordering, not independently verified. Same method as this session: find a real fare/hotel/food-cost data point for a specific route or destination, anchor the nearest band/cell to it, nudge neighbours just enough to stay monotonic, document which cell is the real anchor vs. extrapolated.
+
+### 11. Verify the stay/food RAG-grounding path actually fires once Reddit/Wikivoyage ingestion is unblocked
+
+`core/budget_estimator.py`'s `_grounded_or_flat()` (via `core/cost_grounding.py::community_median_price_inr()`) is wired up and tested, but as of 2026-07-20 it's a no-op in production — verified live against the real Qdrant Cloud cluster that `wiki`/`reddit` collections have 0 points (`itinerary_corpus` has 1). Once item 4 (Reddit approval) lands and ingestion resumes, spot-check a few real wizard budget-recommendation conversations and confirm `stay_community_based`/`food_community_based` actually flip to `true` for at least some destinations, and that the extracted numbers look sane (not a regex false-positive from an unrelated dollar amount in a Reddit post).
 
 ## 🔧 Operational / hygiene items (carried over)
 

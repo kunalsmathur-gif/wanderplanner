@@ -275,6 +275,8 @@ Anya: "For you, your spouse, and your little one, a comfortable
 ```
 This is powered server-side by `core/budget_estimator.py` (deterministic, no LLM cost math) — see `TECHNICAL_DOCUMENTATION.md` §14 v10.8. The frontend requires **no new UI component** for this part — it's the same chat bubble + chip pattern already used throughout the wizard; the difference is entirely in *what number Anya says and when*.
 
+**⭐ NEW v10.26 — departure city now required, real distance replaces the flat flight number:** the flight component of the estimate above was a flat per-destination-tier figure regardless of departure city (found via a real user report: quoted ~₹9,166/person for a Bengaluru→Colombo trip against a real ~₹27,000 fare). `budget_estimate_prompt_hint()` now also blocks on departure city the same way it blocks on group size — Anya asks "Which city will you be flying out of?" before quoting — and once known, `chains/wizard_chat_chain.py` geocodes both cities (reusing the existing free Nominatim proxy) so the flight figure comes from `core/distance_pricing.py`'s real haversine-distance band instead of the flat table. Stay/food now attempt the same free-tools RAG-grounding pattern already used for the itinerary-generation cost hint (`core/cost_grounding.py`) before falling back to the (also recalibrated) flat table — see `TECHNICAL_DOCUMENTATION.md` §14 v10.26 for full detail, including why this currently falls back to the flat table almost everywhere (the Reddit/Wikivoyage RAG collections are empty in production pending Reddit's API approval).
+
 **New pre-generation feasibility gate (`LLMWizard.tsx`):** once Stage 3 (`ready_to_generate=true`) fires, the frontend now calls `POST /api/feasibility-check` (`runFeasibilityGate()`) **before** showing/starting the generate step:
 ```
               ┌─ feasible? ──────────────────────────────────────────┐
@@ -1329,7 +1331,7 @@ Breaking any link in this chain prevents scrolling. `<main className="h-full">` 
 | `REFRESH_TOKEN_TTL_DAYS` | `30` | — | Refresh-token lifetime |
 | `COOKIE_DOMAIN` | `""` | — | Optional cookie domain override |
 | `COOKIE_SECURE` | `true` | — | Must be `true` in production for cross-origin cookies |
-| `COOKIE_SAMESITE` | `lax` | — | Use `lax` locally, `none` in cross-origin production |
+| `COOKIE_SAMESITE` | `lax` | — | `lax` locally only. **Must be `none` in production** (frontend on Vercel, backend on Railway = different origins — `Lax` cookies are silently dropped on cross-site requests). App now refuses to start in production with this left as `lax` — see `core/config.py`'s validator, added after this exact misconfiguration caused a real production bug (⭐ v10.26, `TECHNICAL_DOCUMENTATION.md` §14). |
 | `GOOGLE_CLIENT_ID` | — | ✅ for SSO | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | — | ✅ for SSO | Google OAuth client secret |
 | `GOOGLE_REDIRECT_URI` | `http://localhost:8000/api/auth/google/callback` | ✅ for SSO | OAuth callback URI |

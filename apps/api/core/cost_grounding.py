@@ -21,39 +21,12 @@ prompts — it does not replace the LLM's own estimate, it constrains it.
 """
 from __future__ import annotations
 import logging
-import math
 
+from core.distance_pricing import flight_band_inr
 from models.trip import TripConfig
 from services.search import semantic_search
 
 logger = logging.getLogger(__name__)
-
-# (max_km, low_inr, high_inr) round-trip economy, per passenger, India-origin
-# assumption. Bands are intentionally wide — this is a sanity-check range,
-# not a quote.
-_DISTANCE_BANDS: list[tuple[float, int, int]] = [
-    (500, 4000, 9000),        # short domestic hop
-    (1500, 7000, 15000),      # domestic / near-neighbour international
-    (4000, 15000, 30000),     # regional international (SE Asia, Middle East)
-    (8000, 28000, 55000),     # long-haul (Europe, East Asia)
-    (float("inf"), 45000, 95000),  # ultra-long-haul (Americas, Oceania)
-]
-
-
-def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    r = 6371.0  # Earth radius, km
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(a))
-
-
-def _distance_band(km: float) -> tuple[int, int]:
-    for max_km, low, high in _DISTANCE_BANDS:
-        if km <= max_km:
-            return low, high
-    return _DISTANCE_BANDS[-1][1], _DISTANCE_BANDS[-1][2]
 
 
 def estimate_flight_cost_range_inr(trip_config: TripConfig) -> tuple[int, int] | None:
@@ -64,30 +37,44 @@ def estimate_flight_cost_range_inr(trip_config: TripConfig) -> tuple[int, int] |
     dest = trip_config.destination
     if not origin or not dest:
         return None
-    if not origin.lat or not origin.lon or not dest.lat or not dest.lon:
-        return None
-
-    km = _haversine_km(origin.lat, origin.lon, dest.lat, dest.lon)
-    return _distance_band(km)
+    return flight_band_inr(origin.lat, origin.lon, dest.lat, dest.lon)
 
 
-async def _community_price_snippets(trip_config: TripConfig, query_suffix: str, limit: int = 3) -> list[str]:
+async def community_price_snippets(dest_city: str, query_suffix: str, limit: int = 3) -> list[str]:
     """Best-effort: pull community-reported price mentions from the existing
     free Reddit/Wikivoyage Qdrant collections. Never raises — retrieval
-    issues degrade to 'no snippets' rather than blocking cost estimation."""
-    dest = trip_config.destination.city if trip_config.destination else ""
-    if not dest:
+    issues degrade to 'no snippets' rather than blocking cost estimation.
+    Takes a plain city string (rather than a TripConfig) so callers that
+    only have a destination name — e.g. core/budget_estimator.py, which
+    works on raw partial trip-config dicts — don't need a fully-populated
+    TripConfig just to call this."""
+    if not dest_city:
         return []
     try:
         results = await semantic_search(
-            query=f"{dest} {query_suffix} price cost INR budget",
-            destination=dest,
+            query=f"{dest_city} {query_suffix} price cost INR budget",
+            destination=dest_city,
             limit=limit,
         )
         return [r.text[:280] for r in results]
     except Exception:
-        logger.warning("Community price snippet search failed for %s — continuing without it.", dest, exc_info=True)
+        logger.warning("Community price snippet search failed for %s — continuing without it.", dest_city, exc_info=True)
         return []
+
+
+async def community_median_price_inr(
+    dest_city: str, query_suffix: str, low_bound: float, high_bound: float, min_samples: int = 2, limit: int = 5
+) -> float | None:
+    """Median real per-unit INR price extracted from community snippets for
+    `dest_city`, or None if there's too little signal (fewer than
+    `min_samples` plausible mentions, or the RAG collections have nothing
+    for this destination — currently the common case, see
+    core/price_extraction.py's module docstring for why this stays
+    regex-based rather than an LLM call)."""
+    from core.price_extraction import median_price_inr
+
+    snippets = await community_price_snippets(dest_city, query_suffix, limit=limit)
+    return median_price_inr(snippets, low_bound, high_bound, min_samples)
 
 
 async def flight_cost_grounding_hint(trip_config: TripConfig) -> str:
@@ -108,7 +95,8 @@ async def flight_cost_grounding_hint(trip_config: TripConfig) -> str:
             "figure within (or, with good reason, slightly outside) this range."
         )
 
-    snippets = await _community_price_snippets(trip_config, "flight airfare")
+    dest_city = trip_config.destination.city if trip_config.destination else ""
+    snippets = await community_price_snippets(dest_city, "flight airfare")
     if snippets:
         lines.append("COMMUNITY-REPORTED FARE MENTIONS (from real traveller posts, may be dated):")
         for s in snippets:
@@ -122,7 +110,8 @@ async def accommodation_cost_grounding_hint(trip_config: TripConfig) -> str:
     — used while a Booking.com affiliate/partner pricing feed isn't wired up
     (see todo `booking-accommodation-pricing`). Pulls community-reported
     nightly-rate mentions from the same free RAG collections."""
-    snippets = await _community_price_snippets(trip_config, "hotel accommodation nightly rate")
+    dest_city = trip_config.destination.city if trip_config.destination else ""
+    snippets = await community_price_snippets(dest_city, "hotel accommodation nightly rate")
     if not snippets:
         return ""
     lines = ["COMMUNITY-REPORTED ACCOMMODATION RATE MENTIONS (from real traveller posts, may be dated):"]

@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
+import logging
 import re
 from typing import Any
 
@@ -13,6 +15,9 @@ from core.currency_convert import TOP_10_CURRENCIES, currency_conversion_prompt_
 from core.config import settings
 from core.llm_client import track_gemini_usage
 from models.chat import ChatMessage
+from services.geocode import geocode_city
+
+logger = logging.getLogger(__name__)
 
 
 class WizardChatRequest(BaseModel):
@@ -375,6 +380,9 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
 ## 5. OPTIONAL FIELDS
 Extract if the user mentions them. Never ask for them directly (the checkpoint in Stage 2 will invite them).
   origin: {{"city": "Mumbai", "iata": "", "lat": 0, "lon": 0}}
+    Exception: while RECOMMENDING A BUDGET (see below), {budget_estimate_hint} may explicitly tell you to
+    ask for the departure city (flight cost depends heavily on it) — follow that instruction when it says so,
+    even though origin is otherwise never asked for directly.
   themes: array from ["culture", "food", "adventure", "nature", "shopping",
                        "photography", "nightlife", "sports", "wellness",
                        "religious", "vegetarian_food"]
@@ -934,6 +942,60 @@ def _looks_like_valid_json(raw: str) -> bool:
     return bool(reply and reply.strip())
 
 
+# ── Origin/destination geocoding for the budget-estimate flight distance ────
+# The frontend's structured-wizard flow (ConversationalWizard.tsx) geocodes
+# places via /geocode as the user types, but the live LLM-driven wizard
+# (LLMWizard.tsx) doesn't — it just extracts city names as plain text into
+# config_patch, so lat/lon here are always 0 unless we resolve them
+# ourselves. Needed so core.budget_estimator can use the real-distance
+# flight band instead of its flat per-destination-tier fallback number.
+
+def _has_group(config: dict[str, Any]) -> bool:
+    group = config.get("group") or {}
+    return any(group.get(k) for k in ("adults", "kids", "seniors", "infants"))
+
+
+async def _ensure_place_coords(place: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Best-effort: geocode a {"city": ...} dict that's missing lat/lon.
+    Returns a small {"lat": ..., "lon": ...} patch, or None if there's
+    nothing to resolve or geocoding fails. Never raises — a bad/rate-limited
+    Nominatim response should never block the chat turn."""
+    if not place:
+        return None
+    city = place.get("city")
+    if not city or (place.get("lat") and place.get("lon")):
+        return None
+    try:
+        result = await geocode_city(city)
+        return {"lat": result.lat, "lon": result.lon}
+    except Exception:
+        logger.warning("Geocoding failed for %r — continuing without coordinates.", city, exc_info=True)
+        return None
+
+
+async def _resolve_origin_destination_coords(config: dict[str, Any]) -> dict[str, Any]:
+    """Geocodes origin/destination for the budget-estimate flight-distance
+    heuristic, but only once all three of group/destination/origin city are
+    already known — otherwise the estimate can't use a number yet anyway
+    (see core.budget_estimator's origin gate), so there's no reason to spend
+    a Nominatim call on every earlier turn (purpose, pace, themes, ...)."""
+    dest_city = (config.get("destination") or {}).get("city")
+    origin_city = (config.get("origin") or {}).get("city")
+    if not (_has_group(config) and dest_city and origin_city):
+        return {}
+
+    origin_coords, dest_coords = await asyncio.gather(
+        _ensure_place_coords(config.get("origin")),
+        _ensure_place_coords(config.get("destination")),
+    )
+    patch: dict[str, Any] = {}
+    if origin_coords:
+        patch["origin"] = origin_coords
+    if dest_coords:
+        patch["destination"] = dest_coords
+    return patch
+
+
 # ── Main chain function ───────────────────────────────────────────────────────
 
 async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
@@ -957,7 +1019,18 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         (m.content for m in reversed(request.messages) if m.role == "user"), None
     )
     try:
-        budget_hint = budget_estimate_prompt_hint(request.partial_config, last_user_text)
+        geocode_patch = await _resolve_origin_destination_coords(request.partial_config)
+    except Exception:
+        geocode_patch = {}
+
+    config_for_hint = request.partial_config
+    if geocode_patch:
+        config_for_hint = copy.deepcopy(request.partial_config)
+        for key, coords in geocode_patch.items():
+            config_for_hint[key] = {**config_for_hint.get(key, {}), **coords}
+
+    try:
+        budget_hint = await budget_estimate_prompt_hint(config_for_hint, last_user_text)
     except Exception:
         budget_hint = ""
     try:
@@ -1157,6 +1230,12 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             else:
                 merged[k] = v
 
+        # Persist any origin/destination coordinates we resolved above so the
+        # frontend stores them and future turns don't need to re-geocode.
+        for k, coords in geocode_patch.items():
+            merged[k] = {**merged.get(k, {}), **coords}
+            patch[k] = {**patch.get(k, {}), **coords} if isinstance(patch.get(k), dict) else coords
+
         # Safety net: the LLM occasionally acknowledges a purpose-chip tap in
         # its reply text and moves on to the next question, without actually
         # emitting `purpose` in config_patch — leaving CURRENT_STATE never
@@ -1255,6 +1334,9 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # purpose chips forever, even after the user already tapped one.
         fallback_config = dict(request.partial_config)
         fallback_patch: dict[str, Any] = {}
+        for k, coords in geocode_patch.items():
+            fallback_config[k] = {**fallback_config.get(k, {}), **coords}
+            fallback_patch[k] = coords
         if not fallback_config.get("purpose"):
             inferred_purpose = _infer_purpose_from_chip_tap(last_user_text)
             if inferred_purpose:
