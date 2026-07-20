@@ -14,7 +14,7 @@ verification path in services/poi_pinning.py for every destination.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -92,3 +92,74 @@ class TestScrapeWikivoyage:
         eat_docs = [d for d in docs if d["section"] == "eat"]
         assert see_docs and "Borough Market" not in " ".join(d["text"] for d in see_docs)
         assert eat_docs and "British Museum" not in " ".join(d["text"] for d in eat_docs)
+
+
+class TestScrapeWikivoyageRetry:
+    """wikivoyage.org occasionally returns transient failures (rate-limiting,
+    brief 5xx) that resolve seconds later — found live 2026-07-20 during
+    re-ingestion testing. Retrying with backoff avoids silently recording a
+    destination as having zero wiki chunks."""
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_list_after_exhausting_retries(self):
+        with patch("scrapers.wikivoyage.httpx.AsyncClient") as mock_client_cls, \
+             patch("scrapers.wikivoyage.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+            mock_client = mock_client_cls.return_value.__aenter__.return_value
+            mock_client.get = AsyncMock(side_effect=Exception("timeout"))
+            docs = await scrape_wikivoyage("Nowhere")
+
+        assert docs == []
+        assert mock_client.get.await_count == 3
+        assert mock_sleep.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retries_transient_failure_then_succeeds(self):
+        with patch("scrapers.wikivoyage.httpx.AsyncClient") as mock_client_cls, \
+             patch("scrapers.wikivoyage.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+            mock_client = mock_client_cls.return_value.__aenter__.return_value
+            mock_client.get = AsyncMock(side_effect=[Exception("503"), _mock_response(NEW_MARKUP)])
+            docs = await scrape_wikivoyage("London")
+
+        assert docs, "expected docs after the transient failure resolved"
+        assert mock_client.get.await_count == 2
+        assert mock_sleep.await_count == 1
+
+
+class TestIngestWikivoyageOrphanCleanup:
+    """ingest_wikivoyage() must delete-then-upsert per destination — the
+    same orphan-accumulation risk as scrapers/osm.py applies here since
+    chunk boundaries can shift between scraper-logic revisions."""
+
+    @pytest.mark.asyncio
+    async def test_deletes_stale_points_before_upserting_new_ones(self):
+        from scrapers.wikivoyage import ingest_wikivoyage
+
+        fake_docs = [
+            {"destination": "London", "source": "wikivoyage", "section": "see",
+             "text": "The British Museum is free to enter.", "source_url": "https://en.wikivoyage.org/wiki/London"},
+        ]
+        mock_qdrant = MagicMock()
+
+        with patch("scrapers.wikivoyage.scrape_wikivoyage", new=AsyncMock(return_value=fake_docs)), \
+             patch("scrapers.wikivoyage.embed", return_value=[[0.1] * 384]), \
+             patch("scrapers.wikivoyage.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.wikivoyage.delete_stale_destination_points", return_value=3) as mock_delete:
+            count = await ingest_wikivoyage("London")
+
+        assert count == 1
+        mock_delete.assert_called_once()
+        args, _ = mock_delete.call_args
+        assert args[0] is mock_qdrant
+        assert args[2] == "London"
+        mock_qdrant.upsert.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_cleanup_call_when_scrape_returns_nothing(self):
+        from scrapers.wikivoyage import ingest_wikivoyage
+
+        with patch("scrapers.wikivoyage.scrape_wikivoyage", new=AsyncMock(return_value=[])), \
+             patch("scrapers.wikivoyage.delete_stale_destination_points") as mock_delete:
+            count = await ingest_wikivoyage("Nowhere")
+
+        assert count == 0
+        mock_delete.assert_not_called()

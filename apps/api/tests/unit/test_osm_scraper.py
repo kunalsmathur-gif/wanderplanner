@@ -112,7 +112,79 @@ class TestFetchOsmPoisTruncation:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("scrapers.osm.httpx.AsyncClient", return_value=mock_client):
+        with patch("scrapers.osm.httpx.AsyncClient", return_value=mock_client), \
+             patch("scrapers.osm.asyncio.sleep", new=AsyncMock()) as mock_sleep:
             pois = await fetch_osm_pois("Nowhere", lat=0.0, lon=0.0)
 
         assert pois == []
+        # Retried up to the max before giving up, not just failed once.
+        assert mock_client.post.await_count == 3
+        assert mock_sleep.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retries_transient_failure_then_succeeds(self):
+        # Overpass frequently 504s under load and succeeds seconds later —
+        # found live 2026-07-20. A transient failure on the first attempt
+        # must not be treated the same as a permanent one.
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {"elements": [_make_element(1, "Tower Bridge", {"tourism": "attraction"})]}
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=[Exception("504 Gateway Timeout"), mock_response])
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("scrapers.osm.httpx.AsyncClient", return_value=mock_client), \
+             patch("scrapers.osm.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+            pois = await fetch_osm_pois("London", lat=51.5074, lon=-0.1278)
+
+        assert len(pois) == 1
+        assert pois[0]["name"] == "Tower Bridge"
+        assert mock_client.post.await_count == 2
+        assert mock_sleep.await_count == 1
+
+
+class TestIngestOsmPoisOrphanCleanup:
+    """ingest_osm_pois() must delete-then-upsert per destination — found live
+    2026-07-20 that re-ingesting London with the round-robin fix left the old
+    all-food/drink points in place (58 -> 112, not 58 -> 60), doubling the
+    collection and diluting services/poi_pinning.py's fuzzy-name matching."""
+
+    @pytest.mark.asyncio
+    async def test_deletes_stale_points_before_upserting_new_ones(self):
+        from scrapers.osm import ingest_osm_pois
+
+        fake_pois = [
+            {
+                "destination": "London", "name": "Tower Bridge", "poi_type": "attraction",
+                "lat": 51.5, "lon": -0.1, "tags": {}, "text": "Tower Bridge is an attraction in London.",
+                "source": "osm", "source_url": "https://www.openstreetmap.org/node/1",
+            },
+        ]
+        mock_qdrant = MagicMock()
+
+        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(return_value=fake_pois)), \
+             patch("scrapers.osm.embed", return_value=[[0.1] * 384]), \
+             patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.delete_stale_destination_points", return_value=2) as mock_delete:
+            count = await ingest_osm_pois("London")
+
+        assert count == 1
+        mock_delete.assert_called_once()
+        args, _ = mock_delete.call_args
+        assert args[0] is mock_qdrant
+        assert args[2] == "London"
+        mock_qdrant.upsert.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_cleanup_call_when_fetch_returns_nothing(self):
+        # A failed/empty fetch must not wipe out a destination's existing
+        # real data — only clean up when there's something new to replace it.
+        from scrapers.osm import ingest_osm_pois
+
+        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(return_value=[])), \
+             patch("scrapers.osm.delete_stale_destination_points") as mock_delete:
+            count = await ingest_osm_pois("Nowhere")
+
+        assert count == 0
+        mock_delete.assert_not_called()

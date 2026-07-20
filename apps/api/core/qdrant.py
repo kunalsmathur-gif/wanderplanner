@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PayloadSchemaType, VectorParams
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    PayloadSchemaType,
+    VectorParams,
+)
 
 from core.config import settings
 
@@ -78,3 +85,41 @@ def _ensure_collections(client: QdrantClient):
                 field_name="destination",
                 field_schema=PayloadSchemaType.KEYWORD,
             )
+
+
+def delete_stale_destination_points(
+    client: QdrantClient, collection_name: str, destination: str, keep_ids: set[int]
+) -> int:
+    """Delete any points for `destination` in `collection_name` whose ID isn't
+    in `keep_ids`.
+
+    Ingestion upserts by a stable hash of (destination, name)/(url, section,
+    text) — safe for re-running unchanged logic, but when the
+    category-selection/chunking logic itself changes, points dropped by the
+    new logic are never deleted, only new ones added (live-confirmed
+    2026-07-20: re-ingesting London's OSM POIs with the round-robin fix left
+    the old all-food/drink points in place, doubling the collection to 112
+    and diluting services/poi_pinning.py's fuzzy-name matching). Call this
+    right before upserting a fresh ingestion run's points so each re-ingest
+    is effectively delete-then-upsert per destination, not append-only.
+
+    Returns the number of stale points deleted.
+    """
+    stale_ids: list[int] = []
+    offset = None
+    while True:
+        points, offset = client.scroll(
+            collection_name=collection_name,
+            scroll_filter=Filter(must=[FieldCondition(key="destination", match=MatchValue(value=destination))]),
+            limit=256,
+            offset=offset,
+            with_payload=False,
+            with_vectors=False,
+        )
+        stale_ids.extend(p.id for p in points if p.id not in keep_ids)
+        if offset is None:
+            break
+
+    if stale_ids:
+        client.delete(collection_name=collection_name, points_selector=stale_ids)
+    return len(stale_ids)

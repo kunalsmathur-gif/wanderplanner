@@ -13,14 +13,26 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 from typing import Any
 
 import httpx
 
 from core.config import settings
-from core.qdrant import get_qdrant
 from core.embeddings import embed
+from core.qdrant import delete_stale_destination_points, get_qdrant
 from services.geocode import geocode_city
+
+logger = logging.getLogger(__name__)
+
+# Overpass's public instance frequently returns transient failures under
+# load (429 rate-limit, 504 gateway timeout) — found 2026-07-20 during live
+# re-ingestion testing, where a request would fail and succeed seconds later
+# on its own. Retrying with backoff here means a scheduled/background
+# ingestion job doesn't silently record a destination as having zero POIs
+# just because Overpass was briefly busy.
+_MAX_FETCH_ATTEMPTS = 3
+_RETRY_BASE_DELAY_S = 5.0
 
 # OSM tag categories worth surfacing to the itinerary LLM. Each maps to a
 # human-readable POI type used in the embedded description text.
@@ -139,13 +151,21 @@ async def fetch_osm_pois(destination: str, lat: float | None = None, lon: float 
     # bare 406, so send both defensively.
     headers = {"User-Agent": settings.nominatim_user_agent, "Accept": "*/*"}
 
-    async with httpx.AsyncClient(timeout=30, headers=headers) as client:
-        try:
-            resp = await client.post(settings.osm_overpass_url, data={"data": query})
-            resp.raise_for_status()
-        except Exception:
-            return []
-        data = resp.json()
+    data: dict[str, Any] | None = None
+    for attempt in range(1, _MAX_FETCH_ATTEMPTS + 1):
+        async with httpx.AsyncClient(timeout=30, headers=headers) as client:
+            try:
+                resp = await client.post(settings.osm_overpass_url, data={"data": query})
+                resp.raise_for_status()
+                data = resp.json()
+                break
+            except Exception as e:
+                if attempt == _MAX_FETCH_ATTEMPTS:
+                    logger.warning(
+                        "Overpass fetch failed for %r after %d attempts: %s", destination, attempt, e
+                    )
+                    return []
+                await asyncio.sleep(_RETRY_BASE_DELAY_S * attempt)
 
     pois: list[dict] = []
     seen_names: set[str] = set()
@@ -234,11 +254,19 @@ async def ingest_osm_pois(destination: str) -> int:
     vectors = await asyncio.to_thread(embed, texts)
 
     points = []
+    new_ids: set[int] = set()
     for poi, vec in zip(pois, vectors):
         point_id = hashlib.md5(f"{poi['destination']}::{poi['name']}".encode()).hexdigest()
         point_id_int = int(point_id, 16) % (2**63)
+        new_ids.add(point_id_int)
         points.append(PointStruct(id=point_id_int, vector=vec, payload=poi))
 
     client = get_qdrant()
+    # Delete-then-upsert per destination — see delete_stale_destination_points'
+    # docstring for why this matters (orphaned points from prior
+    # category-selection logic otherwise accumulate forever).
+    stale_count = delete_stale_destination_points(client, settings.qdrant_collection_osm, destination, new_ids)
+    if stale_count:
+        logger.info("Deleted %d stale OSM points for %r before re-ingestion", stale_count, destination)
     client.upsert(collection_name=settings.qdrant_collection_osm, points=points)
     return len(points)

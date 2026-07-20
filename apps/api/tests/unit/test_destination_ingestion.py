@@ -13,9 +13,9 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+import services.destination_ingestion as di
 from db import Base
 from db_models import DestinationIngestionState
-import services.destination_ingestion as di
 
 
 @pytest_asyncio.fixture
@@ -102,3 +102,26 @@ class TestEnsureDestinationIngested:
         async with session_maker() as db:
             row = await db.get(DestinationIngestionState, "Porto")
             assert row.request_count == 5  # each real request still bumps the demand counter
+
+    @pytest.mark.asyncio
+    async def test_warns_when_both_sources_return_zero(self, session_maker, caplog):
+        # Found 2026-07-20: this exact failure mode (both OSM and wiki
+        # scrapers silently returning zero) previously left a destination
+        # with no grounding data at all and no error to surface it.
+        with patch("services.destination_ingestion.geocode_city", new=AsyncMock(return_value=object())), \
+             patch("scrapers.osm.ingest_osm_pois", new=AsyncMock(return_value=0)), \
+             patch("scrapers.wikivoyage.ingest_wikivoyage", new=AsyncMock(return_value=0)), \
+             caplog.at_level("WARNING", logger="services.destination_ingestion"):
+            await di.ensure_destination_ingested("Ghost Town")
+
+        assert any("zero OSM POIs and zero wiki chunks" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_no_warning_when_at_least_one_source_returns_data(self, session_maker, caplog):
+        with patch("services.destination_ingestion.geocode_city", new=AsyncMock(return_value=object())), \
+             patch("scrapers.osm.ingest_osm_pois", new=AsyncMock(return_value=0)), \
+             patch("scrapers.wikivoyage.ingest_wikivoyage", new=AsyncMock(return_value=4)), \
+             caplog.at_level("WARNING", logger="services.destination_ingestion"):
+            await di.ensure_destination_ingested("Partial Town")
+
+        assert not any("zero OSM POIs and zero wiki chunks" in r.message for r in caplog.records)

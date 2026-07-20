@@ -59,15 +59,27 @@ async def ensure_destination_ingested(destination: str) -> None:
                 return
 
             osm_count = 0
+            wiki_count = 0
             try:
                 from scrapers.osm import ingest_osm_pois
                 from scrapers.wikivoyage import ingest_wikivoyage
-                osm_count, _ = await asyncio.gather(
+                osm_count, wiki_count = await asyncio.gather(
                     ingest_osm_pois(destination),
                     ingest_wikivoyage(destination),
                 )
             except Exception:
                 logger.warning("Ingestion failed for new destination %r", destination, exc_info=True)
+
+            if not osm_count and not wiki_count:
+                # Both sources came back empty — Overpass/Wikivoyage may
+                # both be transiently down, or the destination name may not
+                # match either source's naming (found 2026-07-20: this
+                # exact failure mode silently produced destinations with no
+                # grounding data at all, with nothing surfacing it as an
+                # error). Surface it loudly so it doesn't go unnoticed.
+                logger.warning(
+                    "First-request ingestion for %r returned zero OSM POIs and zero wiki chunks", destination
+                )
 
             db.add(DestinationIngestionState(
                 destination=destination,

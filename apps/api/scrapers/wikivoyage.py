@@ -1,17 +1,29 @@
 from __future__ import annotations
+
 """Wikivoyage scraper — extracts destination guide sections."""
 import asyncio
 import hashlib
+import logging
 import re
+
 import httpx
 from bs4 import BeautifulSoup
 
 from core.config import settings
-from core.qdrant import get_qdrant
 from core.embeddings import embed
+from core.qdrant import delete_stale_destination_points, get_qdrant
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://en.wikivoyage.org/wiki/{destination}"
 SECTIONS_OF_INTEREST = {"go", "stay_safe", "see", "do", "eat", "drink", "sleep", "understand"}
+
+# Same rationale as scrapers/osm.py — wikivoyage.org occasionally returns
+# transient failures (rate-limiting, brief 5xx) that resolve on their own
+# within seconds; retry with backoff instead of silently recording a
+# destination as having zero wiki chunks.
+_MAX_FETCH_ATTEMPTS = 3
+_RETRY_BASE_DELAY_S = 5.0
 
 
 def _sentence_boundary_chunks(text: str, max_chars: int = 500) -> list[str]:
@@ -36,12 +48,20 @@ async def scrape_wikivoyage(destination: str) -> list[dict]:
     # request; some network paths in front of wikivoyage.org also reject
     # requests missing one with a bare 403.
     headers = {"User-Agent": settings.nominatim_user_agent}
-    async with httpx.AsyncClient(timeout=15, headers=headers) as client:
-        try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-        except Exception:
-            return []
+    resp: httpx.Response | None = None
+    for attempt in range(1, _MAX_FETCH_ATTEMPTS + 1):
+        async with httpx.AsyncClient(timeout=15, headers=headers) as client:
+            try:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                break
+            except Exception as e:
+                if attempt == _MAX_FETCH_ATTEMPTS:
+                    logger.warning(
+                        "Wikivoyage fetch failed for %r after %d attempts: %s", destination, attempt, e
+                    )
+                    return []
+                await asyncio.sleep(_RETRY_BASE_DELAY_S * attempt)
 
     soup = BeautifulSoup(resp.text, "lxml")
     docs = []
@@ -79,10 +99,14 @@ async def scrape_wikivoyage(destination: str) -> list[dict]:
     return docs
 
 
-async def ingest_wikivoyage(destination: str):
+async def ingest_wikivoyage(destination: str) -> int:
+    """Fetch and upsert wiki chunks for `destination`. Returns the number of
+    chunks ingested. Safe to re-run — stale points from prior scrapes are
+    deleted before the new ones are upserted (see
+    core.qdrant.delete_stale_destination_points)."""
     docs = await scrape_wikivoyage(destination)
     if not docs:
-        return
+        return 0
 
     texts = [d["text"] for d in docs]
     # Offload the CPU-bound embed() call to a worker thread — this coroutine
@@ -93,14 +117,20 @@ async def ingest_wikivoyage(destination: str):
     from qdrant_client.models import PointStruct
 
     points = []
+    new_ids: set[int] = set()
     for doc, vec in zip(docs, vectors):
         # Include chunk text in the hash so each sub-chunk gets a unique point ID
         point_id = hashlib.md5(f"{doc['source_url']}{doc['section']}{doc['text'][:50]}".encode()).hexdigest()
         point_id_int = int(point_id, 16) % (2**63)
+        new_ids.add(point_id_int)
         points.append(PointStruct(
             id=point_id_int,
             vector=vec,
             payload=doc,
         ))
 
+    stale_count = delete_stale_destination_points(client, settings.qdrant_collection_wiki, destination, new_ids)
+    if stale_count:
+        logger.info("Deleted %d stale wiki points for %r before re-ingestion", stale_count, destination)
     client.upsert(collection_name=settings.qdrant_collection_wiki, points=points)
+    return len(points)
