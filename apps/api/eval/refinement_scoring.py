@@ -33,16 +33,24 @@ docs/NEXT_SESSION_TODO.md's POI-pinning section for the full incident):
 1. "Honest"/"verified" measure EXISTENCE, not RELEVANCE or DATA COMPLETENESS.
    A pin can be fully honest (a real place, real coordinates, genuinely in
    the OSM/wiki data) while still being a poor match for the stated named
-   interest — verification has no thematic-relevance check, it only checks
-   "is this a real, findable place." Live-reproduced 2026-07-20: RF-001
-   (London/Harry Potter, expected_pois =
+   interest — verification's OSM path still has no thematic-relevance check,
+   it only checks "is this a real, findable place." Live-reproduced
+   2026-07-20: RF-001 (London/Harry Potter, expected_pois =
    ["Warner Bros. Studio Tour London", "Leadenhall Market", "Platform 9 3/4"])
    pinned "Borough Market" via the wiki fallback — a real, wiki-documented
    London place with no real Harry Potter connection. This exact defect was
    already flagged once in the 2026-07-13 live run's known-defects list and
-   only partially addressed (a candidate-proposal-side prompt tweak); the
-   verification-side gap that lets ANY real, wiki-mentioned name through
-   regardless of topical fit was not fixed and is still open.
+   only partially addressed (a candidate-proposal-side prompt tweak).
+   **Fixed 2026-07-20** for the wiki-fallback path specifically:
+   `services/poi_pinning.py::verify_candidates_sync` now requires the
+   wiki chunk that matches the candidate's name to also mention a keyword
+   from the named interest before it counts as verified (see
+   `_interest_keywords`/regression tests in `test_interest_pinning.py`) —
+   Borough Market no longer survives an unrelated Harry Potter refinement.
+   The OSM path is unaffected by this fix (OSM matches are name-exact
+   against curated map nodes, a narrower risk surface) and still carries
+   no thematic check; existence-vs-relevance remains a live distinction
+   worth remembering when reading a high score.
 
 2. These pure functions score against whatever data they're handed — they
    say nothing about whether that data (real OSM/wiki collections in

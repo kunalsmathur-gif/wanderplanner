@@ -17,7 +17,7 @@ from chains.chat_refine_chain import (
     _is_transient_llm_error,
     chat_refine,
 )
-from chains.interest_expansion_chain import expand_interest_to_candidates, _mock_candidates
+from chains.interest_expansion_chain import _mock_candidates, expand_interest_to_candidates
 from chains.itinerary_chain import (
     _classify_gemini_error,
     _enforce_pins,
@@ -132,12 +132,60 @@ class TestVerifyCandidates:
         pins, dropped = self._run(
             ["Leadenhall Market"],
             [],  # not in OSM
-            [_wiki_chunk("The Victorian Leadenhall Market appeared in the films.")],
+            [_wiki_chunk(
+                "The Victorian Leadenhall Market appeared in the Harry Potter "
+                "films as the exterior of Diagon Alley."
+            )],
         )
         assert dropped == []
         assert len(pins) == 1
         assert pins[0].verified_by == "wiki"
         assert pins[0].lat == 0.0
+
+    # Regression for the recurring Borough Market / Harry Potter false
+    # positive (flagged 2026-07-13, reproduced live 2026-07-20): a place is
+    # real and genuinely mentioned in the destination's wiki text, but that
+    # mention has nothing to do with the user's stated interest. Existence
+    # alone must not be enough to pin it as a "matches your interest" hard
+    # constraint.
+    def test_wiki_match_without_thematic_relevance_is_dropped(self):
+        pins, dropped = self._run(
+            ["Borough Market"],
+            [],  # not in OSM
+            [_wiki_chunk("Borough Market is a popular food market near London Bridge.")],
+        )
+        assert pins == []
+        assert dropped == ["Borough Market"]
+
+    def test_wiki_match_with_thematic_relevance_in_different_chunk_still_dropped(self):
+        # The candidate name and the interest keyword each appear somewhere
+        # in the guide, but never together in the same chunk — should not be
+        # treated as corroborating a real connection between the two.
+        pins, dropped = self._run(
+            ["Borough Market"],
+            [],
+            [
+                _wiki_chunk("Borough Market is a popular food market near London Bridge."),
+                _wiki_chunk("Warner Bros. Studio Tour covers the Harry Potter films."),
+            ],
+        )
+        assert pins == []
+        assert dropped == ["Borough Market"]
+
+    def test_wiki_fallback_without_source_interest_keeps_existence_only_check(self):
+        # No named interest to check thematic relevance against (e.g. called
+        # from a path that doesn't track one) — falls back to existence-only,
+        # matching the pre-fix behaviour.
+        with patch(
+            "services.poi_pinning.get_qdrant",
+            return_value=_mock_qdrant([], [_wiki_chunk("Borough Market is a popular food market.")]),
+        ):
+            pins, dropped = verify_candidates_sync(
+                ["Borough Market"], "London", source_interest=""
+            )
+        assert dropped == []
+        assert len(pins) == 1
+        assert pins[0].verified_by == "wiki"
 
     def test_osm_preferred_over_wiki(self):
         pins, _ = self._run(

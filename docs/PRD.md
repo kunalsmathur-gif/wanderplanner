@@ -589,6 +589,8 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 
 > **Further implementation status (v10.13):** the v10.8 gate above covers the pre-generation `/api/feasibility-check` call. Separately, Anya's live chat conversation (`chains/wizard_chat_chain.py`) previously didn't apply the same scrutiny when a user *stated or lowered* their own budget mid-conversation — the deterministic bare-minimum hint was scoped to "only relevant if user asks for a recommendation," so the LLM had no instruction to compare a user-declared figure against it. Fixed by adding an explicit "FEASIBILITY CHECK" instruction so Anya now proactively flags a shortfall the moment a user states or reduces their budget, not just at the final pre-generation gate.
 
+> **Further implementation status (v10.28, partial):** `core/distance_pricing.py`'s flight-fare distance bands gained two more real-world anchors this pass (Bengaluru→London long-haul round trip, and a manual low-end adjustment to the regional band from a Delhi↔Goa peak-season fare), on top of the one near-neighbour anchor from v10.26. **Not yet done:** `core/budget_estimator.py`'s `_COST_MATRIX` (moderate/premium stay/food tiers) is still the original hand-authored figures, unrecalibrated against any real data source. Citation-backed public datasets were researched as a path to a more systematic recalibration (a 300K-row Kaggle India-domestic flight-fare dataset, a back-calculated Indian Railways per-km fare model, and candidate worldwide flight/hotel datasets) but none have been downloaded or applied to the estimator yet — this remains open follow-up work. See `TECHNICAL_DOCUMENTATION.md` §14 v10.28 for full detail and confidence caveats.
+
 ---
 
 ### **R6 — Persistent Back Navigation**

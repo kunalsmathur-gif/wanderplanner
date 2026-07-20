@@ -117,7 +117,7 @@ The consumer app's real job isn't just SEO/eval showcase — it's the **top of t
 | # | Item | Notes |
 |---|---|---|
 | 1 | Agent mode: branded PDF export, agent markup/margin field, client-shareable link | Thin layer over existing generation |
-| 2 | Live budget grounding (flights, IRCTC trains, hotel medians) + confidence bands | Amadeus free tier / affiliate APIs |
+| 2 | Live budget grounding (flights, IRCTC trains, hotel medians) + confidence bands | Amadeus free tier / affiliate APIs. Interim step (v10.28, pre-affiliate-API): hand-authored `distance_pricing.py` bands recalibrated against 3 real fare screenshots (near-neighbour, long-haul, regional); `budget_estimator.py`'s stay/food tiers still unrecalibrated. Citation-backed public datasets researched as a systematic alternative to one-off screenshots (Kaggle India-domestic flight fares, a back-calculated Indian Railways ₹/km model, candidate worldwide flight/hotel datasets) — none yet applied; see `TECHNICAL_DOCUMENTATION.md` §14 v10.28 |
 | 3 | Hand-onboard 10 agents free → convert 5 to paid | Direct outreach via agent communities |
 
 **Go criterion:** 5 paying agents → build multi-tenant. **Kill criterion:** 0 conversions after 25 demos → agent thesis wrong; pivot to tourism-board pilots.

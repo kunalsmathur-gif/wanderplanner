@@ -45,7 +45,17 @@ logger = logging.getLogger(__name__)
 
 TRAVEL_BLOG_FEEDS = [
     {"name": "Nomadic Matt", "url": "https://www.nomadicmatt.com/travel-blog/feed/"},
-    {"name": "Planet D", "url": "https://www.planetd.com/feed/"},
+    # Planet D's feed (previously listed here) has been failing with a
+    # connection-reset on every fetch since ~2026-07-20 (a different failure
+    # mode than the earlier User-Agent 403) — dropped rather than left in as
+    # dead weight; revisit if it comes back healthy.
+    {"name": "Uncornered Market", "url": "https://uncorneredmarket.com/feed/"},
+    # India-focused (Indian bloggers, domestic + India-outbound trips) — the
+    # existing pool had zero India-specific blog coverage even though
+    # ITINERARY_SUBREDDITS below already includes r/IndiaTravel; day-count
+    # itinerary titles ("10 day trip to Australia", "4-Day Guide to Doha")
+    # match `_ITINERARY_TITLE_PATTERN` well above the pool average.
+    {"name": "Bruised Passports", "url": "https://www.bruisedpassports.com/feed"},
 ]
 
 # Titles that look like a real day-by-day itinerary post, vs. generic listicles.
