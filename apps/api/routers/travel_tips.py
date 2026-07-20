@@ -13,15 +13,16 @@ import logging
 from urllib.parse import quote_plus
 
 import httpx
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.analytics import flush_llm_usage
+from core.auth_dependency import get_optional_user
 from core.config import settings
 from core.llm_client import track_gemini_usage
 from core.llm_usage import reset_usage
-from core.analytics import flush_llm_usage
-from core.auth_dependency import get_optional_user
+from core.rate_limit import LLM_RATE_LIMIT, limiter
 from db import get_db
 from db_models import User
 
@@ -179,7 +180,9 @@ def _fallback_tips(destination: str, limit: int) -> list[TravelTip]:
 
 
 @router.get("/travel-tips", response_model=TravelTipsResponse)
+@limiter.limit(LLM_RATE_LIMIT)
 async def travel_tips(
+    request: Request,
     destination: str = Query(..., description="Destination city/country"),
     limit: int = Query(6, ge=1, le=20),
     db: AsyncSession = Depends(get_db),

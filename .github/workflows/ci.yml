@@ -29,6 +29,22 @@ jobs:
             echo "::warning::This PR modifies AI-agent instruction file(s): $changed — requires a second human reviewer per repo policy (see .github/CODEOWNERS). Do not let an AI agent auto-approve these changes."
           fi
 
+  # ─── Secret scanning ────────────────────────────────────────────────────
+  # See docs/scaling-tech-challenges.md, "Now (any traffic)" risk bucket:
+  # catch committed API keys/tokens before merge, not after a leak.
+  secret-scan:
+    name: Secret scanning (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # ─── Backend ───────────────────────────────────────────────────────────
   backend-lint-and-test:
     name: Backend — Lint, Type-check & Test
@@ -107,6 +123,11 @@ jobs:
 
       - name: Type-check
         run: npm run type-check
+
+      - name: Audit dependencies for known vulnerabilities (npm audit)
+        # Advisory only, matching the backend pip-audit job — flip to
+        # blocking once any pre-existing findings are triaged/remediated.
+        run: npm audit --audit-level=high || echo "::warning::npm audit found known vulnerabilities — see job log."
 
       - name: Unit & component tests (Vitest)
         run: npm run test -- --run

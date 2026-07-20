@@ -1,5 +1,5 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -82,6 +82,15 @@ class Settings(BaseSettings):
     itinerary_corpus_refresh_days: int = 30  # monthly cadence (docs §9 ingestion pipeline)
 
     log_level: str = "INFO"
+
+    # Optional error-tracking/APM (Sentry). Unset by default — a missing DSN
+    # simply means sentry_sdk.init() is never called (no-op), so this is safe
+    # to leave blank in dev/CI and only needs to be set in production once a
+    # Sentry project exists. See docs/scaling-tech-challenges.md, "Now (any
+    # traffic)" risk bucket: "structured logging + basic observability".
+    sentry_dsn: str = ""
+    sentry_traces_sample_rate: float = 0.0
+    sentry_environment: str = "development"
 
     # Cost display currency conversion — Gemini list pricing is USD-denominated,
     # so per-call costs are still computed/stored internally in USD; this rate

@@ -1,11 +1,27 @@
 # Next-Session TODO — Post-Cloud-migration cleanup → Reddit approval → Phase 2
 
-**Last updated:** 2026-07-20 (budget estimator distance/RAG-grounding overhaul + production cross-origin auth cookie fix; see "This session" section immediately below, and v10.26.0 in `TECHNICAL_DOCUMENTATION.md` §14 for full detail)
+**Last updated:** 2026-07-20 (security pass ahead of POC traffic — see new section immediately below; also budget estimator distance/RAG-grounding overhaul + production cross-origin auth cookie fix; see v10.26.0 in `TECHNICAL_DOCUMENTATION.md` §14 for full detail)
 **Context:** A routine dependency-bump task (`google-genai` 1.2.0→2.10.0, dependabot PR #8) led to discovering that Qdrant Cloud has been silently rejecting every `destination`-filtered RAG query since the Cloud migration (2026-07-15) — meaning real research context has likely not been reaching the live LLM prompt at all, degrading itinerary quality invisibly (the failure was swallowed by the fallback chain, never surfaced as an error). **This is fixed in code but needs a Railway redeploy/restart to actually take effect in production** — see "Do this first" below. The user is targeting a POC round of real testers soon; items 1-3 in the "Remaining items" list below are what came out of a 2026-07-16 discussion about what's actually needed before that.
 
 ---
 
-## 🆕 This session (2026-07-20) — Budget estimator overhaul + production auth fix
+## 🆕 This session (2026-07-20) — Security pass before any real traffic (item 1)
+
+Reviewed `docs/scaling-tech-challenges.md`'s "Now (any traffic)" risk bucket against current code. Most items were already solid from prior sessions; found and fixed real gaps in two of them:
+
+- ✅ **Rate limiting gap**: `/travel-tips` calls Gemini (`_generate_gemini_tips`) but had **no rate limit at all** — added `LLM_RATE_LIMIT` (`core/rate_limit.py`). Also added `DEFAULT_RATE_LIMIT` to four previously-unprotected endpoints (`/best-time/{destination}`, `/geocode`, `/search`, `/reddit-highlights`) per the doc's own "blunt brute-force/enumeration" guidance for read-mostly endpoints.
+- ✅ **Observability gap**: structured JSON logging + PII redaction (`core/logging_config.py`) already existed, but no error-tracking/APM. Added optional Sentry integration (`sentry-sdk==2.19.2`, `SENTRY_DSN`/`SENTRY_ENVIRONMENT`/`SENTRY_TRACES_SAMPLE_RATE` in `core/config.py` + `.env.example`) — a no-op unless `SENTRY_DSN` is set, so safe by default in dev/CI; just needs a DSN once a Sentry project exists.
+- ✅ **Dependency hygiene**: pinned the one unpinned line in `requirements.txt` (`eval_type_backport==0.4.0`).
+- ✅ **CI scanning gaps**: added `gitleaks-action` (secret scanning) as a new CI job, and `npm audit --audit-level=high` (advisory, matching the existing `pip-audit` job's non-blocking posture) to the frontend CI job.
+- ✅ Already solid, verified not touched: SSRF protection on `/extract-trip`'s URL-fetch path (`chains/extract_trip_chain.py::_assert_public_host` — validates scheme, resolves DNS, rejects private/loopback/link-local/reserved/multicast IPs, manually walks redirects re-validating each hop, caps response size/content-type); `core/errors.py::sanitize_error()` — audited every router, no raw exception text (`str(e)`/`repr(e)`) reaches any client response; `dependabot.yml` already covers pip/npm/github-actions weekly.
+- ⚠️ **Residual gap found, not fixed this session**: `_assert_public_host`'s DNS-rebinding window — it resolves+validates the hostname, then `httpx` re-resolves DNS independently when actually connecting. An attacker with control of a malicious domain's DNS (low TTL, swap answer between validation and connect) could theoretically bypass the private-IP check. Closing this properly needs IP-pinning at the transport layer (resolve once, connect to that literal IP, preserve TLS SNI/hostname verification) — non-trivial with `httpx`'s stable API, deliberately not risked under time pressure without dedicated tests. Worth a focused follow-up session.
+- Verified: full backend suite still green after changes (284 passed, 6 skipped — the 8 failures seen locally are pre-existing/unrelated: missing optional `sentence-transformers` ML extra, and the already-documented stale `test_signup_rejects_duplicate_email` test, item 9 below). Ruff clean.
+
+**Not done — user explicitly deferred, needs credentials**: OSM POI refresh for big cities (item 2) and the YouTube-transcripts/India-specific hidden-gems fallback (item 3) both require live external calls / a new `YOUTUBE_API_KEY` the user doesn't have on hand yet — revisit once available.
+
+---
+
+## 🆕 2026-07-20 — Budget estimator overhaul + production auth fix
 
 Two live-user-reported bug investigations, both root-caused and fixed. Full detail in `TECHNICAL_DOCUMENTATION.md` §14 v10.26.0.
 
@@ -64,9 +80,9 @@ To actually run them next session:
 - Once a second run exists, try `python eval/compare_results.py <first-run>.json <second-run>.json` and `python eval/analyze_results.py <run>.json` — this session verified both tools against real wizard-eval output and synthetic red-team/model-comparison fixtures, but neither has been exercised against a real multi-model run yet.
 - Related gap surfaced while building this: **no unit test exists for `core/prompt_guard.py`** (the regex-level injection-neutralization logic) — worth a quick `tests/unit/test_prompt_guard.py` alongside or before the red-team run.
 
-### 1. Security checks before any real (even POC) traffic
+### 1. Security checks before any real (even POC) traffic — ✅ done 2026-07-20
 
-Not reviewed this session — needs a fresh pass before opening the app to real testers, even a small POC group. `docs/scaling-tech-challenges.md`'s risk-tiering table has a "Now (any traffic)" bucket that should be re-verified against current code, not assumed still valid: SSRF protection on `extract-trip`'s URL-fetching path, rate limiting on LLM-calling endpoints, sanitized error responses (no raw provider stack traces reaching the client — `core/errors.py::sanitize_error()` exists, confirm it's applied everywhere it should be), pinned dependencies + dependency/secret scanning in CI, structured logging/basic observability (Sentry/APM) so a POC session's failures are actually visible. Also worth a quick check that no secrets leaked into git history from this session's `.env` edits (they shouldn't have — `.env` is gitignored and nothing in the diff touched it — but worth a `git log -p -- apps/api/.env` sanity check).
+Done this session — see "🆕 This session (2026-07-20) — Security pass before any real traffic" above for the full list of what was fixed (rate-limiting gap on `/travel-tips` + 4 other endpoints, optional Sentry wiring, pinned `eval_type_backport`, gitleaks + `npm audit` added to CI) vs. what was already solid (SSRF, `sanitize_error` coverage, dependabot). One residual gap flagged, not fixed: DNS-rebinding window in `_assert_public_host` (`chains/extract_trip_chain.py`) — needs transport-level IP pinning, a focused follow-up.
 
 ### 2. Refresh OSM POI data for big cities before POC (elevated priority — was "low priority," now tied to POC quality)
 
