@@ -25,6 +25,40 @@ Baseline (recorded ChatGPT answers, same prompts):
     unverifiable_rate  — places it named matching NO fixture for that
                          destination / places named (unverifiable suggestions)
     honest             — for negative cases: named no places at all.
+
+CAVEATS — read before treating a high score as "the pipeline is doing well"
+(found and documented 2026-07-20, see docs/eval-set.md §4V and
+docs/NEXT_SESSION_TODO.md's POI-pinning section for the full incident):
+
+1. "Honest"/"verified" measure EXISTENCE, not RELEVANCE or DATA COMPLETENESS.
+   A pin can be fully honest (a real place, real coordinates, genuinely in
+   the OSM/wiki data) while still being a poor match for the stated named
+   interest — verification has no thematic-relevance check, it only checks
+   "is this a real, findable place." Live-reproduced 2026-07-20: RF-001
+   (London/Harry Potter, expected_pois =
+   ["Warner Bros. Studio Tour London", "Leadenhall Market", "Platform 9 3/4"])
+   pinned "Borough Market" via the wiki fallback — a real, wiki-documented
+   London place with no real Harry Potter connection. This exact defect was
+   already flagged once in the 2026-07-13 live run's known-defects list and
+   only partially addressed (a candidate-proposal-side prompt tweak); the
+   verification-side gap that lets ANY real, wiki-mentioned name through
+   regardless of topical fit was not fixed and is still open.
+
+2. These pure functions score against whatever data they're handed — they
+   say nothing about whether that data (real OSM/wiki collections in
+   production) is actually good. Offline mode's fixtures are hand-curated
+   and self-contained by design (fast, free, deterministic regression gate),
+   so a perfect offline score has never implied the production ingestion
+   pipeline was healthy. It wasn't, for months (see the v10.27.0 writeup):
+   `scrapers/osm.py` was producing 100%-food/drink POI pools and
+   `scrapers/wikivoyage.py` was silently returning zero chunks for every
+   destination, invisible to this module because it never touches real
+   Qdrant collections. A live rerun (`--live`) exercises real data and would
+   surface this class of bug, but wasn't run again between 2026-07-15 and
+   this fix landing — a recommended follow-up is a small, separate
+   data-completeness pre-flight check against real collections (non-zero
+   wiki chunks, minimum OSM POI count, no single OSM category dominating),
+   tracked as its own gate rather than folded into fidelity/honesty.
 """
 from __future__ import annotations
 

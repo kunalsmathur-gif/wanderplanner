@@ -49,9 +49,20 @@ async def scrape_wikivoyage(destination: str) -> list[dict]:
         section_id = h2.get("id", "").lower().replace(" ", "_")
         if not any(s in section_id for s in SECTIONS_OF_INTEREST):
             continue
+        # MediaWiki's newer skin wraps each heading in a
+        # `<div class="mw-heading">` rather than leaving <h2> as a direct
+        # sibling of the section content, so section content are actually
+        # siblings of that wrapper div, not of the <h2> itself. Fall back to
+        # the <h2> when the wrapper isn't present (older markup / other
+        # skins) so both layouts are handled.
+        heading_wrapper = h2.parent
+        if heading_wrapper is None or "mw-heading" not in (heading_wrapper.get("class") or []):
+            heading_wrapper = h2
         texts = []
-        for sib in h2.find_next_siblings():
+        for sib in heading_wrapper.find_next_siblings():
             if sib.name == "h2":
+                break
+            if sib.name == "div" and "mw-heading" in (sib.get("class") or []):
                 break
             if sib.name in ("p", "ul", "li"):
                 texts.append(sib.get_text(" ", strip=True))

@@ -24,22 +24,69 @@ from services.geocode import geocode_city
 
 # OSM tag categories worth surfacing to the itinerary LLM. Each maps to a
 # human-readable POI type used in the embedded description text.
+#
+# Deliberately broad across heritage/culture, nature, sports, arts/science,
+# photo-worthy spots, and transport landmarks — not just food/drink — so a
+# destination's ingested pool stays well-rounded regardless of any single
+# trip's preferences. Per-trip preference weighting (e.g. more parks for a
+# toddler, more sports venues for a sports fan) belongs downstream, in
+# itinerary-generation retrieval, not here — this pool is shared across
+# every trip to the destination.
 POI_TAG_QUERIES: dict[str, str] = {
+    # Heritage / historic / cultural
     'tourism=attraction': "attraction",
     'tourism=museum': "museum",
-    'tourism=viewpoint': "viewpoint",
     'tourism=gallery': "art gallery",
+    'tourism=artwork': "public artwork",
+    'tourism=zoo': "zoo",
+    'tourism=aquarium': "aquarium",
+    'tourism=theme_park': "theme park",
     'historic=monument': "historic monument",
     'historic=castle': "castle",
+    'historic=ruins': "historic ruins",
+    'historic=archaeological_site': "archaeological site",
+    'historic=memorial': "memorial",
     'amenity=place_of_worship': "place of worship",
+    # Arts / science / entertainment
+    'amenity=theatre': "theatre",
+    'amenity=arts_centre': "arts centre",
+    'amenity=cinema': "cinema",
+    # Sports
+    'leisure=stadium': "stadium",
+    'leisure=sports_centre': "sports centre",
+    # Nature / photo-worthy / outdoors
+    'tourism=viewpoint': "viewpoint",
     'leisure=park': "park",
+    'leisure=garden': "garden",
+    'leisure=nature_reserve': "nature reserve",
     'natural=beach': "beach",
+    # Transportation landmarks (useful for orientation, and often
+    # destinations in their own right — e.g. King's Cross/Grand Central)
+    'railway=station': "train station",
+    'aeroway=aerodrome': "airport",
+    # Food/drink and shopping — kept last on purpose: see
+    # _prioritize_landmarks below, these are numerically dominant in any
+    # dense urban core and must not crowd out the categories above.
+    'shop=mall': "shopping mall",
+    'shop=marketplace': "market",
     'amenity=restaurant': "restaurant",
     'amenity=cafe': "cafe",
     'amenity=bar': "bar",
-    'shop=mall': "shopping mall",
-    'shop=marketplace': "market",
 }
+
+
+# Once a destination's dense urban core is queried across all tag types in a
+# single unioned Overpass call, food/drink establishments vastly outnumber
+# landmarks (live-verified: central London within 5km returned 45+ restaurant/
+# cafe/bar nodes but as few as 1-2 tourism/historic nodes). A flat Overpass-side
+# result cap then fills entirely with food/drink before any landmark node is
+# ever seen, starving out exactly the attraction/museum/monument data the
+# itinerary LLM and interest-pinning (services/poi_pinning.py) need most.
+# Fix: over-fetch from Overpass, then prioritise non-food/drink categories
+# client-side before truncating to the final cap.
+_RAW_FETCH_MULTIPLIER = 5
+_RAW_FETCH_CEILING = 400
+_FOOD_DRINK_LABELS = {"restaurant", "cafe", "bar"}
 
 
 def _build_overpass_query(lat: float, lon: float, radius_m: int) -> str:
@@ -49,12 +96,13 @@ def _build_overpass_query(lat: float, lon: float, radius_m: int) -> str:
         key, value = tag.split("=", 1)
         clauses.append(f'node["{key}"="{value}"](around:{radius_m},{lat},{lon});')
     body = "\n  ".join(clauses)
+    raw_limit = min(settings.osm_poi_max_results * _RAW_FETCH_MULTIPLIER, _RAW_FETCH_CEILING)
     return f"""
 [out:json][timeout:25];
 (
   {body}
 );
-out center {settings.osm_poi_max_results};
+out center {raw_limit};
 """.strip()
 
 
@@ -126,7 +174,45 @@ async def fetch_osm_pois(destination: str, lat: float | None = None, lon: float 
             "source_url": f"https://www.openstreetmap.org/node/{element.get('id', '')}",
         })
 
-    return pois[: settings.osm_poi_max_results]
+    return _prioritize_landmarks(pois)[: settings.osm_poi_max_results]
+
+
+def _prioritize_landmarks(pois: list[dict]) -> list[dict]:
+    """Round-robin across POI categories so no single tag type can dominate
+    the final truncation, with food/drink categories drawn from only after
+    every other category is exhausted.
+
+    A plain "food/drink last" stable sort (the original version of this
+    function) fixes total food/drink starvation, but doesn't stop a single
+    *non*-food/drink category from crowding out the others the same way:
+    live-verified 2026-07-20, with only that stable sort in place, a 60-slot
+    cap for central Paris came back 51/60 "train station" nodes (Paris's
+    metro network is extremely dense) and Tokyo came back 40/60 "place of
+    worship" nodes (shrines/temples are extremely common), in both cases
+    crowding out museums/attractions/theatres/parks almost entirely — the
+    same starvation bug, just relocated to a different category. Round-robin
+    selection guarantees every category present gets a turn before any single
+    category can fill the remaining slots.
+    """
+    from collections import defaultdict, deque
+
+    landmark_buckets: dict[str, deque] = defaultdict(deque)
+    food_drink_buckets: dict[str, deque] = defaultdict(deque)
+    for poi in pois:
+        label = poi["poi_type"]
+        bucket = food_drink_buckets if label in _FOOD_DRINK_LABELS else landmark_buckets
+        bucket[label].append(poi)
+
+    def _round_robin(buckets: dict[str, deque]) -> list[dict]:
+        keys = list(buckets.keys())
+        ordered: list[dict] = []
+        while any(buckets[key] for key in keys):
+            for key in keys:
+                if buckets[key]:
+                    ordered.append(buckets[key].popleft())
+        return ordered
+
+    return _round_robin(landmark_buckets) + _round_robin(food_drink_buckets)
 
 
 async def ingest_osm_pois(destination: str) -> int:
