@@ -6,7 +6,7 @@ httpx==0.28.1
 beautifulsoup4==4.12.3
 feedparser==6.0.12
 youtube-transcript-api==1.2.4
-lxml==5.2.2
+lxml==6.1.1
 python-dotenv==1.0.1
 geopy==2.4.1
 better-profanity==0.7.0
