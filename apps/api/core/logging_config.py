@@ -78,3 +78,38 @@ def configure_logging() -> None:
     root.handlers = [handler]
     root.setLevel(settings.log_level.upper())
     root._wanderplanner_configured = True  # type: ignore[attr-defined]
+
+    _configure_sentry()
+
+
+def _configure_sentry() -> None:
+    """Best-effort Sentry init — a no-op unless SENTRY_DSN is set.
+
+    Kept optional/soft-fail (missing SDK or bad DSN must never crash
+    startup): this is the "basic observability" half of the logging setup,
+    complementing the structured-JSON logs above with error aggregation and
+    alerting once a Sentry project is wired up in production.
+    """
+    if not settings.sentry_dsn:
+        logging.getLogger("wanderplanner.logging").info(
+            "SENTRY_DSN not set — error tracking/APM disabled (structured JSON logs still active)."
+        )
+        return
+
+    try:
+        import sentry_sdk
+
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            environment=settings.sentry_environment,
+            traces_sample_rate=settings.sentry_traces_sample_rate,
+        )
+        logging.getLogger("wanderplanner.logging").info(
+            "Sentry initialized (environment=%s)", settings.sentry_environment
+        )
+    except ImportError:
+        logging.getLogger("wanderplanner.logging").warning(
+            "SENTRY_DSN is set but sentry-sdk is not installed — run: pip install sentry-sdk"
+        )
+    except Exception:
+        logging.getLogger("wanderplanner.logging").exception("Failed to initialize Sentry — continuing without it")

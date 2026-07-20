@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
 from core.config import settings
-from core.qdrant import get_qdrant
 from core.embeddings import embed
+from core.qdrant import get_qdrant
+from core.rate_limit import DEFAULT_RATE_LIMIT, limiter
 
 router = APIRouter()
 
@@ -27,7 +28,9 @@ class RedditHighlightsResponse(BaseModel):
 
 
 @router.get("/reddit-highlights", response_model=RedditHighlightsResponse)
+@limiter.limit(DEFAULT_RATE_LIMIT)
 async def reddit_highlights(
+    request: Request,
     destination: str = Query(..., description="Destination city name"),
     limit: int = Query(5, ge=1, le=20),
 ) -> RedditHighlightsResponse:
