@@ -12,7 +12,7 @@ from core.config import settings
 from core.qdrant import get_qdrant
 from core.embeddings import embed
 
-SUBREDDITS = ["travel", "solotravel", "digitalnomad", "backpacking"]
+SUBREDDITS = ["travel", "solotravel", "digitalnomad", "backpacking", "IndiaTravel"]
 FEED_URL = "https://www.reddit.com/r/{sub}/top.json?limit=50&t=month"
 
 # Curated list of popular travel destinations for NER-free destination tagging.

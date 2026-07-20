@@ -18,6 +18,19 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://en.wikivoyage.org/wiki/{destination}"
 SECTIONS_OF_INTEREST = {"go", "stay_safe", "see", "do", "eat", "drink", "sleep", "understand"}
 
+# Destinations whose naive `destination.replace(" ", "_").title()` slug
+# resolves to a *different, real* Wikivoyage article than the one meant —
+# e.g. "New York" -> /wiki/New_York is the STATE-level guide (region/city
+# index, no See/Do/Eat sections), not the city guide at /wiki/New_York_City.
+# This is worse than a 404: the fetch succeeds (200) with real but
+# structurally different content, so scrape_wikivoyage silently returns zero
+# chunks instead of erroring — live-confirmed 2026-07-20 re-ingesting New
+# York, the only ambiguous case caught so far. Not an exhaustive list; add
+# entries here as more silent-zero cases like this are found.
+WIKIVOYAGE_TITLE_OVERRIDES: dict[str, str] = {
+    "new york": "New_York_City",
+}
+
 # Same rationale as scrapers/osm.py — wikivoyage.org occasionally returns
 # transient failures (rate-limiting, brief 5xx) that resolve on their own
 # within seconds; retry with backoff instead of silently recording a
@@ -43,7 +56,8 @@ def _sentence_boundary_chunks(text: str, max_chars: int = 500) -> list[str]:
 
 
 async def scrape_wikivoyage(destination: str) -> list[dict]:
-    url = BASE_URL.format(destination=destination.replace(" ", "_").title())
+    slug = WIKIVOYAGE_TITLE_OVERRIDES.get(destination.strip().lower()) or destination.replace(" ", "_").title()
+    url = BASE_URL.format(destination=slug)
     # Wikimedia's API etiquette asks for an identifiable User-Agent on every
     # request; some network paths in front of wikivoyage.org also reject
     # requests missing one with a bare 403.

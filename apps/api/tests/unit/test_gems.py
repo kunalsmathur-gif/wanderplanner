@@ -25,11 +25,23 @@ def _chunk(text: str, subreddit: str = "ThailandTourism") -> dict:
     return {"destination": "Phuket", "text": text, "subreddit": subreddit}
 
 
-def _mock_client(pois: list[dict], chunks: list[dict]) -> MagicMock:
+def _yt_chunk(text: str) -> dict:
+    return {"destination": "Phuket", "text": text, "video_id": "abc123"}
+
+
+def _mock_client(pois: list[dict], chunks: list[dict], yt_chunks: list[dict] | None = None) -> MagicMock:
     client = MagicMock()
+    yt_chunks = yt_chunks or []
 
     def _scroll(collection_name, scroll_filter, limit, with_payload, with_vectors):
-        payloads = pois if collection_name == "osm_pois" else chunks
+        if collection_name == "osm_pois":
+            payloads = pois
+        elif collection_name == "reddit":
+            payloads = chunks
+        elif collection_name == "youtube_comments":
+            payloads = yt_chunks
+        else:
+            payloads = []
         points = []
         for p in payloads:
             pt = MagicMock()
@@ -53,6 +65,12 @@ class TestSentimentAround:
     def test_no_mention_returns_zero(self):
         assert _sentiment_around("nothing here", "banana beach") == (0, 0)
 
+    def test_hinglish_words_counted(self):
+        pos, neg = _sentiment_around("varanasi ghats are ekdum badhiya and sundar", "varanasi ghats")
+        assert pos >= 2  # badhiya, sundar
+        pos, neg = _sentiment_around("this place is bekar and ganda, total bakwas", "this place")
+        assert neg >= 3  # bekar, ganda, bakwas
+
 
 class TestComputeGemIntel:
     def _run(self, pois, chunks):
@@ -71,7 +89,7 @@ class TestComputeGemIntel:
         assert gem["name"] == "Banana Beach"
         assert gem["mentions"] == 2
         assert gem["sentiment"] > 0.55
-        assert "ThailandTourism" in gem["subreddits"]
+        assert "r/ThailandTourism" in gem["sources"]
 
     def test_high_mention_is_crowd_favourite_not_gem(self):
         pois = [_poi("Patong Beach")]
@@ -115,17 +133,40 @@ class TestComputeGemIntel:
         names = [g["name"] for g in intel["gems"]]
         assert names.index("Quiet Cove") < names.index("Known Cove")
 
+    def test_youtube_source_blended_with_reddit(self):
+        """docs/NEXT_SESSION_TODO.md item 3 — YouTube comments should
+        contribute mentions/sentiment alongside Reddit, with "YouTube"
+        provenance distinct from a subreddit label."""
+        pois = [_poi("Banana Beach")]
+        chunks = [_chunk("Banana Beach is a stunning quiet gem")]
+        yt_chunks = [_yt_chunk("Banana Beach was so peaceful and gorgeous, loved it")]
+        with patch("services.gems.get_qdrant", return_value=_mock_client(pois, chunks, yt_chunks)):
+            intel = compute_gem_intel_sync("Phuket")
+        assert len(intel["gems"]) == 1
+        gem = intel["gems"][0]
+        assert gem["mentions"] == 2
+        assert "r/ThailandTourism" in gem["sources"]
+        assert "YouTube" in gem["sources"]
+
+    def test_youtube_only_source_still_works_without_reddit(self):
+        pois = [_poi("Banana Beach")]
+        yt_chunks = [_yt_chunk("Banana Beach is underrated and beautiful, a real gem")]
+        with patch("services.gems.get_qdrant", return_value=_mock_client(pois, [], yt_chunks)):
+            intel = compute_gem_intel_sync("Phuket")
+        assert len(intel["gems"]) == 1
+        assert intel["gems"][0]["sources"] == ["YouTube"]
+
 
 class TestGemPromptBlock:
     _INTEL = {
         "gems": [{
             "name": "Banana Beach", "poi_type": "beach", "lat": 7.9, "lon": 98.3,
-            "mentions": 3, "sentiment": 0.9, "subreddits": ["ThailandTourism"],
+            "mentions": 3, "sentiment": 0.9, "sources": ["r/ThailandTourism"],
             "gem_score": 0.4,
         }],
         "crowd_favourites": [{
             "name": "Patong Beach", "poi_type": "beach", "lat": 7.9, "lon": 98.3,
-            "mentions": 40, "sentiment": 0.5, "subreddits": [], "gem_score": 0.09,
+            "mentions": 40, "sentiment": 0.5, "sources": [], "gem_score": 0.09,
         }],
     }
 

@@ -1,8 +1,11 @@
 """Hidden-gem scoring service (docs/GTM_STRATEGY.md §2, product bet 1).
 
-Ranks OSM-verified POIs for a destination by community signal mined from the
-already-ingested `reddit` Qdrant collection: **high sentiment × low mention
-volume = hidden gem**, high mention volume = crowd favourite. Generic LLMs
+Ranks OSM-verified POIs for a destination by community signal blended from
+every configured sentiment source — `reddit` and `youtube_comments` Qdrant
+collections, each contributing chunks with per-source provenance
+(docs/NEXT_SESSION_TODO.md item 3: YouTube added as an alternative source
+while Reddit ingestion stays blocked on API approval): **high sentiment ×
+low mention volume = hidden gem**, high mention volume = crowd favourite. Generic LLMs
 regurgitate top-10 lists; this surfaces the place praised in 4 comments over
 the one appearing in 400 — with provenance ("mentioned in N traveller posts
 on r/x") so the recommendation is checkable, not vibes.
@@ -61,11 +64,20 @@ _POSITIVE_WORDS = frozenset({
     "favorite", "gem", "gorgeous", "highlight", "incredible", "local", "lovely",
     "loved", "magical", "peaceful", "perfect", "quiet", "recommend", "serene",
     "stunning", "underrated", "unique", "worth",
+    # Romanized Hindi/Hinglish supplement (docs/NEXT_SESSION_TODO.md item 3:
+    # domestic-travel YouTube/Reddit commentary is frequently Hinglish, which
+    # previously contributed zero sentiment signal). Deliberately a small,
+    # common, low-ambiguity set — not exhaustive — to avoid false-positive
+    # collisions with unrelated English usage.
+    "achha", "accha", "badhiya", "zabardast", "kamaal", "shandar",
+    "behtareen", "khoobsurat", "sundar", "mast",
 })
 _NEGATIVE_WORDS = frozenset({
     "avoid", "closed", "crowded", "dirty", "disappointing", "expensive", "meh",
     "overhyped", "overpriced", "overrated", "packed", "queue", "queues", "scam",
     "skip", "touristy", "trap", "waste",
+    # Romanized Hindi/Hinglish supplement — see positive-side comment above.
+    "bekar", "bekaar", "ganda", "faaltu", "bakwas", "mehenga", "mehanga", "dhoka",
 })
 
 # POI names that are a single generic word produce false mention matches
@@ -114,21 +126,38 @@ def _sentiment_around(chunk_lower: str, name_lower: str) -> tuple[int, int]:
 
 
 def compute_gem_intel_sync(destination: str) -> dict:
-    """One bounded pass over osm_pois × reddit chunks for `destination`.
+    """One bounded pass over osm_pois × community-sentiment chunks for
+    `destination`. Blends every configured sentiment source (currently
+    Reddit + YouTube comments — docs/NEXT_SESSION_TODO.md item 3, added so
+    the feature still has real signal to work with while Reddit ingestion
+    stays blocked on API approval) with per-source provenance, instead of a
+    single hardcoded collection.
 
     Returns {"gems": [...], "crowd_favourites": [...]}, each entry:
-    {name, poi_type, lat, lon, mentions, sentiment, subreddits, gem_score}.
-    Pure CPU + two Qdrant scrolls — call via asyncio.to_thread.
+    {name, poi_type, lat, lon, mentions, sentiment, sources, gem_score}.
+    `sources` is a list of "r/<subreddit>" / "YouTube" strings.
+    Pure CPU + N Qdrant scrolls — call via asyncio.to_thread.
     """
     client = get_qdrant()
     pois = _scroll_destination(client, settings.qdrant_collection_osm, destination, _MAX_POIS)
-    chunks = _scroll_destination(client, settings.qdrant_collection_reddit, destination, _MAX_CHUNKS)
+
+    # Each sentiment source contributes chunks with a (text, provenance_label)
+    # shape — provenance is source-specific (subreddit name vs. a flat
+    # "YouTube" label, since individual video titles are too noisy to surface
+    # as provenance the way a subreddit name is).
+    chunks: list[tuple[str, str]] = []
+    reddit_chunks = _scroll_destination(client, settings.qdrant_collection_reddit, destination, _MAX_CHUNKS)
+    chunks.extend((c.get("text") or "", f"r/{c['subreddit']}" if c.get("subreddit") else "") for c in reddit_chunks)
+    yt_chunks = _scroll_destination(
+        client, settings.qdrant_collection_youtube_comments, destination, _MAX_CHUNKS
+    )
+    chunks.extend((c.get("text") or "", "YouTube") for c in yt_chunks)
+
     if not pois or not chunks:
         return {"gems": [], "crowd_favourites": []}
 
     # Pre-lowercase chunk texts once — the inner loop is pure substring search.
-    chunk_texts = [((c.get("text") or ""), (c.get("subreddit") or "")) for c in chunks]
-    chunk_lowers = [(t.lower(), sub) for t, sub in chunk_texts]
+    chunk_lowers = [(t.lower(), label) for t, label in chunks]
 
     gems: list[dict] = []
     crowd: list[dict] = []
@@ -140,16 +169,16 @@ def compute_gem_intel_sync(destination: str) -> dict:
 
         mentions = 0
         pos_total = neg_total = 0
-        subreddits: list[str] = []
-        for chunk_lower, subreddit in chunk_lowers:
+        sources: list[str] = []
+        for chunk_lower, label in chunk_lowers:
             if name_lower not in chunk_lower:
                 continue
             mentions += 1
             pos, neg = _sentiment_around(chunk_lower, name_lower)
             pos_total += pos
             neg_total += neg
-            if subreddit and subreddit not in subreddits:
-                subreddits.append(subreddit)
+            if label and label not in sources:
+                sources.append(label)
 
         if mentions == 0:
             continue  # no community proof — never recommend on OSM presence alone
@@ -164,7 +193,7 @@ def compute_gem_intel_sync(destination: str) -> dict:
             "lon": poi.get("lon", 0.0),
             "mentions": mentions,
             "sentiment": round(sentiment, 3),
-            "subreddits": subreddits[:2],
+            "sources": sources[:2],
             # Fewer mentions rank higher at equal sentiment — that's the gem.
             "gem_score": round(sentiment / math.log2(2 + mentions), 4),
         }
@@ -216,8 +245,8 @@ def gem_prompt_block(intel: dict, crowd_preference: str) -> str:
     lines = []
     for g in gems[:n_gems]:
         provenance = f"mentioned in {g['mentions']} traveller post(s)"
-        if g["subreddits"]:
-            provenance += " on " + ", ".join(f"r/{s}" for s in g["subreddits"])
+        if g["sources"]:
+            provenance += " on " + ", ".join(g["sources"])
         lines.append(
             f"- {g['name']} ({g['poi_type']}, lat {g['lat']}, lon {g['lon']}) — {provenance}, "
             f"{round(g['sentiment'] * 100)}% positive sentiment"
