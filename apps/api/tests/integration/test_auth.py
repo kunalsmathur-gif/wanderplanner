@@ -76,7 +76,10 @@ async def test_signup_rejects_duplicate_email(client):
 
     assert first.status_code == 200
     assert second.status_code == 400
-    assert second.json()["detail"] == "Unable to sign up with these details."
+    # Explicit, actionable message is an intentional product decision — see
+    # the comment in routers/auth.py::signup() (trades some account-
+    # enumeration resistance for clearer signup UX).
+    assert second.json()["detail"] == "An account with this email already exists. Try logging in instead."
 
 
 async def test_login_rejects_wrong_password_and_unknown_email_with_same_response(client, user_factory):
