@@ -166,13 +166,16 @@ async def _apply_interest_pinning(
         if dropped:
             resp.reply += (
                 f"\nI couldn't verify {', '.join(dropped)} against my places "
-                "database, so I left those out."
+                "database — they may still be real, but please check reviews "
+                "on Google Maps/Reddit before building your plan around them."
             )
     else:
         resp.reply += (
             f"\n\nI looked for real {interest} spots around {destination} but "
             "couldn't verify any against my places database, so I haven't "
-            "pinned anything — better honest than invented!"
+            "pinned anything — better honest than invented! If you have "
+            "specific places in mind, please check reviews on Google Maps/"
+            "Reddit before building your plan around them."
         )
     return resp
 
