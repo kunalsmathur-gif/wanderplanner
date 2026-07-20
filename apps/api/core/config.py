@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     qdrant_collection_osm: str = "osm_pois"
     qdrant_collection_itinerary_cache: str = "itinerary_cache"
     qdrant_collection_itinerary_corpus: str = "itinerary_corpus"
+    qdrant_collection_youtube_comments: str = "youtube_comments"
 
     # Embeddings
     embedding_model: str = "all-MiniLM-L6-v2"
@@ -64,8 +65,12 @@ class Settings(BaseSettings):
             )
         return v
 
-    # Nominatim
-    nominatim_user_agent: str = "wanderplanner/1.0"
+    # Nominatim / Wikivoyage / Overpass — must comply with both Nominatim's
+    # ToS and Wikimedia's User-Agent policy (client/version + contact info,
+    # "bot" in the name): a bare "wanderplanner/1.0" with no contact info
+    # started getting hard-403'd by Wikivoyage (confirmed live 2026-07-20 —
+    # see https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy).
+    nominatim_user_agent: str = "WanderPlannerBot/1.0 (https://github.com/kunalsmathur-gif/wanderplanner)"
     nominatim_rate_limit: int = 1
 
     # Pexels — hero photos for itinerary day cards / PDF
@@ -80,6 +85,17 @@ class Settings(BaseSettings):
     osm_ingest_delay_seconds: float = 2.0  # be polite to the free Overpass API between destinations
 
     itinerary_corpus_refresh_days: int = 30  # monthly cadence (docs §9 ingestion pipeline)
+
+    # YouTube Data API v3 (docs/NEXT_SESSION_TODO.md item 3 — hidden-gems
+    # alternative source while Reddit ingestion is blocked on approval).
+    # Self-serve key from Google Cloud Console, no review process — free
+    # 10,000-units/day quota; search.list costs 100 units/query,
+    # commentThreads.list costs 1 unit/call. Blank by default: every function
+    # in scrapers/youtube_comments.py is a documented no-op without a key,
+    # same pattern as pexels_api_key.
+    youtube_api_key: str = ""
+    youtube_comments_per_video: int = 50
+    youtube_videos_per_destination: int = 5
 
     log_level: str = "INFO"
 

@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from scrapers.wikivoyage import scrape_wikivoyage
+from scrapers.wikivoyage import scrape_wikivoyage, WIKIVOYAGE_TITLE_OVERRIDES
 
 NEW_MARKUP = """
 <html><body>
@@ -92,6 +92,37 @@ class TestScrapeWikivoyage:
         eat_docs = [d for d in docs if d["section"] == "eat"]
         assert see_docs and "Borough Market" not in " ".join(d["text"] for d in see_docs)
         assert eat_docs and "British Museum" not in " ".join(d["text"] for d in eat_docs)
+
+
+class TestWikivoyageTitleOverride:
+    """"New York" -> /wiki/New_York is the STATE-level Wikivoyage article
+    (region/city index, no See/Do/Eat sections) — a *different real page*
+    from the city guide at /wiki/New_York_City, not a 404. Live-confirmed
+    2026-07-20: the naive slug fetch returns 200 with zero usable chunks
+    (no matching section headings) rather than an obvious error."""
+
+    @pytest.mark.asyncio
+    async def test_overridden_destination_uses_mapped_slug(self):
+        with patch("scrapers.wikivoyage.httpx.AsyncClient") as mock_client_cls:
+            mock_client = mock_client_cls.return_value.__aenter__.return_value
+            mock_client.get = AsyncMock(return_value=_mock_response(NEW_MARKUP))
+            await scrape_wikivoyage("New York")
+
+        requested_url = mock_client.get.await_args.args[0]
+        assert requested_url == "https://en.wikivoyage.org/wiki/New_York_City"
+
+    @pytest.mark.asyncio
+    async def test_non_overridden_destination_unaffected(self):
+        with patch("scrapers.wikivoyage.httpx.AsyncClient") as mock_client_cls:
+            mock_client = mock_client_cls.return_value.__aenter__.return_value
+            mock_client.get = AsyncMock(return_value=_mock_response(NEW_MARKUP))
+            await scrape_wikivoyage("London")
+
+        requested_url = mock_client.get.await_args.args[0]
+        assert requested_url == "https://en.wikivoyage.org/wiki/London"
+
+    def test_override_keys_are_lowercase(self):
+        assert all(k == k.lower() for k in WIKIVOYAGE_TITLE_OVERRIDES)
 
 
 class TestScrapeWikivoyageRetry:
