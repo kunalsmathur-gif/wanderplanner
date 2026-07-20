@@ -1673,6 +1673,7 @@ instead of the agent) that govern how these tools are meant to be used.
 - **New scheduler job** (`core/scheduler.py::_refresh_itinerary_corpus`) — runs monthly (`ITINERARY_CORPUS_REFRESH_DAYS`, default 30), tolerant of individual source/document failures.
 - **Scope note**: this only *ingests* — wiring the collection into the itinerary generation prompt as few-shot grounding is the separate, still-pending `itinerary-corpus-retrieval` roadmap item.
 - Verified: 154 backend tests passing (137 existing + 17 new), no regressions; manually confirmed the new Qdrant collection creates with the correct two-named-vector schema.
+- **Source pool widened (v10.28)**: the upstream travel-blog RSS list gained Bruised Passports (India-focused) and Uncornered Market, replacing a dead Planet D feed; live-ingested into production (`itinerary_corpus` 1 → 4 points). See `TECHNICAL_DOCUMENTATION.md` §14 v10.28.
 
 ### v10.11 (July 2026) — Itinerary Corpus Scrapers (raw fetch stage, docs/rag-strategy.md §9)
 

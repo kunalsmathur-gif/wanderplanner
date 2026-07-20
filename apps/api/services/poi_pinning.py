@@ -6,9 +6,14 @@ confirms each against data we already ingest, in priority order:
 
 1. `osm_pois` — fuzzy name match against OSM-verified POIs for the
    destination. Survivors get the POI's real lat/lon (verified_by="osm").
-2. `wiki` — substring presence in Wikivoyage/wiki chunk text for the
-   destination. Confirms the place exists (verified_by="wiki") but carries
-   no coordinates; the generation prompt handles that case explicitly.
+2. `wiki` — substring presence in a Wikivoyage/wiki chunk for the
+   destination, *and* that same chunk also mentions the named interest
+   (e.g. "Harry Potter"). Confirms both that the place exists and that the
+   guide itself ties it to the user's stated reason for wanting it — mere
+   existence isn't enough (a market being real doesn't mean it's a Harry
+   Potter place; see the recurring "Borough Market" false positive).
+   Verified_by="wiki" pins carry no coordinates; the generation prompt
+   handles that case explicitly.
 
 Anything unverified is dropped — a candidate the LLM invented can never be
 pinned. This mirrors the "if OSM doesn't know it, we don't rank it" rule in
@@ -36,6 +41,22 @@ from services.gems import _scroll_destination, _MAX_POIS, _MAX_CHUNKS
 logger = logging.getLogger(__name__)
 
 _FUZZY_THRESHOLD = 0.80
+
+# Words too generic to count as a thematic signal on their own (would make
+# almost any wiki chunk "co-occur" with almost any interest).
+_INTEREST_STOPWORDS = {
+    "and", "the", "a", "an", "of", "in", "for", "to", "with", "on", "at",
+    "or", "is", "are", "my", "i", "im", "some", "any", "all",
+}
+
+
+def _interest_keywords(source_interest: str) -> set[str]:
+    """Split a free-text named interest ("Harry Potter", "zen gardens and
+    temples") into the words worth checking for thematic co-occurrence.
+    Empty when the interest is blank or entirely stopwords — callers treat
+    that as "nothing to check relevance against"."""
+    norm = _normalize(source_interest)
+    return {w for w in norm.split() if w and w not in _INTEREST_STOPWORDS and len(w) > 2}
 
 
 def _normalize(name: str) -> str:
@@ -100,19 +121,24 @@ def verify_candidates_sync(
         (_normalize(p.get("name") or ""), p) for p in pois if (p.get("name") or "").strip()
     ]
 
-    # Wiki text is only scrolled if at least one candidate misses OSM.
-    wiki_blob: str | None = None
+    # Wiki text is only scrolled if at least one candidate misses OSM. Kept as
+    # a list of per-chunk texts (not one joined blob) so a candidate match can
+    # be checked for thematic co-occurrence with the source interest within
+    # the *same* chunk, not "mentioned somewhere in this city's entire guide".
+    wiki_chunk_texts: list[str] | None = None
 
-    def _wiki_text() -> str:
-        nonlocal wiki_blob
-        if wiki_blob is None:
+    def _wiki_chunks() -> list[str]:
+        nonlocal wiki_chunk_texts
+        if wiki_chunk_texts is None:
             chunks = _scroll_destination(
                 client, settings.qdrant_collection_wiki, destination, _MAX_CHUNKS
             )
-            wiki_blob = " ".join(
+            wiki_chunk_texts = [
                 _normalize(c.get("text") or c.get("text_preview") or "") for c in chunks
-            )
-        return wiki_blob
+            ]
+        return wiki_chunk_texts
+
+    interest_keywords = _interest_keywords(source_interest)
 
     pins: list[PinnedPOI] = []
     dropped: list[str] = []
@@ -135,13 +161,24 @@ def verify_candidates_sync(
             ))
             continue
 
-        if len(cand_norm) >= 6 and cand_norm in _wiki_text():
-            pins.append(PinnedPOI(
-                name=candidate,
-                source_interest=source_interest,
-                verified_by="wiki",
-            ))
-            continue
+        if len(cand_norm) >= 6:
+            matched_chunks = [chunk for chunk in _wiki_chunks() if cand_norm in chunk]
+            if matched_chunks and (
+                not interest_keywords
+                or any(kw in chunk for chunk in matched_chunks for kw in interest_keywords)
+            ):
+                pins.append(PinnedPOI(
+                    name=candidate,
+                    source_interest=source_interest,
+                    verified_by="wiki",
+                ))
+                continue
+            # Mentioned in the guide but not thematically tied to the user's
+            # named interest anywhere it's mentioned (the recurring "Borough
+            # Market" false positive for a Harry Potter refinement — real
+            # place, just not why the user asked for it). Existence alone
+            # isn't enough to force a "must include, matches your interest"
+            # hard constraint; treat as unverified rather than invent a link.
 
         dropped.append(candidate)
 

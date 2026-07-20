@@ -21,21 +21,40 @@ import math
 # recalibrated directly off this anchor (mid_range fraction ~0.5 now lands
 # at ~₹21,000, premium ~0.9 lands at ~₹28,200 — bracketing the real fare).
 # The short-domestic-hop band is nudged up modestly for the same general
-# fare inflation. The regional/long-haul/ultra-long-haul bands (no real
-# anchor available yet) are nudged up just enough to preserve monotonic
-# ordering against the recalibrated near-neighbour band — they are NOT
-# independently verified against real fares and should be recalibrated the
-# same way once a real data point turns up for one of them. Note that
-# short-haul South Asian routes (India<->Sri Lanka/Nepal/Bangladesh) are
-# disproportionately pricey per km versus competitive long-haul corridors
-# (India<->Gulf/Europe), due to far fewer carriers/frequencies — so do NOT
-# rescale every band by the same ~2.4x ratio derived from this one
-# near-neighbour anchor; that would overshoot the long-haul bands.
+# fare inflation. Note that short-haul South Asian routes (India<->Sri
+# Lanka/Nepal/Bangladesh) are disproportionately pricey per km versus
+# competitive long-haul corridors (India<->Gulf/Europe), due to far fewer
+# carriers/frequencies — so do NOT rescale every band by the same ~2.4x
+# ratio derived from this one near-neighbour anchor; that would overshoot
+# the long-haul bands.
+#
+# Recalibrated again same day against a second real anchor:
+# Bengaluru->London (~8000km, "long-haul" band) priced at a real ₹67,327
+# round trip (MakeMyTrip, "Popular" sort, Aug 2026 — the original band here
+# (₹32,000-65,000) undershot the midpoint by ~1.4x. Recalibrated via
+# `scripts/recalibrate_pricing.py --band long_haul --round-trip-inr 67327`
+# (mid_range fraction ~0.5 now lands almost exactly on the real fare).
+# ultra_long_haul (already comfortably above the recalibrated long_haul
+# band — no nudge needed to stay monotonic) is unchanged.
+#
+# Recalibrated a third time same day: Delhi->Goa (~1504km) at Christmas/
+# New Year peak pricing (MakeMyTrip, Dec 2026) priced at a real ₹18,157
+# round trip cheapest — this is a *domestic* route that lands just 4km
+# past the near-neighbour cutoff (1500km) and so falls into the
+# "regional international" band, but its real fare undershoots that
+# band's old ₹20,000 low even at holiday-peak pricing. Rather than a
+# full symmetric rescale (which would also drop the band's high end —
+# used for genuinely pricier international regional routes like
+# Bangkok/Dubai that this domestic anchor says nothing about), only the
+# low end was nudged down to ₹12,105 (via
+# `scripts/recalibrate_pricing.py --band regional --round-trip-inr 18157`,
+# taking just the low value from its output). The high end (₹40,000)
+# is left unchanged pending a real international-regional data point.
 DISTANCE_BANDS: list[tuple[float, int, int]] = [
     (500, 5000, 11000),            # short domestic hop
     (1500, 12000, 30000),          # domestic / near-neighbour international
-    (4000, 20000, 40000),          # regional international (SE Asia, Middle East)
-    (8000, 32000, 65000),          # long-haul (Europe, East Asia)
+    (4000, 12105, 40000),          # regional international (SE Asia, Middle East) — low end nudged down: real anchor Delhi->Goa peak (Dec) ₹18,157 landed just over the near-neighbour cutoff (1504km) and undershot the old ₹20,000 low even at holiday-peak pricing; high end (genuine int'l routes like Bangkok/Dubai) left unchanged since this anchor is a domestic route, not evidence for the top of the band
+    (8000, 44422, 90232),          # long-haul (Europe, East Asia) — real anchor: Bengaluru->London ₹67,327 (2026-07-20)
     (float("inf"), 55000, 110000),  # ultra-long-haul (Americas, Oceania)
 ]
 
