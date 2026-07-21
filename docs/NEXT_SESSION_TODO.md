@@ -173,11 +173,16 @@ Reviewed the existing eval harnesses against the standard "Quality Flywheel" met
 
 ---
 
-## 🔴 Do this first — verify the production fix actually landed
+## 🔴 Do this first — verify the production fix actually landed — ✅ verified 2026-07-21
 
-1. **Confirm Railway has redeployed/restarted since this session's `core/qdrant.py` fix shipped.** The payload-index creation only runs once per process start (`_ensure_collections()`, called from `get_qdrant()` on first use). If Railway's process wasn't restarted after this commit, prod is still silently 400-ing on every filtered RAG query. Check via Railway dashboard deploy history, or logs for a fresh `_ensure_collections` run.
-2. **Verify from Railway logs**: filter for `destination` or `Index required` — should see zero occurrences after the redeploy. If you still see 400s, the index creation itself needs debugging against the prod cluster (should be identical to what worked locally, but confirm the prod `QDRANT_URL`/`QDRANT_API_KEY` point at the same cluster used to verify this fix).
-3. **Once confirmed live**, consider re-running (or waiting for) a few real itinerary generations and spot-checking whether the RAG context block actually contains real retrieved content now (vs. the "No pre-fetched research available" sentinel it would silently fall back to before).
+1. ✅ **Confirmed via `railway logs -s api -e production`**: a fresh container start is visible (`Starting Container` → `_ensure_collections`-driven `GET /collections/*` calls for `wiki`/`reddit`/`osm_pois`/`itinerary_corpus`/`youtube_comments`, all `200 OK`) with **zero** `destination`/`Index required` 400s anywhere in the tail. The redeploy landed and the index-creation fix is confirmed live.
+2. ✅ Same log tail also reconfirms item 4 (Reddit) is still blocked in prod: `GET reddit.com/r/*/top.json` → `403 Blocked` for all 5 subreddits on this boot.
+
+## 🔧 Hygiene follow-ups closed out 2026-07-21
+
+- **`FieldCondition` audit (from the "consider indexing other frequently-filtered payload fields" item below) — done, no gap found.** Every `FieldCondition` usage in the codebase (`core/qdrant.py`, `services/gems.py`, `services/rag_fallback.py`, `services/search.py`, `scripts/reingest_pilot_batch.py`) filters exclusively on `destination` — the same field `_ensure_collections()`'s `_DESTINATION_INDEXED_COLLECTIONS` loop already indexes across all 5 collections. No other filtered field exists yet, so no further indexing gap to close today; re-check this if a new `FieldCondition` on a different key is ever added.
+- **`tests/unit/test_prompt_guard.py` added** (28 tests, fully offline/no mocks needed) — covers `looks_like_injection()` (known injection phrasings incl. case-insensitivity, legitimate travel text incl. a "Ignore the crowds..." false-positive check, empty/`None` input), `neutralize()` (redaction, untouched clean text, WARNING log emitted only on detection, context string included in the log), and `wrap_untrusted()` (delimiter fencing, neutralization-before-fencing, label→tag slugging, default label). Full suite still green.
+- **Item 11 (RAG grounding path) re-spot-checked live** against the real Qdrant Cloud cluster (`wiki`: 224 points now vs. 21 pre-re-ingestion, `reddit`: still 0). Ran `core/cost_grounding.py::community_median_price_inr()` live for London/Paris/Jaipur/Mumbai (all recently re-ingested) — **still returns `None` for both stay and food on every destination tested**, confirming the grounding path is still effectively a no-op even with real wiki content now present. Root cause is unchanged from the doc's existing note: Wikivoyage guide prose rarely contains extractable per-night/per-meal price mentions the way Reddit posts do, and Reddit remains at 0 points. **Conclusion: no code change warranted yet** — this stays blocked on item 4 (Reddit approval) as already tracked; re-check after Reddit unblocks rather than before.
 
 ## ⏭️ Remaining items (in suggested order — items 1-3 are POC-readiness priorities per 2026-07-16 discussion)
 
