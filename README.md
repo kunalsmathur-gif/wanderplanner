@@ -277,6 +277,12 @@ Open `http://localhost:3000`.
 
 ## Changelog
 
+### v5.11 — ⚠️ Commercial-Licensing Fix: budgetyourtrip.com → Wikivoyage + Inside Airbnb, New Airbnb-Based Stay Estimates (July 2026)
+- ✅ **FIXED: `_COST_MATRIX`'s hotel-pricing source violated commercial-use terms.** budgetyourtrip.com (used for `stay_per_night_pp`) and Numbeo (used for premium-tier `food_per_day_pp`) both turned out to require a paid license for this kind of commercial use. Re-sourced `stay_per_night_pp` onto real Wikivoyage (CC BY-SA 3.0) hotel-listing prices, reconstructed to the same figures via an empirically-derived multiplier — numbers barely move, provenance is now compliant.
+- ✅ **NEW: Airbnb-aware stay estimates.** If you ask for an Airbnb/vacation-rental stay, or if a destination has no usable Wikivoyage hotel pricing (e.g. Istanbul), the budget estimator now grounds the stay figure in real Inside Airbnb (CC BY 4.0) data instead of a flat table.
+- ⚠️ **Still open:** the Numbeo-sourced premium-tier food figures have the same licensing problem and are **not yet fixed** — top priority for next session.
+- 14 new tests, full backend suite green (430 passed, 6 skipped). Docs updated: `TECHNICAL_DOCUMENTATION.md` (§14 v10.32), `docs/system-design.md` (§16), `docs/PRD.md`, `docs/itinerary-generation-flow.md`, `docs/eval-set.md` (§10), `docs/NEXT_SESSION_TODO.md`.
+
 ### v5.10 — Eval Infrastructure Hardening: Wizard Harness, LLM-as-Judge, Compare/Analyze Tools (July 2026)
 - ✅ **NEW: Anya wizard flow now has automated eval coverage.** `eval/run_wizard_eval.py` replays scripted multi-turn conversations against the live wizard, checking chip/reply topic alignment, stale-chip backfill, and `ready_to_generate` correctness — regression-checks the exact budget/pace chip-mismatch bug fixed this session in `wizard_chat_chain.py`.
 - ✅ **NEW: LLM-as-judge quality metric.** `eval/judge_metrics.py` scores generated itineraries on tone/personalization/coherence via a fixed judge model (independent of the model under test), now shown alongside deterministic accuracy/hallucination metrics in the model-comparison report.

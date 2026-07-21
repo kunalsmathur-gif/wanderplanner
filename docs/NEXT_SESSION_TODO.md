@@ -1,6 +1,30 @@
 # Next-Session TODO — Post-Cloud-migration cleanup → Reddit approval → Phase 2
 
-**Last updated:** 2026-07-21 (planned, not yet built: domestic rail/bus/cab alternative + Kaggle-grounded flight/hotel pricing — see new section immediately below)
+**Last updated:** 2026-07-21 (later still) — commercial-licensing fix for `_COST_MATRIX` stay pricing + new Inside Airbnb fallback/explicit-request feature. See new top section immediately below. **Top priority for next session: the Numbeo food-figure licensing issue flagged there is still open.**
+
+---
+
+## 🆕 2026-07-21 session (latest) — ⚠️ licensing fix: budgetyourtrip.com → Wikivoyage + Inside Airbnb, plus new Airbnb-based stay estimates
+
+**Why this session happened:** the "finally recalibrated" `stay_per_night_pp` note two sections below (budgetyourtrip.com-sourced) turned out to have a real problem — **budgetyourtrip.com's ToS prohibits commercial use**, and while auditing that, **Numbeo's ToS was also found to require a paid commercial "Data License"** for anything beyond personal/academic use. Both sources had already been merged into `_COST_MATRIX`.
+
+**Fixed — `stay_per_night_pp` (moderate/premium mid_range) recalibrated onto compliant sources:**
+- Replaced budgetyourtrip.com anchors with **Wikivoyage** (CC BY-SA 3.0, already the license basis for this app's `wiki` RAG collection) real per-listing hotel prices scraped from district "Sleep" sections via raw wikitext (`curl .../action=raw`, not the lossy rendered-page fetch tool — see `_COST_MATRIX`'s docstring for the full technique and city-specific gotchas, e.g. large "hub" articles like Bangkok/Paris/Tokyo have no inline pricing, it's in per-district sub-articles).
+- Wikivoyage's own nominal listing prices are **much lower** than budgetyourtrip's self-reported "average traveller spend" figures (a real methodology gap, not just a licensing swap) — reconstructed the same dollar figures via an empirically-derived multiplier (moderate tier 3.08x, avg of Bangkok 3.10x/Athens 3.06x, independently cross-checked; premium tier 4.31x, Paris-only, flagged as needing a second anchor next time a premium-tier city is scraped).
+- Net numeric change is tiny (moderate mid_range ₹7,968→₹7,916; premium mid_range ₹29,050→₹29,049) — the fix is about **provenance**, not the number itself.
+- Applied via `scripts/recalibrate_pricing.py`; full sourcing math + multiplier derivation rewritten into `_COST_MATRIX`'s docstring, replacing the budgetyourtrip citation.
+
+**New — Inside Airbnb (CC BY 4.0) wired in for two specific cases, not as the default hotel source:**
+- User explicitly asks for an Airbnb/vacation-rental stay (`wants_airbnb_stay()` keyword detector: "airbnb", "air bnb", "air b&b", "vacation rental", "self-catering", "self catering") → applies `_AIRBNB_STAY_DISCOUNT_MULTIPLIER = 0.30` (derived from Bangkok 0.262x / Paris 0.339x Inside Airbnb-vs-Wikivoyage ratios) on top of the normal hotel figure.
+- Wikivoyage has no usable inline hotel pricing for a destination (confirmed real case: **Istanbul**) → falls back to a new `core/airbnb_pricing.py` seeded lookup (`airbnb_hotel_equivalent_pp_inr()`, currently only `"istanbul": 10757`, computed from a live Inside Airbnb CSV + live FX rate) between the community-RAG-grounding rung and the flat `_COST_MATRIX` default. **Extend this seed dict via the new `scripts/ingest_airbnb_pricing.py`** as more Inside-Airbnb-covered cities need it (~100 cities globally, mostly Europe/Americas/some Asia-Pacific — confirmed zero India coverage).
+- Both compose correctly (explicit Airbnb request on a fallback city applies the discount to the real Airbnb-derived rate, not double-discounted — verified live for Istanbul).
+- `estimate_bare_minimum_budget()`'s return dict gained `stay_airbnb_based`/`stay_airbnb_fallback_used` flags; `budget_estimate_prompt_hint()` message logic updated to mention whichever applies.
+
+**Tests:** 14 new tests in `tests/unit/test_airbnb_stay_estimate.py` (kept separate from the pre-existing broken `test_budget_estimator.py` — unrelated Python 3.9 collection error, always excluded via `--ignore`). Full suite green: 430 passed, 6 skipped. Committed as `b65e3cd`.
+
+**⚠️ Still open, top priority for next session — Numbeo-sourced premium food figures are NOT yet fixed.** The v10.31/2026-07-21-earlier premium-tier `food_per_day_pp` recalibration (economical ₹4,245 / mid_range ₹6,546 / premium ₹9,300) used real Numbeo cost-of-living data — same commercial-license problem as budgetyourtrip, just not yet remediated. Needs the same treatment as the stay-pricing fix above: find a compliant substitute source (Wikivoyage prose sometimes mentions meal-price ranges; general web research citing primary compliant sources is another option) and either reconstruct the same figures via a multiplier or accept a fresh recalibration. **This was raised to the user mid-session and not yet resolved** — flag it explicitly before treating the premium food figures as settled/compliant in any future doc or decision.
+
+**Also open:** `docs/eval-set.md` §10's BC-004/BC-005 stored `anchor_low_inr`/`anchor_high_inr` golden values (computed 2026-07-21, before this session's stay-pricing changes and the earlier premium-food recalibration) are now stale relative to what `estimate_bare_minimum_budget()` actually returns for those exact trip configs (spot-checked this session: BC-004 now computes ₹68,800 vs. the stored ₹51,100 anchor; BC-005 now computes ₹503,800 vs. the stored ₹293,300 anchor) — the dataset needs regenerating, but that's an eval/data decision (not a doc-only fix) left for next session.
 
 ---
 
@@ -313,6 +337,8 @@ None of this dataset research has been downloaded or applied to `_COST_MATRIX`/`
 **✅ Built earlier this session — `apps/api/scripts/recalibrate_pricing.py`:** a documented helper with (a) ready-to-open Google Flights/Skyscanner search links for one route per remaining flight band (regional/long-haul/ultra-long-haul) and Booking.com/Numbeo links for one destination per remaining cost-matrix tier (moderate/premium), and (b) a CLI that takes whatever real number you found and does the same "anchor + nudge neighbours just enough to stay monotonic" recalibration the Bengaluru→Colombo fix did by hand, printing a diff + a ready-to-paste updated table. Doesn't edit source files itself (recalibration is worth a glance before landing). 11 unit tests cover the monotonicity-preserving arithmetic in both directions and confirm it never mutates the real tables it reads.
 
 **Still needed (updated 2026-07-21):** `_COST_MATRIX`'s premium-tier food figures are now recalibrated (via real Numbeo data, not this script — Numbeo isn't JS-rendered so it could actually be fetched, unlike Booking.com/Skyscanner) — see the top of item 10 below. `stay_per_night_pp` for both moderate and premium tiers is still unrecalibrated (no free, scrapeable hotel-pricing source found yet), and a decision on whether to pursue Kaggle API access for the dataset research above is still open.
+
+**🆕 2026-07-21 (later, later) — `stay_per_night_pp` recalibrated for moderate/premium, then re-sourced again for licensing (⚠️ superseded).** Originally recalibrated via **budgetyourtrip.com** ($96/day Bangkok, $350/day Paris → ₹7,968/₹29,050). **This source was found mid-session to prohibit commercial use in its ToS** — see the "licensing fix" section at the very top of this file for the full remediation (replaced with Wikivoyage + an empirically-derived multiplier, ending at ₹7,916/₹29,049 — numerically almost identical, now compliantly sourced). Treat this paragraph as historical context only; the top section is the current state. **Remaining gap, still open**: economical-style stay anchors for both tiers still need their own anchors, and the premium-tier food figures below were Numbeo-sourced and have the **same unresolved licensing problem** — see the top section's "still open" callout.
 
 ### 12. Fix the Borough Market / Harry Potter recurring precision miss — ✅ done 2026-07-20
 

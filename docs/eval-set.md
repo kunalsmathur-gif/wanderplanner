@@ -1003,6 +1003,32 @@ accuracy at all:
 | BC-004 | Mumbai → Bangkok | moderate | 1 adult, 5 days | Real Numbeo Bangkok cost-of-living data (`core/budget_estimator.py` `_COST_MATRIX` docstring, spot-checked 2026-07-21) |
 | BC-005 | Mumbai → Paris | premium | 2 adults, 6 days | Real Numbeo Paris cost-of-living data (`core/budget_estimator.py` `_COST_MATRIX` docstring, recalibrated 2026-07-21) |
 
+### 10C-pre — ⚠️ Sourcing/staleness caveats (added 2026-07-21, v10.32 session)
+
+Two things found while auditing the estimator's sourcing that affect how
+trustworthy this section's own "real anchor" claims are — noted here
+rather than silently left implicit:
+
+1. **BC-004/BC-005's cited "Real Numbeo Bangkok/Paris cost-of-living data"
+   is licensing-encumbered, not yet remediated.** Numbeo's ToS requires a
+   paid commercial data license for this kind of use; the premium-tier
+   `food_per_day_pp` figures these two cases partially trace back to have
+   **not yet been re-sourced** onto a compliant alternative (unlike
+   `stay_per_night_pp`, which was re-sourced onto Wikivoyage + Inside
+   Airbnb this session — see `core/budget_estimator.py`'s docstring and
+   `TECHNICAL_DOCUMENTATION.md` §14 v10.32). Treat BC-004/BC-005's anchor
+   sourcing as provisional until that's fixed.
+2. **The dataset's stored `anchor_low_inr`/`anchor_high_inr` golden values
+   are now stale.** They were computed once (2026-07-21) and frozen, but
+   `_COST_MATRIX` has since changed twice (the v10.31 food recalibration,
+   then this session's stay-pricing re-sourcing). Recomputing
+   `estimate_bare_minimum_budget()` against BC-004/BC-005's exact stored
+   `trip_config` now returns ₹68,800 and ₹503,800 respectively — both well
+   outside the stored ±15% bounds (₹43,435–₹58,765 and ₹249,305–₹337,295).
+   Regenerating these golden values is a deliberate eval/data decision
+   (not folded into this doc-only pass) — tracked in
+   `docs/NEXT_SESSION_TODO.md`.
+
 ### 10C — Status: ❌ NOT YET RUN AT SCALE
 
 Smoke-tested end-to-end against a live Gemini call (1 model x 5 cases x 1
