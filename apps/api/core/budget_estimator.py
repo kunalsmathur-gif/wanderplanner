@@ -190,6 +190,31 @@ def is_peak_season(city: str | None, country: str | None, start_date: str | None
 # free, non-JS-rendered hotel-pricing source was found; left as the existing
 # hand-authored figure pending a real anchor (see
 # `scripts/recalibrate_pricing.py`'s docstring for candidate sources).
+#
+# stay_per_night_pp for "moderate" and "premium" tiers RECALIBRATED
+# 2026-07-21 (later) against real budgetyourtrip.com "average traveler"
+# hotel-spend figures (a real, non-JS-rendered, aggregated-from-actual-
+# travellers source — Booking.com/Skyscanner/Numbeo all remain unusable for
+# this, per the note above and `scripts/recalibrate_pricing.py`'s docstring),
+# converted at USD/INR = 83 via `scripts/recalibrate_pricing.py --tier ...
+# --stay-per-night-inr ...`:
+#   - Bangkok (moderate/mid_range anchor): $96/day → ₹7,968 (was ₹3,500 — a
+#     2.3x undershoot)
+#   - Paris (premium/mid_range anchor): $350/day → ₹29,050 (was ₹8,000 — a
+#     3.6x undershoot, the largest gap found in this whole recalibration
+#     effort)
+# Both anchors are "average traveler" spend, i.e. a mid_range proxy, not
+# separately sourced per spending style — the script's usual
+# "nudge neighbours just enough to preserve monotonicity" mechanism was used
+# to keep economical <= mid_range <= premium (both spending-style-within-tier
+# and same-style-across-tier) consistent: moderate/premium nudged 6,000 →
+# 9,163; premium/premium nudged 15,000 → 33,408. economical-tier figures for
+# both rows are untouched — no real anchor for that style yet. This was by
+# far the least-verified figure in the whole cost matrix (had literally zero
+# real data points, in either tier, before this) and the biggest single
+# recalibration in this project's history — treat the exact numbers as a
+# first real anchor, not gospel, and keep sourcing more independent anchors
+# (ideally per spending style, not just mid_range) as they turn up.
 # ---------------------------------------------------------------------------
 
 _COST_MATRIX: dict[str, dict[str, dict[str, int]]] = {
@@ -200,13 +225,13 @@ _COST_MATRIX: dict[str, dict[str, dict[str, int]]] = {
     },
     "moderate": {
         "economical": {"flight_roundtrip_pp": 15000, "stay_per_night_pp": 2000, "food_per_day_pp": 1200},
-        "mid_range":  {"flight_roundtrip_pp": 20000, "stay_per_night_pp": 3500, "food_per_day_pp": 2200},
-        "premium":    {"flight_roundtrip_pp": 28000, "stay_per_night_pp": 6000, "food_per_day_pp": 3800},
+        "mid_range":  {"flight_roundtrip_pp": 20000, "stay_per_night_pp": 7968, "food_per_day_pp": 2200},
+        "premium":    {"flight_roundtrip_pp": 28000, "stay_per_night_pp": 9163, "food_per_day_pp": 3800},
     },
     "premium": {
         "economical": {"flight_roundtrip_pp": 28000, "stay_per_night_pp": 4000,  "food_per_day_pp": 4245},
-        "mid_range":  {"flight_roundtrip_pp": 38000, "stay_per_night_pp": 8000,  "food_per_day_pp": 6546},
-        "premium":    {"flight_roundtrip_pp": 55000, "stay_per_night_pp": 15000, "food_per_day_pp": 9300},
+        "mid_range":  {"flight_roundtrip_pp": 38000, "stay_per_night_pp": 29050, "food_per_day_pp": 6546},
+        "premium":    {"flight_roundtrip_pp": 55000, "stay_per_night_pp": 33408, "food_per_day_pp": 9300},
     },
 }
 
