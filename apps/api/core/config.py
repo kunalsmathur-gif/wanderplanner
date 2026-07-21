@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     # into the production generate_itinerary() provider switch above.
     openai_api_key: str = ""
     anthropic_api_key: str = ""
+    # Only used by eval/run_budget_comparison.py (docs/eval-set.md §14) to
+    # call Moonshot's Kimi models directly, alongside OpenAI/Anthropic/Gemini,
+    # for the "our estimator vs asking an LLM directly" budget comparison —
+    # same "not wired into production" scope as the two keys above. Moonshot's
+    # API is OpenAI-SDK-compatible (different base_url only).
+    moonshot_api_key: str = ""
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
     llm_timeout_seconds: int = 30

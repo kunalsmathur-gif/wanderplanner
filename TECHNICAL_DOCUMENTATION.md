@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.30.0 (Pilot OSM/Wikivoyage re-ingestion for 9 priority destinations; new Wikimedia UA-policy 403 root-caused and fixed; YouTube hidden-gems pipeline built and live-verified end-to-end)
+**Version:** 10.31.0 (Budget-estimator premium-tier recalibration; new LLM-vs-estimator budget comparison eval; Moonshot/Kimi eval provider added; domestic rail/bus/cab + Kaggle pricing plan confirmed for next session)
 **Last Updated:** July 21, 2026  
 **Status:** Production-ready MVP
 
@@ -1129,6 +1129,13 @@ for the full methodology and process-discipline rules, `docs/system-design.md`
 | `run_refinement_eval.py` | Pinned-POI refinement (§8/§12) | Recall/precision/inclusion/stability + honesty, reusing the production fuzzy name matcher |
 | `run_red_team_eval.py` | Injection/safety surfaces (`core/prompt_guard.py`) | Canary/keyword/cost-abuse checks per adversarial case |
 | `run_model_comparison.py` | Itinerary generation model selection | Deterministic accuracy/hallucination + **LLM-as-judge** (`judge_metrics.py`: tone/personalization/coherence, scored by a model fixed independently of whichever model is under test) + cost/latency |
+| `run_budget_comparison.py` (⭐ NEW 2026-07-21) | Budget estimation: WanderPlanner's own deterministic estimator vs. asking a general-purpose chatbot directly | 5 real-anchor-documented cases (`budget_comparison_dataset.json`); scores anchor adherence, no-answer rate, false-positive info-already-given stalls, breakdown rate, hedge-language use, and run-to-run variance (the estimator is exactly 0.0 by construction; LLMs asked 3x are not) — see `docs/eval-set.md` §10 |
+
+**Eval-only LLM providers** (`eval/llm_providers.py`, not wired into
+production inference): OpenAI GPT-4o-mini, Anthropic Claude 3.5 Haiku,
+Google Gemini 2.5 Flash, and (⭐ NEW 2026-07-21) Moonshot/Kimi
+(`kimi-k2-0711-preview`), added specifically for `run_budget_comparison.py`
+so the eval covers the same model spread a real user might ask directly.
 
 **Supporting tools** (⭐ NEW 2026-07-18): `compare_results.py` diffs two
 timestamped result files metric-by-metric to flag regressions between a
@@ -1493,7 +1500,19 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.31.0 Changes (July 2026) — Budget-estimator premium-tier recalibration + new LLM-vs-estimator budget comparison eval + Moonshot/Kimi eval provider (item 5/10)
+
+Follow-up session continuing item 10's budget-estimator recalibration (`core/budget_estimator.py`'s `_COST_MATRIX`, last touched partially in v10.28.0), plus a new eval comparing WanderPlanner's own estimator against asking a general-purpose chatbot directly. **Note:** these changes were staged (`git add`) but intentionally left uncommitted at the user's request, pending a separate go-ahead.
+
+| Change | Detail |
+|---|---|
+| **Recalibrated** `_COST_MATRIX['premium']` food figures | Sourced real Numbeo cost-of-living data for Paris (raw HTML fetch, since Numbeo's JS-rendered page returns nothing via markdown fetch) — all 3 spending styles independently sourced (not one anchor + proportional scaling like v10.28.0's flight-band fixes): economical ₹2,000→4,245, mid_range ₹3,800→6,546, premium ₹6,500→9,300 — a 1.4–2.2x undershoot, worse at lower spending styles (same shape as the earlier Sri Lanka food fix). Spot-checked `moderate`-tier food figures against real Bangkok Numbeo data too and found them already close (~3% off) — left unchanged, verified-not-broken. `stay_per_night_pp` for both tiers is **still not recalibrated** — Numbeo doesn't track hotel rates, and Booking.com/Skyscanner are both JS-rendered and can't be scraped by this repo's fetch tooling, same blocker noted in v10.28.0. Full sourcing math documented inline in `_COST_MATRIX`'s docstring for future auditability (FX rates used: EUR/INR ≈ 93, THB/INR ≈ 2.42, both derived from ~1.08 USD/EUR and ~36 THB/USD). |
+| **Built** `eval/run_budget_comparison.py` + `eval/budget_comparison_scoring.py` + `eval/budget_comparison_dataset.json` | New eval trio (docs/eval-set.md §10) comparing WanderPlanner's own deterministic estimator (zero-variance, free, by construction) against asking GPT-4o-mini/Claude-3.5-Haiku/Gemini-2.5-Flash/Kimi the identical budget question the way an ordinary user would type it into a chatbot directly — no system prompt, no RAG context, no forced JSON. 5 real-anchor-documented cases (BC-001–BC-005: Bengaluru→Colombo, Bengaluru→London, Delhi→Goa, Mumbai→Bangkok, Mumbai→Paris). Scores anchor adherence (directional only — the dataset's own bounds are the estimator's output, not independent ground truth), no-answer rate, false-positive "already told you that" stalls, breakdown rate, hedge-language use, and run-to-run variance. Smoke-tested live end-to-end against real Gemini API (works correctly); not yet run against the full 4-model set (needs `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`/`MOONSHOT_API_KEY` populated). |
+| **Added** Moonshot/Kimi as a 4th eval-only LLM provider | `core/config.py` (`moonshot_api_key`), `eval/llm_providers.py` (`MODEL_REGISTRY` entries + `_call_moonshot`, all `_call_*` functions refactored to accept a `json_mode: bool = True` param so the new freeform-prompt eval doesn't force JSON output), `core/llm_client.py` (Moonshot pricing table entries: `kimi-k2-0711-preview`, `moonshot-v1-8k`). Same "eval-only, not wired into production" scope as the existing OpenAI/Anthropic keys. |
+| **Tests** | 24 new unit tests in `tests/unit/test_budget_comparison_scoring.py`, all passing, fully offline (no live API calls). Full backend suite green (335 passed, 6 skipped — same 1 pre-existing unrelated `test_budget_estimator.py` collection error, Python 3.9 `X \| None` syntax issue, confirmed pre-existing via `git stash`). Ruff lint clean on all changed/new files. |
+| **Planned, not built** Domestic rail/bus/cab alternative + Kaggle-grounded pricing (follow-up request, same session) | User asked to extend item 10 further: add a rail/bus/cab budget alternative for India-domestic routes (compared against flights, cheaper option called out when >15% cheaper — international stays flight-only), integrate Kaggle flight/hotel datasets with inflation + peak-time multipliers, and plan a long-term data-freshness strategy (free dataset refresh vs. paid APIs). Went through a full plan-mode round (clarifying questions on scope, free-vs-paid stance, Kaggle account ownership) before landing a confirmed plan — **nothing in this workstream has been implemented yet**, it's fully recorded as next-session action items in `docs/NEXT_SESSION_TODO.md`. Verified `Inside Airbnb` (insideairbnb.com) live as a genuinely fresh, free, no-auth international hotel-pricing source (quarterly-refreshed CSVs, CC BY 4.0) but with **zero India coverage** (Mumbai/Goa both 404) — India hotel pricing remains an unresolved gap, flagged rather than papered over. See `docs/NEXT_SESSION_TODO.md`'s new top section for the full plan. |
 
 ### v10.30.0 Changes (July 2026) — Pilot OSM/Wikivoyage re-ingestion (8 destinations) + a new Wikimedia 403 root-caused, YouTube hidden-gems groundwork (item 3, key pending)
 

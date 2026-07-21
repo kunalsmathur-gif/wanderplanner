@@ -1,6 +1,64 @@
 # Next-Session TODO — Post-Cloud-migration cleanup → Reddit approval → Phase 2
 
-**Last updated:** 2026-07-21 (pilot OSM/Wikivoyage re-ingestion for 8 destinations + YouTube hidden-gems groundwork — see new section immediately below; see v10.30.0 in `TECHNICAL_DOCUMENTATION.md` §14 for full detail)
+**Last updated:** 2026-07-21 (planned, not yet built: domestic rail/bus/cab alternative + Kaggle-grounded flight/hotel pricing — see new section immediately below)
+
+---
+
+## 🆕 2026-07-21 session (planned, not yet built) — domestic rail/bus/cab alternative + Kaggle-grounded flight/hotel pricing
+
+**Status: PLANNED ONLY, nothing in this section has been implemented yet.** Full plan confirmed with user via a plan-mode session; action items below are the next-session to-dos. See prior recalibration section (item 10, just below) for context on what's already been recalibrated.
+
+**Confirmed scope:**
+1. Rail/bus/cab as an intercity alternative — **only for domestic (India-internal) routes**. International routes stay flight-only. When domestic, compute both the flight estimate (existing `distance_pricing.py` bands) and a rail/bus/cab estimate, compare them, and call out the cheaper option only when it's >15% cheaper (avoid noisy "consider the bus" nudges on trivial savings).
+2. Free vs. paid data sourcing — intentionally left undecided; the plan lays out trade-offs (cost/freshness/effort) for the user to decide from, not baked into a recommendation.
+3. Kaggle account/API token setup is a user (human) action — the agent's deliverable is a runbook + ingestion script, not live credential setup.
+4. Two independent multipliers (NOT merged with the existing general `_PEAK_SEASON_MULTIPLIER = 1.25` in `core/budget_estimator.py`):
+   - **Inflation multiplier**: scales with how stale a dataset is (e.g. ~1.05–1.08x per year elapsed, compounding — exact rate to be sourced from a CPI/travel-inflation reference at implementation time).
+   - **Peak-time multiplier**: dataset-specific, derived from within-dataset seasonal fare variance (e.g. the Kaggle flight data's date-of-journey column) — stacks multiplicatively on top of both the inflation multiplier and the existing general 1.25x multiplier, with an explicit precedence guard so datasets already peak-adjusted don't get double-counted.
+
+**Workstream A — Domestic rail/bus/cab alternative:**
+- New module `core/domestic_transport_pricing.py` (parallel to `distance_pricing.py`): `RAIL_BANDS`/`BUS_BANDS` (distance-based ₹/km slabs, seat61.com-derived approximations from the 2026-07-20 research, LOW-MEDIUM confidence) + `estimate_domestic_alternative(distance_km, class_tier)` returning rail/bus/cab (cab for short hops only, e.g. <150km).
+- `core/budget_estimator.py`: detect domestic (both origin/destination in India) routes, call the new module alongside the flight estimate, add a `cheaper_alternative` field with plain-language call-out.
+- Surface the call-out in `chains/wizard_chat_chain.py`/itinerary chain user-facing copy.
+- Tests: unit tests for the new module + integration test confirming the call-out only fires for domestic routes and only above the 15% threshold.
+
+**Workstream B — Kaggle dataset integration:**
+- Runbook `docs/kaggle-data-runbook.md`: account creation → API token generation → `kaggle.json` placement (`~/.kaggle/kaggle.json`, `chmod 600`) → `pip install kaggle` → download commands.
+- **Flights (India domestic):** `shubhambathwal/flight-price-prediction` (Kaggle, 300K rows, CC0, EaseMyTrip, 6 metros, Feb–Mar 2022) as primary; MachineHack 2019 set as secondary cross-check. No dataset found for India-origin *international* flight routes — those stay on the existing manually-anchored `DISTANCE_BANDS`.
+- **Hotels (international):** **Inside Airbnb** (insideairbnb.com) — verified live this session: NOT a Kaggle dataset, a standalone free project, no account/API token needed, direct CSV download, CC BY 4.0, genuinely continuously refreshed (quarterly per-city, saw June 2026 data live) — much better freshness than any static Kaggle CSV. **Verified gap: no India coverage** (checked Mumbai and Goa directly, both 404 — Inside Airbnb only covers US/Europe/select global cities).
+- **Hotels (India domestic) — the weakest link, no clean source found:**
+  - Kaggle: could not verify live (kaggle.com search is JS-rendered, same fetch blocker hit repeatedly this session). No canonical India hotel-pricing dataset known to exist like the flight one — any India hotel Kaggle datasets are likely small individually-scraped MakeMyTrip/Goibibo snapshots of unverified freshness/quality.
+  - India OTA aggregators checked (MakeMyTrip, Goibibo, OYO, Cleartrip, Yatra): all JS-rendered SPAs, no public/free pricing API — same blocker class as Booking.com/Skyscanner, would need paid partner/affiliate API access.
+  - `data.gov.in` (Ministry of Tourism): free hotel count/star-classification datasets by state — inventory/tier-availability signal only, not per-night ₹ pricing.
+  - Google Places API (paid, cheap per-call): returns a `price_level` (0–4 ordinal scale) per hotel — not exact ₹ figures, but real, India-covering, always-fresh. Flagged as the most realistic paid upgrade path specifically for this gap.
+  - **Recommendation:** continue the manual Numbeo/screenshot-anchor approach (as already done for the premium tier) as the near-term fix for India hotels.
+- Ingestion script `scripts/ingest_kaggle_pricing.py`: loads raw CSV(s), groups by route/distance-band, computes median/percentile fares, applies the inflation multiplier by dataset age, emits a JSON "calibration proposal" diff for human review — does **not** auto-write into `_COST_MATRIX`/`DISTANCE_BANDS`, mirroring `recalibrate_pricing.py`'s existing "propose, don't auto-apply" convention.
+
+**Workstream C — Multiplier design:** new `core/pricing_multipliers.py`, shared by flight bands and the new domestic-transport bands — `inflation_multiplier(dataset_year, reference_year)` and `dataset_peak_multiplier(dataset, month)`, stacking multiplicatively with documented precedence rules.
+
+**Workstream D — Long-term data-freshness strategy (decision doc, not code):** new `docs/data-freshness-strategy.md` comparing manual Kaggle re-download (free, low effort, matches current philosophy), scheduled re-pull (free, unpredictable cadence risk), Inside-Airbnb-style continuously-refreshed open data (free, proves the pattern works but coverage-dependent — no India), Google Places `price_level` (low-cost paid, best fit for the India-hotel gap specifically), and a full paid live-fare API (best freshness, real cost/integration effort) — final call deliberately left to the user.
+
+**Action items for next session:**
+1. Build `core/domestic_transport_pricing.py` + rail/bus band data.
+2. Wire domestic alternative comparison into `budget_estimator.py` + surface call-out copy in chat/itinerary chains.
+3. Write `docs/kaggle-data-runbook.md`.
+4. Build `scripts/ingest_kaggle_pricing.py` (propose-only, human-reviewed diff).
+5. Build `core/pricing_multipliers.py` (inflation + dataset-peak multiplier, with precedence guard vs. existing general peak multiplier).
+6. Write `docs/data-freshness-strategy.md` comparison table; get user's free-vs-paid decision recorded.
+7. Add unit tests for all new modules; extend the existing budget-comparison eval with a domestic case asserting the cheaper-alternative call-out.
+8. Update this doc to reflect execution progress once started.
+9. **User action:** once Kaggle account/token is set up, re-search Kaggle live for **both India hotel pricing and international hotel pricing** datasets (agent's fetch tool can't render Kaggle's JS search UI) — report back any candidates found (including anything better than Inside Airbnb internationally, and anything at all for India) for evaluation/ingestion.
+10. Spot-check `data.gov.in` Ministry of Tourism hotel classification datasets as an auxiliary (non-pricing) signal for India hotel tier availability.
+
+**Open risks:** domestic vs. international detection needs a reliable signal (check for an existing city/country lookup before building a new one); the Kaggle flight dataset is Feb–Mar 2022 only (no full-year seasonality, limits `dataset_peak_multiplier` confidence — may need a festival/holiday-calendar fallback instead); India hotel pricing remains genuinely unresolved.
+
+---
+
+## 🆕 2026-07-21 session (later) — budget-estimator premium-tier recalibration + budget-comparison eval (item 5/10)
+
+Recalibrated `core/budget_estimator.py`'s `_COST_MATRIX['premium']` food figures against real Numbeo cost-of-living data for Paris (all 3 spending styles independently sourced — economical ₹2,000→4,245, mid_range ₹3,800→6,546, premium ₹6,500→9,300 — a 1.4-2.2x undershoot, worse at lower spending styles, same shape as the 2026-07-20 Sri Lanka fix). Spot-checked the `moderate` tier against real Bangkok Numbeo data too and found it already close (~3%) — left unchanged. `stay_per_night_pp` for both tiers still needs a real anchor (Numbeo doesn't track hotels; Booking.com/Skyscanner are JS-rendered and can't be scraped by this repo's tooling). Full source figures + math in `_COST_MATRIX`'s updated docstring. See item 10 below for full detail.
+
+Also built `eval/run_budget_comparison.py` + `eval/budget_comparison_scoring.py` + `eval/budget_comparison_dataset.json` (docs/eval-set.md §10): compares WanderPlanner's own (now-recalibrated) deterministic budget estimator against asking GPT-4o-mini/Claude-3.5-Haiku/Gemini-2.5-Flash/Kimi (Moonshot, newly added as a 4th eval-only provider) the identical budget question a real user would type directly into a chatbot — no system prompt, no RAG context, no forced JSON. Scores anchor adherence (directional only — see the dataset's own caveat), no-answer rate, whether the model asks for info it's already been given (a false-positive stall, since WanderPlanner's own estimator's discipline is refusing to quote *until* that info is missing, not after), breakdown rate, hedge-language use, and run-to-run variance (WanderPlanner's estimator is exactly 0.0 by construction; LLMs asked the same question 3x are not). Smoke-tested live end-to-end against Gemini (works correctly); not yet run against the full 4-model set — needs `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`/`MOONSHOT_API_KEY`. 24 new unit tests, fully offline (`tests/unit/test_budget_comparison_scoring.py`); full backend suite still green (335 passed, 6 skipped, same 1 pre-existing unrelated collection error in `test_budget_estimator.py` as prior sessions).
 
 ---
 
@@ -217,7 +275,11 @@ Register Viator / GetYourGuide / Skyscanner affiliate programs and supply IDs. L
 
 Confirmed: the test predated the product decision. `routers/auth.py::signup()` intentionally returns `"An account with this email already exists. Try logging in instead."` (per an explicit product-decision comment). Fixed `tests/integration/test_auth.py::test_signup_rejects_duplicate_email` to assert the correct message. 8 tests passing.
 
-### 10. Recalibrate the rest of the budget-estimator's hand-authored figures as real data points turn up — ⚠️ partial progress 2026-07-20 (3 real anchors applied to `DISTANCE_BANDS`; `_COST_MATRIX` still fully unrecalibrated)
+### 10. Recalibrate the rest of the budget-estimator's hand-authored figures as real data points turn up — ⚠️ further progress 2026-07-21 (`_COST_MATRIX` premium tier now recalibrated; `DISTANCE_BANDS` unchanged this session)
+
+**🆕 2026-07-21 session:** `core/budget_estimator.py`'s `_COST_MATRIX['premium']['food_per_day_pp']` row recalibrated against real Numbeo cost-of-living data for Paris (all three spending styles — economical/mid_range/premium — each independently sourced, not one anchor + proportional scaling like prior fixes): ₹2,000→4,245 / ₹3,800→6,546 / ₹6,500→9,300, an undershoot of 1.4-2.2x, worse at the lower spending styles (same shape as the 2026-07-20 Sri Lanka food fix). The `moderate` tier's food figures were spot-checked against real Numbeo Bangkok data too and found already close (within ~3%) — left unchanged, verified-not-broken. `stay_per_night_pp` for both tiers is still NOT recalibrated — Numbeo doesn't track hotel rates and no free, non-JS-rendered hotel-pricing source was found this session either; still needs a real anchor (see `scripts/recalibrate_pricing.py`'s docstring for candidate sources — Booking.com/Skyscanner are both JS-rendered and can't be scraped by this repo's fetch tooling, same blocker as before). Full reasoning + exact per-meal source figures documented in `core/budget_estimator.py`'s `_COST_MATRIX` docstring.
+
+**🆕 2026-07-21 — also built: `eval/run_budget_comparison.py`** (docs/eval-set.md §10) — compares WanderPlanner's own recalibrated estimator against asking GPT-4o-mini/Claude/Gemini/Kimi the same budget question directly, as an ordinary chatbot user would. Smoke-tested live against Gemini (works end-to-end); not yet run against the full model set (needs `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`/`MOONSHOT_API_KEY`). Added Moonshot/Kimi as a fourth eval-only provider (`eval/llm_providers.py`, `core/config.py`'s new `moonshot_api_key`, `core/llm_client.py` pricing table) — same "eval-only, not wired into production" scope as the OpenAI/Anthropic keys already there. See docs/eval-set.md §10 for the full metric list and the important caveat about what its anchor bounds do/don't prove (they're our own estimator's output, not independent ground truth — the real citations are what should be trusted).
 
 Two more real anchors landed this session on top of the Bengaluru→Colombo one from v10.26.0: a Bengaluru→London long-haul round-trip fare (₹67,327, screenshot-sourced) recalibrated the long-haul band via the full anchor+nudge algorithm, and a Delhi↔Goa peak-season (Dec 25–31) round-trip fare (~₹18,157–20,389) manually lowered the regional band's low end only (the high end still covers pricier international-regional routes a domestic anchor says nothing about — user's explicit call, see `core/distance_pricing.py`'s comment block for the full reasoning). `core/budget_estimator.py`'s `_COST_MATRIX` (moderate/premium stay/food tiers) remains fully unrecalibrated — no real data point has been applied to it yet.
 
@@ -230,7 +292,7 @@ None of this dataset research has been downloaded or applied to `_COST_MATRIX`/`
 
 **✅ Built earlier this session — `apps/api/scripts/recalibrate_pricing.py`:** a documented helper with (a) ready-to-open Google Flights/Skyscanner search links for one route per remaining flight band (regional/long-haul/ultra-long-haul) and Booking.com/Numbeo links for one destination per remaining cost-matrix tier (moderate/premium), and (b) a CLI that takes whatever real number you found and does the same "anchor + nudge neighbours just enough to stay monotonic" recalibration the Bengaluru→Colombo fix did by hand, printing a diff + a ready-to-paste updated table. Doesn't edit source files itself (recalibration is worth a glance before landing). 11 unit tests cover the monotonicity-preserving arithmetic in both directions and confirm it never mutates the real tables it reads.
 
-**Still needed:** at least one real number for `_COST_MATRIX`'s moderate/premium tiers (script's docstring has the links), and a decision on whether to pursue Kaggle API access to apply the dataset research above.
+**Still needed (updated 2026-07-21):** `_COST_MATRIX`'s premium-tier food figures are now recalibrated (via real Numbeo data, not this script — Numbeo isn't JS-rendered so it could actually be fetched, unlike Booking.com/Skyscanner) — see the top of item 10 below. `stay_per_night_pp` for both moderate and premium tiers is still unrecalibrated (no free, scrapeable hotel-pricing source found yet), and a decision on whether to pursue Kaggle API access for the dataset research above is still open.
 
 ### 12. Fix the Borough Market / Harry Potter recurring precision miss — ✅ done 2026-07-20
 

@@ -1,0 +1,77 @@
+{
+  "version": "1.0",
+  "description": "Budget-recommendation comparison eval (docs/eval-set.md \u00a714, item 5/10 follow-up). Answers a concrete product question: if a user just pasted their itinerary into ChatGPT/Claude/Gemini/Kimi and asked 'what should I budget for this trip?', how does that freeform answer compare to WanderPlanner's own deterministic bare-minimum estimator (core/budget_estimator.py)? This is NOT the same question as eval/model_comparison_dataset.json (which compares candidate LLMs on WanderPlanner's own itinerary-generation prompt/RAG context) -- this harness sends each case's trip details as an ORDINARY END-USER WOULD TYPE THEM, with no system prompt, no RAG context, and no structured-output constraint, to see what a traveller gets from a general-purpose chatbot instead of the app.",
+  "anchor_methodology": "anchor_low/anchor_high (INR, bare-minimum flights+stay+food total for the full group) are core/budget_estimator.py's OWN output for each case's trip_config, computed once when this dataset was authored and stored statically (same 'fixed golden expectation' approach every other eval dataset in this directory uses), +/-15%. This is NOT independent third-party ground truth -- it is honest about being 'our own estimator's answer, which is itself grounded in the real fare/cost anchors documented in core/distance_pricing.py and core/budget_estimator.py's _COST_MATRIX docstring (Bengaluru->Colombo and Bengaluru->London real fares, Delhi->Goa real peak fare, Bangkok/Paris real Numbeo cost-of-living data)'. Scoring therefore measures two genuinely different things and reports them separately, never blended into one number: (1) anchor_adherence -- how close each LLM's freeform total lands to OUR estimator's real-anchor-grounded number (a directional 'is the LLM in the right ballpark' signal, not a claim our number is definitively correct); (2) behavioural checks (asked_clarifying_question, gave_breakdown, hedge_language, run-to-run variance) that don't depend on any ground truth at all and are the more interesting comparison -- WanderPlanner deliberately refuses to quote a number until group size + departure city are known (see core/budget_estimator.py's module docstring), and this eval checks whether a generic chatbot exhibits the same discipline or just confidently guesses.",
+  "cases": [
+    {
+      "id": "BC-001",
+      "label": "Bengaluru -> Colombo, 2 adults, 4-day near-neighbour budget trip",
+      "origin": {"city": "Bengaluru", "country": "India", "lat": 12.9716, "lon": 77.5946},
+      "destination": {"city": "Colombo", "country": "Sri Lanka", "lat": 6.9271, "lon": 79.8612},
+      "scope": "international",
+      "dates": {"start": "2026-11-10", "end": "2026-11-13", "duration_days": 4},
+      "group": {"adults": 2},
+      "traveller_level_hint": null,
+      "user_prompt": "I'm planning a 4-day trip from Bengaluru to Colombo, Sri Lanka for 2 adults, travelling around November 10-13, 2026. We haven't booked flights or hotels yet and want to keep costs reasonable (mid-range, not luxury, not backpacking). Roughly how much should we budget in total for flights, accommodation, and food for both of us?",
+      "anchor_low_inr": 58140,
+      "anchor_high_inr": 78660,
+      "anchor_source": "core.budget_estimator.estimate_bare_minimum_budget() = \u20b968,400 total (\u00b115%), itself grounded in the real Bengaluru->Colombo \u20b927,000 round-trip fare anchor (core/distance_pricing.py) and the real Sri Lanka mid-range food research (~$20-25/day, core/budget_estimator.py _COST_MATRIX docstring)."
+    },
+    {
+      "id": "BC-002",
+      "label": "Bengaluru -> London, 2 adults, 6-day long-haul premium trip",
+      "origin": {"city": "Bengaluru", "country": "India", "lat": 12.9716, "lon": 77.5946},
+      "destination": {"city": "London", "country": "United Kingdom", "lat": 51.5072, "lon": -0.1276},
+      "scope": "international",
+      "dates": {"start": "2026-08-10", "end": "2026-08-15", "duration_days": 6},
+      "group": {"adults": 2},
+      "traveller_level_hint": null,
+      "user_prompt": "We're 2 adults planning a 6-day trip from Bengaluru to London, roughly August 10-15, 2026. No flights or hotels booked yet. We'd like a comfortable mid-range trip -- nice hotels, good restaurants, but not full luxury/no-expense-spared. Roughly how much should we budget in total (INR) for flights, stay, and food for both of us?",
+      "anchor_low_inr": 275060,
+      "anchor_high_inr": 372140,
+      "anchor_source": "core.budget_estimator.estimate_bare_minimum_budget() = \u20b9323,600 total (\u00b115%), itself grounded in the real Bengaluru->London \u20b967,327 round-trip fare anchor (core/distance_pricing.py, MakeMyTrip Aug 2026)."
+    },
+    {
+      "id": "BC-003",
+      "label": "Delhi -> Goa, 2 adults, 5-day domestic peak-season (Christmas/New Year) budget trip",
+      "origin": {"city": "Delhi", "country": "India", "lat": 28.7041, "lon": 77.1025},
+      "destination": {"city": "Goa", "country": "India", "lat": 15.2993, "lon": 74.1240},
+      "scope": "domestic",
+      "dates": {"start": "2026-12-25", "end": "2026-12-29", "duration_days": 5},
+      "group": {"adults": 2},
+      "traveller_level_hint": null,
+      "user_prompt": "2 adults, planning a 5-day trip from Delhi to Goa over Christmas/New Year (Dec 25-29, 2026) -- yes we know it's peak season. No flights or hotels booked yet, want a reasonable mid-range budget, not backpacker-cheap, not a luxury resort. What total budget in INR should we plan for flights, stay, and food for both of us, given it's peak pricing?",
+      "anchor_low_inr": 60010,
+      "anchor_high_inr": 81190,
+      "anchor_source": "core.budget_estimator.estimate_bare_minimum_budget() = \u20b970,600 total (\u00b115%), itself grounded in the real Delhi->Goa \u20b918,157 round-trip peak-season fare anchor (core/distance_pricing.py, MakeMyTrip Dec 2026)."
+    },
+    {
+      "id": "BC-004",
+      "label": "Mumbai -> Bangkok, 1 adult solo, 5-day moderate mid-range trip",
+      "origin": {"city": "Mumbai", "country": "India", "lat": 19.0760, "lon": 72.8777},
+      "destination": {"city": "Bangkok", "country": "Thailand", "lat": 13.7563, "lon": 100.5018},
+      "scope": "international",
+      "dates": {"start": "2026-11-05", "end": "2026-11-09", "duration_days": 5},
+      "group": {"adults": 1},
+      "traveller_level_hint": null,
+      "user_prompt": "I'm a solo traveller planning a 5-day trip from Mumbai to Bangkok, roughly November 5-9, 2026. No flights or hotel booked yet. I want a comfortable mid-range trip, not backpacker-cheap but not a 5-star resort either. Roughly how much should I budget in total (INR) for flights, stay, and food?",
+      "anchor_low_inr": 43435,
+      "anchor_high_inr": 58765,
+      "anchor_source": "core.budget_estimator.estimate_bare_minimum_budget() = \u20b951,100 total (\u00b115%), itself grounded in real Numbeo Bangkok cost-of-living data spot-checked 2026-07-21 (core/budget_estimator.py _COST_MATRIX docstring) plus the flight-distance band from core/distance_pricing.py."
+    },
+    {
+      "id": "BC-005",
+      "label": "Mumbai -> Paris, 2 adults, 6-day premium mid-range honeymoon trip",
+      "origin": {"city": "Mumbai", "country": "India", "lat": 19.0760, "lon": 72.8777},
+      "destination": {"city": "Paris", "country": "France", "lat": 48.8566, "lon": 2.3522},
+      "scope": "international",
+      "dates": {"start": "2026-09-14", "end": "2026-09-19", "duration_days": 6},
+      "group": {"adults": 2},
+      "traveller_level_hint": null,
+      "user_prompt": "We're a couple planning a 6-day honeymoon trip from Mumbai to Paris, roughly September 14-19, 2026. No flights or hotels booked yet. We want a nice mid-range trip -- comfortable hotels, good restaurants, maybe one special splurge dinner -- not full luxury throughout. Roughly how much should we budget in total (INR) for flights, stay, and food for both of us?",
+      "anchor_low_inr": 249305,
+      "anchor_high_inr": 337295,
+      "anchor_source": "core.budget_estimator.estimate_bare_minimum_budget() = \u20b9293,300 total (\u00b115%), itself grounded in real Numbeo Paris cost-of-living data recalibrated 2026-07-21 (core/budget_estimator.py _COST_MATRIX docstring) plus the flight-distance band from core/distance_pricing.py."
+    }
+  ]
+}
