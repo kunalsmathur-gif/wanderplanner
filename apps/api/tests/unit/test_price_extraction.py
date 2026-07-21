@@ -48,3 +48,85 @@ def test_median_returns_value_once_enough_samples():
 def test_unrecognised_currency_symbol_ignored():
     amounts = extract_price_mentions_inr(["Cost about 5000 baht for the week."], *STAY_BOUNDS)
     assert amounts == []
+
+
+# --- Bare-number (no currency symbol) extraction, added 2026-07-21 for
+# casual YouTube comments (e.g. "Choki dani 700 per person") ---
+
+FOOD_BOUNDS = (50, 5000)
+
+
+def test_extracts_bare_amount_with_per_person_suffix():
+    amounts = extract_price_mentions_inr(["Choki dani 700 per person"], *FOOD_BOUNDS)
+    assert amounts == [700.0]
+
+
+def test_extracts_bare_amount_with_pp_suffix():
+    amounts = extract_price_mentions_inr(["Thali was 250pp, great value."], *FOOD_BOUNDS)
+    assert amounts == [250.0]
+
+
+def test_extracts_bare_amount_with_per_night_suffix():
+    amounts = extract_price_mentions_inr(["Got a room for 1200 per night near the fort."], STAY_BOUNDS[0], STAY_BOUNDS[1])
+    assert amounts == [1200.0]
+
+
+def test_extracts_bare_amount_after_price_verb():
+    amounts = extract_price_mentions_inr(["paid 500 for the whole taxi ride"], *FOOD_BOUNDS)
+    assert amounts == [500.0]
+
+
+def test_extracts_bare_amount_after_cost_verb_with_words_between():
+    amounts = extract_price_mentions_inr(["the total cost was around 900 for two"], *FOOD_BOUNDS)
+    assert amounts == [900.0]
+
+
+def test_bare_number_with_no_price_context_is_ignored():
+    # "Tapri central 200" has no unit/verb anchor — genuinely ambiguous,
+    # correctly left unextracted rather than guessed.
+    amounts = extract_price_mentions_inr(["Tapri central 200"], *FOOD_BOUNDS)
+    assert amounts == []
+
+
+def test_timestamp_like_number_not_misread_as_price():
+    amounts = extract_price_mentions_inr(["Skip to 10:30 for the food market segment"], *FOOD_BOUNDS)
+    assert amounts == []
+
+
+def test_view_count_not_misread_as_price():
+    amounts = extract_price_mentions_inr(["This video has 700 views already"], *FOOD_BOUNDS)
+    assert amounts == []
+
+
+def test_phone_number_like_digits_not_misread_as_price():
+    amounts = extract_price_mentions_inr(["call the guide at 98765 for details"], *FOOD_BOUNDS)
+    assert amounts == []
+
+
+def test_symbol_amount_not_double_counted_with_bare_pass():
+    # "₹700 per person" must be counted once (via the symbol pass), not
+    # again via the bare-number unit-suffix pass on the same text.
+    amounts = extract_price_mentions_inr(["₹700 per person for the buffet"], *FOOD_BOUNDS)
+    assert amounts == [700.0]
+
+
+def test_bare_amount_respects_bounds():
+    amounts = extract_price_mentions_inr(["paid 5000000 per person, absurd scam price"], *FOOD_BOUNDS)
+    assert amounts == []
+
+
+def test_median_uses_mixed_symbol_and_bare_amounts():
+    snippets = [
+        "Choki dani 700 per person, worth it",
+        "Another thali place was ₹650 per person",
+        "Tapri central was cheaper, 600 per person",
+    ]
+    assert median_price_inr(snippets, *FOOD_BOUNDS, min_samples=2) == 650.0
+
+
+def test_foreign_currency_after_price_verb_not_misread_as_inr():
+    # A number following a price-reporting verb is only assumed to be INR
+    # if no other currency word is attached to it — "5000 baht" must not
+    # be read as ₹5000.
+    amounts = extract_price_mentions_inr(["Cost about 5000 baht for the week."], *STAY_BOUNDS)
+    assert amounts == []
