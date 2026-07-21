@@ -109,6 +109,7 @@ async def semantic_search(
     limit: int = 10,
     vector: list[float] | None = None,
     bm25_query: str | None = None,
+    collections: list[str] | None = None,
 ) -> list[SearchResult]:
     # embed() is CPU-bound (sentence-transformers) and client.search() is a
     # blocking network call (sync QdrantClient). Both block the asyncio event
@@ -132,7 +133,12 @@ async def semantic_search(
             limit=limit // 2,
         )
 
-    collections = [settings.qdrant_collection_wiki, settings.qdrant_collection_reddit]
+    # Defaults to wiki+reddit (unchanged behavior for existing callers —
+    # itinerary RAG context, the /search endpoint, run_rag_eval.py). Callers
+    # that want to additionally draw on youtube_comments (e.g. cost_grounding's
+    # community price-mention search) pass `collections` explicitly.
+    if collections is None:
+        collections = [settings.qdrant_collection_wiki, settings.qdrant_collection_reddit]
     hits_per_collection = await asyncio.gather(
         *[asyncio.to_thread(_search_collection, c) for c in collections]
     )

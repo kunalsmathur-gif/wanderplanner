@@ -22,6 +22,7 @@ prompts — it does not replace the LLM's own estimate, it constrains it.
 from __future__ import annotations
 import logging
 
+from core.config import settings
 from core.distance_pricing import flight_band_inr
 from models.trip import TripConfig
 from services.search import semantic_search
@@ -42,12 +43,19 @@ def estimate_flight_cost_range_inr(trip_config: TripConfig) -> tuple[int, int] |
 
 async def community_price_snippets(dest_city: str, query_suffix: str, limit: int = 3) -> list[str]:
     """Best-effort: pull community-reported price mentions from the existing
-    free Reddit/Wikivoyage Qdrant collections. Never raises — retrieval
-    issues degrade to 'no snippets' rather than blocking cost estimation.
-    Takes a plain city string (rather than a TripConfig) so callers that
-    only have a destination name — e.g. core/budget_estimator.py, which
-    works on raw partial trip-config dicts — don't need a fully-populated
-    TripConfig just to call this."""
+    free Reddit/Wikivoyage/YouTube-comments Qdrant collections. Never raises —
+    retrieval issues degrade to 'no snippets' rather than blocking cost
+    estimation. Takes a plain city string (rather than a TripConfig) so
+    callers that only have a destination name — e.g. core/budget_estimator.py,
+    which works on raw partial trip-config dicts — don't need a
+    fully-populated TripConfig just to call this.
+
+    Explicitly includes `youtube_comments` alongside the default wiki+reddit
+    pair (2026-07-21): reddit is still at 0 points in prod (item 4, blocked
+    on approval), but youtube_comments already has real per-visit price
+    mentions from vloggers/commenters (e.g. "Choki dani 700 per person") that
+    the default wiki+reddit-only search never saw.
+    """
     if not dest_city:
         return []
     try:
@@ -55,6 +63,11 @@ async def community_price_snippets(dest_city: str, query_suffix: str, limit: int
             query=f"{dest_city} {query_suffix} price cost INR budget",
             destination=dest_city,
             limit=limit,
+            collections=[
+                settings.qdrant_collection_wiki,
+                settings.qdrant_collection_reddit,
+                settings.qdrant_collection_youtube_comments,
+            ],
         )
         return [r.text[:280] for r in results]
     except Exception:
