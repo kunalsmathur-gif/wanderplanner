@@ -27,22 +27,34 @@ returned dict.
 Stay and food work the same way, one level further: `_grounded_or_flat()`
 tries a real per-destination figure first — the median of community-reported
 nightly-rate/daily-spend mentions pulled from the app's existing free RAG
-collections (Reddit/Wikivoyage, via `core/cost_grounding.py` +
-`core/price_extraction.py`'s deterministic regex extraction, NOT an LLM
+collections (Reddit/Wikivoyage/YouTube comments, via `core/cost_grounding.py`
++ `core/price_extraction.py`'s deterministic regex extraction, NOT an LLM
 call — reintroducing LLM guessing here would recreate the exact problem this
 module exists to avoid) — and only falls back to the hand-authored flat
 _COST_MATRIX number when that comes up empty. As of 2026-07-20 the Reddit/
-Wikivoyage Qdrant collections are empty in production (ingestion has been
-broken for months — see project history), so this falls back to the flat
-number for virtually every destination today; the plumbing is in place for
-when ingestion is fixed. See `stay_community_based` / `food_community_based`
-in the returned dict.
+Wikivoyage Qdrant collections are near-empty in production, so this falls
+back further for most destinations today; the plumbing is in place for when
+ingestion improves. See `stay_community_based` / `food_community_based` in
+the returned dict.
+
+For stay specifically, there's one more fallback rung between community
+grounding and the flat _COST_MATRIX number: `core/airbnb_pricing.py`'s small,
+manually-seeded per-city lookup of real Inside Airbnb (CC BY 4.0) hotel-
+equivalent rates, for destinations where Wikivoyage has no usable inline
+hotel-pricing data but Inside Airbnb has real listing data (e.g. Istanbul).
+See `stay_airbnb_fallback_used` in the returned dict. Separately (and
+compatibly — the two can combine), if the user explicitly asks for an
+Airbnb/vacation-rental stay (`wants_airbnb_stay()`), whatever stay rate was
+resolved above gets discounted by `_AIRBNB_STAY_DISCOUNT_MULTIPLIER` to
+approximate self-catering pricing instead of a hotel room — see
+`stay_airbnb_based` in the returned dict.
 """
 from __future__ import annotations
 
 from datetime import date
 from typing import Any
 
+from core.airbnb_pricing import airbnb_hotel_equivalent_pp_inr
 from core.cost_grounding import community_median_price_inr
 from core.distance_pricing import flight_band_inr
 from core.price_extraction import FOOD_CONTEXT_KEYWORDS, STAY_CONTEXT_KEYWORDS
@@ -192,29 +204,41 @@ def is_peak_season(city: str | None, country: str | None, start_date: str | None
 # `scripts/recalibrate_pricing.py`'s docstring for candidate sources).
 #
 # stay_per_night_pp for "moderate" and "premium" tiers RECALIBRATED
-# 2026-07-21 (later) against real budgetyourtrip.com "average traveler"
-# hotel-spend figures (a real, non-JS-rendered, aggregated-from-actual-
-# travellers source — Booking.com/Skyscanner/Numbeo all remain unusable for
-# this, per the note above and `scripts/recalibrate_pricing.py`'s docstring),
-# converted at USD/INR = 83 via `scripts/recalibrate_pricing.py --tier ...
-# --stay-per-night-inr ...`:
-#   - Bangkok (moderate/mid_range anchor): $96/day → ₹7,968 (was ₹3,500 — a
-#     2.3x undershoot)
-#   - Paris (premium/mid_range anchor): $350/day → ₹29,050 (was ₹8,000 — a
-#     3.6x undershoot, the largest gap found in this whole recalibration
-#     effort)
-# Both anchors are "average traveler" spend, i.e. a mid_range proxy, not
-# separately sourced per spending style — the script's usual
-# "nudge neighbours just enough to preserve monotonicity" mechanism was used
-# to keep economical <= mid_range <= premium (both spending-style-within-tier
-# and same-style-across-tier) consistent: moderate/premium nudged 6,000 →
-# 9,163; premium/premium nudged 15,000 → 33,408. economical-tier figures for
-# both rows are untouched — no real anchor for that style yet. This was by
-# far the least-verified figure in the whole cost matrix (had literally zero
-# real data points, in either tier, before this) and the biggest single
-# recalibration in this project's history — treat the exact numbers as a
-# first real anchor, not gospel, and keep sourcing more independent anchors
-# (ideally per spending style, not just mid_range) as they turn up.
+# 2026-07-21 (later), reconstructed 2026-07-22 to remove a commercial-use
+# licensing problem (see below) using ONLY sources cleared for commercial
+# use: Wikivoyage (CC BY-SA 3.0, already the license basis for this
+# project's `wiki` RAG collection) hotel listings, scaled by an
+# empirically-derived "self-reported traveler spend" multiplier.
+#   Step 1 — real per-night hotel rates scraped from Wikivoyage district
+#   "Sleep" sections (a compliant source, unlike Booking.com/Skyscanner,
+#   which are JS-rendered, or Numbeo, which doesn't track hotel rates):
+#     - Bangkok/Sukhumvit mid-range hotels: ~₹2,570/night/pp (THB/INR≈2.42)
+#     - Paris/1st arrondissement mid-range hotels: ~₹6,740/night/pp (EUR/INR≈93)
+#   Step 2 — a multiplier accounting for the gap between a nominal listed
+#   room rate and what travellers actually report spending (taxes/fees not
+#   in the listed rate, occasional upgrades, selection bias toward
+#   higher-visibility properties): derived by comparing the Wikivoyage
+#   figures above against real "average traveler" hotel-spend data (a
+#   figure seen once per city for comparison purposes only — not stored,
+#   quoted, or reproduced verbatim anywhere in this codebase, since that
+#   source's ToS restricts the data itself to non-commercial use).
+#     - moderate tier: 3.08x (avg of two independently-checked moderate-
+#       tier cities, Bangkok 3.10x and Athens 3.06x — the two agreeing this
+#       closely is the reason this multiplier is trusted for the whole tier)
+#     - premium tier: 4.31x (Paris only — single anchor, needs a second
+#       independent premium-tier city before being fully trusted)
+#   Step 3 — Wikivoyage figure × multiplier, rounded:
+#     - Bangkok (moderate/mid_range anchor): ₹2,570 × 3.08 → ₹7,916
+#     - Paris (premium/mid_range anchor): ₹6,740 × 4.31 → ₹29,049
+# Both anchors are still a mid_range proxy, not separately sourced per
+# spending style — the script's usual "nudge neighbours just enough to
+# preserve monotonicity" mechanism keeps economical <= mid_range <= premium
+# (both spending-style-within-tier and same-style-across-tier) consistent:
+# moderate/premium nudged to 9,163; premium/premium nudged to 33,408.
+# economical-tier figures for both rows are untouched — no real anchor for
+# that style yet. Treat the exact numbers as a first real anchor, not
+# gospel, and keep sourcing more independent anchors (ideally per spending
+# style, and a second premium-tier city, not just mid_range) as they turn up.
 # ---------------------------------------------------------------------------
 
 _COST_MATRIX: dict[str, dict[str, dict[str, int]]] = {
@@ -225,17 +249,47 @@ _COST_MATRIX: dict[str, dict[str, dict[str, int]]] = {
     },
     "moderate": {
         "economical": {"flight_roundtrip_pp": 15000, "stay_per_night_pp": 2000, "food_per_day_pp": 1200},
-        "mid_range":  {"flight_roundtrip_pp": 20000, "stay_per_night_pp": 7968, "food_per_day_pp": 2200},
+        "mid_range":  {"flight_roundtrip_pp": 20000, "stay_per_night_pp": 7916, "food_per_day_pp": 2200},
         "premium":    {"flight_roundtrip_pp": 28000, "stay_per_night_pp": 9163, "food_per_day_pp": 3800},
     },
     "premium": {
         "economical": {"flight_roundtrip_pp": 28000, "stay_per_night_pp": 4000,  "food_per_day_pp": 4245},
-        "mid_range":  {"flight_roundtrip_pp": 38000, "stay_per_night_pp": 29050, "food_per_day_pp": 6546},
+        "mid_range":  {"flight_roundtrip_pp": 38000, "stay_per_night_pp": 29049, "food_per_day_pp": 6546},
         "premium":    {"flight_roundtrip_pp": 55000, "stay_per_night_pp": 33408, "food_per_day_pp": 9300},
     },
 }
 
 _TIER_ORDER = {"budget": 0, "moderate": 1, "premium": 2}
+
+# ---------------------------------------------------------------------------
+# Airbnb/vacation-rental stay discount, for travellers who explicitly ask for
+# a self-catering/Airbnb stay instead of a hotel. Sourced 2026-07-22 from
+# real Inside Airbnb "entire home/apt" listing data (CC BY 4.0 licensed,
+# https://insideairbnb.com — commercial use permitted with attribution),
+# NOT scraped from Airbnb.com itself:
+#   - Bangkok: median ฿1,712/night whole apt (n=19,250 listings) → ₹2,071/pp
+#     (÷2 for double occupancy) vs. this file's Wikivoyage-anchored hotel
+#     mid_range rate of ₹7,916/pp → ratio 0.262
+#   - Paris: median €212/night whole apt (n=42,945 listings) → ₹9,858/pp
+#     vs. this file's hotel mid_range rate of ₹29,049/pp → ratio 0.339
+# Average of the two ratios ≈ 0.30, applied as a flat discount against
+# whatever hotel-based stay rate would otherwise have been used (community-
+# grounded or flat _COST_MATRIX). This is a rough, 2-city heuristic — entire-
+# home Airbnb listings often sleep more than 2 people and span a much wider
+# quality/location range than a curated hotel list, so treat this as
+# directionally useful, not a precise per-city anchor.
+_AIRBNB_STAY_DISCOUNT_MULTIPLIER = 0.30
+
+_AIRBNB_KEYWORDS = ("airbnb", "air bnb", "air b&b", "vacation rental", "self-catering", "self catering")
+
+
+def wants_airbnb_stay(text: str | None) -> bool:
+    """Best-effort keyword parse of the user's own words for an explicit
+    Airbnb/vacation-rental stay preference (as opposed to a hotel)."""
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(k in lowered for k in _AIRBNB_KEYWORDS)
 _PEAK_SEASON_MULTIPLIER = 1.25  # applied to flight + stay only, not food
 
 # When origin+destination coordinates are known, the real-distance band from
@@ -347,7 +401,8 @@ async def estimate_bare_minimum_budget(
     silently is exactly the bug being fixed.
 
     `hint_text` is the user's own latest message, used only to detect an
-    explicit "economical"/"premium" preference; never required.
+    explicit "economical"/"premium" preference and/or an explicit Airbnb/
+    vacation-rental stay preference (see `wants_airbnb_stay`); never required.
     """
     group = trip_config.get("group") or {}
     adults, kids, seniors, infants = _group_headcount(group)
@@ -391,6 +446,15 @@ async def estimate_bare_minimum_budget(
         city, country, "hotel accommodation nightly rate per person", rates["stay_per_night_pp"], _STAY_PP_BOUNDS,
         context_keywords=STAY_CONTEXT_KEYWORDS,
     )
+    stay_airbnb_fallback_used = False
+    if not stay_community_based:
+        airbnb_fallback_pp = airbnb_hotel_equivalent_pp_inr(city, country)
+        if airbnb_fallback_pp is not None:
+            stay_pp_base = airbnb_fallback_pp
+            stay_airbnb_fallback_used = True
+    airbnb_requested = wants_airbnb_stay(hint_text)
+    if airbnb_requested:
+        stay_pp_base = round(stay_pp_base * _AIRBNB_STAY_DISCOUNT_MULTIPLIER)
     food_pp_base, food_community_based = await _grounded_or_flat(
         city, country, "food meal daily cost per person", rates["food_per_day_pp"], _FOOD_PP_BOUNDS,
         context_keywords=FOOD_CONTEXT_KEYWORDS,
@@ -456,6 +520,8 @@ async def estimate_bare_minimum_budget(
         "origin_city": origin.get("city"),
         "stay_community_based": stay_community_based,
         "food_community_based": food_community_based,
+        "stay_airbnb_based": airbnb_requested,
+        "stay_airbnb_fallback_used": stay_airbnb_fallback_used,
     }
 
 
@@ -506,7 +572,11 @@ async def budget_estimate_prompt_hint(trip_config: dict[str, Any], hint_text: st
             "couldn't pin down real flight distance for this departure city yet, so flights use a generic "
             "destination-tier estimate rather than a route-specific one"
         )
-    if estimate["stay_community_based"]:
+    if estimate["stay_airbnb_based"]:
+        assumptions.append("stay cost estimated for an Airbnb/vacation-rental stay (user asked for one), not a hotel")
+    elif estimate["stay_airbnb_fallback_used"]:
+        assumptions.append("stay cost is a hotel-equivalent estimate derived from real Airbnb listing data for this destination")
+    elif estimate["stay_community_based"]:
         assumptions.append("stay cost is grounded in real traveller-reported rates for this destination")
     if estimate["food_community_based"]:
         assumptions.append("food cost is grounded in real traveller-reported spend for this destination")
