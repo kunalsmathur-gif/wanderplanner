@@ -947,6 +947,82 @@ verify the regex in isolation; worth a follow-up `tests/unit/test_prompt_guard.p
 
 ---
 
+## Section 10 — Budget-Recommendation Comparison Eval (`eval/run_budget_comparison.py`)
+
+**Why this section exists:** `core/budget_estimator.py`'s bare-minimum
+estimator exists specifically to avoid letting an LLM freehand a budget
+number (see that module's docstring). But that raises an obvious question
+a user could reasonably ask: "why not just paste my itinerary into ChatGPT
+and ask it for a budget?" This harness answers that directly — it sends
+the same trip details a real end user would type, phrased as an ordinary
+chat question (no system prompt, no RAG context, no JSON constraint), to
+each of GPT/Claude/Gemini/Kimi, and to WanderPlanner's own estimator, and
+compares what comes back.
+
+### 10A — What it tests, and what it deliberately does NOT claim
+
+Reuses §8's provider glue (`eval/llm_providers.py::call_model`, now with a
+`json_mode=False` path added for this eval — a forced-JSON response is not
+what an ordinary chatbot user would see). Five cases
+(`eval/budget_comparison_dataset.json`), each anchored to a specific
+destination-tier/distance-band combination already recalibrated against
+real fare/cost data this session and the 2026-07-20 session before it
+(Bengaluru→Colombo near-neighbour, Bengaluru→London long-haul, Delhi→Goa
+domestic peak-season, Mumbai→Bangkok moderate-tier, Mumbai→Paris
+premium-tier).
+
+**Important caveat, stated in the dataset's own `anchor_methodology`
+field and repeated here because it's easy to miss:** the eval's
+`anchor_low`/`anchor_high` bounds are WanderPlanner's OWN estimator output
+for each case (±15%), not independent third-party ground truth. This
+means `anchor_adherence` is a **directional "is the LLM in our estimator's
+ballpark" signal**, not a claim that our number is definitively correct —
+the real citations backing our estimator's own figures (real screenshot-
+sourced fares, real Numbeo cost-of-living data) are what should be trusted,
+and they're documented per-case in the dataset. The genuinely
+ground-truth-free part of this eval — and arguably the more interesting
+one — is the behavioural comparison below, which doesn't depend on anchor
+accuracy at all:
+
+| Metric | What it measures | Why it matters |
+|---|---|---|
+| `no_answer_rate` | How often no usable number could be extracted at all | A chatbot that free-associates prose with no number is a worse outcome than a wrong number |
+| `anchor_adherence` | Distance from WanderPlanner's own real-anchor-grounded estimate | Directional only — see caveat above |
+| `clarifying_question_rate` | Did the model ask for info this dataset's prompts already supply | Every case already supplies group size + departure city + dates, so a "yes" here is a **false-positive stall**, not the disciplined behaviour WanderPlanner's own estimator has (it refuses to quote *until* that's known — see `core/budget_estimator.py`'s docstring) |
+| `breakdown_rate` | Did the response separate flights/stay/food, or give one bare number | A breakdown is more useful and more auditable than a single figure |
+| `hedge_language_rate` | Did the response use uncertainty language ("approximately", "can vary") | The honest thing to do, given neither the model nor this harness has live fare data |
+| Run-to-run variance (coefficient of variation) | How much the SAME prompt's extracted total swings across repeated calls | WanderPlanner's own estimator is exactly 0.0 by construction (deterministic arithmetic); an LLM asked the identical question three times at temperature 0.4 is not |
+
+### 10B — Test cases
+
+| ID | Route | Tier / band | Group | Real anchor this case's bounds trace back to |
+|---|---|---|---|---|
+| BC-001 | Bengaluru → Colombo | budget / near-neighbour | 2 adults, 4 days | ₹27,000 real round-trip fare (`core/distance_pricing.py`) |
+| BC-002 | Bengaluru → London | premium / long-haul | 2 adults, 6 days | ₹67,327 real round-trip fare (`core/distance_pricing.py`) |
+| BC-003 | Delhi → Goa | budget / domestic peak-season | 2 adults, 5 days | ₹18,157 real peak-season round-trip fare (`core/distance_pricing.py`) |
+| BC-004 | Mumbai → Bangkok | moderate | 1 adult, 5 days | Real Numbeo Bangkok cost-of-living data (`core/budget_estimator.py` `_COST_MATRIX` docstring, spot-checked 2026-07-21) |
+| BC-005 | Mumbai → Paris | premium | 2 adults, 6 days | Real Numbeo Paris cost-of-living data (`core/budget_estimator.py` `_COST_MATRIX` docstring, recalibrated 2026-07-21) |
+
+### 10C — Status: ❌ NOT YET RUN AT SCALE
+
+Smoke-tested end-to-end against a live Gemini call (1 model x 5 cases x 1
+run) — the runner, extraction regex, and report all work correctly on a
+real response. Not yet run against the full default model set
+(`gpt-4o-mini`, `claude-3-5-haiku-20241022`, `gemini-2.5-flash`,
+`kimi-k2-0711-preview`) with multiple repeats for variance measurement —
+needs `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `MOONSHOT_API_KEY` set
+(`GEMINI_API_KEY` already is). Costs real money per the runner's own
+docstring; run with `--yes` only once the cost estimate it prints has been
+reviewed. 24 unit tests cover the scoring module
+(`tests/unit/test_budget_comparison_scoring.py`), fully offline.
+
+Run with (from `apps/api`, venv python):
+```
+python -m eval.run_budget_comparison --models gpt-4o-mini,claude-3-5-haiku-20241022,gemini-2.5-flash,kimi-k2-0711-preview --runs 3
+```
+
+---
+
 ## Appendix A — Regression Test Checklist (Run Before Each Release)
 
 ```

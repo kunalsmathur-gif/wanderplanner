@@ -33,6 +33,8 @@ _PRICING: dict[str, tuple[float, float]] = {
     "gpt-4o-mini": (0.15, 0.60),                   # OpenAI
     "claude-3-5-sonnet-20241022": (3.00, 15.00),   # Anthropic
     "claude-3-5-haiku-20241022": (0.80, 4.00),     # Anthropic
+    "kimi-k2-0711-preview": (0.60, 2.50),           # Moonshot (published rate card, eval/run_budget_comparison.py, docs/eval-set.md §14)
+    "moonshot-v1-8k": (0.20, 1.00),                 # Moonshot
 }
 _DEFAULT_PRICING = (0.10, 0.40)
 

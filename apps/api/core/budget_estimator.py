@@ -157,6 +157,38 @@ def is_peak_season(city: str | None, country: str | None, start_date: str | None
 # Colombo double room, ~₹2,075/person) and found close to the existing
 # ₹2,000 mid_range figure — left unchanged rather than "fixed" without
 # evidence it was actually wrong.
+#
+# food_per_day_pp for the "moderate" tier spot-checked 2026-07-21 against
+# real Numbeo cost-of-living data for Bangkok (jul-2026 snapshot,
+# numbeo.com/cost-of-living/in/Bangkok): a day of inexpensive breakfast
+# (฿120) + inexpensive lunch (฿120) + a mid-range dinner (per-person half of
+# the "meal for two" figure, ฿600) + one cappuccino (฿96) = ฿936/day,
+# converted at THB/INR ≈ 2.42 (derived from `core/config.py`'s
+# usd_to_inr_rate=87 and ~36 THB/USD) = ~₹2,265/day — within ~3% of the
+# existing ₹2,200 mid_range figure and ~₹1,137 for the economical-tier
+# equivalent (2 inexpensive meals + fast food) vs. the existing ₹1,200.
+# Both already-close — left unchanged (same "verified, not broken" call as
+# the Sri Lanka stay figure above).
+#
+# food_per_day_pp for the "premium" tier RECALIBRATED 2026-07-21 against
+# real Numbeo cost-of-living data for Paris (same jul-2026 snapshot,
+# numbeo.com/cost-of-living/in/Paris), converted at EUR/INR ≈ 93:
+#   - economical (inexpensive breakfast €15.50 + inexpensive lunch €15.50 +
+#     a fast-food dinner €12.00 + bottled water €2.64 = €45.64/day) → ₹4,245
+#   - mid_range (inexpensive breakfast €15.50 + inexpensive lunch €15.50 +
+#     a mid-range dinner, per-person half of the "meal for two" figure
+#     €35.00 + one cappuccino €4.39 = €70.39/day) → ₹6,546
+#   - premium (top-of-range inexpensive meals €22+€22 + top-of-range
+#     mid-range dinner €50 pp + top-of-range cappuccino €6 = €100/day) → ₹9,300
+# All three cells were undershooting by ~1.4-2.2x (worse at the lower
+# spending styles, same direction/shape as the Sri Lanka food-tier bug) —
+# unlike that fix, this one has an independently-sourced real number for
+# every cell in the row (not one anchor + proportional scaling), so all
+# three are applied directly. stay_per_night_pp for this tier is NOT
+# recalibrated this pass — Numbeo doesn't track hotel nightly rates and no
+# free, non-JS-rendered hotel-pricing source was found; left as the existing
+# hand-authored figure pending a real anchor (see
+# `scripts/recalibrate_pricing.py`'s docstring for candidate sources).
 # ---------------------------------------------------------------------------
 
 _COST_MATRIX: dict[str, dict[str, dict[str, int]]] = {
@@ -171,9 +203,9 @@ _COST_MATRIX: dict[str, dict[str, dict[str, int]]] = {
         "premium":    {"flight_roundtrip_pp": 28000, "stay_per_night_pp": 6000, "food_per_day_pp": 3800},
     },
     "premium": {
-        "economical": {"flight_roundtrip_pp": 28000, "stay_per_night_pp": 4000,  "food_per_day_pp": 2000},
-        "mid_range":  {"flight_roundtrip_pp": 38000, "stay_per_night_pp": 8000,  "food_per_day_pp": 3800},
-        "premium":    {"flight_roundtrip_pp": 55000, "stay_per_night_pp": 15000, "food_per_day_pp": 6500},
+        "economical": {"flight_roundtrip_pp": 28000, "stay_per_night_pp": 4000,  "food_per_day_pp": 4245},
+        "mid_range":  {"flight_roundtrip_pp": 38000, "stay_per_night_pp": 8000,  "food_per_day_pp": 6546},
+        "premium":    {"flight_roundtrip_pp": 55000, "stay_per_night_pp": 15000, "food_per_day_pp": 9300},
     },
 }
 
