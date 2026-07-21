@@ -41,6 +41,37 @@ _AMOUNT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Topic-keyword anchors (added 2026-07-21, alongside the bare-number pass
+# below): a snippet retrieved for a "hotel per-night rate" query can still
+# contain an unrelated in-bounds amount (e.g. a nightclub cover charge
+# mentioned in the same Wikivoyage nightlife section) — live-verified this
+# actually happens: a Paris "stay" grounding query pulled in "Rex Club,
+# about €15" and "Pigalle, €20" (cover charges, not room rates) and
+# confidently reported ₹1575/night. `extract_price_mentions_inr()`'s
+# optional `context_keywords` requires at least one on-topic word to appear
+# *anywhere in the same snippet* as the amount before counting it — coarser
+# than per-amount proximity, but the snippet chunks here are short (~280
+# chars) and single-topic enough that this is a real signal, not just noise.
+STAY_CONTEXT_KEYWORDS = frozenset({
+    "hotel", "hotels", "room", "rooms", "night", "nights", "stay", "stayed",
+    "staying", "hostel", "hostels", "guesthouse", "guesthouses", "airbnb",
+    "accommodation", "lodging", "riad", "resort", "resorts", "homestay",
+})
+FOOD_CONTEXT_KEYWORDS = frozenset({
+    "meal", "meals", "food", "restaurant", "restaurants", "lunch", "dinner",
+    "breakfast", "thali", "plate", "buffet", "eat", "eating", "cuisine",
+    "dish", "dishes", "menu", "eatery", "eateries", "cafe", "dhaba",
+})
+
+
+def _snippet_has_context(text: str, context_keywords: frozenset[str] | None) -> bool:
+    """No filter applied when `context_keywords` is None (unchanged behavior
+    for any caller that doesn't opt in)."""
+    if context_keywords is None:
+        return True
+    lowered = text.lower()
+    return any(keyword in lowered for keyword in context_keywords)
+
 # Bare-number amounts (no currency symbol/code) — common in casual YouTube
 # comments (e.g. "Choki dani 700 per person") vs. Reddit's more explicit
 # ₹/$-prefixed prose. Deliberately narrow: only matches a number when it's
@@ -90,13 +121,28 @@ def _extract_bare_inr_amounts(text: str) -> list[float]:
     return amounts
 
 
-def extract_price_mentions_inr(snippets: list[str], low_bound: float, high_bound: float) -> list[float]:
+def extract_price_mentions_inr(
+    snippets: list[str],
+    low_bound: float,
+    high_bound: float,
+    context_keywords: frozenset[str] | None = None,
+) -> list[float]:
     """Extracts plausible INR amounts from free-text snippets. Amounts
     outside [low_bound, high_bound] are discarded as implausible for the
     thing being estimated (e.g. a snippet mentioning a $500,000 house
-    shouldn't be read as a nightly hotel rate)."""
+    shouldn't be read as a nightly hotel rate).
+
+    `context_keywords` (e.g. `STAY_CONTEXT_KEYWORDS`/`FOOD_CONTEXT_KEYWORDS`),
+    when given, additionally requires the snippet to contain at least one
+    on-topic word before any amount in it counts — guards against an
+    in-bounds but off-topic amount (a club cover charge, a souvenir price)
+    in a snippet that was retrieved for its overall topical similarity but
+    isn't actually about the thing being priced. No filtering when omitted
+    (existing callers unaffected)."""
     amounts: list[float] = []
     for text in snippets:
+        if not _snippet_has_context(text, context_keywords):
+            continue
         for symbol, raw_amount, thousands_suffix in _AMOUNT_RE.findall(text):
             try:
                 amount = float(raw_amount.replace(",", ""))
@@ -117,12 +163,16 @@ def extract_price_mentions_inr(snippets: list[str], low_bound: float, high_bound
 
 
 def median_price_inr(
-    snippets: list[str], low_bound: float, high_bound: float, min_samples: int = 2
+    snippets: list[str],
+    low_bound: float,
+    high_bound: float,
+    min_samples: int = 2,
+    context_keywords: frozenset[str] | None = None,
 ) -> float | None:
     """Median of plausible price mentions found in `snippets`, or None if
     fewer than `min_samples` were found — too little signal to trust over
     the hand-authored default."""
-    amounts = extract_price_mentions_inr(snippets, low_bound, high_bound)
+    amounts = extract_price_mentions_inr(snippets, low_bound, high_bound, context_keywords)
     if len(amounts) < min_samples:
         return None
     return statistics.median(amounts)

@@ -45,6 +45,7 @@ from typing import Any
 
 from core.cost_grounding import community_median_price_inr
 from core.distance_pricing import flight_band_inr
+from core.price_extraction import FOOD_CONTEXT_KEYWORDS, STAY_CONTEXT_KEYWORDS
 
 # ---------------------------------------------------------------------------
 # Destination cost tier (hand-authored — reflects real-world cost of living +
@@ -284,7 +285,12 @@ _FOOD_PP_BOUNDS = (100, 10_000)
 
 
 async def _grounded_or_flat(
-    city: str | None, country: str | None, query_suffix: str, flat_default: float, bounds: tuple[float, float]
+    city: str | None,
+    country: str | None,
+    query_suffix: str,
+    flat_default: float,
+    bounds: tuple[float, float],
+    context_keywords: frozenset[str] | None = None,
 ) -> tuple[float, bool]:
     """Real per-destination community-reported figure (INR) if the free RAG
     collections have enough signal for it, else the hand-authored flat
@@ -295,7 +301,9 @@ async def _grounded_or_flat(
     if not dest_city:
         return flat_default, False
     try:
-        grounded = await community_median_price_inr(dest_city, query_suffix, bounds[0], bounds[1])
+        grounded = await community_median_price_inr(
+            dest_city, query_suffix, bounds[0], bounds[1], context_keywords=context_keywords
+        )
     except Exception:
         grounded = None
     if grounded is not None:
@@ -355,10 +363,12 @@ async def estimate_bare_minimum_budget(
         flight_pp *= _DOMESTIC_FLIGHT_DISCOUNT
 
     stay_pp_base, stay_community_based = await _grounded_or_flat(
-        city, country, "hotel accommodation nightly rate per person", rates["stay_per_night_pp"], _STAY_PP_BOUNDS
+        city, country, "hotel accommodation nightly rate per person", rates["stay_per_night_pp"], _STAY_PP_BOUNDS,
+        context_keywords=STAY_CONTEXT_KEYWORDS,
     )
     food_pp_base, food_community_based = await _grounded_or_flat(
-        city, country, "food meal daily cost per person", rates["food_per_day_pp"], _FOOD_PP_BOUNDS
+        city, country, "food meal daily cost per person", rates["food_per_day_pp"], _FOOD_PP_BOUNDS,
+        context_keywords=FOOD_CONTEXT_KEYWORDS,
     )
     stay_pp_per_night = stay_pp_base * season_multiplier
     food_pp_per_day = food_pp_base

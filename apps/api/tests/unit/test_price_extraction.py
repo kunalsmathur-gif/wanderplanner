@@ -1,6 +1,11 @@
 """Tests for core/price_extraction.py — deterministic (no-LLM) INR price
 extraction from free-text community snippets."""
-from core.price_extraction import extract_price_mentions_inr, median_price_inr
+from core.price_extraction import (
+    FOOD_CONTEXT_KEYWORDS,
+    STAY_CONTEXT_KEYWORDS,
+    extract_price_mentions_inr,
+    median_price_inr,
+)
 
 STAY_BOUNDS = (300, 50_000)
 
@@ -130,3 +135,51 @@ def test_foreign_currency_after_price_verb_not_misread_as_inr():
     # be read as ₹5000.
     amounts = extract_price_mentions_inr(["Cost about 5000 baht for the week."], *STAY_BOUNDS)
     assert amounts == []
+
+
+# --- Topic-context anchoring, added 2026-07-21 after live-verifying a real
+# false positive: a Paris "stay" grounding query pulled in nightclub cover
+# charges ("Rex Club, about €15") and confidently reported them as a
+# nightly hotel rate. ---
+
+def test_context_keywords_reject_off_topic_amount_for_stay():
+    # A real false positive this guards against: a nightlife snippet with
+    # an in-bounds € amount that has nothing to do with a hotel rate.
+    snippet = "Rex Club (near the Grand Rex, house/electro, about €15). Pigalle is trashy, €20."
+    amounts = extract_price_mentions_inr([snippet], *STAY_BOUNDS, context_keywords=STAY_CONTEXT_KEYWORDS)
+    assert amounts == []
+
+
+def test_context_keywords_accept_on_topic_stay_amount():
+    snippet = "Booked a hotel room for ₹4500 a night, clean and central."
+    amounts = extract_price_mentions_inr([snippet], *STAY_BOUNDS, context_keywords=STAY_CONTEXT_KEYWORDS)
+    assert amounts == [4500.0]
+
+
+def test_context_keywords_accept_on_topic_food_amount():
+    snippet = "Thali at the local restaurant was 250 per person, filling."
+    amounts = extract_price_mentions_inr([snippet], *(50, 5000), context_keywords=FOOD_CONTEXT_KEYWORDS)
+    assert amounts == [250.0]
+
+
+def test_context_keywords_reject_off_topic_amount_for_food():
+    snippet = "The taxi from the airport cost ₹800, quick ride."
+    amounts = extract_price_mentions_inr([snippet], *(50, 5000), context_keywords=FOOD_CONTEXT_KEYWORDS)
+    assert amounts == []
+
+
+def test_no_context_keywords_means_unfiltered_default_behavior():
+    # Omitting context_keywords keeps every existing caller's behavior
+    # unchanged — no filtering applied.
+    snippet = "Rex Club (near the Grand Rex, house/electro, about €15)."
+    amounts = extract_price_mentions_inr([snippet], *STAY_BOUNDS)
+    assert amounts == [15 * 90.0]
+
+
+def test_median_price_inr_applies_context_keywords():
+    snippets = [
+        "Rex Club, about €15 cover charge.",  # off-topic, rejected
+        "Hotel room was ₹4500 a night.",
+        "Guesthouse stay was ₹4800 per night, nice courtyard.",
+    ]
+    assert median_price_inr(snippets, *STAY_BOUNDS, min_samples=2, context_keywords=STAY_CONTEXT_KEYWORDS) == 4650.0

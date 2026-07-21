@@ -76,18 +76,30 @@ async def community_price_snippets(dest_city: str, query_suffix: str, limit: int
 
 
 async def community_median_price_inr(
-    dest_city: str, query_suffix: str, low_bound: float, high_bound: float, min_samples: int = 2, limit: int = 5
+    dest_city: str,
+    query_suffix: str,
+    low_bound: float,
+    high_bound: float,
+    min_samples: int = 2,
+    limit: int = 5,
+    context_keywords: frozenset[str] | None = None,
 ) -> float | None:
     """Median real per-unit INR price extracted from community snippets for
     `dest_city`, or None if there's too little signal (fewer than
     `min_samples` plausible mentions, or the RAG collections have nothing
     for this destination — currently the common case, see
     core/price_extraction.py's module docstring for why this stays
-    regex-based rather than an LLM call)."""
+    regex-based rather than an LLM call).
+
+    `context_keywords` (see core/price_extraction.py) is passed straight
+    through — callers pricing a specific line item (e.g. stay vs. food)
+    should pass the matching keyword set so an on-topic-looking snippet
+    with an off-topic in-bounds amount isn't misread as that line item's
+    price."""
     from core.price_extraction import median_price_inr
 
     snippets = await community_price_snippets(dest_city, query_suffix, limit=limit)
-    return median_price_inr(snippets, low_bound, high_bound, min_samples)
+    return median_price_inr(snippets, low_bound, high_bound, min_samples, context_keywords)
 
 
 async def flight_cost_grounding_hint(trip_config: TripConfig) -> str:
