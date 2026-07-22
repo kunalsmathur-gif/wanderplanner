@@ -129,15 +129,25 @@ A hand-labeled "golden dataset" (`apps/api/eval/golden_dataset.json`) with known
 
 Full detail in `docs/rag-strategy.md` (new section: "RAG Failure Modes & Where It Shines") and `docs/scaling-tech-challenges.md` §6a.
 
+### Q14. When Anya recommends a budget, is that number real or is the LLM just making it up?
+
+**Neither purely — it's a deterministic calculator with an honest fallback chain, not an LLM guess.** `core/budget_estimator.py` computes flights + stay + food as three separate numbers, each trying progressively "less specific" sources until one actually returns something, and the LLM is only asked to *present* the final number in its own words, never to invent it:
+- **Flights:** real haversine distance between the user's two cities → a distance-banded fare range; falls back to one flat number per destination tier only if coordinates aren't available yet.
+- **Stay/food:** first tries a real median price mined from the same Qdrant RAG corpus (Reddit/Wikivoyage/YouTube-comment mentions, destination-filtered, regex-verified against a currency amount near an on-topic word like "per night"/"paid"/"cost" — not just any number in a nearby sentence); if that has too little signal (still the common case for most destinations today), it falls to a real Inside-Airbnb-derived rate for a small set of seeded cities, and only then to a hand-authored flat table (itself built from real anchor research, not invented).
+- **The key discipline:** if a step finds nothing, it returns "not grounded" and moves to the next fallback — it never lets the LLM fill the gap with a guess, which is exactly the failure mode this module exists to prevent. The user-facing answer always states which rung was used (e.g. "stay cost is grounded in real traveller-reported rates for this destination") so the estimate's honesty is never overstated.
+- **Nothing is fetched live at request time** — all RAG content was scraped/embedded ahead of time and just gets searched, so a budget answer is instant and never depends on Reddit/Wikivoyage being up at that moment.
+
+Full detail in `docs/PRD.md` (Epic/budget-estimator section) and `core/budget_estimator.py`'s module docstring.
+
 ---
 
 ## Part 5 — GTM: Consumer Hook & Monetization
 
-### Q14. Once an itinerary is generated, what's the hook to get the user to contact an offline agency?
+### Q15. Once an itinerary is generated, what's the hook to get the user to contact an offline agency?
 
 **A contextual CTA: "Get This Itinerary Booked by a Local Expert"** (not a cold "request a quotation" ask) — placed alongside the existing OTA booking-links section, right when trust in the plan is highest. Best contact mode is **WhatsApp**, not a form-then-email flow (`wa.me/<agent_number>?text=<prefilled itinerary summary>`), because that's where Indian users already are and where offline agents already work. This feeds real consumer demand into the paid "Anya for Agents" B2B product — the consumer app is the lead-gen engine; agents are the revenue engine. Implementation is a new `AgentHandoffCard.tsx` component + a `POST /api/agent-leads` endpoint + simple destination-based routing to onboarded agents (kept manual/simple in Phase 1 — don't automate matching before there's real agent supply). Full detail in `docs/GTM_STRATEGY.md`.
 
-### Q15. Should the agency-facing product be white-labeled, or agency + WanderPlanner co-branded?
+### Q16. Should the agency-facing product be white-labeled, or agency + WanderPlanner co-branded?
 
 **Default to white-label, tiered by price** — not a permanent co-brand:
 - The agency's *own* customer needs to trust the agency, not an unfamiliar SaaS brand riding along on their itinerary PDF — co-branding subtly signals "outsourced thinking" and risks planting the idea the traveller could cut the agency out next time.
