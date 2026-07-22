@@ -32,8 +32,10 @@ async def session_maker():
 @pytest.fixture(autouse=True)
 def _reset_locks():
     di._locks.clear()
+    di._cold_start_times.clear()
     yield
     di._locks.clear()
+    di._cold_start_times.clear()
 
 
 class TestEnsureDestinationIngested:
@@ -125,3 +127,45 @@ class TestEnsureDestinationIngested:
             await di.ensure_destination_ingested("Partial Town")
 
         assert not any("zero OSM POIs and zero wiki chunks" in r.message for r in caplog.records)
+
+
+class TestColdStartRateLimit:
+    """docs/scaling-tech-challenges.md §8 item 5 — cap first-request ingestion
+    cost so garbage/spam input naming many distinct destinations can't run up
+    unbounded Overpass/Gemini spend."""
+
+    @pytest.mark.asyncio
+    async def test_allows_up_to_the_hourly_cap(self):
+        for _ in range(di._MAX_COLD_STARTS_PER_HOUR):
+            assert await di._cold_start_budget_available() is True
+
+    @pytest.mark.asyncio
+    async def test_denies_once_cap_is_exhausted(self):
+        for _ in range(di._MAX_COLD_STARTS_PER_HOUR):
+            await di._cold_start_budget_available()
+        assert await di._cold_start_budget_available() is False
+
+    @pytest.mark.asyncio
+    async def test_old_slots_expire_out_of_the_window(self):
+        from datetime import datetime, timedelta, timezone
+        stale = datetime.now(timezone.utc) - timedelta(hours=2)
+        di._cold_start_times.extend([stale] * di._MAX_COLD_STARTS_PER_HOUR)
+        # all slots are outside the 1-hour window, so a fresh one should free up
+        assert await di._cold_start_budget_available() is True
+
+    @pytest.mark.asyncio
+    async def test_exhausted_budget_skips_first_request_ingestion(self, session_maker, caplog):
+        from datetime import datetime, timezone
+        di._cold_start_times.extend([datetime.now(timezone.utc)] * di._MAX_COLD_STARTS_PER_HOUR)
+        with patch("services.destination_ingestion.geocode_city", new=AsyncMock(return_value=object())) as mock_geo, \
+             patch("scrapers.osm.ingest_osm_pois", new=AsyncMock()) as mock_osm, \
+             caplog.at_level("WARNING", logger="services.destination_ingestion"):
+            await di.ensure_destination_ingested("Overbooked City")
+
+        mock_geo.assert_not_awaited()
+        mock_osm.assert_not_awaited()
+        assert any("budget exhausted" in r.message for r in caplog.records)
+
+        async with session_maker() as db:
+            row = await db.get(DestinationIngestionState, "Overbooked City")
+            assert row is None  # not persisted, so it can be retried once the window clears

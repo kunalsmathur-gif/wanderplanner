@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from collections import deque
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -29,6 +30,32 @@ logger = logging.getLogger(__name__)
 # ingest once, not N times — same pattern as services/gems.py.
 _locks: dict[str, asyncio.Lock] = {}
 _locks_guard = asyncio.Lock()
+
+# Cold-start rate limit (docs/scaling-tech-challenges.md §8 item 5): first-ever
+# requests for a destination are the expensive path (Overpass + Wikivoyage +
+# embeddings), unlike the cheap counter-bump for already-ingested ones. With no
+# cap, garbage/spam input naming many distinct fake destinations could run up
+# Overpass/Gemini spend unbounded. This is a process-global sliding-window cap
+# (not per-IP/session — no caller identity reaches this function today; adding
+# that would need request-context plumbing through chains/itinerary_chain.py,
+# a bigger change than this guard rail) — cheap first line of defense.
+_MAX_COLD_STARTS_PER_HOUR = 5
+_cold_start_window = timedelta(hours=1)
+_cold_start_times: deque[datetime] = deque()
+_cold_start_guard = asyncio.Lock()
+
+
+async def _cold_start_budget_available() -> bool:
+    """Reserve one of the hour's cold-start slots, or return False if exhausted."""
+    async with _cold_start_guard:
+        now = datetime.now(timezone.utc)
+        cutoff = now - _cold_start_window
+        while _cold_start_times and _cold_start_times[0] < cutoff:
+            _cold_start_times.popleft()
+        if len(_cold_start_times) >= _MAX_COLD_STARTS_PER_HOUR:
+            return False
+        _cold_start_times.append(now)
+        return True
 
 
 async def ensure_destination_ingested(destination: str) -> None:
@@ -48,6 +75,15 @@ async def ensure_destination_ingested(destination: str) -> None:
                 row.request_count += 1
                 row.last_requested_at = now
                 await db.commit()
+                return
+
+            if not await _cold_start_budget_available():
+                logger.warning(
+                    "Cold-start ingestion budget exhausted (%d/hour) — skipping first-request "
+                    "ingestion for %r this cycle",
+                    _MAX_COLD_STARTS_PER_HOUR,
+                    destination,
+                )
                 return
 
             # First-ever request for this destination. Geocode-validate first

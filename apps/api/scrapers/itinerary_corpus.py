@@ -56,6 +56,15 @@ TRAVEL_BLOG_FEEDS = [
     # itinerary titles ("10 day trip to Australia", "4-Day Guide to Doha")
     # match `_ITINERARY_TITLE_PATTERN` well above the pool average.
     {"name": "Bruised Passports", "url": "https://www.bruisedpassports.com/feed"},
+    # Added 2026-07-22 -- "hidden gems"-angled per docs/NEXT_SESSION_TODO.md
+    # item 3's free-source list. Live-verified: both feeds return real,
+    # full-body-fetchable posts. Two Wandering Soles has the strongest hit
+    # rate seen yet against `_ITINERARY_TITLE_PATTERN`/gem-style titles (e.g.
+    # "Portugal's Best Hidden Gem", "The 2-day Kyoto Itinerary I'd Recommend"
+    # -- 3 of 12 recent items), Y Travel Blog next-best ("Queensland's Best
+    # Kept Secret").
+    {"name": "Two Wandering Soles", "url": "https://www.twowanderingsoles.com/feed/"},
+    {"name": "Y Travel Blog", "url": "https://www.ytravelblog.com/feed/"},
 ]
 
 # Titles that look like a real day-by-day itinerary post, vs. generic listicles.
