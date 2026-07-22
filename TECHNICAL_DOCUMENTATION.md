@@ -1,7 +1,7 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.31.0 (Budget-estimator premium-tier recalibration; new LLM-vs-estimator budget comparison eval; Moonshot/Kimi eval provider added; domestic rail/bus/cab + Kaggle pricing plan confirmed for next session)
-**Last Updated:** July 21, 2026  
+**Version:** 10.33.0 (Cold-start rate-limit guard added to demand-driven destination ingestion; itinerary-corpus RSS feed pool expanded with 2 more "hidden gems"-angled blogs; prior session's prompt_guard test + FieldCondition audit confirmed complete)
+**Last Updated:** July 22, 2026  
 **Status:** Production-ready MVP
 
 ---
@@ -1500,7 +1500,18 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.33.0 Changes (July 2026) — Cold-start ingestion rate limit + itinerary-corpus RSS feed expansion (scaling-tech-challenges §8 item 5 + NEXT_SESSION_TODO item 3)
+
+Follow-up session closing out 4 low-effort, dependency-clean hygiene items flagged in `docs/NEXT_SESSION_TODO.md`. Two of the four (the `prompt_guard` unit test and the `FieldCondition` payload-index audit) turned out to already be complete from a prior same-day session (`cabb20a`) — the TODO doc just hadn't been updated to reflect it; corrected here rather than duplicating the work.
+
+| Change | Detail |
+|---|---|
+| **Built** Cold-start rate limit on demand-driven destination ingestion (`scaling-tech-challenges.md` §8 item 5) | `services/destination_ingestion.py::_cold_start_budget_available()` — a process-global sliding-window cap (`_MAX_COLD_STARTS_PER_HOUR = 5`) checked right before `ensure_destination_ingested()` does its expensive first-time work (geocode + Overpass + Wikivoyage + embeddings). When exhausted, the request is skipped (not persisted, so it's retryable once the window clears) and logged at WARNING. Scoped **process-global rather than per-IP/session**, a deliberate narrowing of the original design: no caller identity reaches this function today (`chains/itinerary_chain.py` calls it with just a destination string) — true per-IP scoping would need request-context plumbing through that call chain, a bigger change deferred until real abuse data shows it's needed. 4 new unit tests in `tests/unit/test_destination_ingestion.py` (cap enforcement, window expiry, exhausted-budget skip behavior). |
+| **Expanded** `TRAVEL_BLOG_FEEDS` in `scrapers/itinerary_corpus.py` (item 3's free hidden-gems source list) | Added Two Wandering Soles and Y Travel Blog, both live-verified (real, full-body-fetchable RSS feeds). Two Wandering Soles had the best itinerary/gem-title hit rate of everything spot-checked this session (e.g. "Portugal's Best Hidden Gem", "The 2-day Kyoto Itinerary I'd Recommend" — 3 of 12 recent items); Y Travel Blog next-best ("Queensland's Best Kept Secret"). Not yet ingested against the real Qdrant cluster. |
+| **Confirmed already done** `tests/unit/test_prompt_guard.py` (28 tests) and the `FieldCondition` payload-index audit | Both were completed in commit `cabb20a` the same day as v10.32.0 but `docs/NEXT_SESSION_TODO.md` still listed them as outstanding — doc corrected to match reality rather than re-doing the work. |
+| **Tests** | 4 new tests (destination-ingestion rate limit) plus the pre-existing 28 (`prompt_guard`). Full backend suite green (434 passed, 6 skipped — same pre-existing unrelated `test_budget_estimator.py` Python 3.9 collection error, always excluded via `--ignore`). |
 
 ### v10.32.0 Changes (July 2026) — ⚠️ Commercial-licensing fix: budgetyourtrip.com → Wikivoyage + Inside Airbnb, plus new Airbnb-based stay-estimate feature
 
