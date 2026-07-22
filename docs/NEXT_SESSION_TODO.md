@@ -1,6 +1,23 @@
 # Next-Session TODO — Post-Cloud-migration cleanup → Reddit approval → Phase 2
 
-**Last updated:** 2026-07-21 (later still) — commercial-licensing fix for `_COST_MATRIX` stay pricing + new Inside Airbnb fallback/explicit-request feature. See new top section immediately below. **Top priority for next session: the Numbeo food-figure licensing issue flagged there is still open.**
+**Last updated:** 2026-07-22 — decision recorded: since the project is not yet in a commercial phase (no paid product/revenue), Numbeo and budgetyourtrip.com are back in active use for `_COST_MATRIX` (both restored/kept, see new top section below), superseding the 2026-07-21 "still open, top priority" framing for Numbeo. **These two sources are now tracked as a pre-commercial-launch removal checklist item, not an active blocker.**
+
+---
+
+## 🆕 2026-07-22 session — decision: allow ToS-restricted sources pre-commercial; tracked for removal at launch
+
+**Decision:** this project is pre-revenue/pre-commercial, so sources whose ToS only restrict *commercial* reuse (Numbeo, budgetyourtrip.com) are fine to use now. Reverted the 2026-07-21-later "remove Numbeo/budgetyourtrip" direction:
+- `core/budget_estimator.py`'s premium-tier `food_per_day_pp` **stays Numbeo-sourced** (₹4,245/₹6,546/₹9,300, unchanged) — the planned Wikivoyage substitution was researched but not applied (see below).
+- `stay_per_night_pp` (moderate/premium mid_range) **reverted to direct budgetyourtrip.com figures** (₹7,968/₹29,050, restoring the pre-2026-07-22 values) — the Wikivoyage-multiplier reconstruction from the licensing-fix session is kept in the docstring as a documented compliant fallback (numbers are within ~1 INR either way), not removed.
+- Wikivoyage and Inside Airbnb stay fully wired in as-is (both are already compliant — CC BY-SA 3.0 / CC BY 4.0 — no reason to remove either regardless of commercial status).
+
+**⚠️ Pre-commercial-only data sources — MUST remove/re-source before any commercial launch:**
+1. **Numbeo** (numbeo.com) — `core/budget_estimator.py`'s premium-tier `food_per_day_pp`. ToS requires a paid commercial "Data License" beyond personal/academic use.
+2. **budgetyourtrip.com** — `core/budget_estimator.py`'s moderate/premium `stay_per_night_pp`. ToS prohibits commercial use outright.
+
+Both are now flagged directly in `core/budget_estimator.py`'s module docstring (search "PRE-COMMERCIAL-ONLY DATA SOURCES") as well as here — check both spots are updated together if either source's status changes.
+
+**Research done this session, not applied (kept as reference for whenever Numbeo actually needs replacing):** live-compared Wikivoyage "Eat" section listings (Budget/Mid-range/Splurge categorization) against fresh Numbeo data for Paris, Bangkok, and Tokyo, and tried deriving a single Wikivoyage→Numbeo multiplier the same way the stay-pricing fix did for hotels. **Finding: it doesn't generalize.** Paris gave a consistent ~1.12x multiplier (economical 1.13x/mid_range 1.09x/premium 1.15x), but Bangkok's ratios came out 2.37x/1.53x/1.30x (Wikivoyage's Bangkok "Budget" tier is genuine street-food/night-market pricing, ~2x cheaper than Numbeo's "inexpensive restaurant" category — different real-world category despite the same label), and Tokyo/Shinjuku's Wikivoyage listings were too sparse/format-inconsistent (single-dish vs. all-you-can-eat vs. no-price-listed) to compute a ratio at all. Also found: Numbeo has **zero coverage** for smaller destinations (confirmed live: Rishikesh returns "Cannot find city id"), while Wikivoyage has at least some price data there (Chotiwala "from ₹100," Ganga View "₹10-200") — so the two sources' density/reliability trade off in opposite directions depending on destination tier. Full detail in `core/budget_estimator.py`'s premium-tier `food_per_day_pp` docstring. **If Numbeo is dropped later, don't reuse a single global multiplier — derive one per destination, same caution already applied to the stay-pricing Wikivoyage multiplier (Paris-only, "needs a second anchor" caveat).**
 
 ---
 

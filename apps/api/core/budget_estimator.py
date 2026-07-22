@@ -48,6 +48,21 @@ Airbnb/vacation-rental stay (`wants_airbnb_stay()`), whatever stay rate was
 resolved above gets discounted by `_AIRBNB_STAY_DISCOUNT_MULTIPLIER` to
 approximate self-catering pricing instead of a hotel room — see
 `stay_airbnb_based` in the returned dict.
+
+⚠️ PRE-COMMERCIAL-ONLY DATA SOURCES — remove/re-source before commercial
+launch: this project is not yet in a commercial phase (no paid product, no
+revenue), so `_COST_MATRIX` currently cites two sources whose Terms of
+Service prohibit *commercial* reuse of their data without a paid license:
+  - **Numbeo** (numbeo.com) — premium-tier `food_per_day_pp` (see that
+    row's docstring below for the exact figures/citations).
+  - **budgetyourtrip.com** — `stay_per_night_pp` for moderate/premium tiers
+    (see that row's docstring below).
+Both are fine to use pre-commercial (this is explicitly a non-commercial,
+free-tools research/build phase) but MUST be removed or re-sourced from a
+compliant alternative (Wikivoyage CC BY-SA 3.0 and Inside Airbnb CC BY 4.0
+are already wired in alongside them as compliant cross-checks/fallbacks —
+see each row's docstring) before any commercial launch. Tracked as a
+pre-launch checklist item in `docs/NEXT_SESSION_TODO.md`.
 """
 from __future__ import annotations
 
@@ -193,6 +208,34 @@ def is_peak_season(city: str | None, country: str | None, start_date: str | None
 #     €35.00 + one cappuccino €4.39 = €70.39/day) → ₹6,546
 #   - premium (top-of-range inexpensive meals €22+€22 + top-of-range
 #     mid-range dinner €50 pp + top-of-range cappuccino €6 = €100/day) → ₹9,300
+# ⚠️ Numbeo's ToS requires a paid commercial "Data License" for use beyond
+# personal/academic purposes — fine for this project's current pre-commercial
+# phase, but MUST be removed/re-sourced before commercial launch (see the
+# module-level "PRE-COMMERCIAL-ONLY DATA SOURCES" note above and
+# `docs/NEXT_SESSION_TODO.md`).
+#
+# Cross-checked 2026-07-22 against Wikivoyage (CC BY-SA 3.0, compliant)
+# "Eat" section listings, which use their own Budget/Mid-range/Splurge
+# categorization — a live, course-matched comparison against fresh Numbeo
+# data (economical €44.55 / mid_range €69.45 / premium €100.00, same
+# formula shape as above) found Wikivoyage landing close for Paris
+# (economical €39.50, ~13% lower; mid_range €64.00, ~9% lower; premium
+# €87.00, ~13% lower — ratios 1.13x/1.09x/1.15x). Testing that ~1.12x
+# Paris-derived multiplier against two more cities showed it does **not**
+# generalize: Bangkok's ratios came out 2.37x/1.53x/1.30x (Wikivoyage's
+# "Budget" listings there are genuine street-food/night-market stalls,
+# 30-60 baht, vs. Numbeo's "inexpensive restaurant" figure which reflects
+# an actual sit-down cheap restaurant — different real-world categories
+# that both happen to get called "budget"), and Tokyo/Shinjuku's Wikivoyage
+# listings were too sparse/format-inconsistent (a single noodle dish vs. an
+# all-you-can-eat buffet vs. several listings with no price at all) to even
+# compute a reliable ratio. Conclusion: no single global Wikivoyage->Numbeo
+# multiplier is defensible — a per-city multiplier, derived fresh each time
+# (same spirit as the stay_per_night_pp cross-check above, which only ever
+# claimed to be Paris-specific), would be the correct approach if Numbeo
+# ever needs to be dropped, not a blanket conversion factor. Not applied to
+# this table — Numbeo's own figures are kept pre-commercial (see ToS note
+# above).
 # All three cells were undershooting by ~1.4-2.2x (worse at the lower
 # spending styles, same direction/shape as the Sri Lanka food-tier bug) —
 # unlike that fix, this one has an independently-sourced real number for
@@ -204,11 +247,21 @@ def is_peak_season(city: str | None, country: str | None, start_date: str | None
 # `scripts/recalibrate_pricing.py`'s docstring for candidate sources).
 #
 # stay_per_night_pp for "moderate" and "premium" tiers RECALIBRATED
-# 2026-07-21 (later), reconstructed 2026-07-22 to remove a commercial-use
-# licensing problem (see below) using ONLY sources cleared for commercial
-# use: Wikivoyage (CC BY-SA 3.0, already the license basis for this
-# project's `wiki` RAG collection) hotel listings, scaled by an
-# empirically-derived "self-reported traveler spend" multiplier.
+# 2026-07-21 (later) against real budgetyourtrip.com "average traveler"
+# hotel-spend figures, converted at USD/INR = 83:
+#   - Bangkok (moderate/mid_range anchor): $96/day → ₹7,968
+#   - Paris (premium/mid_range anchor): $350/day → ₹29,050
+# ⚠️ budgetyourtrip.com's ToS prohibits this kind of commercial reuse
+# without a paid license — fine for this project's current pre-commercial
+# phase (no paid product/revenue yet), but MUST be removed/re-sourced
+# before commercial launch (see the module-level "PRE-COMMERCIAL-ONLY DATA
+# SOURCES" note above and `docs/NEXT_SESSION_TODO.md`).
+#
+# Cross-checked 2026-07-22 against a fully compliant, commercial-use-cleared
+# source — Wikivoyage (CC BY-SA 3.0, already the license basis for this
+# project's `wiki` RAG collection) — to see how far a licensing-safe
+# reconstruction would land, in case budgetyourtrip.com ever needs to be
+# dropped again:
 #   Step 1 — real per-night hotel rates scraped from Wikivoyage district
 #   "Sleep" sections (a compliant source, unlike Booking.com/Skyscanner,
 #   which are JS-rendered, or Numbeo, which doesn't track hotel rates):
@@ -217,19 +270,21 @@ def is_peak_season(city: str | None, country: str | None, start_date: str | None
 #   Step 2 — a multiplier accounting for the gap between a nominal listed
 #   room rate and what travellers actually report spending (taxes/fees not
 #   in the listed rate, occasional upgrades, selection bias toward
-#   higher-visibility properties): derived by comparing the Wikivoyage
-#   figures above against real "average traveler" hotel-spend data (a
-#   figure seen once per city for comparison purposes only — not stored,
-#   quoted, or reproduced verbatim anywhere in this codebase, since that
-#   source's ToS restricts the data itself to non-commercial use).
+#   higher-visibility properties), derived by comparing the Wikivoyage
+#   figures above against the budgetyourtrip.com figures above:
 #     - moderate tier: 3.08x (avg of two independently-checked moderate-
 #       tier cities, Bangkok 3.10x and Athens 3.06x — the two agreeing this
 #       closely is the reason this multiplier is trusted for the whole tier)
 #     - premium tier: 4.31x (Paris only — single anchor, needs a second
 #       independent premium-tier city before being fully trusted)
-#   Step 3 — Wikivoyage figure × multiplier, rounded:
-#     - Bangkok (moderate/mid_range anchor): ₹2,570 × 3.08 → ₹7,916
-#     - Paris (premium/mid_range anchor): ₹6,740 × 4.31 → ₹29,049
+#   Step 3 — Wikivoyage figure × multiplier, rounded: Bangkok ₹2,570 × 3.08
+#   → ₹7,916; Paris ₹6,740 × 4.31 → ₹29,049 — within ~1 INR of the
+#   budgetyourtrip.com figures actually stored in the table below, i.e. the
+#   two independent sources corroborate each other closely. **The table
+#   below uses the direct budgetyourtrip.com figures** (₹7,968/₹29,050),
+#   since that source is allowed pre-commercial and is the more direct
+#   anchor; swap to the Wikivoyage-reconstructed figures (₹7,916/₹29,049,
+#   functionally identical) if budgetyourtrip.com needs to be dropped later.
 # Both anchors are still a mid_range proxy, not separately sourced per
 # spending style — the script's usual "nudge neighbours just enough to
 # preserve monotonicity" mechanism keeps economical <= mid_range <= premium
@@ -249,12 +304,12 @@ _COST_MATRIX: dict[str, dict[str, dict[str, int]]] = {
     },
     "moderate": {
         "economical": {"flight_roundtrip_pp": 15000, "stay_per_night_pp": 2000, "food_per_day_pp": 1200},
-        "mid_range":  {"flight_roundtrip_pp": 20000, "stay_per_night_pp": 7916, "food_per_day_pp": 2200},
+        "mid_range":  {"flight_roundtrip_pp": 20000, "stay_per_night_pp": 7968, "food_per_day_pp": 2200},
         "premium":    {"flight_roundtrip_pp": 28000, "stay_per_night_pp": 9163, "food_per_day_pp": 3800},
     },
     "premium": {
         "economical": {"flight_roundtrip_pp": 28000, "stay_per_night_pp": 4000,  "food_per_day_pp": 4245},
-        "mid_range":  {"flight_roundtrip_pp": 38000, "stay_per_night_pp": 29049, "food_per_day_pp": 6546},
+        "mid_range":  {"flight_roundtrip_pp": 38000, "stay_per_night_pp": 29050, "food_per_day_pp": 6546},
         "premium":    {"flight_roundtrip_pp": 55000, "stay_per_night_pp": 33408, "food_per_day_pp": 9300},
     },
 }
@@ -268,10 +323,10 @@ _TIER_ORDER = {"budget": 0, "moderate": 1, "premium": 2}
 # https://insideairbnb.com — commercial use permitted with attribution),
 # NOT scraped from Airbnb.com itself:
 #   - Bangkok: median ฿1,712/night whole apt (n=19,250 listings) → ₹2,071/pp
-#     (÷2 for double occupancy) vs. this file's Wikivoyage-anchored hotel
-#     mid_range rate of ₹7,916/pp → ratio 0.262
+#     (÷2 for double occupancy) vs. this file's hotel mid_range rate of
+#     ₹7,968/pp → ratio 0.260
 #   - Paris: median €212/night whole apt (n=42,945 listings) → ₹9,858/pp
-#     vs. this file's hotel mid_range rate of ₹29,049/pp → ratio 0.339
+#     vs. this file's hotel mid_range rate of ₹29,050/pp → ratio 0.339
 # Average of the two ratios ≈ 0.30, applied as a flat discount against
 # whatever hotel-based stay rate would otherwise have been used (community-
 # grounded or flat _COST_MATRIX). This is a rough, 2-city heuristic — entire-

@@ -47,6 +47,8 @@ For Indian users budget is *the* planning primitive, not a filter.
 - **Inverse planning mode:** "Best 6-day trip for a family of 4 under ₹1L" — start from the budget, derive destination + itinerary.
 - Per-day burn view; existing splurge/save preferences allocate the delta.
 
+> **Shipped today vs. this bet's paid-API vision:** the bullets above (Amadeus/Skyscanner/Booking/IRCTC) describe the target end-state once paid live-pricing APIs are wired in — not yet built. What's actually live today is a **free-tools, deterministic estimator** (`core/budget_estimator.py`) that already delivers the core "grounded, not guessed" positioning without any paid API: flights use real haversine distance between the user's two cities mapped to a fare band; stay/food first try a real median price mined from the app's own pre-scraped RAG corpus (Wikivoyage/Reddit/YouTube-comment mentions for that exact destination) before falling back to a hand-authored, research-anchored flat table. The discipline that matters for the pitch: **if no real data is found for a destination, the code says so and falls back rather than letting the LLM invent a number** — the same "honest about what it doesn't know" positioning this bet is selling, already true pre-revenue. This is the free-tier proof point this bet's paid-API roadmap upgrades from, not a placeholder to be embarrassed about. Full mechanism explainer in `docs/PRD.md`'s R5 section and `docs/DEMO_DAY_FAQ_CHEATSHEET.md` Q14.
+
 ---
 
 ## 3. Market landscape (verified July 2026)
