@@ -176,6 +176,11 @@ export function LLMWizard() {
   // as an intentional cancel and never reports as an error. Reset on every
   // status/data/error event; if it ever fires, that means total silence.
   const generationWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // True while `error` holds a generate-itinerary failure (vs. a chat-turn
+  // failure) — lets the shared error banner's Retry button re-run
+  // generation instead of blindly resending the last chat message, which
+  // previously left generation failures with no working retry path.
+  const generationErrorRef = useRef(false)
   // Synchronous lock for in-flight sends. `isSending` (React state) only
   // takes effect on the NEXT render, so two click events dispatched in the
   // same tick (e.g. a duplicate click/touch event some browsers/devices
@@ -356,6 +361,7 @@ export function LLMWizard() {
     if (!isBootstrap) setMessages(nextMessages)
     setIsSending(true)
     setError('')
+    generationErrorRef.current = false
 
     // Build history for the API (exclude bootstrap marker)
     // Include config_patch on assistant turns so backend can reconstruct real extraction history
@@ -522,6 +528,7 @@ export function LLMWizard() {
     clearGenerationWatchdog()
     generationWatchdogRef.current = setTimeout(() => {
       cancelStreamRef.current?.()
+      generationErrorRef.current = true
       setError('Generation is taking much longer than expected and may have stalled. Please try again.')
       setPhase('chatting')
     }, 60_000) // user-facing cap — shorter than backend's own 90s LLM_TIMEOUT_SECONDS
@@ -531,6 +538,7 @@ export function LLMWizard() {
   }
 
   function startGeneration(fullConfig: TripConfig) {
+    generationErrorRef.current = false
     setPhase('generating')
     setProgress({ message: 'Starting up…', step: 0, total: 6 })
     wizardReset()
@@ -558,6 +566,7 @@ export function LLMWizard() {
           router.push(`/signup?returnTo=${encodeURIComponent('/')}`)
           return
         }
+        generationErrorRef.current = true
         setError(`Generation failed: ${message} (${code})`)
         setPhase('chatting')
       },
@@ -814,13 +823,20 @@ export function LLMWizard() {
               <button
                 type="button"
                 onClick={() => {
+                  setError('')
+                  // Generation failures (incl. the stall watchdog) need to
+                  // re-run generation itself — resending the last chat
+                  // message just re-confirmed "proceed?" and never actually
+                  // retried, leaving the user stuck after a failed generate.
+                  if (generationErrorRef.current) {
+                    generationErrorRef.current = false
+                    startGeneration(useTripConfigStore.getState().config)
+                    return
+                  }
                   const lastUser = [...messages].reverse().find((m) => m.role === 'user')
                   if (lastUser) {
                     setMessages((prev) => prev.slice(0, -1)) // remove last user msg to re-send
-                    setError('')
                     sendMessage(lastUser.content, messages.slice(0, -1))
-                  } else {
-                    setError('')
                   }
                 }}
                 className="shrink-0 rounded-lg bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200 dark:bg-red-900/40 dark:text-red-300"
