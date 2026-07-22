@@ -51,10 +51,21 @@ class _UnsafeUrlError(Exception):
     pass
 
 
-def _assert_public_host(url: str) -> str:
+def _assert_public_host(url: str) -> tuple[str, str]:
     """Validate scheme + resolve host, rejecting private/loopback/link-local/reserved IPs.
 
-    Returns the hostname on success; raises _UnsafeUrlError otherwise.
+    Returns (hostname, pinned_ip) on success — a single validated public IP the
+    caller MUST connect to directly (see `_pinned_get`); raises _UnsafeUrlError
+    otherwise.
+
+    Returning the exact IP that was just validated — not only the hostname — is
+    what closes the DNS-rebinding (TOCTOU) window. If the caller instead let
+    httpx re-resolve the hostname at connect time, an attacker controlling the
+    domain's DNS (low TTL) could swap in a private/metadata IP in the gap
+    between this check and the actual socket connect. Pinning the connection to
+    the IP validated here removes that second, unchecked DNS lookup entirely.
+    We still reject the whole URL if *any* resolved address is non-public
+    (conservative), and pin the first public one.
     """
     parsed = urlparse(url)
     if parsed.scheme not in _ALLOWED_SCHEMES:
@@ -68,6 +79,7 @@ def _assert_public_host(url: str) -> str:
     except socket.gaierror as exc:
         raise _UnsafeUrlError(f"Could not resolve host: {host}") from exc
 
+    pinned_ip: str | None = None
     for family, _, _, _, sockaddr in addr_infos:
         ip = ipaddress.ip_address(sockaddr[0])
         if (
@@ -79,8 +91,31 @@ def _assert_public_host(url: str) -> str:
             or ip.is_unspecified
         ):
             raise _UnsafeUrlError(f"Refusing to fetch non-public address: {ip}")
+        if pinned_ip is None:
+            pinned_ip = str(ip)
 
-    return host
+    if pinned_ip is None:
+        raise _UnsafeUrlError(f"Could not resolve host: {host}")
+
+    return host, pinned_ip
+
+
+async def _pinned_get(client: httpx.AsyncClient, url: str, host: str, ip: str) -> httpx.Response:
+    """GET `url` but TCP-connect to the pre-validated literal `ip` instead of
+    letting httpx re-resolve `host`. TLS SNI + certificate verification still
+    use the real hostname (via httpcore's `sni_hostname` request extension),
+    and the HTTP `Host` header is preserved, so virtual-hosted and HTTPS
+    origins behave exactly as they would normally — only the second, unchecked
+    DNS resolution (the rebinding window) is removed. See `_assert_public_host`.
+    """
+    parsed = httpx.URL(url)
+    host_header = host if parsed.port is None else f"{host}:{parsed.port}"
+    pinned_url = parsed.copy_with(host=ip)
+    return await client.get(
+        pinned_url,
+        headers={"User-Agent": "WanderPlanner/1.0", "Host": host_header},
+        extensions={"sni_hostname": host},
+    )
 
 
 async def _fetch_url_text(url: str) -> str:
@@ -91,7 +126,7 @@ async def _fetch_url_text(url: str) -> str:
     content-type to avoid abuse as an open proxy/exfiltration channel.
     """
     try:
-        _assert_public_host(url)
+        current_host, current_ip = _assert_public_host(url)
     except _UnsafeUrlError:
         return ""
 
@@ -99,10 +134,7 @@ async def _fetch_url_text(url: str) -> str:
     try:
         async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
             for _ in range(_MAX_REDIRECTS + 1):
-                resp = await client.get(
-                    current_url,
-                    headers={"User-Agent": "WanderPlanner/1.0"},
-                )
+                resp = await _pinned_get(client, current_url, current_host, current_ip)
                 if resp.is_redirect:
                     location = resp.headers.get("location")
                     if not location:
@@ -110,7 +142,7 @@ async def _fetch_url_text(url: str) -> str:
                     next_url = httpx.URL(current_url).join(location)
                     next_url = str(next_url)
                     try:
-                        _assert_public_host(next_url)
+                        current_host, current_ip = _assert_public_host(next_url)
                     except _UnsafeUrlError:
                         return ""
                     current_url = next_url

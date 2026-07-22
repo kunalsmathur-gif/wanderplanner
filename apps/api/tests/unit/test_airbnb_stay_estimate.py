@@ -125,3 +125,53 @@ class TestAirbnbHotelEquivalentFallback:
         assert airbnb_requested["stay_airbnb_based"] is True
         assert airbnb_requested["breakdown"]["stay_inr"] < hotel_equivalent["breakdown"]["stay_inr"]
 
+
+class TestFoodGroundingFloor:
+    """The food line item floors community grounding at the flat _COST_MATRIX
+    value (floor=True): Wikivoyage 'Eat' prices are per-dish/per-meal, so a
+    below-flat grounded figure under-estimates a full day's food. Stay has no
+    such floor (NEXT_SESSION_TODO 'item A', 2026-07-22)."""
+
+    @pytest.mark.asyncio
+    async def test_food_grounding_below_flat_is_floored_and_not_flagged_community(self):
+        from core.budget_estimator import _FOOD_PP_BOUNDS, _grounded_or_flat
+
+        with patch("core.budget_estimator.community_median_price_inr", new=AsyncMock(return_value=400.0)):
+            val, based = await _grounded_or_flat(
+                "Venice", "Italy", "food meal daily cost per person", 6546, _FOOD_PP_BOUNDS, floor=True
+            )
+        assert (val, based) == (6546, False)  # per-dish 400 discarded, flat used, reported honestly
+
+    @pytest.mark.asyncio
+    async def test_food_grounding_above_flat_is_used(self):
+        from core.budget_estimator import _FOOD_PP_BOUNDS, _grounded_or_flat
+
+        with patch("core.budget_estimator.community_median_price_inr", new=AsyncMock(return_value=8000.0)):
+            val, based = await _grounded_or_flat(
+                "Venice", "Italy", "food meal daily cost per person", 6546, _FOOD_PP_BOUNDS, floor=True
+            )
+        assert (val, based) == (8000.0, True)  # legitimately-higher grounding still wins
+
+    @pytest.mark.asyncio
+    async def test_stay_grounding_below_flat_is_kept_no_floor(self):
+        from core.budget_estimator import _STAY_PP_BOUNDS, _grounded_or_flat
+
+        with patch("core.budget_estimator.community_median_price_inr", new=AsyncMock(return_value=500.0)):
+            val, based = await _grounded_or_flat(
+                "Goa", "India", "hotel accommodation nightly rate per person", 2000, _STAY_PP_BOUNDS, floor=False
+            )
+        assert (val, based) == (500.0, True)  # a genuinely-cheap stay is allowed below flat
+
+    @pytest.mark.asyncio
+    async def test_estimator_floors_food_but_keeps_below_flat_stay(self):
+        """End-to-end: one low grounded value hits both line items; food (floored)
+        ignores it, stay (no floor) uses it — proving the floor is food-only."""
+
+        async def _low(dest, query_suffix, low, high, context_keywords=None):
+            return 400.0  # below both the flat food (1800) and flat stay (2000) for budget tier
+
+        with patch("core.budget_estimator.community_median_price_inr", new=_low):
+            est = await estimate_bare_minimum_budget(_config())  # Colombo, budget tier
+        assert est["food_community_based"] is False  # floored to flat
+        assert est["stay_community_based"] is True    # below-flat stay grounding kept
+

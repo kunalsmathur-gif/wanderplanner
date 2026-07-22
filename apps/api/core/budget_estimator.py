@@ -425,12 +425,26 @@ async def _grounded_or_flat(
     flat_default: float,
     bounds: tuple[float, float],
     context_keywords: frozenset[str] | None = None,
+    floor: bool = False,
 ) -> tuple[float, bool]:
     """Real per-destination community-reported figure (INR) if the free RAG
     collections have enough signal for it, else the hand-authored flat
     default. Best-effort — a retrieval hiccup or empty corpus (the common
     case today, see core/cost_grounding.py) just falls back, never blocks
-    the estimate."""
+    the estimate.
+
+    `floor=True` discards a grounded figure that comes in *below* the flat
+    default, using the flat default instead (and reporting it as not
+    community-based). This is for the food line item specifically: the
+    community source for food is Wikivoyage "Eat" listings, whose per-dish/
+    per-meal prices systematically undershoot a full day's food budget, so
+    letting them undercut the researched flat bare-minimum produced harmful
+    under-estimates (e.g. Venice food ₹1,190/day vs a realistic ₹6,546 —
+    NEXT_SESSION_TODO "item A", 2026-07-22). Mirrors feasibility_chain.py's
+    existing `max(llm_estimate, deterministic_floor)`. Stay does NOT use this
+    (a below-flat grounded stay figure can legitimately reflect a genuinely
+    cheap destination). Once food grounding distinguishes per-meal from
+    per-day spend, this floor can be revisited."""
     dest_city = city or country
     if not dest_city:
         return flat_default, False
@@ -440,7 +454,7 @@ async def _grounded_or_flat(
         )
     except Exception:
         grounded = None
-    if grounded is not None:
+    if grounded is not None and (not floor or grounded >= flat_default):
         return grounded, True
     return flat_default, False
 
@@ -512,7 +526,7 @@ async def estimate_bare_minimum_budget(
         stay_pp_base = round(stay_pp_base * _AIRBNB_STAY_DISCOUNT_MULTIPLIER)
     food_pp_base, food_community_based = await _grounded_or_flat(
         city, country, "food meal daily cost per person", rates["food_per_day_pp"], _FOOD_PP_BOUNDS,
-        context_keywords=FOOD_CONTEXT_KEYWORDS,
+        context_keywords=FOOD_CONTEXT_KEYWORDS, floor=True,
     )
     stay_pp_per_night = stay_pp_base * season_multiplier
     food_pp_per_day = food_pp_base
