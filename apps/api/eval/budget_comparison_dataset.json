@@ -27,9 +27,9 @@
       "group": {"adults": 2},
       "traveller_level_hint": null,
       "user_prompt": "We're 2 adults planning a 6-day trip from Bengaluru to London, roughly August 10-15, 2026. No flights or hotels booked yet. We'd like a comfortable mid-range trip -- nice hotels, good restaurants, but not full luxury/no-expense-spared. Roughly how much should we budget in total (INR) for flights, stay, and food for both of us?",
-      "anchor_low_inr": 275060,
-      "anchor_high_inr": 372140,
-      "anchor_source": "core.budget_estimator.estimate_bare_minimum_budget() = \u20b9323,600 total (\u00b115%), itself grounded in the real Bengaluru->London \u20b967,327 round-trip fare anchor (core/distance_pricing.py, MakeMyTrip Aug 2026)."
+      "anchor_low_inr": 453985,
+      "anchor_high_inr": 614215,
+      "anchor_source": "core.budget_estimator.estimate_bare_minimum_budget() = \u20b9534,100 total (\u00b115%), itself grounded in the real Bengaluru->London \u20b967,327 round-trip fare anchor (core/distance_pricing.py, MakeMyTrip Aug 2026)."
     },
     {
       "id": "BC-003",
@@ -55,9 +55,9 @@
       "group": {"adults": 1},
       "traveller_level_hint": null,
       "user_prompt": "I'm a solo traveller planning a 5-day trip from Mumbai to Bangkok, roughly November 5-9, 2026. No flights or hotel booked yet. I want a comfortable mid-range trip, not backpacker-cheap but not a 5-star resort either. Roughly how much should I budget in total (INR) for flights, stay, and food?",
-      "anchor_low_inr": 43435,
-      "anchor_high_inr": 58765,
-      "anchor_source": "core.budget_estimator.estimate_bare_minimum_budget() = \u20b951,100 total (\u00b115%), itself grounded in real Numbeo Bangkok cost-of-living data spot-checked 2026-07-21 (core/budget_estimator.py _COST_MATRIX docstring) plus the flight-distance band from core/distance_pricing.py."
+      "anchor_low_inr": 58650,
+      "anchor_high_inr": 79350,
+      "anchor_source": "core.budget_estimator.estimate_bare_minimum_budget() = \u20b969,000 total (\u00b115%), itself grounded in real Numbeo Bangkok cost-of-living data spot-checked 2026-07-21 (core/budget_estimator.py _COST_MATRIX docstring) plus the flight-distance band from core/distance_pricing.py."
     },
     {
       "id": "BC-005",
@@ -69,9 +69,9 @@
       "group": {"adults": 2},
       "traveller_level_hint": null,
       "user_prompt": "We're a couple planning a 6-day honeymoon trip from Mumbai to Paris, roughly September 14-19, 2026. No flights or hotels booked yet. We want a nice mid-range trip -- comfortable hotels, good restaurants, maybe one special splurge dinner -- not full luxury throughout. Roughly how much should we budget in total (INR) for flights, stay, and food for both of us?",
-      "anchor_low_inr": 249305,
-      "anchor_high_inr": 337295,
-      "anchor_source": "core.budget_estimator.estimate_bare_minimum_budget() = \u20b9293,300 total (\u00b115%), itself grounded in real Numbeo Paris cost-of-living data recalibrated 2026-07-21 (core/budget_estimator.py _COST_MATRIX docstring) plus the flight-distance band from core/distance_pricing.py."
+      "anchor_low_inr": 428230,
+      "anchor_high_inr": 579370,
+      "anchor_source": "core.budget_estimator.estimate_bare_minimum_budget() = \u20b9503,800 total (\u00b115%), itself grounded in real Numbeo Paris cost-of-living data recalibrated 2026-07-21 (core/budget_estimator.py _COST_MATRIX docstring) plus the flight-distance band from core/distance_pricing.py."
     }
   ]
 }

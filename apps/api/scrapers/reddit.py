@@ -25,6 +25,20 @@ KNOWN_DESTINATIONS = [
     "Varanasi", "Agra", "Kolkata", "Chennai", "Hyderabad", "Bengaluru", "Kochi",
     "Sri Lanka", "Colombo", "Maldives", "Dubai", "Abu Dhabi", "Doha", "Muscat",
     "Istanbul", "Cappadocia", "Tbilisi", "Baku",
+    # India — domestic tourism (tier-2/3 towns, hill stations, heritage &
+    # beach circuits). India is the core user cohort but was under-represented
+    # here (only the metros above), so organically-mentioned domestic
+    # destinations were silently bucketed as "general" and lost their signal
+    # (NEXT_SESSION_TODO.md item 3, India-coverage findings). Word-boundary
+    # matched, so multi-word names are fine.
+    "Rishikesh", "Haridwar", "Manali", "Shimla", "Leh", "Ladakh",
+    "Dharamshala", "Nainital", "Mussoorie", "Srinagar", "Amritsar", "Spiti",
+    "Udaipur", "Jodhpur", "Jaisalmer", "Pushkar",
+    "Pondicherry", "Munnar", "Alleppey", "Ooty", "Coorg", "Mysuru",
+    "Hampi", "Gokarna", "Varkala",
+    "Darjeeling", "Gangtok", "Shillong",
+    "Khajuraho", "Aurangabad", "Mahabaleshwar", "Lonavala",
+    "Andaman", "Port Blair",
     # Europe
     "Paris", "London", "Rome", "Barcelona", "Amsterdam", "Berlin", "Prague",
     "Vienna", "Budapest", "Lisbon", "Porto", "Madrid", "Athens", "Santorini",

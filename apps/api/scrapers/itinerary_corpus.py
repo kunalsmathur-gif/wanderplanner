@@ -158,6 +158,13 @@ WIKIVOYAGE_API_URL = "https://en.wikivoyage.org/w/api.php"
 # list above — we seed with known-good article titles.)
 WIKIVOYAGE_ITINERARY_TITLES = [
     "Golden Triangle (India)",
+    # India-specific additions (NEXT_SESSION_TODO.md item 3 — the blog/RSS and
+    # itinerary-corpus pools were India-thin despite India being the core
+    # cohort). Both live-verified to resolve to real, itinerary-shaped
+    # Wikivoyage articles (canonical titles used so a redirect change can't
+    # silently break them).
+    "Kerala Backwaters",
+    "Rail travel in India",
     "Grand Tour of Europe",
     "Trans-Siberian Railway",
     "Backpacking in Southeast Asia",
