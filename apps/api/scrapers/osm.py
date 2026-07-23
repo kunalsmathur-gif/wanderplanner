@@ -14,13 +14,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import random
 from typing import Any
 
 import httpx
 
 from core.config import settings
 from core.embeddings import embed
-from core.qdrant import delete_stale_destination_points, get_qdrant
+from core.qdrant import count_destination_points, delete_stale_destination_points, get_qdrant
 from services.geocode import geocode_city
 
 logger = logging.getLogger(__name__)
@@ -31,8 +32,30 @@ logger = logging.getLogger(__name__)
 # on its own. Retrying with backoff here means a scheduled/background
 # ingestion job doesn't silently record a destination as having zero POIs
 # just because Overpass was briefly busy.
-_MAX_FETCH_ATTEMPTS = 3
+#
+# 2026-07-23: bumped from 3 to 5 attempts and switched linear->exponential
+# backoff (with jitter) after live large-batch re-ingestion runs (~9-34
+# destinations sequentially) visibly saturated the single primary mirror —
+# Warsaw/Maldives needed a within-run retry and Fiji/Hawaii needed a whole
+# extra out-of-band retry after exhausting the old 3-attempt/15s-max budget.
+# Each attempt also rotates to the next mirror in _overpass_mirrors() so
+# repeated failures don't all land on the same rate-limited instance.
+_MAX_FETCH_ATTEMPTS = 5
 _RETRY_BASE_DELAY_S = 5.0
+_RETRY_MAX_DELAY_S = 60.0
+_RETRY_JITTER_S = 3.0
+
+
+def _overpass_mirrors() -> list[str]:
+    """Primary Overpass instance first, then the configured fallback
+    mirrors, deduplicated while preserving order."""
+    seen: set[str] = set()
+    mirrors: list[str] = []
+    for url in [settings.osm_overpass_url, *settings.osm_overpass_fallback_mirrors]:
+        if url and url not in seen:
+            seen.add(url)
+            mirrors.append(url)
+    return mirrors
 
 # OSM tag categories worth surfacing to the itinerary LLM. Each maps to a
 # human-readable POI type used in the embedded description text.
@@ -159,21 +182,33 @@ async def fetch_osm_pois(
     # bare 406, so send both defensively.
     headers = {"User-Agent": settings.nominatim_user_agent, "Accept": "*/*"}
 
+    mirrors = _overpass_mirrors()
     data: dict[str, Any] | None = None
     for attempt in range(1, _MAX_FETCH_ATTEMPTS + 1):
+        mirror_url = mirrors[(attempt - 1) % len(mirrors)]
         async with httpx.AsyncClient(timeout=30, headers=headers) as client:
             try:
-                resp = await client.post(settings.osm_overpass_url, data={"data": query})
+                resp = await client.post(mirror_url, data={"data": query})
                 resp.raise_for_status()
                 data = resp.json()
                 break
             except Exception as e:
                 if attempt == _MAX_FETCH_ATTEMPTS:
                     logger.warning(
-                        "Overpass fetch failed for %r after %d attempts: %s", destination, attempt, e
+                        "Overpass fetch failed for %r after %d attempts across %d mirrors: %s",
+                        destination, attempt, len(mirrors), e,
                     )
                     return []
-                await asyncio.sleep(_RETRY_BASE_DELAY_S * attempt)
+                # Exponential backoff, capped, with jitter so a batch of
+                # destinations that all failed around the same moment don't
+                # all retry in lockstep and re-trigger the same rate limit.
+                delay = min(_RETRY_BASE_DELAY_S * (2 ** (attempt - 1)), _RETRY_MAX_DELAY_S)
+                delay += random.uniform(0, _RETRY_JITTER_S)
+                logger.info(
+                    "Overpass attempt %d/%d for %r failed (%s), retrying on %s in %.1fs",
+                    attempt, _MAX_FETCH_ATTEMPTS, destination, e, mirrors[attempt % len(mirrors)], delay,
+                )
+                await asyncio.sleep(delay)
 
     pois: list[dict] = []
     seen_names: set[str] = set()
@@ -293,6 +328,25 @@ async def ingest_osm_pois(destination: str) -> int:
             pois = expanded_pois
     if not pois:
         return 0
+
+    # A non-empty but severely degraded fetch (e.g. Overpass silently
+    # returning a near-empty/truncated result after exhausting retries,
+    # rather than raising) is worse than doing nothing if it would delete an
+    # existing, substantially larger dataset — live-confirmed 2026-07-23:
+    # Las Vegas/Tulum each had 60 good POIs replaced by a single restaurant
+    # POI during a busy retry batch. Only refuse the overwrite when the new
+    # result is still thin/dominated even after the radius-expansion retry
+    # above, and strictly worse than what's already there.
+    if _is_thin_or_dominated(pois):
+        client = get_qdrant()
+        existing_count = count_destination_points(client, "osm_pois", destination)
+        if existing_count > len(pois):
+            logger.warning(
+                "%r: new OSM fetch is thin/dominated (%d POIs) and worse than the %d POIs already "
+                "stored — keeping existing data instead of overwriting it.",
+                destination, len(pois), existing_count,
+            )
+            return existing_count
 
     from qdrant_client.models import PointStruct
 

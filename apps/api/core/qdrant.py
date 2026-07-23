@@ -89,6 +89,22 @@ def _ensure_collections(client: QdrantClient):
             )
 
 
+def count_destination_points(client: QdrantClient, collection_name: str, destination: str) -> int:
+    """Count existing points for `destination` in `collection_name` — used to
+    guard against a fresh ingestion run silently overwriting a good,
+    substantial dataset with a degraded/thin one (e.g. Overpass returning
+    only 1-2 POIs after exhausting retries instead of raising — a "success"
+    by return-value alone; live-confirmed 2026-07-23 for Las Vegas/Tulum,
+    whose prior 60-POI datasets were replaced by a single restaurant POI).
+    """
+    result = client.count(
+        collection_name=collection_name,
+        count_filter=Filter(must=[FieldCondition(key="destination", match=MatchValue(value=destination))]),
+        exact=True,
+    )
+    return result.count
+
+
 def delete_stale_destination_points(
     client: QdrantClient, collection_name: str, destination: str, keep_ids: set[int]
 ) -> int:

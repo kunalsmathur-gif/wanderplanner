@@ -52,6 +52,16 @@ class Settings(BaseSettings):
 
     # OSM POI ingestion (docs §3I)
     osm_overpass_url: str = "https://overpass-api.de/api/interpreter"
+    # Additional public Overpass mirrors, tried in round-robin alongside
+    # osm_overpass_url when a request fails — spreads load across
+    # independently rate-limited instances instead of hammering a single one
+    # ~100 times in a row during a large re-ingestion batch. Added 2026-07-23
+    # after live batches (Warsaw/Maldives/Fiji/Hawaii) visibly saturated the
+    # primary instance under back-to-back sequential load.
+    osm_overpass_fallback_mirrors: list[str] = [
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.openstreetmap.fr/api/interpreter",
+    ]
     osm_poi_radius_m: int = 5000
     # Fallback radius tried when the default radius comes back thin/food-
     # dominated (see scrapers/osm.py::ingest_osm_pois) — small towns and

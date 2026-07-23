@@ -194,3 +194,121 @@ class TestIngestWikivoyageOrphanCleanup:
 
         assert count == 0
         mock_delete.assert_not_called()
+
+
+def _mock_json_response(payload: dict, status_code: int = 200):
+    resp = AsyncMock()
+    resp.status_code = status_code
+    resp.json = lambda: payload
+    if status_code >= 400:
+        resp.raise_for_status = MagicMock(side_effect=Exception(f"{status_code} error"))
+    else:
+        resp.raise_for_status = lambda: None
+    return resp
+
+
+class TestWikivoyage404SearchFallback:
+    """A naive `.title()` slug can 404 even for a real destination — e.g.
+    "Washington DC" -> "Washington_Dc", "Rio de Janeiro" -> "Rio_De_Janeiro"
+    (Python's `.title()` mis-cases "DC"/"de"). Rather than hand-pinning every
+    such casing mismatch, fall back to Wikivoyage's own fuzzy search."""
+
+    @pytest.mark.asyncio
+    async def test_404_falls_back_to_wikivoyage_search_result(self):
+        get_responses = [
+            _mock_json_response({}, status_code=404),  # naive slug 404s
+            _mock_response(NEW_MARKUP),  # fetch of the search-resolved title
+        ]
+        with patch("scrapers.wikivoyage.httpx.AsyncClient") as mock_client_cls, \
+             patch(
+                 "scrapers.wikivoyage._wikivoyage_search_title",
+                 new=AsyncMock(return_value="Washington, D.C."),
+             ):
+            mock_client = mock_client_cls.return_value.__aenter__.return_value
+            mock_client.get = AsyncMock(side_effect=get_responses)
+            docs = await scrape_wikivoyage("Washington DC")
+
+        assert docs
+        last_url = mock_client.get.await_args_list[-1].args[0]
+        assert last_url == "https://en.wikivoyage.org/wiki/Washington,_D.C."
+
+
+class TestWikivoyageDisambiguation:
+    """Some destination names are genuine Wikivoyage disambiguation pages
+    (e.g. "Queenstown", "Oaxaca", "Cartagena") rather than a single city
+    guide — the naive fetch succeeds (200) but yields zero usable chunks,
+    the same failure mode as the New York state-vs-city override."""
+
+    @pytest.mark.asyncio
+    async def test_disambiguation_page_resolved_via_country_match(self):
+        from models.common import GeocodeResponse
+
+        disambig_page = """
+        <html><body><div id="mw-content-text">
+        <a href="/wiki/Cartagena_(Colombia)">Cartagena (Colombia)</a>
+        <a href="/wiki/Cartagena_(Spain)">Cartagena (Spain)</a>
+        </div></body></html>
+        """
+        get_responses = [
+            _mock_response("<html><body><h2 id='mw-toc-heading'></h2></body></html>"),  # naive fetch: disambig, 0 docs
+            _mock_json_response({"query": {"pages": {"1": {"pageprops": {"disambiguation": ""}}}}}),  # pageprops
+            _mock_response(disambig_page),  # disambiguation page itself
+            _mock_response(NEW_MARKUP),  # final resolved city page
+        ]
+        fake_geo = GeocodeResponse(display_name="Cartagena, Colombia", lat=10.4, lon=-75.5, country_code="co")
+
+        with patch("scrapers.wikivoyage.httpx.AsyncClient") as mock_client_cls, \
+             patch("scrapers.wikivoyage.geocode_city", new=AsyncMock(return_value=fake_geo)):
+            mock_client = mock_client_cls.return_value.__aenter__.return_value
+            mock_client.get = AsyncMock(side_effect=get_responses)
+            docs = await scrape_wikivoyage("Cartagena")
+
+        assert docs
+        last_url = mock_client.get.await_args_list[-1].args[0]
+        assert last_url == "https://en.wikivoyage.org/wiki/Cartagena_(Colombia)"
+
+    @pytest.mark.asyncio
+    async def test_disambiguation_prefers_city_over_region_when_country_ties(self):
+        """"Oaxaca (state)" vs "Oaxaca (city)" both sit under Mexico, so a
+        country match alone can't break the tie — must prefer the
+        non-region-level candidate."""
+        from models.common import GeocodeResponse
+
+        disambig_page = """
+        <html><body><div id="mw-content-text">
+        <a href="/wiki/Oaxaca_(state)">Oaxaca (state)</a>
+        <a href="/wiki/Oaxaca_(city)">Oaxaca (city)</a>
+        </div></body></html>
+        """
+        get_responses = [
+            _mock_response("<html><body><h2 id='mw-toc-heading'></h2></body></html>"),
+            _mock_json_response({"query": {"pages": {"1": {"pageprops": {"disambiguation": ""}}}}}),
+            _mock_response(disambig_page),
+            _mock_response(NEW_MARKUP),
+        ]
+        fake_geo = GeocodeResponse(display_name="Oaxaca, Mexico", lat=17.0, lon=-96.5, country_code="mx")
+
+        with patch("scrapers.wikivoyage.httpx.AsyncClient") as mock_client_cls, \
+             patch("scrapers.wikivoyage.geocode_city", new=AsyncMock(return_value=fake_geo)):
+            mock_client = mock_client_cls.return_value.__aenter__.return_value
+            mock_client.get = AsyncMock(side_effect=get_responses)
+            await scrape_wikivoyage("Oaxaca")
+
+        last_url = mock_client.get.await_args_list[-1].args[0]
+        assert last_url == "https://en.wikivoyage.org/wiki/Oaxaca_(city)"
+
+    @pytest.mark.asyncio
+    async def test_non_disambiguation_zero_docs_page_returns_empty_without_extra_calls(self):
+        """A genuinely empty/structurally-different page that isn't a
+        disambiguation page (pageprops has no `disambiguation` key) should
+        just return an empty list, not loop forever trying to disambiguate."""
+        get_responses = [
+            _mock_response("<html><body><h2 id='mw-toc-heading'></h2></body></html>"),
+            _mock_json_response({"query": {"pages": {"1": {"pageprops": {}}}}}),
+        ]
+        with patch("scrapers.wikivoyage.httpx.AsyncClient") as mock_client_cls:
+            mock_client = mock_client_cls.return_value.__aenter__.return_value
+            mock_client.get = AsyncMock(side_effect=get_responses)
+            docs = await scrape_wikivoyage("Somewhere")
+
+        assert docs == []

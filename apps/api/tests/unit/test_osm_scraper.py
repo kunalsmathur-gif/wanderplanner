@@ -117,9 +117,9 @@ class TestFetchOsmPoisTruncation:
             pois = await fetch_osm_pois("Nowhere", lat=0.0, lon=0.0)
 
         assert pois == []
-        # Retried up to the max before giving up, not just failed once.
-        assert mock_client.post.await_count == 3
-        assert mock_sleep.await_count == 2
+        # Retried up to the max (5, across rotating mirrors) before giving up.
+        assert mock_client.post.await_count == 5
+        assert mock_sleep.await_count == 4
 
     @pytest.mark.asyncio
     async def test_retries_transient_failure_then_succeeds(self):
@@ -142,6 +142,33 @@ class TestFetchOsmPoisTruncation:
         assert pois[0]["name"] == "Tower Bridge"
         assert mock_client.post.await_count == 2
         assert mock_sleep.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_rotates_across_mirrors_on_repeated_failure(self):
+        # 2026-07-23: repeated Overpass failures must not all retry against
+        # the same instance — spread across the configured mirrors so one
+        # rate-limited/overloaded instance doesn't eat the whole retry budget.
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=Exception("504 Gateway Timeout"))
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("scrapers.osm.httpx.AsyncClient", return_value=mock_client), \
+             patch("scrapers.osm.asyncio.sleep", new=AsyncMock()), \
+             patch(
+                "scrapers.osm.settings.osm_overpass_fallback_mirrors",
+                ["https://mirror-a", "https://mirror-b"],
+            ):
+            await fetch_osm_pois("Nowhere", lat=0.0, lon=0.0)
+
+        called_urls = [call.args[0] for call in mock_client.post.await_args_list]
+        assert called_urls == [
+            "https://overpass-api.de/api/interpreter",
+            "https://mirror-a",
+            "https://mirror-b",
+            "https://overpass-api.de/api/interpreter",
+            "https://mirror-a",
+        ]
 
 
 class TestIngestOsmPoisOrphanCleanup:
@@ -166,6 +193,7 @@ class TestIngestOsmPoisOrphanCleanup:
         with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(return_value=fake_pois)), \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384]), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.count_destination_points", return_value=0), \
              patch("scrapers.osm.delete_stale_destination_points", return_value=2) as mock_delete:
             count = await ingest_osm_pois("London")
 
@@ -216,6 +244,7 @@ class TestRadiusExpansionForThinOrDominatedResults:
         with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(side_effect=[thin, wide])) as mock_fetch, \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 25), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.count_destination_points", return_value=0), \
              patch("scrapers.osm.delete_stale_destination_points", return_value=0):
             count = await ingest_osm_pois("Spiti")
 
@@ -237,6 +266,7 @@ class TestRadiusExpansionForThinOrDominatedResults:
         with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(side_effect=[dominated, balanced])) as mock_fetch, \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 25), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.count_destination_points", return_value=0), \
              patch("scrapers.osm.delete_stale_destination_points", return_value=0):
             count = await ingest_osm_pois("Jaisalmer")
 
@@ -274,8 +304,57 @@ class TestRadiusExpansionForThinOrDominatedResults:
         with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(side_effect=[thin, []])) as mock_fetch, \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 5), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.count_destination_points", return_value=0), \
              patch("scrapers.osm.delete_stale_destination_points", return_value=0):
             count = await ingest_osm_pois("Nowhereville")
 
         assert count == 5
         assert mock_fetch.await_count == 2
+
+
+class TestDataLossGuardForThinResults:
+    """A thin-but-non-empty new fetch must not clobber a substantially
+    larger existing dataset — Overpass can silently return truncated
+    results without raising, so emptiness alone isn't a safe guard."""
+
+    def _poi(self, name: str, poi_type: str) -> dict:
+        return {
+            "destination": "X", "name": name, "poi_type": poi_type,
+            "lat": 0.0, "lon": 0.0, "tags": {}, "text": f"{name} is a {poi_type} in X.",
+            "source": "osm", "source_url": "https://www.openstreetmap.org/node/1",
+        }
+
+    @pytest.mark.asyncio
+    async def test_skips_overwrite_when_existing_data_is_more_substantial(self):
+        from scrapers.osm import ingest_osm_pois
+
+        thin = [self._poi("Only POI", "attraction")]
+        mock_qdrant = MagicMock()
+
+        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(side_effect=[thin, thin])), \
+             patch("scrapers.osm.embed", return_value=[[0.1] * 384]), \
+             patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.count_destination_points", return_value=60), \
+             patch("scrapers.osm.delete_stale_destination_points") as mock_delete:
+            count = await ingest_osm_pois("Las Vegas")
+
+        assert count == 60
+        mock_delete.assert_not_called()
+        mock_qdrant.upsert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_overwrites_when_new_thin_result_is_not_worse(self):
+        from scrapers.osm import ingest_osm_pois
+
+        thin = [self._poi("Only POI", "attraction")]
+        mock_qdrant = MagicMock()
+
+        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(side_effect=[thin, thin])), \
+             patch("scrapers.osm.embed", return_value=[[0.1] * 384]), \
+             patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.count_destination_points", return_value=0), \
+             patch("scrapers.osm.delete_stale_destination_points", return_value=0) as mock_delete:
+            count = await ingest_osm_pois("Brand New Place")
+
+        assert count == 1
+        mock_delete.assert_called_once()

@@ -52,3 +52,4 @@ npm-debug.log*
 
 # Eval harness generated reports (commit published results deliberately, not by default)
 apps/api/eval/out/
+apps/api/scripts/out/
