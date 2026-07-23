@@ -1,6 +1,27 @@
 # Next-Session TODO — Post-Cloud-migration cleanup → Reddit approval → Phase 2
 
-**Last updated:** 2026-07-22 (later) — completed a batch of items (eval-anchor regen, 23-destination re-ingestion, India seed-list expansion, DNS-rebinding SSRF fix, grounding + data-completeness live verification). See "2026-07-22 session (batch)" immediately below. **⚠️ NEW top-priority issue surfaced: re-ingestion inadvertently activated a latent food-grounding under-estimation bug — see item A below.**
+**Last updated:** 2026-07-23 — re-ingested the 34 India tier-2/3 towns (item 2, India-first cohort) against the live cluster: all 34 now have Wikivoyage data (was zero), 29/34 have real OSM POIs, 21 fully pass the completeness gate. See "2026-07-23 session" immediately below for the per-destination breakdown + new follow-up TODOs (5 OSM-zeros to fix, two prod-data-quality cleanups). Prior: 2026-07-22 (later) — completed a batch of items (eval-anchor regen, 23-destination re-ingestion, India seed-list expansion, DNS-rebinding SSRF fix, grounding + data-completeness live verification). See "2026-07-22 session (batch)" below. **⚠️ Still top-priority: the latent food-grounding under-estimation bug — see item A below.**
+
+---
+
+## 🆕 2026-07-23 session — item 2: India tier-2/3 re-ingestion (34 towns, live cluster)
+
+Ran a read-only audit of the live cluster first (rather than trusting old session counts): **~150 of the now-168 `KNOWN_DESTINATIONS` fail the data-completeness gate** (`MIN_OSM_POIS=20`, `MIN_WIKI_CHUNKS=1`, `MAX_CATEGORY_SHARE=0.5`) — bigger than the previously-noted "126" because the 2026-07-22 India seed-list expansion added 35 towns that were never ingested. User chose the **India tier-2/3 towns** as the first batch (highest value for the India-first cohort, lowest Overpass rate-limit risk).
+
+New script: **`apps/api/scripts/reingest_india_tier23.py`** (parallel to `reingest_pilot_batch.py`, 12s inter-destination delay, writes a JSON summary to gitignored `scripts/out/`). Reuses the existing `ingest_osm_pois()`/`ingest_wikivoyage()` (round-robin categories + retry/backoff + delete-then-upsert cleanup all already built in). All counts below are post-write scroll reads of the real `osm_pois`/`wiki` collections (persistence confirmed). Retry/backoff visibly worked — the log shows many Overpass `429`/`504`s retried through successfully.
+
+**Result: all 34 towns now have Wikivoyage data (was zero everywhere), 29/34 have real OSM POIs (~1,400 new OSM points + ~830 wiki chunks written).**
+- **✅ 21 fully healthy** (pass the gate): Rishikesh, Manali, Shimla, Leh, Mussoorie, Srinagar, Amritsar, Udaipur, Jodhpur, Ooty, Mysuru, Hampi, Darjeeling, Gangtok, Shillong, Port Blair, Aurangabad, Haridwar, Pondicherry, Munnar, Gokarna.
+- **🟡 5 OSM slightly category-dominated (top cat >0.5) but good data + wiki** — real-world skew, not a bug: Dharamshala (place-of-worship 0.53), Pushkar (restaurant 0.63), Alleppey (place-of-worship 0.78), Varkala (place-of-worship 0.62), Khajuraho (restaurant 0.77).
+- **🟡 3 thin OSM (<20)**: Coorg (2), Mahabaleshwar (16), Lonavala (19).
+- **🔴 5 OSM-zero (wiki still populated)**: Ladakh, Spiti, Andaman (region/area names — Nominatim returns a huge/wrong bbox → Overpass yields nothing; Coorg's near-zero is the same cause) and **Nainital, Jaisalmer** (real cities that geocoded fine and Overpass returned `200` but 0 POIs — a genuine bbox-pick anomaly, NOT rate-limiting; worth investigating).
+
+### Follow-up TODOs from this session (not yet done)
+
+1. **Fix the 5 India OSM-zeros.** For the region/area names add a city-substitute geocoding override (Ladakh→Leh, Spiti→Kaza, Andaman→Port Blair, Coorg→Madikeri — same spirit as `WIKIVOYAGE_TITLE_OVERRIDES`). Separately root-cause the **Nainital/Jaisalmer** anomaly (Overpass `200` + 0 POIs despite a clean geocode — likely a bad Nominatim bounding-box pick), then re-run just those.
+2. **Continue item 2 — next batch: top POC-magnet international cities** (Tokyo, Rome, Barcelona, Amsterdam, Berlin, Dubai, Singapore, Kyoto, Vienna, etc.) — all still `wiki=0` / food-dominated in the audit. Higher Overpass rate-limit risk; expect some to need a retry pass. ~120 destinations still remain in the overall backlog after this India batch.
+3. **Prod data-quality cleanup #1 — delete `Skeleton Test City`** (224 points of leaked test data found in the production `osm_pois` collection during the audit).
+4. **Prod data-quality cleanup #2 — `Medellín` vs `Medellin` accent mismatch**: the cluster holds `Medellin` (60 pts, no accent) but `KNOWN_DESTINATIONS` lists `Medellín` (accented), so the accented lookup finds zero — same silent-zero class as the earlier "New York" state-vs-city bug. Decide on canonical spelling + re-key or re-ingest.
 
 ---
 
