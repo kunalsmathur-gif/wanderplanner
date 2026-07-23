@@ -183,3 +183,70 @@ def test_median_price_inr_applies_context_keywords():
         "Guesthouse stay was ₹4800 per night, nice courtyard.",
     ]
     assert median_price_inr(snippets, *STAY_BOUNDS, min_samples=2, context_keywords=STAY_CONTEXT_KEYWORDS) == 4650.0
+
+
+# --- Food per-meal -> per-day reconciliation, added 2026-07-24 (NEXT_SESSION
+# _TODO "item A" proper fix): Wikivoyage "Eat" prices are per-dish/per-meal, so
+# a per_day_meal_multiplier scales per-meal amounts to a day's food budget,
+# leaving amounts already expressed per-day un-scaled. ---
+
+FOOD_PP_BOUNDS = (100, 10_000)
+
+
+def test_per_day_multiplier_scales_per_meal_amount():
+    # A ₹300 dish, unit-less (Wikivoyage "Eat" style) -> per-day at x3 = ₹900.
+    amounts = extract_price_mentions_inr(
+        ["Thali at the dhaba was ₹300, filling."], *FOOD_PP_BOUNDS,
+        context_keywords=FOOD_CONTEXT_KEYWORDS, per_day_meal_multiplier=3.0,
+    )
+    assert amounts == [900.0]
+
+
+def test_per_day_multiplier_leaves_already_daily_amount_unscaled():
+    # An amount explicitly per-day must NOT be multiplied again.
+    amounts = extract_price_mentions_inr(
+        ["We spent about ₹1500 per day on food each."], *FOOD_PP_BOUNDS,
+        context_keywords=FOOD_CONTEXT_KEYWORDS, per_day_meal_multiplier=3.0,
+    )
+    assert amounts == [1500.0]
+
+
+def test_per_day_multiplier_bounds_apply_to_reconciled_value():
+    # A ₹50 street snack is below the 100 per-day floor raw, but x3 = ₹150 is
+    # in-bounds and kept — the bound is on the reconciled per-day figure.
+    amounts = extract_price_mentions_inr(
+        ["Momos were just ₹50 a plate at the food stall."], *FOOD_PP_BOUNDS,
+        context_keywords=FOOD_CONTEXT_KEYWORDS, per_day_meal_multiplier=3.0,
+    )
+    assert amounts == [150.0]
+
+
+def test_per_day_multiplier_discards_when_reconciled_over_high_bound():
+    # A ₹4000 "dish" reconciled to ₹12000/day exceeds the 10000 bound and is
+    # dropped (almost certainly not actually a single meal's price).
+    amounts = extract_price_mentions_inr(
+        ["Some restaurant meal was ₹4000, splurge."], *FOOD_PP_BOUNDS,
+        context_keywords=FOOD_CONTEXT_KEYWORDS, per_day_meal_multiplier=3.0,
+    )
+    assert amounts == []
+
+
+def test_no_multiplier_leaves_food_amounts_raw():
+    # Backward-compatible: omitting the multiplier keeps the raw per-meal value.
+    amounts = extract_price_mentions_inr(
+        ["Thali was ₹300."], *FOOD_PP_BOUNDS, context_keywords=FOOD_CONTEXT_KEYWORDS,
+    )
+    assert amounts == [300.0]
+
+
+def test_median_food_per_day_mixes_meal_and_daily_correctly():
+    snippets = [
+        "Breakfast thali ₹200 at the cafe.",          # per-meal -> x3 = 600
+        "Lunch buffet was ₹300 per person, great.",   # per-meal -> x3 = 900
+        "Honestly we spent ₹900 per day on food.",     # already daily -> 900
+    ]
+    # Reconciled values: [600, 900, 900] -> median 900.
+    assert median_price_inr(
+        snippets, *FOOD_PP_BOUNDS, min_samples=2,
+        context_keywords=FOOD_CONTEXT_KEYWORDS, per_day_meal_multiplier=3.0,
+    ) == 900.0

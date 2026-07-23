@@ -69,6 +69,24 @@ GEOCODE_QUERY_OVERRIDES: dict[str, str] = {
     # alongside Bogotá/Medellín/Lima/Cusco (see scrapers/reddit.py), i.e. it
     # means Colombia. Live-confirmed 2026-07-23.
     "cartagena": "Cartagena, Colombia",
+    # "La Paz" bare-queries to La Paz, Baja California Sur, Mexico — a real
+    # city, so neither the importance nor the Wikipedia country cross-check
+    # flags it — but the catalog groups "La Paz" with Santiago/Montevideo/
+    # Cusco (South America), i.e. it means the Bolivian seat of government.
+    # Same class as Cartagena. Live-confirmed 2026-07-23.
+    "la paz": "La Paz, Bolivia",
+    # "Austin" bare-queries to Austin, Nevada — a ~150-person former mining
+    # town — instead of Austin, Texas. Both are in the US, so the Wikipedia
+    # country cross-check can't correct it; a same-country namesake collision
+    # only the qualifier resolves. Live-confirmed 2026-07-23 (was silently
+    # ingesting 3 OSM POIs for the Nevada ghost town).
+    "austin": "Austin, Texas",
+    # "Valencia" bare-queries to Valencia, Venezuela, but the catalog groups
+    # it with Seville/Granada/Nice/Lyon (see scrapers/reddit.py), i.e. it
+    # means Valencia, Spain. Both are real cities of comparable prominence,
+    # so no importance/country heuristic disambiguates. Live-confirmed
+    # 2026-07-23 (was silently ingesting 60 POIs for the Venezuelan city).
+    "valencia": "Valencia, Spain",
 }
 
 

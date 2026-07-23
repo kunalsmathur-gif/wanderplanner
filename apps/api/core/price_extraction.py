@@ -99,26 +99,68 @@ _PRICE_VERB_PREFIX_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Marks an amount as already expressed per full day / per night (a hotel
+# nightly rate, or a "we spent ₹X per day on food" mention) rather than
+# per-meal/per-dish/unspecified. Used only by the food per-day reconciliation
+# (see `per_day_meal_multiplier` below) so an amount that is *already* daily
+# isn't multiplied up a second time. Deliberately narrow — "per person" alone
+# is ambiguous (per meal? per day?) and is treated as per-meal for food.
+_DAILY_UNIT_RE = re.compile(
+    r"(?:per\s+day|per\s+night|/\s*day|/\s*night|a\s+day|a\s+night|daily|pppd|"
+    r"per\s+person\s+per\s+day)\b",
+    re.IGNORECASE,
+)
 
-def _extract_bare_inr_amounts(text: str) -> list[float]:
-    """Extracts symbol-less amounts assumed to be INR, from unit-anchored or
-    price-verb-anchored phrasing only (see module-level comment above the
-    regexes). Runs on a copy of `text` with any already-symbol-matched spans
-    blanked out first, so an amount like "₹700 per person" isn't double
-    counted once via `_AMOUNT_RE` and again via the unit-suffix pattern."""
-    masked = _AMOUNT_RE.sub(" ", text)
-    amounts: list[float] = []
-    for raw_amount in _BARE_AMOUNT_UNIT_SUFFIX_RE.findall(masked):
+
+def _has_daily_unit(fragment: str) -> bool:
+    return bool(_DAILY_UNIT_RE.search(fragment))
+
+
+def _iter_raw_amounts(text: str):
+    """Yield `(inr_amount, is_daily)` for every plausible price mention in
+    `text`, across the symbol/currency-code, bare-unit-suffix, and price-verb
+    passes. `is_daily` is True when the amount is explicitly a per-day/per-
+    night rate; False for per-meal/per-dish/unspecified amounts (the common
+    Wikivoyage "Eat"-listing case, which has no unit at all).
+
+    Symbol-matched spans are masked with an equal-length run of spaces before
+    the bare passes run, so an amount like "₹700 per person" is counted once
+    (symbol pass) not twice — equal-length masking (rather than the previous
+    single-space collapse) keeps every match offset aligned with `text` so
+    the trailing-context unit check reads the right characters."""
+    masked = _AMOUNT_RE.sub(lambda m: " " * len(m.group(0)), text)
+
+    for m in _AMOUNT_RE.finditer(text):
+        symbol, raw_amount, thousands_suffix = m.group(1), m.group(2), m.group(3)
         try:
-            amounts.append(float(raw_amount.replace(",", "")))
+            amount = float(raw_amount.replace(",", ""))
         except ValueError:
             continue
-    for raw_amount in _PRICE_VERB_PREFIX_RE.findall(masked):
+        rate = _FX_TO_INR.get(symbol.lower().rstrip("."))
+        if rate is None:
+            continue
+        if thousands_suffix:
+            amount *= 1000
+        yield amount * rate, _has_daily_unit(text[m.end():m.end() + 20])
+
+    for m in _BARE_AMOUNT_UNIT_SUFFIX_RE.finditer(masked):
         try:
-            amounts.append(float(raw_amount.replace(",", "")))
+            amount = float(m.group(1).replace(",", ""))
         except ValueError:
             continue
-    return amounts
+        # The unit phrase is inside this match; a trailing "per day" (e.g.
+        # "500 per plate per day" would be odd, but "500 pp per day" isn't)
+        # is also checked.
+        is_daily = _has_daily_unit(m.group(0)) or _has_daily_unit(text[m.end():m.end() + 20])
+        yield amount, is_daily
+
+    for m in _PRICE_VERB_PREFIX_RE.finditer(masked):
+        try:
+            amount = float(m.group(1).replace(",", ""))
+        except ValueError:
+            continue
+        is_daily = _has_daily_unit(m.group(0)) or _has_daily_unit(text[m.end():m.end() + 20])
+        yield amount, is_daily
 
 
 def extract_price_mentions_inr(
@@ -126,6 +168,7 @@ def extract_price_mentions_inr(
     low_bound: float,
     high_bound: float,
     context_keywords: frozenset[str] | None = None,
+    per_day_meal_multiplier: float | None = None,
 ) -> list[float]:
     """Extracts plausible INR amounts from free-text snippets. Amounts
     outside [low_bound, high_bound] are discarded as implausible for the
@@ -138,27 +181,27 @@ def extract_price_mentions_inr(
     in-bounds but off-topic amount (a club cover charge, a souvenir price)
     in a snippet that was retrieved for its overall topical similarity but
     isn't actually about the thing being priced. No filtering when omitted
-    (existing callers unaffected)."""
+    (existing callers unaffected).
+
+    `per_day_meal_multiplier`, when set (food only), reconciles per-meal to
+    per-day: Wikivoyage "Eat" prices are per-dish/per-meal, so a raw median
+    of them is a single meal's cost, not a day's food budget. Each amount NOT
+    already tagged per-day/per-night (see `_iter_raw_amounts`) is scaled by
+    this factor (≈ meals/day) before the bounds check, so the bound is applied
+    to the reconciled per-day figure. Amounts already expressed per-day are
+    left as-is (no double-counting). Omitted (None) for stay/other callers,
+    whose amounts are already per-night — behavior unchanged."""
     amounts: list[float] = []
     for text in snippets:
         if not _snippet_has_context(text, context_keywords):
             continue
-        for symbol, raw_amount, thousands_suffix in _AMOUNT_RE.findall(text):
-            try:
-                amount = float(raw_amount.replace(",", ""))
-            except ValueError:
-                continue
-            rate = _FX_TO_INR.get(symbol.lower().rstrip("."))
-            if rate is None:
-                continue
-            if thousands_suffix:
-                amount *= 1000
-            inr = amount * rate
-            if low_bound <= inr <= high_bound:
-                amounts.append(inr)
-        for inr in _extract_bare_inr_amounts(text):
-            if low_bound <= inr <= high_bound:
-                amounts.append(inr)
+        for raw, is_daily in _iter_raw_amounts(text):
+            if per_day_meal_multiplier is not None and not is_daily:
+                value = raw * per_day_meal_multiplier
+            else:
+                value = raw
+            if low_bound <= value <= high_bound:
+                amounts.append(value)
     return amounts
 
 
@@ -168,11 +211,15 @@ def median_price_inr(
     high_bound: float,
     min_samples: int = 2,
     context_keywords: frozenset[str] | None = None,
+    per_day_meal_multiplier: float | None = None,
 ) -> float | None:
     """Median of plausible price mentions found in `snippets`, or None if
     fewer than `min_samples` were found — too little signal to trust over
-    the hand-authored default."""
-    amounts = extract_price_mentions_inr(snippets, low_bound, high_bound, context_keywords)
+    the hand-authored default. `per_day_meal_multiplier` is passed straight
+    through to `extract_price_mentions_inr` (food per-day reconciliation)."""
+    amounts = extract_price_mentions_inr(
+        snippets, low_bound, high_bound, context_keywords, per_day_meal_multiplier
+    )
     if len(amounts) < min_samples:
         return None
     return statistics.median(amounts)

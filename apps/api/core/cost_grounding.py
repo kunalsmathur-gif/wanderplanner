@@ -83,6 +83,7 @@ async def community_median_price_inr(
     min_samples: int = 2,
     limit: int = 5,
     context_keywords: frozenset[str] | None = None,
+    per_day_meal_multiplier: float | None = None,
 ) -> float | None:
     """Median real per-unit INR price extracted from community snippets for
     `dest_city`, or None if there's too little signal (fewer than
@@ -95,11 +96,17 @@ async def community_median_price_inr(
     through — callers pricing a specific line item (e.g. stay vs. food)
     should pass the matching keyword set so an on-topic-looking snippet
     with an off-topic in-bounds amount isn't misread as that line item's
-    price."""
+    price.
+
+    `per_day_meal_multiplier` (food only) reconciles per-meal/per-dish
+    prices to a per-day budget before the median is taken — see
+    core/price_extraction.py::extract_price_mentions_inr."""
     from core.price_extraction import median_price_inr
 
     snippets = await community_price_snippets(dest_city, query_suffix, limit=limit)
-    return median_price_inr(snippets, low_bound, high_bound, min_samples, context_keywords)
+    return median_price_inr(
+        snippets, low_bound, high_bound, min_samples, context_keywords, per_day_meal_multiplier
+    )
 
 
 async def flight_cost_grounding_hint(trip_config: TripConfig) -> str:
