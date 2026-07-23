@@ -136,14 +136,22 @@ def _describe_poi(name: str, poi_type: str, destination: str, tags: dict[str, st
     return " ".join(bits)
 
 
-async def fetch_osm_pois(destination: str, lat: float | None = None, lon: float | None = None) -> list[dict]:
+async def fetch_osm_pois(
+    destination: str,
+    lat: float | None = None,
+    lon: float | None = None,
+    radius_m: int | None = None,
+) -> list[dict]:
     """Fetch raw POIs for `destination` from Overpass. Geocodes the destination
-    first if lat/lon aren't already known."""
+    first if lat/lon aren't already known. `radius_m` defaults to
+    `settings.osm_poi_radius_m`; `ingest_osm_pois` passes the wider
+    `osm_poi_radius_expanded_m` as a second pass for thin/category-dominated
+    destinations."""
     if lat is None or lon is None:
         geo = await geocode_city(destination)
         lat, lon = geo.lat, geo.lon
 
-    query = _build_overpass_query(lat, lon, settings.osm_poi_radius_m)
+    query = _build_overpass_query(lat, lon, radius_m or settings.osm_poi_radius_m)
 
     # Overpass's usage policy asks for an identifiable User-Agent; some
     # network paths (corporate proxies/CDNs in front of overpass-api.de)
@@ -235,6 +243,30 @@ def _prioritize_landmarks(pois: list[dict]) -> list[dict]:
     return _round_robin(landmark_buckets) + _round_robin(food_drink_buckets)
 
 
+# Mirrors eval/data_completeness_scoring.py's MIN_OSM_POIS/MAX_CATEGORY_SHARE
+# gate thresholds (not imported directly — that module lives in eval/ and
+# pulls in eval-only deps — kept in sync by hand, same as the two other
+# nearby "same rationale as X" comments in this file).
+_MIN_POIS_BEFORE_RADIUS_EXPANSION = 20
+_MAX_CATEGORY_SHARE_BEFORE_EXPANSION = 0.5
+
+
+def _is_thin_or_dominated(pois: list[dict]) -> bool:
+    """True if `pois` would fail the data-completeness gate's OSM checks —
+    too few POIs, or a single category crowding out the rest. Small towns/
+    "hidden gem" destinations often have this happen at the default 5km
+    radius even though a wider radius (still well within a single day-trip
+    area) would round out the mix — see `ingest_osm_pois`'s expanded-radius
+    retry."""
+    if len(pois) < _MIN_POIS_BEFORE_RADIUS_EXPANSION:
+        return True
+    from collections import Counter
+
+    counts = Counter(p["poi_type"] for p in pois)
+    top_share = counts.most_common(1)[0][1] / len(pois)
+    return top_share > _MAX_CATEGORY_SHARE_BEFORE_EXPANSION
+
+
 async def ingest_osm_pois(destination: str) -> int:
     """Fetch and upsert POIs for `destination` into the osm_pois collection.
 
@@ -243,6 +275,22 @@ async def ingest_osm_pois(destination: str) -> int:
     rather than duplicating.
     """
     pois = await fetch_osm_pois(destination)
+    # Thin/single-category-dominated results are common for small towns and
+    # "hidden gem" destinations whose few landmark/nature POIs are spread
+    # wider than the default 5km while restaurants cluster densely near the
+    # centre point — live-confirmed 2026-07-23 (Coorg/Jaisalmer restaurant-
+    # dominated, Spiti/Nainital thin). Retry once at a wider radius rather
+    # than accepting a food/drink-only pool or an under-20 destination as
+    # final; a wider-radius fetch is effectively a superset area so it's
+    # never worse, only potentially the same.
+    if pois and _is_thin_or_dominated(pois):
+        expanded_pois = await fetch_osm_pois(destination, radius_m=settings.osm_poi_radius_expanded_m)
+        if expanded_pois and (len(expanded_pois) > len(pois) or not _is_thin_or_dominated(expanded_pois)):
+            logger.info(
+                "%r: default 5km radius was thin/dominated (%d POIs), expanded to %dm radius (%d POIs)",
+                destination, len(pois), settings.osm_poi_radius_expanded_m, len(expanded_pois),
+            )
+            pois = expanded_pois
     if not pois:
         return 0
 

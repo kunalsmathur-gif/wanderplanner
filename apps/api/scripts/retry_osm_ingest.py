@@ -31,7 +31,7 @@ MISSING = [
     "Seville", "Granada", "Valencia", "Marseille", "Cinque Terre", "Amalfi",
     "New York", "San Francisco", "Miami", "Las Vegas", "New Orleans", "Seattle",
     "Austin", "Washington DC", "Mexico City", "Tulum", "Havana", "Bogotá",
-    "Medellín", "Lima", "Cusco", "Rio de Janeiro", "São Paulo", "Quito",
+    "Medellin", "Lima", "Cusco", "Rio de Janeiro", "São Paulo", "Quito",
     "Toronto", "Vancouver", "Montreal", "Cape Town", "Marrakech", "Nairobi",
     "Zanzibar", "Casablanca", "Brisbane", "Auckland", "Queenstown", "Fiji",
     "Hawaii", "Honolulu",

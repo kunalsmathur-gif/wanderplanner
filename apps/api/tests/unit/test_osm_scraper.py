@@ -188,3 +188,94 @@ class TestIngestOsmPoisOrphanCleanup:
 
         assert count == 0
         mock_delete.assert_not_called()
+
+
+class TestRadiusExpansionForThinOrDominatedResults:
+    """A thin (<20 POIs) or single-category-dominated (>50% one poi_type)
+    default-radius result must trigger a second fetch at the wider
+    `osm_poi_radius_expanded_m` radius before ingest_osm_pois accepts it —
+    small towns/"hidden gem" destinations often have their few landmark/
+    nature POIs spread wider than 5km. Live-confirmed 2026-07-23 for Coorg/
+    Jaisalmer (restaurant-dominated) and Spiti/Nainital (thin OSM)."""
+
+    def _poi(self, name: str, poi_type: str) -> dict:
+        return {
+            "destination": "X", "name": name, "poi_type": poi_type,
+            "lat": 0.0, "lon": 0.0, "tags": {}, "text": f"{name} is a {poi_type} in X.",
+            "source": "osm", "source_url": "https://www.openstreetmap.org/node/1",
+        }
+
+    @pytest.mark.asyncio
+    async def test_expands_radius_when_thin(self):
+        from scrapers.osm import ingest_osm_pois
+
+        thin = [self._poi(f"Landmark {i}", "attraction") for i in range(5)]
+        wide = [self._poi(f"Landmark {i}", "attraction") for i in range(25)]
+        mock_qdrant = MagicMock()
+
+        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(side_effect=[thin, wide])) as mock_fetch, \
+             patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 25), \
+             patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.delete_stale_destination_points", return_value=0):
+            count = await ingest_osm_pois("Spiti")
+
+        assert count == 25
+        assert mock_fetch.await_count == 2
+        _, kwargs = mock_fetch.await_args
+        assert kwargs["radius_m"] == 15000
+
+    @pytest.mark.asyncio
+    async def test_expands_radius_when_category_dominated(self):
+        from scrapers.osm import ingest_osm_pois
+
+        dominated = [self._poi(f"R{i}", "restaurant") for i in range(19)] + [self._poi("Fort", "attraction")]
+        balanced = [self._poi(f"R{i}", "restaurant") for i in range(10)] + [
+            self._poi(f"Landmark {i}", "attraction") for i in range(15)
+        ]
+        mock_qdrant = MagicMock()
+
+        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(side_effect=[dominated, balanced])) as mock_fetch, \
+             patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 25), \
+             patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.delete_stale_destination_points", return_value=0):
+            count = await ingest_osm_pois("Jaisalmer")
+
+        assert count == 25
+        assert mock_fetch.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_keeps_default_radius_result_when_healthy(self):
+        from scrapers.osm import ingest_osm_pois
+
+        healthy = [self._poi(f"Landmark {i}", "attraction") for i in range(15)] + [
+            self._poi(f"R{i}", "restaurant") for i in range(15)
+        ]
+        mock_qdrant = MagicMock()
+
+        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(return_value=healthy)) as mock_fetch, \
+             patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 30), \
+             patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.delete_stale_destination_points", return_value=0):
+            count = await ingest_osm_pois("London")
+
+        assert count == 30
+        mock_fetch.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_original_when_expanded_fetch_still_bad(self):
+        # Overpass returns nothing usable at the wider radius either (e.g.
+        # transient failure exhausts retries) — keep the original thin
+        # result rather than discarding real data for nothing.
+        from scrapers.osm import ingest_osm_pois
+
+        thin = [self._poi(f"Landmark {i}", "attraction") for i in range(5)]
+        mock_qdrant = MagicMock()
+
+        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(side_effect=[thin, []])) as mock_fetch, \
+             patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 5), \
+             patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.delete_stale_destination_points", return_value=0):
+            count = await ingest_osm_pois("Nowhereville")
+
+        assert count == 5
+        assert mock_fetch.await_count == 2

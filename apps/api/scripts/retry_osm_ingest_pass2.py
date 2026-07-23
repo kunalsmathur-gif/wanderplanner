@@ -22,7 +22,7 @@ STILL_ZERO = [
     "Venice", "Florence", "Brussels", "Reykjavik", "Warsaw", "Hamburg",
     "Granada", "Marseille", "Cinque Terre", "Amalfi", "New York", "Las Vegas",
     "New Orleans", "Seattle", "Austin", "Mexico City", "Tulum", "Havana",
-    "Bogotá", "Medellín", "Rio de Janeiro", "São Paulo", "Quito", "Toronto",
+    "Bogotá", "Medellin", "Rio de Janeiro", "São Paulo", "Quito", "Toronto",
     "Vancouver", "Montreal", "Cape Town", "Zanzibar", "Casablanca", "Auckland",
     "Fiji", "Hawaii", "Goa", "Sri Lanka", "Bali",
 ]

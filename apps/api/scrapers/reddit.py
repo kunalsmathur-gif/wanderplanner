@@ -50,7 +50,7 @@ KNOWN_DESTINATIONS = [
     # Americas
     "New York", "Los Angeles", "San Francisco", "Chicago", "Miami", "Las Vegas",
     "New Orleans", "Boston", "Seattle", "Denver", "Austin", "Washington DC",
-    "Mexico City", "Cancun", "Tulum", "Oaxaca", "Havana", "Bogotá", "Medellín",
+    "Mexico City", "Cancun", "Tulum", "Oaxaca", "Havana", "Bogotá", "Medellin",
     "Cartagena", "Lima", "Cusco", "Machu Picchu", "Buenos Aires", "Rio de Janeiro",
     "São Paulo", "Santiago", "Montevideo", "Quito", "La Paz", "Toronto",
     "Vancouver", "Montreal", "Quebec City",

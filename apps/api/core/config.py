@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     # OSM POI ingestion (docs §3I)
     osm_overpass_url: str = "https://overpass-api.de/api/interpreter"
     osm_poi_radius_m: int = 5000
+    # Fallback radius tried when the default radius comes back thin/food-
+    # dominated (see scrapers/osm.py::ingest_osm_pois) — small towns and
+    # "hidden gem" hill-stations often have their few landmark/nature POIs
+    # spread wider than 5km even though restaurants cluster densely near the
+    # centre point, so a bigger radius both raises the total count and
+    # rebalances the category mix. Live-confirmed 2026-07-23 for Coorg/
+    # Jaisalmer (restaurant-dominated) and Spiti/Nainital (thin OSM).
+    osm_poi_radius_expanded_m: int = 15000
     osm_poi_max_results: int = 60
 
     # CORS
