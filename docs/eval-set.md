@@ -1032,6 +1032,12 @@ resolved**, history kept for context:
    / `food_community_based` both `False`), so they're deterministic and
    reproducible. The big movers (BC-002/BC-005) are premium-tier trips whose
    stay component tracks the recalibrated premium `stay_per_night_pp`.
+   > **Caveat (v10.37):** the food per-meal→per-day reconciliation now lets food
+   > grounding *raise* the estimate above flat when a destination has enough
+   > extractable Wikivoyage "Eat" data (previously a single meal's price almost
+   > never cleared the flat, so food effectively always floored). These anchors
+   > were confirmed flat-based on 2026-07-22; re-verify them on the next
+   > regeneration in case food grounding now fires for any BC city.
 
 ### 10C — Status: ❌ NOT YET RUN AT SCALE
 

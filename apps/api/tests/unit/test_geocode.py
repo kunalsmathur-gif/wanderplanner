@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from services.geocode import (
+    GEOCODE_QUERY_OVERRIDES,
     _is_country_like,
     _needs_second_opinion,
     _pick_best_hit,
@@ -206,3 +207,39 @@ async def test_geocode_city_raises_when_nothing_found_anywhere():
          patch("services.geocode.asyncio.sleep", new=AsyncMock()):
         with pytest.raises(ValueError):
             await geocode_city("Nowhereville12345xyz")
+
+
+class TestGeocodeQueryOverrides:
+    """Same-name-collision pins: a handful of destinations whose bare name
+    resolves to the wrong same-named place, which no importance/country
+    heuristic can disambiguate (Austin TX vs a Nevada ghost town — same
+    country; La Paz/Valencia — real cities of comparable prominence to the
+    intended one). The override must rewrite the Nominatim query string."""
+
+    @pytest.mark.parametrize(
+        "name, expected_query",
+        [
+            ("Austin", "Austin, Texas"),
+            ("La Paz", "La Paz, Bolivia"),
+            ("Valencia", "Valencia, Spain"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_override_rewrites_nominatim_query(self, name, expected_query):
+        # A confident place hit so the pipeline returns after the first search
+        # and we can inspect exactly what query string was sent to Nominatim.
+        search_resp = _json_response([_place_hit(importance=0.8)])
+        client = _mock_client(get_side_effect=[search_resp])
+
+        with patch("services.geocode.httpx.AsyncClient", return_value=client), \
+             patch("services.geocode.asyncio.sleep", new=AsyncMock()):
+            await geocode_city(name)
+
+        sent_query = client.get.await_args_list[0].kwargs["params"]["q"]
+        assert sent_query == expected_query
+
+    def test_overrides_are_lowercase_keyed(self):
+        # geocode_city looks up city.strip().lower() — keys must be lowercase
+        # or the override silently never fires.
+        for key in GEOCODE_QUERY_OVERRIDES:
+            assert key == key.lower()

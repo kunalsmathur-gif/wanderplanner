@@ -127,10 +127,12 @@ class TestAirbnbHotelEquivalentFallback:
 
 
 class TestFoodGroundingFloor:
-    """The food line item floors community grounding at the flat _COST_MATRIX
-    value (floor=True): Wikivoyage 'Eat' prices are per-dish/per-meal, so a
-    below-flat grounded figure under-estimates a full day's food. Stay has no
-    such floor (NEXT_SESSION_TODO 'item A', 2026-07-22)."""
+    """The food line item reconciles per-meal community prices to a per-day
+    figure (per_day_meal_multiplier=_FOOD_MEALS_PER_DAY) and then floors it at
+    the flat _COST_MATRIX value (floor=True): Wikivoyage 'Eat' prices are
+    per-dish/per-meal, so grounding can only ever *raise* food above the
+    researched flat bare-minimum, never undercut it. Stay has no such floor
+    and no reconciliation (NEXT_SESSION_TODO 'item A')."""
 
     @pytest.mark.asyncio
     async def test_food_grounding_below_flat_is_floored_and_not_flagged_community(self):
@@ -167,11 +169,50 @@ class TestFoodGroundingFloor:
         """End-to-end: one low grounded value hits both line items; food (floored)
         ignores it, stay (no floor) uses it — proving the floor is food-only."""
 
-        async def _low(dest, query_suffix, low, high, context_keywords=None):
-            return 400.0  # below both the flat food (1800) and flat stay (2000) for budget tier
+        async def _low(dest, query_suffix, low, high, context_keywords=None, per_day_meal_multiplier=None):
+            # A single per-meal figure; even reconciled to per-day it stays
+            # below both the flat food (1800) and flat stay (2000) budget-tier
+            # values, so it exercises the floor (food) vs no-floor (stay) split.
+            return 400.0 * (per_day_meal_multiplier or 1)
 
         with patch("core.budget_estimator.community_median_price_inr", new=_low):
             est = await estimate_bare_minimum_budget(_config())  # Colombo, budget tier
         assert est["food_community_based"] is False  # floored to flat
         assert est["stay_community_based"] is True    # below-flat stay grounding kept
+
+    @pytest.mark.asyncio
+    async def test_food_call_passes_per_day_multiplier_but_stay_does_not(self):
+        """The food line item must reconcile per-meal->per-day (multiplier set);
+        the stay line item must not (its amounts are already per-night)."""
+        from core.budget_estimator import _FOOD_MEALS_PER_DAY, estimate_bare_minimum_budget
+
+        seen: dict[str, float | None] = {}
+
+        async def _capture(dest, query_suffix, low, high, min_samples=2, limit=5,
+                           context_keywords=None, per_day_meal_multiplier=None):
+            key = "food" if "food" in query_suffix else "stay"
+            seen[key] = per_day_meal_multiplier
+            return None  # force flat fallback; we only care about the kwargs
+
+        with patch("core.budget_estimator.community_median_price_inr", new=_capture):
+            await estimate_bare_minimum_budget(_config())
+
+        assert seen["food"] == _FOOD_MEALS_PER_DAY
+        assert seen["stay"] is None
+
+    @pytest.mark.asyncio
+    async def test_reconciled_food_above_flat_flips_community_true(self):
+        """A genuinely food-expensive destination whose reconciled per-day
+        figure exceeds the flat default correctly grounds food upward and
+        flags it community-based — the whole point of the item-A proper fix."""
+        from core.budget_estimator import _FOOD_PP_BOUNDS, _FOOD_MEALS_PER_DAY, _grounded_or_flat
+
+        # community_median_price_inr already returns the reconciled per-day
+        # median here (the multiplier is applied inside it); 8000 > flat 6546.
+        with patch("core.budget_estimator.community_median_price_inr", new=AsyncMock(return_value=8000.0)):
+            val, based = await _grounded_or_flat(
+                "Venice", "Italy", "food meal daily cost per person", 6546, _FOOD_PP_BOUNDS,
+                floor=True, per_day_meal_multiplier=_FOOD_MEALS_PER_DAY,
+            )
+        assert (val, based) == (8000.0, True)
 

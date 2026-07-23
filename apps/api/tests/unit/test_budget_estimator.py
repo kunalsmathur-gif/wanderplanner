@@ -42,7 +42,8 @@ def community_grounding(*, stay: float | None = None, food: float | None = None)
     """Returns a patch() context manager that makes community_median_price_inr
     answer `stay` for accommodation queries and `food` for food queries."""
 
-    def _fake(dest_city, query_suffix, low, high, min_samples=2, limit=5):
+    def _fake(dest_city, query_suffix, low, high, min_samples=2, limit=5,
+              context_keywords=None, per_day_meal_multiplier=None):
         if "hotel" in query_suffix or "accommodation" in query_suffix:
             return stay
         if "food" in query_suffix or "meal" in query_suffix:
