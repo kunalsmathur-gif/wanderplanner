@@ -702,6 +702,28 @@ def _is_destination_mode_chip_tap(last_user_text: str | None) -> bool:
     return stripped in canonical
 
 
+def _is_group_type_chip_tap(last_user_text: str | None) -> bool:
+    """True when the user's last message was a tap of one of the group-TYPE
+    chips (Solo/Couple/Family/Friends) rather than actual traveler counts.
+    Tapping one of these only tells us the *category* of group, not the
+    numbers — the very next question always asks for the actual composition
+    ("how many adults, children (and their ages), and any seniors will be
+    travelling?"), which expects free-form numbers, not another tap of the
+    same type chip. Used to suppress the group chips from reappearing under
+    that follow-up (see bug: group-type chips re-rendered verbatim under the
+    adult/children-count follow-up, since `_is_stale_chips` only considers
+    `group` "filled" once `adults` is actually set, which doesn't happen
+    until this very question is answered)."""
+    if not last_user_text:
+        return False
+    stripped = _strip_emoji(last_user_text).strip().lower()
+    canonical = {
+        _strip_emoji(c).strip().lower()
+        for c in _FIELD_CHIP_SETS["group"]
+    }
+    return stripped in canonical
+
+
 def _is_stale_chips(chips: list[str], config: dict[str, Any]) -> bool:
     """True if `chips` matches a field's canonical set but CURRENT_STATE says
     that field is already filled — i.e. the model echoed an old question's
@@ -1306,6 +1328,14 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         if chips_list and _is_destination_mode_chip_tap(last_user_text) and frozenset(chips_list) == _FIELD_CHIP_SETS["destination"]:
             chips_list = []
 
+        # Bug fix: the user just tapped a group-TYPE chip (Solo/Couple/
+        # Family/Friends) — the very next question asks for actual traveler
+        # counts (adults/children/seniors), which expects free-form numbers,
+        # not another tap of the type they already picked. Drop the group
+        # chips if the LLM echoed them verbatim under this follow-up.
+        if chips_list and _is_group_type_chip_tap(last_user_text) and frozenset(chips_list) == _FIELD_CHIP_SETS["group"]:
+            chips_list = []
+
         # Safety net (general, any turn): the same "LLM asks the right
         # question but drops the chips" failure mode observed above for the
         # opening purpose question also happens later in the conversation —
@@ -1317,14 +1347,22 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # backfill just the chips — the LLM's own wording is left untouched.
         # Exception: don't backfill the destination-MODE chips right after
         # the user already tapped one of them (see above) — that would
-        # reintroduce the same bug via this fallback path instead.
+        # reintroduce the same bug via this fallback path instead. Same
+        # exception for group-TYPE chips: `_next_missing_field_prompt` still
+        # considers `group` "missing" right after a type-chip tap (since
+        # `adults` isn't set until the follow-up counts question is
+        # answered), so it would otherwise re-suggest the group-type
+        # question/chips even though the reply text has already moved on to
+        # asking for counts.
         if not chips_list and not ready:
             _, fallback_chips = _next_missing_field_prompt(merged)
             is_destination_mode_fallback = frozenset(fallback_chips) == _FIELD_CHIP_SETS["destination"]
+            is_group_fallback = frozenset(fallback_chips) == _FIELD_CHIP_SETS["group"]
             if (
                 fallback_chips
                 and fallback_chips != ["Just generate it! 🚀"]
                 and not (is_destination_mode_fallback and _is_destination_mode_chip_tap(last_user_text))
+                and not (is_group_fallback and _is_group_type_chip_tap(last_user_text))
             ):
                 chips_list = fallback_chips
 
@@ -1418,10 +1456,12 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         if not extracted_chips:
             _, fallback_chips = _next_missing_field_prompt(fallback_config)
             is_destination_mode_fallback = frozenset(fallback_chips) == _FIELD_CHIP_SETS["destination"]
+            is_group_fallback = frozenset(fallback_chips) == _FIELD_CHIP_SETS["group"]
             if (
                 fallback_chips
                 and fallback_chips != ["Just generate it! 🚀"]
                 and not (is_destination_mode_fallback and _is_destination_mode_chip_tap(last_user_text))
+                and not (is_group_fallback and _is_group_type_chip_tap(last_user_text))
             ):
                 extracted_chips = fallback_chips
 
@@ -1443,6 +1483,12 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # Bug fix (see JSON-success path above): don't echo the destination
         # MODE chips right back after the user just tapped one of them.
         if extracted_chips and _is_destination_mode_chip_tap(last_user_text) and frozenset(extracted_chips) == _FIELD_CHIP_SETS["destination"]:
+            extracted_chips = []
+
+        # Bug fix (see JSON-success path above): don't echo the group-TYPE
+        # chips right back after the user just tapped one of them — the
+        # follow-up question expects traveler counts, not another tap.
+        if extracted_chips and _is_group_type_chip_tap(last_user_text) and frozenset(extracted_chips) == _FIELD_CHIP_SETS["group"]:
             extracted_chips = []
 
         # Bug fix: when Gemini's response was unusable (empty/unparseable),

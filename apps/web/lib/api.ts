@@ -227,6 +227,7 @@ export function streamItinerary(
     const decoder = new TextDecoder()
     let buffer = ''
     let receivedData = false
+    let receivedError = false
 
     while (true) {
       const { done, value } = await reader.read()
@@ -250,13 +251,21 @@ export function streamItinerary(
           receivedData = true
           onData(payload)
         } else if (event === 'error') {
+          receivedError = true
           onError(payload.code, payload.message, payload.retryable)
         }
       }
     }
 
-    // Stream ended without sending a data event — treat as a generation failure
-    if (!receivedData) {
+    // Stream ended without ever sending a data event — treat as a generation
+    // failure. Bug fix: this used to fire unconditionally whenever no `data`
+    // event arrived, even when the backend HAD already sent a specific, more
+    // useful `error` event (e.g. LLM_TIMEOUT, GENERATION_FAILED) — that real
+    // error was silently overwritten a moment later by this generic
+    // "(NO_DATA)" message, since both call the same `onError` setter. Only
+    // fall back to the generic message when the stream truly ended in
+    // silence (no data AND no error event at all).
+    if (!receivedData && !receivedError) {
       onError('NO_DATA', 'Itinerary generation did not complete. Please try again.', true)
     }
   }
