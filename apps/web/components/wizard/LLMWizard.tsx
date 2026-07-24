@@ -217,7 +217,27 @@ export function LLMWizard() {
       role: 'assistant',
       content: "Welcome back! Picking up right where you left off — generating your itinerary now.",
     })
-    startGeneration(pendingGeneration)
+    // Bug fix: calling startGeneration() synchronously here is vulnerable to
+    // React 18 Strict Mode's dev-only mount→cleanup→mount double-invoke —
+    // the sibling "cleanup on unmount" effect below (empty deps) runs its
+    // cleanup during React's synchronous phantom-unmount simulation, which
+    // calls `cancelStreamRef.current?.()` and immediately aborts the fetch
+    // this same tick just dispatched. Aborted fetches are treated as a
+    // silent, deliberate cancel (no error surfaced, matching normal
+    // navigate-away behaviour) — so the wizard was left frozen on "Starting
+    // up..." forever with no error and no data ever arriving. Deferring the
+    // actual kickoff to a macrotask lets it run *after* the synchronous
+    // double-invoke settles (cancelStreamRef.current is still null when the
+    // phantom cleanup fires, making it a harmless no-op), while a genuine
+    // unmount shortly after would still correctly abort it.
+    const timer = setTimeout(() => startGeneration(pendingGeneration), 0)
+    // Deliberately no cleanup here: returning one would itself be cleared by
+    // this same effect's own Strict Mode phantom-cleanup pass, permanently
+    // cancelling the only scheduled kickoff before it ever runs (the ref
+    // guard above already prevents the effect from re-scheduling on the
+    // subsequent phantom re-mount). A genuine unmount shortly after is still
+    // safely handled — the sibling cleanup-on-unmount effect aborts
+    // `cancelStreamRef.current` once it's actually set.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authStatus, pendingGeneration])
 

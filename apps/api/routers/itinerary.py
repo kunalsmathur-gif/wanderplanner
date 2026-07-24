@@ -48,40 +48,59 @@ async def _stream_generation(trip_config: TripConfig, db: AsyncSession, user: Us
     yield await send("status", {"message": "Searching destination content...", "step": 2, "total_steps": total_steps})
     await asyncio.sleep(0)
 
+    task = asyncio.ensure_future(
+        asyncio.wait_for(generate_itinerary(trip_config), timeout=settings.llm_timeout_seconds)
+    )
     try:
-        task = asyncio.ensure_future(
-            asyncio.wait_for(generate_itinerary(trip_config), timeout=settings.llm_timeout_seconds)
-        )
+        try:
+            # Poll the in-flight task every few seconds; each tick, emit the next
+            # rotating filler message so the UI shows continuous progress during
+            # the actual (opaque) LLM generation window.
+            step = 2
+            msg_idx = 0
+            while not task.done():
+                done, _pending = await asyncio.wait({task}, timeout=3.0)
+                if task in done:
+                    break
+                step = min(step + 1, total_steps - 1)
+                yield await send(
+                    "status",
+                    {
+                        "message": _GENERATION_FILLER_MESSAGES[msg_idx % len(_GENERATION_FILLER_MESSAGES)],
+                        "step": step,
+                        "total_steps": total_steps,
+                    },
+                )
+                msg_idx += 1
 
-        # Poll the in-flight task every few seconds; each tick, emit the next
-        # rotating filler message so the UI shows continuous progress during
-        # the actual (opaque) LLM generation window.
-        step = 2
-        msg_idx = 0
-        while not task.done():
-            done, _pending = await asyncio.wait({task}, timeout=3.0)
-            if task in done:
-                break
-            step = min(step + 1, total_steps - 1)
-            yield await send(
-                "status",
-                {
-                    "message": _GENERATION_FILLER_MESSAGES[msg_idx % len(_GENERATION_FILLER_MESSAGES)],
-                    "step": step,
-                    "total_steps": total_steps,
-                },
+            result = await task
+            yield await send("status", {"message": "Finalising your schedule...", "step": total_steps, "total_steps": total_steps})
+            yield await send("data", result.model_dump())
+            await log_event(
+                db,
+                "itinerary_generated",
+                user_id=user.id,
+                metadata={"destination": getattr(trip_config, "destination", None), "days": getattr(trip_config, "days", None)},
             )
-            msg_idx += 1
-
-        result = await task
-        yield await send("status", {"message": "Finalising your schedule...", "step": total_steps, "total_steps": total_steps})
-        yield await send("data", result.model_dump())
-        await log_event(
-            db,
-            "itinerary_generated",
-            user_id=user.id,
-            metadata={"destination": getattr(trip_config, "destination", None), "days": getattr(trip_config, "days", None)},
-        )
+        finally:
+            # Bug fix: if the client disconnects/aborts mid-generation (e.g.
+            # the frontend's client-side stall watchdog fires, or the user
+            # navigates away), Starlette closes this generator via
+            # GeneratorExit at whatever `yield`/`await` it's suspended on —
+            # but `task` was scheduled with `asyncio.ensure_future` as an
+            # independent Task, so closing *this* generator does NOT
+            # automatically cancel it. Left unguarded, the orphaned task
+            # keeps running to completion in the background with nobody
+            # listening — burning a real Gemini call, Qdrant writes, and a
+            # full batch of Pexels image lookups for a result that's simply
+            # discarded, for however long generation takes (observed: still
+            # running and completing many minutes after the client had
+            # already given up and shown a stalled/cancelled request).
+            # Cancelling here on every exit path (success, timeout, error,
+            # AND client-disconnect) ensures a still-running task is always
+            # torn down once nobody can receive its result.
+            if not task.done():
+                task.cancel()
     except asyncio.TimeoutError:
         yield await send("error", {
             "code": "LLM_TIMEOUT",
