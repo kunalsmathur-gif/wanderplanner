@@ -203,6 +203,20 @@ export function LLMWizard() {
     hasResumedGenerationRef.current = true
     clearPendingGeneration()
     updateConfig(pendingGeneration)
+    // Bug fix: this only used to update the Zustand trip-config store, never
+    // the component's own local `partialConfig`/`messages` state that the
+    // pill checklist and the post-error "chatting" view render from. Result:
+    // right after sign-in, the wizard looked completely reset (every pill
+    // gray, no chat history) while generation was silently in flight — and
+    // if generation then failed for any reason (auth hiccup, timeout), the
+    // user was dropped back into an empty-looking chat with no memory of
+    // anything they'd already answered. Sync both so the wizard reflects
+    // the resumed config immediately, and gracefully falls back to it.
+    setPartialConfig(pendingGeneration)
+    addMessage({
+      role: 'assistant',
+      content: "Welcome back! Picking up right where you left off — generating your itinerary now.",
+    })
     startGeneration(pendingGeneration)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authStatus, pendingGeneration])

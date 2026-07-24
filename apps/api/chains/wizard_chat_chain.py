@@ -655,6 +655,23 @@ _PURPOSE_CHIP_VALUES: dict[str, str] = {
 }
 
 
+def _strip_emoji(text: str) -> str:
+    """Removes emoji pictographs AND the invisible joiner/modifier
+    codepoints used to compose multi-part emoji (e.g. the "family" emoji
+    👨‍👩‍👧 is actually 👨 + ZERO WIDTH JOINER + 👩 + ZERO WIDTH JOINER + 👧).
+    Stripping only the pictograph range (as this used to do) left the ZWJ
+    (U+200D) characters behind — invisible on screen, but enough to make
+    "family vacation" != "family vacation \u200d\u200d" in an exact-match
+    dict lookup, silently breaking chip-tap detection for every purpose/
+    group chip that uses a ZWJ-sequence emoji. Also strips the variation
+    selector (U+FE0F) some emoji renderers append, for the same reason.
+    Additionally covers U+2600-U+27BF (Misc Symbols / Dingbats) — e.g. the
+    ❤️ in the "Couple ❤️" group chip lives here, outside the main pictograph
+    block, and was previously left behind entirely (not just its variation
+    selector)."""
+    return re.sub(r"[\U0001F300-\U0001FAFF\u2600-\u27bf\u200d\ufe0f]", "", text)
+
+
 def _infer_purpose_from_chip_tap(last_user_text: str | None) -> str | None:
     """Deterministically resolve a purpose value from a user message that's
     just a canonical purpose-chip tap (emoji and case aside). Returns None
@@ -662,7 +679,7 @@ def _infer_purpose_from_chip_tap(last_user_text: str | None) -> str | None:
     from longer, descriptive answers."""
     if not last_user_text:
         return None
-    stripped = re.sub(r"[\U0001F300-\U0001FAFF]", "", last_user_text).strip().lower()
+    stripped = _strip_emoji(last_user_text).strip().lower()
     return _PURPOSE_CHIP_VALUES.get(stripped)
 
 
@@ -677,9 +694,9 @@ def _is_destination_mode_chip_tap(last_user_text: str | None) -> bool:
     re-rendered verbatim under the destination-name follow-up)."""
     if not last_user_text:
         return False
-    stripped = re.sub(r"[\U0001F300-\U0001FAFF]", "", last_user_text).strip().lower()
+    stripped = _strip_emoji(last_user_text).strip().lower()
     canonical = {
-        re.sub(r"[\U0001F300-\U0001FAFF]", "", c).strip().lower()
+        _strip_emoji(c).strip().lower()
         for c in _FIELD_CHIP_SETS["destination"]
     }
     return stripped in canonical
@@ -1428,8 +1445,21 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         if extracted_chips and _is_destination_mode_chip_tap(last_user_text) and frozenset(extracted_chips) == _FIELD_CHIP_SETS["destination"]:
             extracted_chips = []
 
+        # Bug fix: when Gemini's response was unusable (empty/unparseable),
+        # `clean_raw` ends up empty here and we used to paper over it with a
+        # static "I'm on it! Just a moment…" placeholder. That text falsely
+        # implies more processing is coming, but this is a synchronous
+        # request/response call — nothing else arrives, so the chat visibly
+        # stalls until the user sends another message to trigger a fresh
+        # turn. Ask the actual next missing question instead, so every turn
+        # ends with a real, answerable prompt.
+        if not clean_raw:
+            clean_raw, honest_chips = _next_missing_field_prompt(fallback_config)
+            if not extracted_chips:
+                extracted_chips = honest_chips
+
         return WizardChatResponse(
-            reply=clean_raw or "I'm on it! Just a moment…",
+            reply=clean_raw,
             chips=extracted_chips,
             config_patch=fallback_patch,
             ready_to_generate=False,
