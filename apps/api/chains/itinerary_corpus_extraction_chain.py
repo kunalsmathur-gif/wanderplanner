@@ -27,7 +27,7 @@ import hashlib
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -219,10 +219,11 @@ async def ingest_itinerary_corpus() -> int:
 
     Returns the number of documents successfully ingested.
     """
-    from scrapers.itinerary_corpus import collect_itinerary_corpus_raw
-    from core.qdrant import get_qdrant
-    from core.embeddings import embed
     from qdrant_client.models import PointStruct
+
+    from core.embeddings import embed
+    from core.qdrant import get_qdrant
+    from scrapers.itinerary_corpus import collect_itinerary_corpus_raw
 
     raw_docs = await collect_itinerary_corpus_raw()
     if not raw_docs:
@@ -270,7 +271,7 @@ async def ingest_itinerary_corpus() -> int:
                 "source_url": source_url,
                 "days_json": json.dumps([d.model_dump() for d in doc.days]),
                 "quality_score": compute_quality_score(raw_doc),
-                "ingested_at": datetime.now(timezone.utc).date().isoformat(),
+                "ingested_at": datetime.now(UTC).date().isoformat(),
             },
         ))
 

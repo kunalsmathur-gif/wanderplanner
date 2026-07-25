@@ -34,9 +34,10 @@ from difflib import SequenceMatcher
 from core.config import settings
 from core.qdrant import get_qdrant
 from models.trip import MAX_PINNED_POIS, PinnedPOI
+
 # Same bounded destination-scroll helper gems.py uses — shared on purpose so
 # both verification paths stay within identical compute caps.
-from services.gems import _scroll_destination, _MAX_POIS, _MAX_CHUNKS
+from services.gems import _MAX_CHUNKS, _MAX_POIS, _scroll_destination
 
 logger = logging.getLogger(__name__)
 

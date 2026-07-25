@@ -1,6 +1,7 @@
 """In-memory trip share store: POST /api/share → slug, GET /api/share/{slug} → data."""
 
 import secrets
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 

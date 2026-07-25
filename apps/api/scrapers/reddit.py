@@ -4,13 +4,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 import httpx
 from better_profanity import profanity
 
 from core.config import settings
-from core.qdrant import get_qdrant
 from core.embeddings import embed
+from core.qdrant import get_qdrant
 
 SUBREDDITS = ["travel", "solotravel", "digitalnomad", "backpacking", "IndiaTravel"]
 FEED_URL = "https://www.reddit.com/r/{sub}/top.json?limit=50&t=month"
@@ -132,7 +133,7 @@ async def ingest_reddit():
                 destination = _extract_destination(title, selftext)
                 post_url = f"https://reddit.com{data.get('permalink', '')}"
                 published_date = (
-                    datetime.fromtimestamp(data["created_utc"], tz=timezone.utc).date().isoformat()
+                    datetime.fromtimestamp(data["created_utc"], tz=UTC).date().isoformat()
                     if data.get("created_utc")
                     else None
                 )

@@ -12,9 +12,8 @@ All tests are fully offline — no Qdrant, no LLM, no network calls.
 from __future__ import annotations
 
 import hashlib
-import math
-from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, patch
+from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 
@@ -200,17 +199,17 @@ from services.search import _time_decay_score
 
 class TestTimeDecayScore:
     def test_recent_content_retains_high_score(self):
-        recent = (datetime.now(timezone.utc) - timedelta(days=7)).date().isoformat()
+        recent = (datetime.now(UTC) - timedelta(days=7)).date().isoformat()
         score = _time_decay_score(1.0, recent)
         assert score > 0.95, "Content from last week should retain >95% of score"
 
     def test_one_year_old_content_moderately_decayed(self):
-        one_year = (datetime.now(timezone.utc) - timedelta(days=365)).date().isoformat()
+        one_year = (datetime.now(UTC) - timedelta(days=365)).date().isoformat()
         score = _time_decay_score(1.0, one_year)
         assert 0.70 < score < 0.85, f"1-year-old content should score 0.70–0.85, got {score:.3f}"
 
     def test_three_year_old_content_significantly_decayed(self):
-        three_years = (datetime.now(timezone.utc) - timedelta(days=1095)).date().isoformat()
+        three_years = (datetime.now(UTC) - timedelta(days=1095)).date().isoformat()
         score = _time_decay_score(1.0, three_years)
         assert 0.40 < score < 0.65, f"3-year-old content should score 0.40–0.65, got {score:.3f}"
 
@@ -225,7 +224,7 @@ class TestTimeDecayScore:
         assert abs(score - 0.85) < 0.01, f"Unknown date should give 0.85, got {score:.3f}"
 
     def test_proportional_to_base_score(self):
-        date = (datetime.now(timezone.utc) - timedelta(days=180)).date().isoformat()
+        date = (datetime.now(UTC) - timedelta(days=180)).date().isoformat()
         score_high = _time_decay_score(0.9, date)
         score_low = _time_decay_score(0.5, date)
         ratio = score_high / score_low
@@ -233,7 +232,7 @@ class TestTimeDecayScore:
 
     def test_monotonically_decreasing_with_age(self):
         dates = [
-            (datetime.now(timezone.utc) - timedelta(days=d)).date().isoformat()
+            (datetime.now(UTC) - timedelta(days=d)).date().isoformat()
             for d in [30, 180, 365, 730]
         ]
         scores = [_time_decay_score(1.0, d) for d in dates]
@@ -247,8 +246,8 @@ class TestTimeDecayScore:
 # ---------------------------------------------------------------------------
 # services/search.py — _rrf_merge
 # ---------------------------------------------------------------------------
-from services.search import _rrf_merge
 from models.common import SearchResult
+from services.search import _rrf_merge
 
 
 def _make_result(text: str, score: float = 0.8, dest: str = "Tokyo") -> SearchResult:
@@ -376,7 +375,7 @@ class TestSummariseContext:
         assert "up the hillside" in result
 
     def test_sorted_by_decayed_score_descending(self):
-        recent = (datetime.now(timezone.utc) - timedelta(days=10)).date().isoformat()
+        recent = (datetime.now(UTC) - timedelta(days=10)).date().isoformat()
         old = "2020-01-01"
         docs = [
             self._doc("Old content about travel with vintage tips", score=0.85, pub=old),
@@ -389,7 +388,7 @@ class TestSummariseContext:
     def test_time_decay_penalises_stale_content(self):
         """Stale content with high raw score should be outranked by fresh content."""
         old = "2021-06-01"
-        recent = (datetime.now(timezone.utc) - timedelta(days=5)).date().isoformat()
+        recent = (datetime.now(UTC) - timedelta(days=5)).date().isoformat()
         stale_high = self._doc("Stale tip: visit the old market near the station exit", score=0.92, pub=old)
         fresh_low = self._doc("Fresh tip: new rooftop bar with city views just opened", score=0.75, pub=recent)
         result = summarise_context([stale_high, fresh_low], max_chars=2400)
@@ -415,7 +414,7 @@ class TestQueryVariantConstruction:
 
     def _make_config(self):
         """Return a minimal TripConfig with a Barcelona destination."""
-        from models.trip import TripConfig, DestinationInput
+        from models.trip import DestinationInput, TripConfig
         return TripConfig(
             destination=DestinationInput(city="Barcelona"),
             personas=["culture"],
@@ -426,6 +425,7 @@ class TestQueryVariantConstruction:
     def test_three_queries_issued(self):
         """retrieve_context issues exactly 3 parallel queries (config, vibe, practical)."""
         import asyncio
+
         from services.search import retrieve_context
 
         captured: list[str] = []
@@ -444,6 +444,7 @@ class TestQueryVariantConstruction:
     def test_query_variants_are_distinct(self):
         """All three generated queries must differ from each other."""
         import asyncio
+
         from services.search import retrieve_context
 
         captured: list[str] = []
@@ -462,6 +463,7 @@ class TestQueryVariantConstruction:
     def test_destination_in_all_queries(self):
         """Every generated query must contain the destination name."""
         import asyncio
+
         from services.search import retrieve_context
 
         captured: list[str] = []
@@ -481,8 +483,9 @@ class TestQueryVariantConstruction:
     def test_results_deduplicated_by_rrf(self):
         """Duplicate chunks returned by multiple queries appear only once in output."""
         import asyncio
-        from services.search import retrieve_context
+
         from models.common import SearchResult
+        from services.search import retrieve_context
 
         dup = SearchResult(
             text="shared chunk about Barcelona",
@@ -513,20 +516,20 @@ class TestRedditPublishedDateFormat:
 
     def test_valid_utc_epoch_to_iso(self):
         """created_utc as integer epoch → ISO-8601 UTC date string."""
-        from datetime import datetime, timezone
+        from datetime import datetime
         epoch = 1_700_000_000  # 2023-11-14
-        dt = datetime.fromtimestamp(epoch, tz=timezone.utc)
+        dt = datetime.fromtimestamp(epoch, tz=UTC)
         iso = dt.date().isoformat()
         assert iso == "2023-11-14"
 
     def test_published_date_not_future(self):
         """A real reddit post's created_utc should produce a date in the past."""
-        from datetime import datetime, timezone
+        from datetime import datetime
         # Oldest plausible Reddit post epoch (reddit founded 2005)
         epoch = 1_130_000_000  # 2005-10-22
-        dt = datetime.fromtimestamp(epoch, tz=timezone.utc)
+        dt = datetime.fromtimestamp(epoch, tz=UTC)
         assert dt.year >= 2005
-        assert dt < datetime.now(tz=timezone.utc)
+        assert dt < datetime.now(tz=UTC)
 
 
 class TestWikivoyagePointIdUniqueness:
@@ -565,7 +568,8 @@ import pytest
 def test_fallback_tier1_cache_hit():
     """On LLM failure, system returns cached itinerary JSON if cosine >= threshold."""
     import asyncio
-    from models.trip import TripConfig, DestinationInput
+
+    from models.trip import DestinationInput, TripConfig
     from services.itinerary_cache import get_cached_itinerary, store_itinerary
 
     trip_config = TripConfig(
@@ -590,7 +594,8 @@ def test_fallback_tier1_cache_hit():
 def test_fallback_tier1_cache_miss_for_unrelated_destination():
     """A cache entry for one destination must not be returned for an unrelated one."""
     import asyncio
-    from models.trip import TripConfig, DestinationInput
+
+    from models.trip import DestinationInput, TripConfig
     from services.itinerary_cache import get_cached_itinerary
 
     trip_config = TripConfig(destination=DestinationInput(city="Nowhere Ever Cached City XYZ"))
@@ -602,11 +607,13 @@ def test_fallback_tier2_rag_skeleton_builds_from_osm_pois():
     """If cache misses, system returns a RAG-skeleton itinerary from real OSM POI data."""
     import asyncio
     import uuid as uuid_module
+
     from qdrant_client.models import PointStruct
+
     from core.config import settings
-    from core.qdrant import get_qdrant
     from core.embeddings import embed
-    from models.trip import TripConfig, DestinationInput
+    from core.qdrant import get_qdrant
+    from models.trip import DestinationInput, TripConfig
     from services.rag_fallback import rag_skeleton_itinerary
 
     dest = "Skeleton Test City"
@@ -640,7 +647,8 @@ def test_fallback_tier2_rag_skeleton_builds_from_osm_pois():
 def test_fallback_tier2_returns_none_without_enough_pois():
     """Tier 2 must decline (return None) rather than build a near-empty plan."""
     import asyncio
-    from models.trip import TripConfig, DestinationInput
+
+    from models.trip import DestinationInput, TripConfig
     from services.rag_fallback import rag_skeleton_itinerary
 
     trip_config = TripConfig(destination=DestinationInput(city="No OSM Data Whatsoever City"))
@@ -651,7 +659,7 @@ def test_fallback_tier2_returns_none_without_enough_pois():
 def test_fallback_tier3_enhanced_mock_splices_real_tips():
     """If skeleton also declines, the mock itinerary is enhanced with real retrieved tip text."""
     from chains.itinerary_chain import _mock_itinerary
-    from models.trip import TripConfig, DestinationInput
+    from models.trip import DestinationInput, TripConfig
 
     trip_config = TripConfig(destination=DestinationInput(city="Mock City"))
     tips = ["Always carry a reusable water bottle here.", "The old town closes early on Sundays."]
@@ -664,7 +672,7 @@ def test_fallback_tier3_enhanced_mock_splices_real_tips():
 def test_fallback_tier3_mock_without_tips_unchanged():
     """With no tip_texts, the mock itinerary is unchanged from the plain version."""
     from chains.itinerary_chain import _mock_itinerary
-    from models.trip import TripConfig, DestinationInput
+    from models.trip import DestinationInput, TripConfig
 
     trip_config = TripConfig(destination=DestinationInput(city="Plain Mock City"))
     raw = _mock_itinerary(trip_config)
@@ -805,8 +813,9 @@ class TestHyDEPassageGeneration:
 class TestCrossEncoderReranking:
     def test_rerank_reorders_by_cross_encoder_score(self):
         import asyncio
-        from services.search import _rerank
+
         from models.common import SearchResult
+        from services.search import _rerank
 
         results = [
             SearchResult(text="low relevance chunk", source="wiki", source_url="", score=0.9, destination="X", published_date=None),
@@ -821,8 +830,9 @@ class TestCrossEncoderReranking:
     def test_rerank_falls_back_to_original_order_on_failure(self):
         """A cross-encoder failure (e.g. model load error) must not break retrieval."""
         import asyncio
-        from services.search import _rerank
+
         from models.common import SearchResult
+        from services.search import _rerank
 
         results = [
             SearchResult(text="a", source="wiki", source_url="", score=0.5, destination="X", published_date=None),
@@ -836,6 +846,7 @@ class TestCrossEncoderReranking:
 
     def test_rerank_empty_input_returns_empty(self):
         import asyncio
+
         from services.search import _rerank
 
         reranked = asyncio.get_event_loop().run_until_complete(_rerank("query", [], top_n=10))
@@ -870,8 +881,7 @@ class TestOSMPoiParsing:
         """fetch_osm_pois must skip unnamed nodes and duplicate names, and
         cap results at settings.osm_poi_max_results."""
         import asyncio
-        import httpx
-        from unittest.mock import AsyncMock
+
         from scrapers import osm
 
         overpass_response = {
@@ -906,6 +916,7 @@ class TestOSMPoiParsing:
 
     def test_fetch_osm_pois_returns_empty_on_request_failure(self):
         import asyncio
+
         from scrapers import osm
 
         async def fake_post(*args, **kwargs):
@@ -924,8 +935,8 @@ class TestOSMPoiParsing:
 
 class TestItineraryCacheKey:
     def test_cache_key_includes_destination_pace_purpose_and_duration(self):
+        from models.trip import DestinationInput, TripConfig
         from services.itinerary_cache import _cache_key_text
-        from models.trip import TripConfig, DestinationInput
 
         trip_config = TripConfig(
             destination=DestinationInput(city="Kyoto"),
@@ -940,8 +951,8 @@ class TestItineraryCacheKey:
         assert "4d" in key  # 5 - 1 = 4 days
 
     def test_cache_key_handles_missing_dates(self):
+        from models.trip import DestinationInput, TripConfig
         from services.itinerary_cache import _cache_key_text
-        from models.trip import TripConfig, DestinationInput
 
         trip_config = TripConfig(destination=DestinationInput(city="Kyoto"))
         key = _cache_key_text(trip_config)

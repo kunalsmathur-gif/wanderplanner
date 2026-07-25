@@ -91,8 +91,8 @@ async def test_non_admin_cannot_list_or_review_requests(mock_notify, client, use
 async def test_admin_can_approve_request_and_grant_admin_access(mock_notify, mock_decision, client, user_factory):
     mock_notify.return_value = True
     mock_decision.return_value = True
-    admin = await user_factory(email="admin@example.com", password="Password123!", is_admin=True)
-    member = await user_factory(email="member@example.com", password="Password123!")
+    await user_factory(email="admin@example.com", password="Password123!", is_admin=True)
+    await user_factory(email="member@example.com", password="Password123!")
 
     await _login(client, "member@example.com", "Password123!")
     created = await client.post("/api/admin/requests", json={})

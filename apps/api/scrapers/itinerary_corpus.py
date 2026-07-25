@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import feedparser
@@ -129,7 +129,7 @@ async def scrape_travel_blog_feed(feed: dict[str, str], limit: int = 20) -> list
 
             published_date = None
             if entry.get("published_parsed"):
-                published_date = datetime(*entry["published_parsed"][:6], tzinfo=timezone.utc).date().isoformat()
+                published_date = datetime(*entry["published_parsed"][:6], tzinfo=UTC).date().isoformat()
 
             docs.append({
                 "source": "travel_blog",
@@ -269,7 +269,7 @@ async def scrape_reddit_trip_reports() -> list[dict[str, Any]]:
                     continue
 
                 published_date = (
-                    datetime.fromtimestamp(data["created_utc"], tz=timezone.utc).date().isoformat()
+                    datetime.fromtimestamp(data["created_utc"], tz=UTC).date().isoformat()
                     if data.get("created_utc")
                     else None
                 )

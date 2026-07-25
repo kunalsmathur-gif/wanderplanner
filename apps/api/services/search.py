@@ -3,16 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from qdrant_client.models import Filter, FieldCondition, MatchValue
+from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from core.config import settings
-from core.qdrant import get_qdrant
 from core.embeddings import embed, rerank_scores
-from services.hyde import generate_hypothetical_passage
+from core.qdrant import get_qdrant
 from models.common import SearchResult
 from models.trip import TripConfig
+from services.hyde import generate_hypothetical_passage
 
 # Persona/occasion -> extra query keywords used to bias retrieval toward
 # relevant content in the existing free wiki/reddit collections (design memo
@@ -223,8 +223,8 @@ def _time_decay_score(base_score: float, published_date: str | None) -> float:
         return base_score * 0.85
 
     try:
-        pub = datetime.fromisoformat(published_date).replace(tzinfo=timezone.utc)
-        age_days = (datetime.now(timezone.utc) - pub).days
+        pub = datetime.fromisoformat(published_date).replace(tzinfo=UTC)
+        age_days = (datetime.now(UTC) - pub).days
         decay = 0.5 ** (age_days / 548)
         return base_score * (0.4 + 0.6 * decay)
     except Exception:

@@ -13,10 +13,10 @@ import pytest
 from chains.itinerary_corpus_extraction_chain import (
     ItineraryCorpusDay,
     ItineraryCorpusDoc,
-    extract_itinerary_doc,
-    compute_quality_score,
     _config_text,
     _content_text,
+    compute_quality_score,
+    extract_itinerary_doc,
     ingest_itinerary_corpus,
 )
 

@@ -14,7 +14,8 @@ eval out of sync with the real behavior.
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from chains.wizard_chat_chain import _FIELD_CHIP_SETS, _has_all_required, _is_stale_chips
 

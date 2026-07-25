@@ -1,7 +1,7 @@
 from __future__ import annotations
-from typing import Optional
-from datetime import datetime
+
 import uuid
+from datetime import datetime
 
 from sqlalchemy import JSON, DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -26,10 +26,10 @@ class Event(Base):
     # "itinerary_generated", "itinerary_failed"
     event_type: Mapped[str] = mapped_column(String(64), index=True)
 
-    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
-    event_metadata: Mapped[Optional[dict]] = mapped_column(JSONB().with_variant(JSON(), "sqlite"), nullable=True)
+    event_metadata: Mapped[dict | None] = mapped_column(JSONB().with_variant(JSON(), "sqlite"), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from core.config import settings
 
 if TYPE_CHECKING:
-    from sentence_transformers import SentenceTransformer, CrossEncoder
+    from sentence_transformers import CrossEncoder, SentenceTransformer
 
 _model: SentenceTransformer | None = None
 _reranker: CrossEncoder | None = None

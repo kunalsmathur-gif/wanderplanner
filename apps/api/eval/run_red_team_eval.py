@@ -31,7 +31,7 @@ import asyncio
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from core.config import settings
@@ -190,7 +190,7 @@ async def main_async(models: list[str]) -> None:
     summaries = {model: aggregate_model(results) for model, results in per_model_results.items()}
 
     OUT_DIR.mkdir(exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     results_blob = json.dumps({"summaries": summaries, "details": per_model_results}, indent=2, default=str)
     report = render_report(summaries)
     # Timestamped file is the durable record for `eval/compare_results.py`

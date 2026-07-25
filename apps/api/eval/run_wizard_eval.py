@@ -30,7 +30,7 @@ import asyncio
 import copy
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from chains.wizard_chat_chain import WizardChatRequest, wizard_chat
@@ -139,7 +139,7 @@ async def main_async() -> None:
             print(f"      {status} turn {i}: chips={turn['chips']}")
 
     OUT_DIR.mkdir(exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     results_path = OUT_DIR / f"wizard_eval_results_{ts}.json"
     report_path = OUT_DIR / f"wizard_eval_report_{ts}.md"
     results_path.write_text(json.dumps({"results": results}, indent=2, default=str), encoding="utf-8")

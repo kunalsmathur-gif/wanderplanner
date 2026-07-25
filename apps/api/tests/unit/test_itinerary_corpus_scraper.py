@@ -14,13 +14,13 @@ import pytest
 from scrapers.itinerary_corpus import (
     YOUTUBE_ITINERARY_SEED_DESTINATIONS,
     _is_itinerary_shaped,
+    collect_itinerary_corpus_raw,
     discover_youtube_itinerary_videos,
-    scrape_travel_blog_feed,
-    scrape_wikivoyage_itinerary,
-    scrape_reddit_trip_reports,
     fetch_youtube_transcript,
     scrape_all_youtube_transcripts,
-    collect_itinerary_corpus_raw,
+    scrape_reddit_trip_reports,
+    scrape_travel_blog_feed,
+    scrape_wikivoyage_itinerary,
 )
 
 

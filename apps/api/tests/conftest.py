@@ -1,7 +1,7 @@
 """Conftest — shared pytest fixtures."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from itertools import count
 
 import pytest
@@ -99,7 +99,7 @@ async def user_factory(db_session_maker):
                 display_name=display_name,
                 is_admin=is_admin,
                 is_active=is_active,
-                consent_accepted_at=datetime.now(timezone.utc),
+                consent_accepted_at=datetime.now(UTC),
             )
             session.add(user)
             await session.commit()

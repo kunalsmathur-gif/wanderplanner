@@ -6,8 +6,15 @@ filterwarnings = ["ignore::DeprecationWarning"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test modules group their imports under section banners next to the tests
+# they belong to, which reads better than one hoisted block at the top.
+"tests/**" = ["E402"]
 
 [tool.mypy]
 python_version = "3.11"

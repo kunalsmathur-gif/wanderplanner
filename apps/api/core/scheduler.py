@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 import asyncio
 import logging
+from datetime import UTC
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -43,14 +45,16 @@ async def _refresh_osm_pois():
     are free shared public services, so this avoids hammering them with a
     burst of concurrent requests.
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
+
     from sqlalchemy import select
+
     from db import AsyncSessionLocal
     from db_models import DestinationIngestionState
     from scrapers.osm import ingest_osm_pois
     from scrapers.wikivoyage import ingest_wikivoyage
 
-    stale_before = datetime.now(timezone.utc) - timedelta(days=settings.osm_refresh_days)
+    stale_before = datetime.now(UTC) - timedelta(days=settings.osm_refresh_days)
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
@@ -61,7 +65,7 @@ async def _refresh_osm_pois():
         stale_destinations = [row[0] for row in result.all()]
 
     for destination in stale_destinations:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         try:
             await ingest_osm_pois(destination)
             await ingest_wikivoyage(destination)
@@ -94,8 +98,10 @@ async def _refresh_youtube_comments():
     that never got YouTube data (ingested before a key existed, or during an
     exhausted-budget window) are picked up ahead of merely-stale ones.
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
+
     from sqlalchemy import or_, select
+
     from db import AsyncSessionLocal
     from db_models import DestinationIngestionState
     from scrapers.youtube_comments import ingest_youtube_comments
@@ -104,7 +110,7 @@ async def _refresh_youtube_comments():
         logger.info("YOUTUBE_API_KEY not set — skipping YouTube comment refresh")
         return
 
-    stale_before = datetime.now(timezone.utc) - timedelta(days=settings.youtube_refresh_days)
+    stale_before = datetime.now(UTC) - timedelta(days=settings.youtube_refresh_days)
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
@@ -124,7 +130,7 @@ async def _refresh_youtube_comments():
         destinations = [row[0] for row in result.all()]
 
     for destination in destinations:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         try:
             count = await ingest_youtube_comments(destination)
         except Exception as e:

@@ -1,15 +1,14 @@
 
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chains.wizard_chat_chain import WizardChatRequest, WizardChatResponse, wizard_chat
-from core.errors import sanitize_error
-from core.rate_limit import LLM_RATE_LIMIT, limiter
-from core.llm_usage import reset_usage
 from core.analytics import flush_llm_usage
 from core.auth_dependency import get_optional_user
+from core.errors import sanitize_error
+from core.llm_usage import reset_usage
+from core.rate_limit import LLM_RATE_LIMIT, limiter
 from db import get_db
 from db_models import User
 
@@ -22,7 +21,7 @@ async def wizard_chat_endpoint(
     request: Request,
     body: WizardChatRequest,
     db: AsyncSession = Depends(get_db),
-    user: Optional[User] = Depends(get_optional_user),
+    user: User | None = Depends(get_optional_user),
 ) -> WizardChatResponse:
     reset_usage()
     try:

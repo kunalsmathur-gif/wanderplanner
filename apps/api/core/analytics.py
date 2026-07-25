@@ -10,8 +10,8 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db_models import Event
 from core.llm_usage import get_usage
+from db_models import Event
 
 _log = logging.getLogger("wanderplanner.analytics")
 

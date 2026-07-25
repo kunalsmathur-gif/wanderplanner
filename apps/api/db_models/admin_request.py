@@ -1,7 +1,7 @@
 from __future__ import annotations
-from typing import Optional
-from datetime import datetime
+
 import uuid
+from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -30,11 +30,11 @@ class AdminRequest(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False, index=True)
 
     # Optional free-text reason the requester gave for wanting admin access.
-    message: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    message: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
-    reviewed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
-    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

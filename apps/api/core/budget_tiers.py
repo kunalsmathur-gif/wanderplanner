@@ -14,6 +14,7 @@ and `chains/feasibility_chain.py` (cost feasibility check).
 No external calls, no cost — pure rule-based mapping.
 """
 from __future__ import annotations
+
 from models.trip import TripConfig
 
 # Ordered by priority: if a user has multiple personas that imply a tier,

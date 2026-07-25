@@ -22,7 +22,7 @@ MIN_POIS_FOR_SKELETON = 3  # below this, there's not enough real data to bother
 
 
 def _fetch_osm_pois_sync(destination: str, limit: int = 40) -> list[dict]:
-    from qdrant_client.models import Filter, FieldCondition, MatchValue
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
     client = get_qdrant()
     dest_filter = Filter(must=[FieldCondition(key="destination", match=MatchValue(value=destination))])
     points, _ = client.scroll(

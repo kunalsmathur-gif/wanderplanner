@@ -7,6 +7,7 @@ fully offline.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -59,13 +60,13 @@ class TestEnsureDestinationIngested:
     @pytest.mark.asyncio
     async def test_second_request_bumps_counter_without_reingesting(self, session_maker):
         async with session_maker() as db:
-            from datetime import datetime, timezone
+            from datetime import datetime
             db.add(DestinationIngestionState(
                 destination="Lisbon",
-                osm_last_ingested_at=datetime.now(timezone.utc),
-                wiki_last_ingested_at=datetime.now(timezone.utc),
+                osm_last_ingested_at=datetime.now(UTC),
+                wiki_last_ingested_at=datetime.now(UTC),
                 request_count=1,
-                last_requested_at=datetime.now(timezone.utc),
+                last_requested_at=datetime.now(UTC),
             ))
             await db.commit()
 
@@ -147,16 +148,16 @@ class TestColdStartRateLimit:
 
     @pytest.mark.asyncio
     async def test_old_slots_expire_out_of_the_window(self):
-        from datetime import datetime, timedelta, timezone
-        stale = datetime.now(timezone.utc) - timedelta(hours=2)
+        from datetime import datetime, timedelta
+        stale = datetime.now(UTC) - timedelta(hours=2)
         di._cold_start_times.extend([stale] * di._MAX_COLD_STARTS_PER_HOUR)
         # all slots are outside the 1-hour window, so a fresh one should free up
         assert await di._cold_start_budget_available() is True
 
     @pytest.mark.asyncio
     async def test_exhausted_budget_skips_first_request_ingestion(self, session_maker, caplog):
-        from datetime import datetime, timezone
-        di._cold_start_times.extend([datetime.now(timezone.utc)] * di._MAX_COLD_STARTS_PER_HOUR)
+        from datetime import datetime
+        di._cold_start_times.extend([datetime.now(UTC)] * di._MAX_COLD_STARTS_PER_HOUR)
         with patch("services.destination_ingestion.geocode_city", new=AsyncMock(return_value=object())) as mock_geo, \
              patch("scrapers.osm.ingest_osm_pois", new=AsyncMock()) as mock_osm, \
              caplog.at_level("WARNING", logger="services.destination_ingestion"):

@@ -16,9 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
-from datetime import datetime, timedelta, timezone
-
-from sqlalchemy import select
+from datetime import UTC, datetime, timedelta
 
 from core.config import settings
 from db import AsyncSessionLocal
@@ -49,7 +47,7 @@ _cold_start_guard = asyncio.Lock()
 async def _cold_start_budget_available() -> bool:
     """Reserve one of the hour's cold-start slots, or return False if exhausted."""
     async with _cold_start_guard:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now - _cold_start_window
         while _cold_start_times and _cold_start_times[0] < cutoff:
             _cold_start_times.popleft()
@@ -70,7 +68,7 @@ async def ensure_destination_ingested(destination: str) -> None:
     async with lock:
         async with AsyncSessionLocal() as db:
             row = await db.get(DestinationIngestionState, destination)
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
 
             if row is not None:
                 row.request_count += 1

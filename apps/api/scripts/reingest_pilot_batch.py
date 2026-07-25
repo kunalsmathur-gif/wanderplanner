@@ -20,6 +20,7 @@ import asyncio
 import logging
 import sys
 from collections import Counter
+from datetime import UTC
 
 sys.path.insert(0, ".")
 
@@ -59,11 +60,12 @@ async def _reingest_one(destination: str) -> dict:
 
 
 async def _upsert_state_row(destination: str, osm_count: int, wiki_count: int) -> None:
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from db import AsyncSessionLocal
     from db_models import DestinationIngestionState
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with AsyncSessionLocal() as db:
         row = await db.get(DestinationIngestionState, destination)
         if row is None:
@@ -86,9 +88,10 @@ def _category_breakdown(destination: str) -> Counter:
     """Read back the freshly-ingested points for this destination and count
     POI categories, to spot-check the round-robin fix actually balanced the
     result (not just that it returned a nonzero count)."""
-    from core.qdrant import get_qdrant
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
     from core.config import settings
-    from qdrant_client.models import Filter, FieldCondition, MatchValue
+    from core.qdrant import get_qdrant
 
     client = get_qdrant()
     dest_filter = Filter(must=[FieldCondition(key="destination", match=MatchValue(value=destination))])
@@ -124,7 +127,7 @@ async def main() -> None:
         logger.info(
             "[%d/%d] %s: %d OSM POIs, %d wiki chunks. Top categories: %s%s",
             i, len(DESTINATIONS), destination, result["osm_count"], result["wiki_count"],
-            top, " | errors: osm=%r wiki=%r" % (result["osm_error"], result["wiki_error"])
+            top, " | errors: osm={!r} wiki={!r}".format(result["osm_error"], result["wiki_error"])
             if result["osm_error"] or result["wiki_error"] else "",
         )
 

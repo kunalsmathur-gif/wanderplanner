@@ -40,7 +40,7 @@ import asyncio
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from core.config import settings
@@ -63,6 +63,8 @@ from chains.itinerary_chain import (  # noqa: E402
 from core.llm_client import estimate_cost_usd  # noqa: E402
 from core.prompt_guard import neutralize, wrap_untrusted  # noqa: E402
 from core.qdrant import get_qdrant  # noqa: E402
+from eval.config_loader import load_eval_config  # noqa: E402
+from eval.judge_metrics import JUDGE_MODEL, judge_available, judge_itinerary_quality  # noqa: E402
 from eval.llm_providers import (  # noqa: E402
     MODEL_REGISTRY,
     call_model,
@@ -76,8 +78,6 @@ from eval.model_comparison_scoring import (  # noqa: E402
     hallucination_rate,
     render_report,
 )
-from eval.judge_metrics import JUDGE_MODEL, judge_available, judge_itinerary_quality  # noqa: E402
-from eval.config_loader import load_eval_config  # noqa: E402
 from models.trip import Budget, DestinationInput, GroupComposition, TripConfig  # noqa: E402
 from services.search import retrieve_context, summarise_context  # noqa: E402
 
@@ -248,7 +248,7 @@ async def main_async(models: list[str], runs: int, monthly_volumes: list[int]) -
     summaries = {model: aggregate_model(results) for model, results in per_model_results.items()}
 
     OUT_DIR.mkdir(exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     results_blob = json.dumps({"summaries": summaries, "details": per_model_case_details}, indent=2, default=str)
     report = render_report(summaries, monthly_volumes)
     # Timestamped file is the durable record for `eval/compare_results.py`

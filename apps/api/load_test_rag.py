@@ -23,8 +23,8 @@ from qdrant_client.models import PointStruct
 from core.config import settings
 from core.embeddings import embed
 from core.qdrant import get_qdrant
-from models.trip import TripConfig, DestinationInput
-from services.search import semantic_search, retrieve_context, summarise_context
+from models.trip import DestinationInput, TripConfig
+from services.search import retrieve_context
 
 DESTINATIONS = ["Paris", "Tokyo", "Bali", "New York", "Rome"]
 PERSONAS = ["foodie", "adventure", "culture", "relaxation", "digital_nomad"]

@@ -129,7 +129,7 @@ def budget_adherence(raw: dict, budget_amount: float) -> float:
     if budget_amount <= 0:
         return 1.0
     breakdown = raw.get("expense_breakdown") or {}
-    total = sum(v for k, v in breakdown.items() if isinstance(v, (int, float)))
+    total = sum(v for k, v in breakdown.items() if isinstance(v, int | float))
     if total <= 0:
         return 0.5  # model didn't provide a breakdown — partial credit, not a hard fail
     ratio = total / budget_amount

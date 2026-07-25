@@ -49,7 +49,7 @@ import asyncio
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
@@ -173,7 +173,7 @@ async def main_async(models: list[str], runs: int) -> None:
     summaries = {model: aggregate_model(results) for model, results in per_model_results.items()}
 
     OUT_DIR.mkdir(exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     results_blob = json.dumps({"summaries": summaries, "details": per_model_case_details, "case_variances": case_variances}, indent=2, default=str)
     report = render_report(case_variances, summaries)
     (OUT_DIR / f"budget_comparison_results_{ts}.json").write_text(results_blob, encoding="utf-8")

@@ -1,22 +1,29 @@
 from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import uuid
 
-from core.config import settings
-from models.itinerary import ItineraryResponse, ItineraryDay, ItineraryItem, ItineraryItemLocation
-from models.trip import TripConfig
-from services.search import retrieve_context, retrieve_itinerary_examples, summarise_context
-from services.itinerary_cache import get_cached_itinerary, store_itinerary
-from services.rag_fallback import rag_skeleton_itinerary
-from services.pexels import get_day_photos
-from chains.scoring import calculate_alignment_score
 from chains.safety import apply_kid_safety_filter, inject_persona_modules
-from core.prompt_guard import neutralize, wrap_untrusted
-from core.llm_client import track_gemini_usage
+from chains.scoring import calculate_alignment_score
 from core.budget_tiers import budget_tier_prompt_hint
-from core.cost_grounding import flight_cost_grounding_hint, accommodation_cost_grounding_hint
+from core.config import settings
+from core.cost_grounding import accommodation_cost_grounding_hint, flight_cost_grounding_hint
+from core.llm_client import track_gemini_usage
+from core.prompt_guard import neutralize, wrap_untrusted
+from models.itinerary import (
+    ExpenseBreakdown,
+    ItineraryDay,
+    ItineraryItem,
+    ItineraryItemLocation,
+    ItineraryResponse,
+)
+from models.trip import TripConfig
+from services.itinerary_cache import get_cached_itinerary, store_itinerary
+from services.pexels import get_day_photos
+from services.rag_fallback import rag_skeleton_itinerary
+from services.search import retrieve_context, retrieve_itinerary_examples, summarise_context
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +56,7 @@ async def _gem_guidance_block(trip_config: TripConfig) -> str:
     if not dest or crowd_pref == "touristy":
         return ""
     try:
-        from services.gems import get_gem_intel, gem_prompt_block
+        from services.gems import gem_prompt_block, get_gem_intel
         intel = await get_gem_intel(dest)
         block = gem_prompt_block(intel, crowd_pref)
     except Exception:
@@ -94,7 +101,7 @@ def _pinned_guidance_block(trip_config: TripConfig) -> str:
     )
 
 
-def _enforce_pins(days: list["ItineraryDay"], trip_config: TripConfig) -> list["ItineraryDay"]:
+def _enforce_pins(days: list[ItineraryDay], trip_config: TripConfig) -> list[ItineraryDay]:
     """Deterministic hard-constraint enforcement (GTM §2): the prompt asks for
     each pinned place exactly once with the "pinned" tag, but LLM compliance
     is probabilistic (live 2026-07-13 eval: Barcelona honoured 1 of 3 pins —
@@ -406,8 +413,7 @@ def _mock_itinerary(trip_config: TripConfig, tip_texts: list[str] | None = None)
     }
 
 
-def _parse_expense_breakdown(raw: dict, trip_config: TripConfig) -> "ExpenseBreakdown":
-    from models.itinerary import ExpenseBreakdown
+def _parse_expense_breakdown(raw: dict, trip_config: TripConfig) -> ExpenseBreakdown:
     group = trip_config.group
     if hasattr(group, 'adults'):
         people = group.adults + group.seniors + len(group.kids if group.kids else [])
@@ -594,8 +600,8 @@ async def _langchain_itinerary(trip_config: TripConfig) -> dict:
     trip_json = trip_config.model_dump_json(indent=2)
     trip_json = neutralize(trip_json, context="trip configuration")
     try:
-        from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.output_parsers import JsonOutputParser
+        from langchain_core.prompts import ChatPromptTemplate
     except ImportError:
         raise RuntimeError("langchain not installed. Run: pip install -r requirements-ml.txt")
 

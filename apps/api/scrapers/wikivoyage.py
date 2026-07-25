@@ -1,6 +1,6 @@
+"""Wikivoyage scraper — extracts destination guide sections."""
 from __future__ import annotations
 
-"""Wikivoyage scraper — extracts destination guide sections."""
 import asyncio
 import hashlib
 import logging

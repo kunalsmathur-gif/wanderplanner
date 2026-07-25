@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import httpx
 
-from models.common import BestTimeResponse, MonthlyWeather, BusyPeriod, LocalEvent
+from models.common import BestTimeResponse, BusyPeriod, LocalEvent, MonthlyWeather
 from services.geocode import geocode_city
 
 OPEN_METEO_URL = "https://archive-api.open-meteo.com/v1/archive"

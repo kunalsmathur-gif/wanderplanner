@@ -10,13 +10,11 @@ middleware needed): the `state` param is a signed, short-lived token via
 required and the flow works fine behind a load balancer.
 """
 import logging
-from typing import Optional
-import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,7 +36,13 @@ from core.security import (
 )
 from db import get_db
 from db_models import PasswordResetToken, RefreshToken, User
-from models.auth import ForgotPasswordRequest, LoginRequest, ResetPasswordRequest, SignupRequest, UserResponse
+from models.auth import (
+    ForgotPasswordRequest,
+    LoginRequest,
+    ResetPasswordRequest,
+    SignupRequest,
+    UserResponse,
+)
 
 router = APIRouter()
 _log = logging.getLogger("wanderplanner.auth")
@@ -72,7 +76,7 @@ async def _issue_session(response: Response, db: AsyncSession, user: User, reque
             ip_hash=hash_ip(request.client.host if request.client else None),
         )
     )
-    user.last_login_at = datetime.now(timezone.utc)
+    user.last_login_at = datetime.now(UTC)
     await db.commit()
 
     cookie_kwargs = dict(
@@ -121,7 +125,7 @@ async def signup(request: Request, response: Response, body: SignupRequest, db: 
         email=body.email,
         password_hash=hash_password(body.password),
         display_name=body.display_name,
-        consent_accepted_at=datetime.now(timezone.utc),
+        consent_accepted_at=datetime.now(UTC),
     )
     db.add(user)
     await db.flush()
@@ -176,9 +180,9 @@ async def google_start(request: Request, return_to: str = "/") -> Response:
 @limiter.limit(DEFAULT_RATE_LIMIT)
 async def google_callback(
     request: Request,
-    code: Optional[str] = None,
-    state: Optional[str] = None,
-    error: Optional[str] = None,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     from fastapi.responses import RedirectResponse
@@ -237,7 +241,7 @@ async def google_callback(
             email=email,
             google_sub=google_sub,
             display_name=info.get("name"),
-            consent_accepted_at=datetime.now(timezone.utc),
+            consent_accepted_at=datetime.now(UTC),
         )
         db.add(user)
         await db.flush()
@@ -269,12 +273,12 @@ async def refresh(
     result = await db.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
     stored = result.scalar_one_or_none()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expires_at = stored.expires_at if stored else None
     if expires_at is not None and expires_at.tzinfo is None:
         # Defensive: some DB backends (e.g. SQLite in local/dev) don't
         # round-trip tz-aware datetimes — assume UTC rather than crash.
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
+        expires_at = expires_at.replace(tzinfo=UTC)
     if stored is None or stored.revoked_at is not None or expires_at < now:
         _clear_session_cookies(response)
         raise HTTPException(status_code=401, detail="Session expired, please sign in again.")
@@ -300,7 +304,7 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
         result = await db.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
         stored = result.scalar_one_or_none()
         if stored is not None and stored.revoked_at is None:
-            stored.revoked_at = datetime.now(timezone.utc)
+            stored.revoked_at = datetime.now(UTC)
             await db.commit()
 
     _clear_session_cookies(response)
@@ -367,10 +371,10 @@ async def reset_password(request: Request, response: Response, body: ResetPasswo
     result = await db.execute(select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash))
     stored = result.scalar_one_or_none()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expires_at = stored.expires_at if stored else None
     if expires_at is not None and expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
+        expires_at = expires_at.replace(tzinfo=UTC)
 
     if stored is None or stored.used_at is not None or expires_at < now:
         raise HTTPException(status_code=400, detail="This password reset link is invalid or has expired.")

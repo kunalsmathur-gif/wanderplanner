@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from scrapers.wikivoyage import scrape_wikivoyage, WIKIVOYAGE_TITLE_OVERRIDES
+from scrapers.wikivoyage import WIKIVOYAGE_TITLE_OVERRIDES, scrape_wikivoyage
 
 NEW_MARKUP = """
 <html><body>
