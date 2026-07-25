@@ -22,11 +22,44 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from scrapers.osm import _display_name, _prioritize_landmarks, fetch_osm_pois
+from scrapers.osm import (
+    _build_prominence_query,
+    _display_name,
+    _prioritize_landmarks,
+    _prominence_score,
+    fetch_osm_pois,
+)
 
 
 def _make_element(osm_id: int, name: str, tags: dict[str, str], lat: float = 51.5, lon: float = -0.1) -> dict:
-    return {"id": osm_id, "lat": lat, "lon": lon, "tags": {"name": name, **tags}}
+    return {"id": osm_id, "type": "node", "lat": lat, "lon": lon, "tags": {"name": name, **tags}}
+
+
+def _make_area(osm_id: int, name: str, tags: dict[str, str], lat: float = 51.5, lon: float = -0.1,
+               kind: str = "way") -> dict:
+    """A way/relation element as Overpass returns it under `out center` — no
+    top-level lat/lon, a `center` object instead. Famous landmarks are mapped
+    this way (Kiyomizu-dera and Kinkaku-ji are ways; Delhi's Jama Masjid is a
+    relation), which is why the node-only query could never reach them."""
+    return {"id": osm_id, "type": kind, "center": {"lat": lat, "lon": lon},
+            "tags": {"name": name, **tags}}
+
+
+def _make_response(elements: list[dict]) -> MagicMock:
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {"elements": elements}
+    return response
+
+
+def _mock_client(*responses) -> AsyncMock:
+    """An httpx.AsyncClient mock returning `responses` in order — one per
+    Overpass pass (prominence first, then broad)."""
+    client = AsyncMock()
+    client.post = AsyncMock(side_effect=list(responses))
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    return client
 
 
 class TestDisplayName:
@@ -114,6 +147,230 @@ class TestPrioritizeLandmarks:
         assert categories_in_top_12 == {"train station", "museum", "attraction", "theatre"}
 
 
+class TestProminenceScore:
+    """Live-measured 2026-07-25: the ingested pool held 21 obscure Kyoto
+    temples and 20 small museums but not Kiyomizu-dera or Kinkaku-ji, because
+    nothing ranked by prominence and the slots went to whatever Overpass
+    returned first. `wikidata`/`wikipedia`/`heritage` are the free signal that
+    separates the two — famous sites carry them, neighbourhood shrines
+    don't."""
+
+    def test_unremarkable_poi_scores_zero(self):
+        assert _prominence_score({"name": "Corner Shrine", "amenity": "place_of_worship"}) == 0
+
+    def test_wikidata_and_wikipedia_outrank_a_bare_website(self):
+        famous = _prominence_score({"wikidata": "Q1030", "wikipedia": "en:Kiyomizu-dera"})
+        has_site = _prominence_score({"website": "https://example.com"})
+        assert famous > has_site > 0
+
+    def test_world_heritage_listing_outranks_plain_heritage(self):
+        world = _prominence_score({"heritage": "1"})
+        national = _prominence_score({"heritage": "2"})
+        assert world > national > 0
+
+    def test_english_name_is_a_weak_signal(self):
+        assert _prominence_score({"name:en": "Golden Pavilion"}) > 0
+        assert _prominence_score({"int_name": "Golden Pavilion"}) > 0
+
+    def test_signals_accumulate(self):
+        both = _prominence_score({"wikidata": "Q1", "heritage": "1", "website": "x", "name:en": "y"})
+        one = _prominence_score({"wikidata": "Q1"})
+        assert both > one
+
+
+class TestProminenceQuery:
+    """The prominence pass has to ask for ways and relations, must not carry a
+    result cap, and must leave out the categories it isn't for."""
+
+    def test_asks_for_nodes_ways_and_relations(self):
+        query = _build_prominence_query(35.0, 135.0, 15000)
+        assert "nwr[" in query
+        # A node-only query is exactly the bug being fixed: Kiyomizu-dera,
+        # Kinkaku-ji and Ginkaku-ji are all `way` elements.
+        assert 'node["' not in query
+
+    def test_filters_to_prominent_elements(self):
+        assert '["wikidata"]' in _build_prominence_query(35.0, 135.0, 15000)
+
+    def test_has_no_result_cap(self):
+        # Overpass's `out <limit>` truncates in element-type order, nodes
+        # first — so any cap here would silently drop every way and relation,
+        # which is the whole point of the pass. Live-verified: an `nwr` query
+        # capped at 3000 for Kyoto came back 3000/3000 nodes.
+        assert _build_prominence_query(35.0, 135.0, 15000).rstrip().endswith("out center;")
+
+    def test_excludes_transport_and_food_drink(self):
+        query = _build_prominence_query(35.0, 135.0, 15000)
+        for excluded in ('"railway"="station"', '"aeroway"="aerodrome"',
+                         '"amenity"="restaurant"', '"amenity"="cafe"', '"amenity"="bar"'):
+            assert excluded not in query
+        # ...but still covers what a traveller plans a day around.
+        assert '"tourism"="attraction"' in query
+        assert '"historic"="monument"' in query
+
+    def test_uses_the_radius_it_is_given(self):
+        assert "around:15000," in _build_prominence_query(35.0, 135.0, 15000)
+
+
+class TestProminenceRanking:
+    def test_prominent_poi_wins_its_category_slot(self):
+        pois = [
+            {"poi_type": "place of worship", "name": "Corner Shrine", "prominence": 0},
+            {"poi_type": "place of worship", "name": "Kiyomizu-dera", "prominence": 7},
+            {"poi_type": "place of worship", "name": "Another Shrine", "prominence": 0},
+        ]
+        ordered = _prioritize_landmarks(pois)
+        assert ordered[0]["name"] == "Kiyomizu-dera"
+
+    def test_prominence_does_not_let_one_category_dominate(self):
+        # The anti-domination guarantee has to survive prominence ranking.
+        # Delhi is monument-dense: dozens of monuments are *genuinely* the
+        # most prominent things in the city, so they rightly outrank a
+        # nondescript museum — but they must not take every slot. The cap
+        # bounds them and defers the rest behind the other categories.
+        pois = (
+            [{"poi_type": "historic monument", "name": f"Monument {i}", "prominence": 9}
+             for i in range(40)]
+            + [{"poi_type": "museum", "name": "Museum", "prominence": 1}]
+            + [{"poi_type": "park", "name": "Park", "prominence": 0}]
+        )
+        ordered = _prioritize_landmarks(pois)
+        names = [p["name"] for p in ordered]
+        cap = round(60 * 0.25)  # settings.osm_poi_max_results * _MAX_CATEGORY_SHARE_IN_POOL
+
+        # The most prominent category leads, but only up to the cap.
+        assert all(p["poi_type"] == "historic monument" for p in ordered[:cap])
+        # Then the other categories, ahead of the deferred monument overflow.
+        assert names[cap:cap + 2] == ["Museum", "Park"]
+        # Nothing is thrown away — a thin destination must not lose POIs.
+        assert len(ordered) == 42
+
+    def test_overflow_is_deferred_not_discarded(self):
+        pois = [{"poi_type": "train station", "name": f"S{i}", "prominence": 0} for i in range(50)]
+        assert len(_prioritize_landmarks(pois)) == 50
+
+    def test_missing_prominence_key_is_treated_as_zero(self):
+        # _prioritize_landmarks is also called on POIs that predate the
+        # prominence field (and by tests that don't set it) — it must not
+        # raise, and must fall back to arrival order.
+        pois = [
+            {"poi_type": "museum", "name": "M1"},
+            {"poi_type": "museum", "name": "M2"},
+        ]
+        assert [p["name"] for p in _prioritize_landmarks(pois)] == ["M1", "M2"]
+
+    def test_ties_keep_arrival_order(self):
+        pois = [
+            {"poi_type": "museum", "name": "M1", "prominence": 3},
+            {"poi_type": "museum", "name": "M2", "prominence": 3},
+            {"poi_type": "museum", "name": "M3", "prominence": 3},
+        ]
+        assert [p["name"] for p in _prioritize_landmarks(pois)] == ["M1", "M2", "M3"]
+
+
+class TestTwoPassFetch:
+    @pytest.mark.asyncio
+    async def test_way_and_relation_landmarks_are_ingested(self):
+        # The regression this whole change exists for: before it, a node-only
+        # query meant these were not out-ranked, they were unreachable.
+        prominence = [
+            _make_area(1, "Kiyomizu-dera", {"tourism": "attraction", "wikidata": "Q1030"},
+                       lat=34.99, lon=135.78),
+            _make_area(2, "Jama Masjid", {"amenity": "place_of_worship", "wikidata": "Q207286"},
+                       kind="relation", lat=28.65, lon=77.23),
+        ]
+        broad = [_make_element(3, "Some Cafe", {"amenity": "cafe"})]
+
+        with patch("scrapers.osm.httpx.AsyncClient",
+                   return_value=_mock_client(_make_response(prominence), _make_response(broad))):
+            pois = await fetch_osm_pois("Kyoto", lat=35.0116, lon=135.7681)
+
+        by_name = {p["name"]: p for p in pois}
+        assert "Kiyomizu-dera" in by_name
+        assert "Jama Masjid" in by_name
+        # `center` is what ways/relations carry instead of lat/lon.
+        assert by_name["Kiyomizu-dera"]["lat"] == 34.99
+        # The OSM link has to point at the right element type or it 404s.
+        assert by_name["Jama Masjid"]["source_url"].endswith("/relation/2")
+        assert by_name["Kiyomizu-dera"]["source_url"].endswith("/way/1")
+
+    @pytest.mark.asyncio
+    async def test_prominent_duplicate_beats_the_plain_node(self):
+        # A landmark is often mapped twice — an area carrying the real tags
+        # and a bare node. Dedup is by name, so the prominence pass has to be
+        # merged first or the richer element loses to the emptier one.
+        prominence = [_make_area(1, "Kinkaku-ji", {"tourism": "attraction", "wikidata": "Q200016",
+                                                   "heritage": "1"})]
+        broad = [_make_element(2, "Kinkaku-ji", {"tourism": "attraction"})]
+
+        with patch("scrapers.osm.httpx.AsyncClient",
+                   return_value=_mock_client(_make_response(prominence), _make_response(broad))):
+            pois = await fetch_osm_pois("Kyoto", lat=35.0116, lon=135.7681)
+
+        kept = [p for p in pois if p["name"] == "Kinkaku-ji"]
+        assert len(kept) == 1
+        assert kept[0]["prominence"] > 0
+        assert kept[0]["source_url"].endswith("/way/1")
+
+    @pytest.mark.asyncio
+    async def test_broad_pass_still_works_when_prominence_pass_fails(self):
+        # Overpass is genuinely flaky and the prominence query is the heavier
+        # of the two. Losing it must degrade to the old behaviour, not to an
+        # empty destination.
+        broad = [_make_element(1, "Tower Bridge", {"tourism": "attraction"})]
+        client = _mock_client(
+            *([Exception("504 Gateway Timeout")] * 4),  # prominence pass, exhausted
+            _make_response(broad),
+        )
+
+        with patch("scrapers.osm.httpx.AsyncClient", return_value=client), \
+             patch("scrapers.osm.asyncio.sleep", new=AsyncMock()):
+            pois = await fetch_osm_pois("London", lat=51.5074, lon=-0.1278)
+
+        assert [p["name"] for p in pois] == ["Tower Bridge"]
+
+    @pytest.mark.asyncio
+    async def test_prominence_pass_alone_is_enough_when_broad_pass_fails(self):
+        prominence = [_make_area(1, "Kiyomizu-dera", {"tourism": "attraction", "wikidata": "Q1030"})]
+        client = _mock_client(
+            _make_response(prominence),
+            *([Exception("504 Gateway Timeout")] * 5),  # broad pass, exhausted
+        )
+
+        with patch("scrapers.osm.httpx.AsyncClient", return_value=client), \
+             patch("scrapers.osm.asyncio.sleep", new=AsyncMock()):
+            pois = await fetch_osm_pois("Kyoto", lat=35.0116, lon=135.7681)
+
+        assert [p["name"] for p in pois] == ["Kiyomizu-dera"]
+
+    @pytest.mark.asyncio
+    async def test_prominence_pass_widens_with_the_callers_radius(self):
+        # ingest_osm_pois retries thin destinations at the expanded radius;
+        # the prominent set has to widen with it rather than stay at 15km.
+        client = _mock_client(_make_response([]), _make_response([]))
+        with patch("scrapers.osm.httpx.AsyncClient", return_value=client), \
+             patch("scrapers.osm.settings.osm_prominence_radius_m", 15000):
+            await fetch_osm_pois("Nowhere", lat=0.0, lon=0.0, radius_m=40000)
+
+        prominence_query = client.post.await_args_list[0].kwargs["data"]["data"]
+        assert "around:40000," in prominence_query
+
+    @pytest.mark.asyncio
+    async def test_prominence_pass_uses_the_wider_radius_by_default(self):
+        client = _mock_client(_make_response([]), _make_response([]))
+        with patch("scrapers.osm.httpx.AsyncClient", return_value=client), \
+             patch("scrapers.osm.settings.osm_poi_radius_m", 5000), \
+             patch("scrapers.osm.settings.osm_prominence_radius_m", 15000):
+            await fetch_osm_pois("Delhi", lat=28.6139, lon=77.2090)
+
+        prominence_query = client.post.await_args_list[0].kwargs["data"]["data"]
+        broad_query = client.post.await_args_list[1].kwargs["data"]["data"]
+        # Live-probed: Delhi at 5km misses Red Fort, Qutub Minar, Lotus Temple
+        # and Chandni Chowk; at 15km it finds all four.
+        assert "around:15000," in prominence_query
+        assert "around:5000," in broad_query
+
+
 class TestFetchOsmPoisTruncation:
     @pytest.mark.asyncio
     async def test_final_cap_keeps_landmarks_over_food_drink(self):
@@ -175,20 +432,23 @@ class TestFetchOsmPoisTruncation:
             pois = await fetch_osm_pois("Nowhere", lat=0.0, lon=0.0)
 
         assert pois == []
-        # Retried up to the max (5, across rotating mirrors) before giving up.
-        assert mock_client.post.await_count == 5
-        assert mock_sleep.await_count == 4
+        # Both passes exhaust their own budget: 4 for the supplementary
+        # prominence pass, then 5 for the load-bearing broad pass.
+        assert mock_client.post.await_count == 4 + 5
+        assert mock_sleep.await_count == 3 + 4
 
     @pytest.mark.asyncio
     async def test_retries_transient_failure_then_succeeds(self):
         # Overpass frequently 504s under load and succeeds seconds later —
         # found live 2026-07-20. A transient failure on the first attempt
         # must not be treated the same as a permanent one.
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"elements": [_make_element(1, "Tower Bridge", {"tourism": "attraction"})]}
+        prominence_response = _make_response([])
+        broad_response = _make_response([_make_element(1, "Tower Bridge", {"tourism": "attraction"})])
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=[Exception("504 Gateway Timeout"), mock_response])
+        mock_client.post = AsyncMock(side_effect=[
+            Exception("504 Gateway Timeout"), prominence_response,   # prominence pass
+            Exception("504 Gateway Timeout"), broad_response,        # broad pass
+        ])
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
@@ -198,8 +458,8 @@ class TestFetchOsmPoisTruncation:
 
         assert len(pois) == 1
         assert pois[0]["name"] == "Tower Bridge"
-        assert mock_client.post.await_count == 2
-        assert mock_sleep.await_count == 1
+        assert mock_client.post.await_count == 4
+        assert mock_sleep.await_count == 2
 
     @pytest.mark.asyncio
     async def test_rotates_across_mirrors_on_repeated_failure(self):
@@ -221,6 +481,12 @@ class TestFetchOsmPoisTruncation:
 
         called_urls = [call.args[0] for call in mock_client.post.await_args_list]
         assert called_urls == [
+            # prominence pass — 4 attempts
+            "https://overpass-api.de/api/interpreter",
+            "https://mirror-a",
+            "https://mirror-b",
+            "https://overpass-api.de/api/interpreter",
+            # broad pass — 5 attempts, restarting the rotation
             "https://overpass-api.de/api/interpreter",
             "https://mirror-a",
             "https://mirror-b",
@@ -248,7 +514,7 @@ class TestIngestOsmPoisOrphanCleanup:
         ]
         mock_qdrant = MagicMock()
 
-        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(return_value=fake_pois)), \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(return_value=(fake_pois, True))), \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384]), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.count_destination_points", return_value=0), \
@@ -268,7 +534,7 @@ class TestIngestOsmPoisOrphanCleanup:
         # real data — only clean up when there's something new to replace it.
         from scrapers.osm import ingest_osm_pois
 
-        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(return_value=[])), \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(return_value=([], True))), \
              patch("scrapers.osm.delete_stale_destination_points") as mock_delete:
             count = await ingest_osm_pois("Nowhere")
 
@@ -299,7 +565,7 @@ class TestRadiusExpansionForThinOrDominatedResults:
         wide = [self._poi(f"Landmark {i}", "attraction") for i in range(25)]
         mock_qdrant = MagicMock()
 
-        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(side_effect=[thin, wide])) as mock_fetch, \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(side_effect=[(thin, True), (wide, True)])) as mock_fetch, \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 25), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.count_destination_points", return_value=0), \
@@ -321,7 +587,7 @@ class TestRadiusExpansionForThinOrDominatedResults:
         ]
         mock_qdrant = MagicMock()
 
-        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(side_effect=[dominated, balanced])) as mock_fetch, \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(side_effect=[(dominated, True), (balanced, True)])) as mock_fetch, \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 25), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.count_destination_points", return_value=0), \
@@ -340,7 +606,7 @@ class TestRadiusExpansionForThinOrDominatedResults:
         ]
         mock_qdrant = MagicMock()
 
-        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(return_value=healthy)) as mock_fetch, \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(return_value=(healthy, True))) as mock_fetch, \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 30), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.delete_stale_destination_points", return_value=0):
@@ -359,7 +625,7 @@ class TestRadiusExpansionForThinOrDominatedResults:
         thin = [self._poi(f"Landmark {i}", "attraction") for i in range(5)]
         mock_qdrant = MagicMock()
 
-        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(side_effect=[thin, []])) as mock_fetch, \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(side_effect=[(thin, True), ([], True)])) as mock_fetch, \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 5), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.count_destination_points", return_value=0), \
@@ -389,7 +655,7 @@ class TestDataLossGuardForThinResults:
         thin = [self._poi("Only POI", "attraction")]
         mock_qdrant = MagicMock()
 
-        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(side_effect=[thin, thin])), \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(side_effect=[(thin, True), (thin, True)])), \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384]), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.count_destination_points", return_value=60), \
@@ -407,7 +673,7 @@ class TestDataLossGuardForThinResults:
         thin = [self._poi("Only POI", "attraction")]
         mock_qdrant = MagicMock()
 
-        with patch("scrapers.osm.fetch_osm_pois", new=AsyncMock(side_effect=[thin, thin])), \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(side_effect=[(thin, True), (thin, True)])), \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384]), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.count_destination_points", return_value=0), \
@@ -416,3 +682,135 @@ class TestDataLossGuardForThinResults:
 
         assert count == 1
         mock_delete.assert_called_once()
+
+
+class TestHardRefusalRotatesWithoutBackoff:
+    """Live-measured 2026-07-25 during the prominence re-ingestion:
+    `overpass.openstreetmap.fr` answered 403 to 5 of 5 requests while the other
+    two mirrors were still serving. Backing off before moving on wasted both a
+    retry slot and an exponential sleep on a mirror that was never going to
+    answer."""
+
+    def _http_error(self, status: int) -> Exception:
+        response = MagicMock()
+        response.status_code = status
+        error = Exception(f"HTTP {status}")
+        error.response = response
+        return error
+
+    @pytest.mark.asyncio
+    async def test_403_rotates_immediately_and_succeeds_on_next_mirror(self):
+        broad = [_make_element(1, "Tower Bridge", {"tourism": "attraction"})]
+        client = _mock_client(
+            self._http_error(403), _make_response([]),      # prominence: refused, then ok
+            self._http_error(403), _make_response(broad),   # broad: refused, then ok
+        )
+        with patch("scrapers.osm.httpx.AsyncClient", return_value=client), \
+             patch("scrapers.osm.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+            pois = await fetch_osm_pois("London", lat=51.5074, lon=-0.1278)
+
+        assert [p["name"] for p in pois] == ["Tower Bridge"]
+        # The whole point: no waiting before rotating off a refusing mirror.
+        mock_sleep.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_429_still_backs_off(self):
+        # Rate limiting *is* congestion — that one must keep its backoff, or
+        # we'd hammer a mirror that just asked us to slow down.
+        client = _mock_client(
+            self._http_error(429), _make_response([]),
+            self._http_error(429), _make_response([]),
+        )
+        with patch("scrapers.osm.httpx.AsyncClient", return_value=client), \
+             patch("scrapers.osm.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+            await fetch_osm_pois("London", lat=51.5074, lon=-0.1278)
+
+        assert mock_sleep.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_server_error_still_backs_off(self):
+        client = _mock_client(
+            self._http_error(504), _make_response([]),
+            self._http_error(504), _make_response([]),
+        )
+        with patch("scrapers.osm.httpx.AsyncClient", return_value=client), \
+             patch("scrapers.osm.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+            await fetch_osm_pois("London", lat=51.5074, lon=-0.1278)
+
+        assert mock_sleep.await_count == 2
+
+
+class TestIngestGuardsAgainstProminencePassFailure:
+    """A broad-pass-only result passes every other health check here — full
+    count, well-spread categories — while containing none of the landmarks the
+    destination is known for. Live-hit on this change's first run: Delhi's
+    prominence query 403'd on all three mirrors and the fallback pool held
+    none of Red Fort, Humayun's Tomb, Qutub Minar, India Gate, Lotus Temple,
+    Jama Masjid or Lodhi Gardens, yet looked entirely healthy."""
+
+    def _healthy_pool(self) -> list[dict]:
+        return [
+            {
+                "destination": "Delhi", "name": f"POI {i}",
+                "poi_type": ["attraction", "museum", "park", "theatre"][i % 4],
+                "lat": 0.0, "lon": 0.0, "prominence": 0, "tags": {},
+                "text": "x", "source": "osm",
+                "source_url": "https://www.openstreetmap.org/node/1",
+            }
+            for i in range(60)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_keeps_existing_data_when_prominence_pass_failed(self):
+        from scrapers.osm import ingest_osm_pois
+
+        mock_qdrant = MagicMock()
+        with patch("scrapers.osm._fetch_osm_pois_with_meta",
+                   new=AsyncMock(return_value=(self._healthy_pool(), False))), \
+             patch("scrapers.osm.embed", return_value=[[0.1] * 384]), \
+             patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.count_destination_points", return_value=60), \
+             patch("scrapers.osm.delete_stale_destination_points") as mock_delete:
+            count = await ingest_osm_pois("Delhi")
+
+        assert count == 60
+        mock_delete.assert_not_called()
+        mock_qdrant.upsert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_still_ingests_a_brand_new_destination(self):
+        # Degraded data beats no data when there is nothing to protect — this
+        # must not turn a flaky prominence query into a permanently empty
+        # destination for a first-time cold-start request.
+        from scrapers.osm import ingest_osm_pois
+
+        mock_qdrant = MagicMock()
+        with patch("scrapers.osm._fetch_osm_pois_with_meta",
+                   new=AsyncMock(return_value=(self._healthy_pool(), False))), \
+             patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 60), \
+             patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.count_destination_points", return_value=0), \
+             patch("scrapers.osm.delete_stale_destination_points", return_value=0):
+            count = await ingest_osm_pois("Somewhere New")
+
+        assert count == 60
+        mock_qdrant.upsert.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_empty_prominence_result_is_not_treated_as_failure(self):
+        # A rural destination can legitimately have no wikidata-tagged POI at
+        # all. That must still ingest — otherwise thinly-mapped destinations
+        # could never be refreshed.
+        from scrapers.osm import ingest_osm_pois
+
+        mock_qdrant = MagicMock()
+        with patch("scrapers.osm._fetch_osm_pois_with_meta",
+                   new=AsyncMock(return_value=(self._healthy_pool(), True))), \
+             patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 60), \
+             patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.count_destination_points", return_value=60), \
+             patch("scrapers.osm.delete_stale_destination_points", return_value=0):
+            count = await ingest_osm_pois("Sleepy Village")
+
+        assert count == 60
+        mock_qdrant.upsert.assert_called_once()

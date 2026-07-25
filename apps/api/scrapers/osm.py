@@ -47,6 +47,16 @@ _RETRY_MAX_DELAY_S = 60.0
 _RETRY_JITTER_S = 3.0
 
 
+def _is_hard_refusal(exc: Exception) -> bool:
+    """True when a mirror actively refused the request rather than being
+    busy. 429 (rate limited) and 408 (request timeout) are congestion and
+    deserve a backoff; other 4xx responses mean this mirror will keep saying
+    no, so waiting before moving on just wastes the retry budget."""
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    return isinstance(status, int) and 400 <= status < 500 and status not in (408, 429)
+
+
 def _overpass_mirrors() -> list[str]:
     """Primary Overpass instance first, then the configured fallback
     mirrors, deduplicated while preserving order."""
@@ -124,9 +134,127 @@ _RAW_FETCH_MULTIPLIER = 5
 _RAW_FETCH_CEILING = 400
 _FOOD_DRINK_LABELS = {"restaurant", "cafe", "bar"}
 
+# Nothing in the pipeline used to rank POIs by *prominence*, so the 60 slots
+# filled with whatever Overpass happened to return first and a nameless
+# neighbourhood shrine had exactly the same claim on a slot as Kiyomizu-dera.
+# Live-measured 2026-07-25: Kyoto's pool held 21 obscure temples and 20 small
+# museums but none of Kiyomizu-dera/Fushimi Inari/Kinkaku-ji/Arashiyama;
+# Delhi carried 7 train stations but no Red Fort, Humayun's Tomb or Chandni
+# Chowk; Bangkok carried 12 train stations but no Wat Arun or Wat Pho. Those
+# are exactly the places travellers name in the ingested comments, which made
+# this the binding constraint on hidden gems (services/gems.py can only match
+# names that are in the pool) and on itinerary grounding generally.
+#
+# Two separate causes, both fixed below.
+#
+# 1. **The query only ever asked for `node`.** Famous sites are mapped as
+#    areas — a live probe found Kiyomizu-dera, Kinkaku-ji and Ginkaku-ji are
+#    all `way` elements, and Delhi's Jama Masjid a `relation` — so they were
+#    structurally unreachable, not merely out-ranked. (The `out center` verb
+#    and the `element["center"]` read below were already written for
+#    ways/relations; only the query kind was missing.)
+#
+# 2. **No prominence signal.** OSM carries a strong free one: `wikidata`/
+#    `wikipedia`/`heritage` are exactly what famous sites are tagged with and
+#    what neighbourhood shrines lack.
+#
+# The naive fix — switching the existing broad query to `nwr` — does *not*
+# work, and failing to notice would look like success: Overpass's `out
+# <limit>` truncates in element-type order, nodes first, so a capped `nwr`
+# query returns an all-node result and silently drops every way and relation
+# (live-verified: an `nwr` query capped at 3000 for Kyoto came back 3000/3000
+# nodes). Asking for every way/relation *uncapped* is the other extreme and
+# simply times out on public Overpass in a dense city.
+#
+# So prominence is fetched as its own second pass: nodes+ways+relations, but
+# filtered to elements carrying `wikidata`. That filter is what makes an
+# uncapped query affordable — Delhi returns 159 elements, Kyoto 345, Bangkok
+# 668 — and no cap is applied to it precisely because a cap would reintroduce
+# the nodes-first truncation above.
+#
+# `wikidata` alone, not a regex over `wikidata|wikipedia|heritage`: the wider
+# filter was measured live on the same cities and is not worth it. Istanbul
+# gained 7 elements out of 836 for double the query time (42s -> 89s), and
+# Bangkok's wider query timed out on every mirror after 202s where the
+# `wikidata` one succeeded in 36s. In practice almost everything tagged
+# `wikipedia` or `heritage` carries `wikidata` too.
+_PROMINENCE_FILTER_TAG = "wikidata"
+
+# Transport and food/drink are left out of the prominence pass. They are
+# already numerically abundant in the broad node pass, and the point of this
+# pass is the places a traveller plans a day *around* — v10.39.0 had to
+# exclude train stations from gem candidates for the same reason (Istanbul's
+# entire gem list came back as three metro stops).
+_PROMINENCE_EXCLUDED_LABELS = _FOOD_DRINK_LABELS | {"train station", "airport"}
+
+# The prominence query is heavier than the broad one and is supplementary
+# rather than load-bearing, so it gets a smaller retry budget: a degraded
+# Overpass shouldn't cost two full exponential-backoff budgets per
+# destination before the broad pass even starts. Four rather than three
+# because one of the three configured mirrors is currently hard-refusing
+# every request (see `_is_hard_refusal`) — with refusals costing no backoff,
+# a 4-attempt rotation still yields three real tries.
+_PROMINENCE_FETCH_ATTEMPTS = 4
+
+# Additive prominence signals, in descending strength. Deliberately a plain
+# weighted tag count rather than anything learned or LLM-derived: it has to
+# run over every element of every ingestion with no API budget, and the
+# ordering it produces only has to be *better than arrival order*, which is
+# what it replaces. `heritage=1` is OSM's convention for world-level (UNESCO)
+# listing, so it earns a second increment on top of the base heritage signal.
+_PROMINENCE_WEIGHTS: dict[str, int] = {
+    "wikidata": 3,
+    "wikipedia": 3,
+    "heritage": 2,
+    "website": 1,
+    "name:en": 1,
+}
+_HERITAGE_WORLD_LEVEL = "1"
+_HERITAGE_WORLD_BONUS = 2
+
+# Ceiling on any one category's share of the pool, applied during selection
+# (see _prioritize_landmarks). Deliberately half of the data-completeness
+# gate's MAX_CATEGORY_SHARE=0.5, so a pool this module produces clears that
+# gate with margin instead of sitting on the line; at the default 60-POI cap
+# it works out to 15 slots per category. This is the "per-category hard cap
+# in osm.py" that the Paris-metro/temple-town category-skew question was
+# left open on — worth revisiting together with that gate, not separately.
+_MAX_CATEGORY_SHARE_IN_POOL = 0.25
+
+
+def _prominence_score(tags: dict[str, str]) -> int:
+    """How likely `tags` describe somewhere a traveller has heard of.
+
+    Not a measure of quality or of how good a visit would be — only of how
+    well-documented the place is, which is the part OSM can actually tell us
+    for free.
+    """
+    score = 0
+    if tags.get("wikidata"):
+        score += _PROMINENCE_WEIGHTS["wikidata"]
+    if tags.get("wikipedia"):
+        score += _PROMINENCE_WEIGHTS["wikipedia"]
+    heritage = (tags.get("heritage") or "").strip()
+    if heritage:
+        score += _PROMINENCE_WEIGHTS["heritage"]
+        if heritage == _HERITAGE_WORLD_LEVEL:
+            score += _HERITAGE_WORLD_BONUS
+    if tags.get("website") or tags.get("contact:website"):
+        score += _PROMINENCE_WEIGHTS["website"]
+    # An English name is itself weak evidence of international recognition —
+    # a mapper only bothers adding one for a place foreign visitors look for.
+    if tags.get("name:en") or tags.get("int_name"):
+        score += _PROMINENCE_WEIGHTS["name:en"]
+    return score
+
 
 def _build_overpass_query(lat: float, lon: float, radius_m: int) -> str:
-    """Build an Overpass QL query for all POI categories around a point."""
+    """Build an Overpass QL query for all POI categories around a point.
+
+    The broad pass: nodes only, every category, over-fetched then prioritised
+    client-side. Left node-only on purpose — see the block comment above on
+    why widening *this* query to `nwr` would time out rather than help.
+    """
     clauses = []
     for tag, _ in POI_TAG_QUERIES.items():
         key, value = tag.split("=", 1)
@@ -139,6 +267,30 @@ def _build_overpass_query(lat: float, lon: float, radius_m: int) -> str:
   {body}
 );
 out center {raw_limit};
+""".strip()
+
+
+def _build_prominence_query(lat: float, lon: float, radius_m: int) -> str:
+    """Build the prominence pass: nodes, ways *and* relations, restricted to
+    elements carrying a `wikidata` tag, with no result cap (a cap would
+    truncate nodes-first and drop exactly the ways/relations this pass exists
+    to fetch). A longer server-side timeout than the broad pass — it covers a
+    wider radius and has to consider area geometry."""
+    clauses = []
+    for tag, label in POI_TAG_QUERIES.items():
+        if label in _PROMINENCE_EXCLUDED_LABELS:
+            continue
+        key, value = tag.split("=", 1)
+        clauses.append(
+            f'nwr["{key}"="{value}"]["{_PROMINENCE_FILTER_TAG}"](around:{radius_m},{lat},{lon});'
+        )
+    body = "\n  ".join(clauses)
+    return f"""
+[out:json][timeout:90];
+(
+  {body}
+);
+out center;
 """.strip()
 
 
@@ -201,6 +353,174 @@ def _describe_poi(name: str, poi_type: str, destination: str, tags: dict[str, st
     return " ".join(bits)
 
 
+async def _fetch_overpass(
+    query: str,
+    destination: str,
+    pass_label: str,
+    max_attempts: int = _MAX_FETCH_ATTEMPTS,
+) -> list[dict] | None:
+    """POST `query` to Overpass, retrying across mirrors, and return its raw
+    elements.
+
+    Returns `None` rather than raising when every attempt fails — a caller
+    merging two passes must still be able to use whichever one succeeded.
+    `None` (the request failed) is deliberately distinct from `[]` (the
+    request succeeded and this area genuinely has nothing): only the former
+    is grounds for protecting already-stored data.
+    """
+    # Overpass's usage policy asks for an identifiable User-Agent; some
+    # network paths (corporate proxies/CDNs in front of overpass-api.de)
+    # also reject POST requests missing an explicit Accept header with a
+    # bare 406, so send both defensively.
+    headers = {"User-Agent": settings.nominatim_user_agent, "Accept": "*/*"}
+
+    mirrors = _overpass_mirrors()
+    for attempt in range(1, max_attempts + 1):
+        mirror_url = mirrors[(attempt - 1) % len(mirrors)]
+        async with httpx.AsyncClient(timeout=120, headers=headers) as client:
+            try:
+                resp = await client.post(mirror_url, data={"data": query})
+                resp.raise_for_status()
+                data: dict[str, Any] = resp.json()
+                return data.get("elements", [])
+            except Exception as e:
+                if attempt == max_attempts:
+                    logger.warning(
+                        "Overpass %s fetch failed for %r after %d attempts across %d mirrors: %s",
+                        pass_label, destination, attempt, len(mirrors), e,
+                    )
+                    return None
+                # A hard refusal is not congestion, so backing off doesn't
+                # help — rotate to the next mirror immediately instead.
+                # Live-measured 2026-07-25 during the prominence re-ingestion:
+                # `overpass.openstreetmap.fr` answered 403 to 5 of 5 requests
+                # while the other two mirrors were still serving, so every
+                # attempt landing there burned a retry slot *and* an
+                # exponential-backoff sleep for a mirror that was never going
+                # to answer.
+                if _is_hard_refusal(e):
+                    logger.info(
+                        "Overpass %s attempt %d/%d for %r hard-refused by %s (%s), "
+                        "rotating to %s without backoff",
+                        pass_label, attempt, max_attempts, destination, mirror_url, e,
+                        mirrors[attempt % len(mirrors)],
+                    )
+                    continue
+                # Exponential backoff, capped, with jitter so a batch of
+                # destinations that all failed around the same moment don't
+                # all retry in lockstep and re-trigger the same rate limit.
+                delay = min(_RETRY_BASE_DELAY_S * (2 ** (attempt - 1)), _RETRY_MAX_DELAY_S)
+                delay += random.uniform(0, _RETRY_JITTER_S)
+                logger.info(
+                    "Overpass %s attempt %d/%d for %r failed (%s), retrying on %s in %.1fs",
+                    pass_label, attempt, max_attempts, destination, e,
+                    mirrors[attempt % len(mirrors)], delay,
+                )
+                await asyncio.sleep(delay)
+    return None
+
+
+def _element_to_poi(element: dict, destination: str) -> dict | None:
+    """Convert one raw Overpass element into a POI payload, or None if it
+    can't be used (unnamed, or no resolvable coordinates)."""
+    tags: dict[str, str] = element.get("tags", {})
+    name = _display_name(tags)
+    if not name:
+        return None  # skip unnamed nodes — useless for itinerary display
+
+    # Retained so a comment or query written in the local script can still
+    # be matched (services/gems.py checks both) and so the traveller can
+    # be shown the name that is actually on the signage.
+    local_name = (tags.get("name") or "").strip()
+
+    # Nodes carry lat/lon directly; ways and relations carry a `center`
+    # instead, which is why the queries ask for `out center`.
+    poi_lat = element.get("lat") or (element.get("center") or {}).get("lat")
+    poi_lon = element.get("lon") or (element.get("center") or {}).get("lon")
+    if poi_lat is None or poi_lon is None:
+        return None
+
+    poi_type = _poi_type(tags)
+    element_type = element.get("type") or "node"
+    return {
+        "destination": destination,
+        "name": name,
+        "name_local": local_name if local_name != name else "",
+        "poi_type": poi_type,
+        "lat": float(poi_lat),
+        "lon": float(poi_lon),
+        "prominence": _prominence_score(tags),
+        "tags": {k: v for k, v in tags.items() if k in ("cuisine", "opening_hours", "website")},
+        "text": _describe_poi(name, poi_type, destination, tags),
+        "source": "osm",
+        "source_url": f"https://www.openstreetmap.org/{element_type}/{element.get('id', '')}",
+    }
+
+
+async def _fetch_osm_pois_with_meta(
+    destination: str,
+    lat: float | None = None,
+    lon: float | None = None,
+    radius_m: int | None = None,
+) -> tuple[list[dict], bool]:
+    """`fetch_osm_pois`, plus whether the prominence pass actually succeeded.
+
+    That second value matters to `ingest_osm_pois` and cannot be inferred from
+    the POIs themselves: when the prominence pass fails, the broad pass still
+    returns a full 60 well-distributed POIs, so the existing
+    thin/dominated data-loss guard sees a perfectly healthy-looking result and
+    lets it overwrite good stored data. Live-hit on the very first run of this
+    change — Delhi's prominence query 403'd on all three mirrors and the
+    fallback pool contained none of Red Fort, Humayun's Tomb, Qutub Minar,
+    India Gate, Lotus Temple, Jama Masjid or Lodhi Gardens.
+    """
+    if lat is None or lon is None:
+        geo = await geocode_city(destination)
+        lat, lon = geo.lat, geo.lon
+
+    radius = radius_m or settings.osm_poi_radius_m
+    # The prominence pass never narrows below the caller's radius — when
+    # ingest_osm_pois retries a thin destination at the expanded radius, the
+    # prominent set must widen with it, not stay put.
+    prominence_radius = max(radius, settings.osm_prominence_radius_m)
+
+    # Prominence pass first so that a landmark mapped both as an area and as
+    # a node is kept as the area element, which is the one carrying the
+    # richer tags (and therefore the honest prominence score).
+    prominent_elements = await _fetch_overpass(
+        _build_prominence_query(lat, lon, prominence_radius),
+        destination,
+        "prominence",
+        max_attempts=_PROMINENCE_FETCH_ATTEMPTS,
+    )
+    # An empty prominence result is genuinely possible for a rural or thinly
+    # mapped destination, so "did the request succeed" is tracked separately
+    # from "did it return anything" — only the former is a reason to protect
+    # existing data.
+    prominence_ok = prominent_elements is not None
+    broad_elements = await _fetch_overpass(
+        _build_overpass_query(lat, lon, radius), destination, "broad",
+    )
+    elements = (prominent_elements or []) + (broad_elements or [])
+    if not elements:
+        return [], prominence_ok
+    logger.info(
+        "%r: Overpass returned %d prominent + %d broad elements",
+        destination, len(prominent_elements or []), len(broad_elements or []),
+    )
+
+    pois: list[dict] = []
+    seen_names: set[str] = set()
+    for element in elements:
+        poi = _element_to_poi(element, destination)
+        if poi is None or poi["name"] in seen_names:
+            continue
+        seen_names.add(poi["name"])
+        pois.append(poi)
+
+    return _prioritize_landmarks(pois)[: settings.osm_poi_max_results], prominence_ok
+
+
 async def fetch_osm_pois(
     destination: str,
     lat: float | None = None,
@@ -211,85 +531,20 @@ async def fetch_osm_pois(
     first if lat/lon aren't already known. `radius_m` defaults to
     `settings.osm_poi_radius_m`; `ingest_osm_pois` passes the wider
     `osm_poi_radius_expanded_m` as a second pass for thin/category-dominated
-    destinations."""
-    if lat is None or lon is None:
-        geo = await geocode_city(destination)
-        lat, lon = geo.lat, geo.lon
+    destinations.
 
-    query = _build_overpass_query(lat, lon, radius_m or settings.osm_poi_radius_m)
-
-    # Overpass's usage policy asks for an identifiable User-Agent; some
-    # network paths (corporate proxies/CDNs in front of overpass-api.de)
-    # also reject POST requests missing an explicit Accept header with a
-    # bare 406, so send both defensively.
-    headers = {"User-Agent": settings.nominatim_user_agent, "Accept": "*/*"}
-
-    mirrors = _overpass_mirrors()
-    data: dict[str, Any] | None = None
-    for attempt in range(1, _MAX_FETCH_ATTEMPTS + 1):
-        mirror_url = mirrors[(attempt - 1) % len(mirrors)]
-        async with httpx.AsyncClient(timeout=30, headers=headers) as client:
-            try:
-                resp = await client.post(mirror_url, data={"data": query})
-                resp.raise_for_status()
-                data = resp.json()
-                break
-            except Exception as e:
-                if attempt == _MAX_FETCH_ATTEMPTS:
-                    logger.warning(
-                        "Overpass fetch failed for %r after %d attempts across %d mirrors: %s",
-                        destination, attempt, len(mirrors), e,
-                    )
-                    return []
-                # Exponential backoff, capped, with jitter so a batch of
-                # destinations that all failed around the same moment don't
-                # all retry in lockstep and re-trigger the same rate limit.
-                delay = min(_RETRY_BASE_DELAY_S * (2 ** (attempt - 1)), _RETRY_MAX_DELAY_S)
-                delay += random.uniform(0, _RETRY_JITTER_S)
-                logger.info(
-                    "Overpass attempt %d/%d for %r failed (%s), retrying on %s in %.1fs",
-                    attempt, _MAX_FETCH_ATTEMPTS, destination, e, mirrors[attempt % len(mirrors)], delay,
-                )
-                await asyncio.sleep(delay)
-
-    pois: list[dict] = []
-    seen_names: set[str] = set()
-    for element in data.get("elements", []):
-        tags: dict[str, str] = element.get("tags", {})
-        name = _display_name(tags)
-        if not name or name in seen_names:
-            continue  # skip unnamed nodes — useless for itinerary display
-        seen_names.add(name)
-        # Retained so a comment or query written in the local script can still
-        # be matched (services/gems.py checks both) and so the traveller can
-        # be shown the name that is actually on the signage.
-        local_name = (tags.get("name") or "").strip()
-
-        poi_lat = element.get("lat") or (element.get("center") or {}).get("lat")
-        poi_lon = element.get("lon") or (element.get("center") or {}).get("lon")
-        if poi_lat is None or poi_lon is None:
-            continue
-
-        poi_type = _poi_type(tags)
-        pois.append({
-            "destination": destination,
-            "name": name,
-            "name_local": local_name if local_name != name else "",
-            "poi_type": poi_type,
-            "lat": float(poi_lat),
-            "lon": float(poi_lon),
-            "tags": {k: v for k, v in tags.items() if k in ("cuisine", "opening_hours", "website")},
-            "text": _describe_poi(name, poi_type, destination, tags),
-            "source": "osm",
-            "source_url": f"https://www.openstreetmap.org/node/{element.get('id', '')}",
-        })
-
-    return _prioritize_landmarks(pois)[: settings.osm_poi_max_results]
+    Two Overpass passes are merged: a prominence pass (nodes+ways+relations
+    carrying `wikidata`, over a wider radius) and the broad node pass. See the
+    block comment above `_PROMINENCE_FILTER_TAG` for why it has to be two
+    queries rather than one widened one.
+    """
+    pois, _ = await _fetch_osm_pois_with_meta(destination, lat, lon, radius_m)
+    return pois
 
 
 def _prioritize_landmarks(pois: list[dict]) -> list[dict]:
-    """Round-robin across POI categories so no single tag type can dominate
-    the final truncation, with food/drink categories drawn from only after
+    """Order POIs so the most prominent land first, no single tag type can
+    dominate the final truncation, and food/drink is drawn from only after
     every other category is exhausted.
 
     A plain "food/drink last" stable sort (the original version of this
@@ -303,17 +558,39 @@ def _prioritize_landmarks(pois: list[dict]) -> list[dict]:
     same starvation bug, just relocated to a different category. Round-robin
     selection guarantees every category present gets a turn before any single
     category can fill the remaining slots.
+
+    Plain round-robin, though, treats every category as equally deserving,
+    and that over-corrects: live-verified 2026-07-25 after the prominence
+    passes were added, Delhi's 60 slots went to 4 cinemas and 4 art galleries
+    but only 4 attractions, and Red Fort, Humayun's Tomb, Qutub Minar and
+    India Gate still missed out — a cinema had exactly the same claim on a
+    slot as the Red Fort. So selection runs in descending *prominence tiers*,
+    round-robinning across categories within each tier:
+
+      - Across tiers, prominence wins: every UNESCO-listed, Wikipedia-known
+        site is placed before the first unremarkable neighbourhood cinema,
+        whatever their categories.
+      - Within a tier, round-robin still guarantees no category can crowd out
+        the others — and when no POI carries any prominence signal the whole
+        pool collapses to a single tier, which is exactly the previous
+        behaviour.
+
+    A per-category cap then bounds the tail, because tiers alone don't: a
+    monument-dense city like Delhi has dozens of equally prominent monuments,
+    and without a cap they would take every slot before a museum or a park
+    got one. POIs past the cap aren't discarded, only deferred behind
+    everything else, so a thinly-mapped destination still fills its quota
+    rather than shrinking.
     """
-    from collections import defaultdict, deque
+    from collections import Counter, defaultdict, deque
 
-    landmark_buckets: dict[str, deque] = defaultdict(deque)
-    food_drink_buckets: dict[str, deque] = defaultdict(deque)
-    for poi in pois:
-        label = poi["poi_type"]
-        bucket = food_drink_buckets if label in _FOOD_DRINK_LABELS else landmark_buckets
-        bucket[label].append(poi)
+    landmarks = [p for p in pois if p["poi_type"] not in _FOOD_DRINK_LABELS]
+    food_drink = [p for p in pois if p["poi_type"] in _FOOD_DRINK_LABELS]
 
-    def _round_robin(buckets: dict[str, deque]) -> list[dict]:
+    def _round_robin(items: list[dict]) -> list[dict]:
+        buckets: dict[str, deque] = defaultdict(deque)
+        for poi in items:
+            buckets[poi["poi_type"]].append(poi)
         keys = list(buckets.keys())
         ordered: list[dict] = []
         while any(buckets[key] for key in keys):
@@ -322,7 +599,29 @@ def _prioritize_landmarks(pois: list[dict]) -> list[dict]:
                     ordered.append(buckets[key].popleft())
         return ordered
 
-    return _round_robin(landmark_buckets) + _round_robin(food_drink_buckets)
+    def _select(items: list[dict]) -> list[dict]:
+        if not items:
+            return []
+        ranked: list[dict] = []
+        # Descending tiers; ties inside a tier keep arrival order, so the
+        # no-prominence-anywhere case is byte-identical to plain round-robin.
+        for tier in sorted({p.get("prominence", 0) for p in items}, reverse=True):
+            ranked.extend(_round_robin([p for p in items if p.get("prominence", 0) == tier]))
+
+        cap = max(1, round(settings.osm_poi_max_results * _MAX_CATEGORY_SHARE_IN_POOL))
+        counts: Counter = Counter()
+        chosen: list[dict] = []
+        overflow: list[dict] = []
+        for poi in ranked:
+            label = poi["poi_type"]
+            if counts[label] < cap:
+                counts[label] += 1
+                chosen.append(poi)
+            else:
+                overflow.append(poi)
+        return chosen + overflow
+
+    return _select(landmarks) + _select(food_drink)
 
 
 # Mirrors eval/data_completeness_scoring.py's MIN_OSM_POIS/MAX_CATEGORY_SHARE
@@ -356,7 +655,7 @@ async def ingest_osm_pois(destination: str) -> int:
     stable hash of (destination, name), so re-ingestion updates in place
     rather than duplicating.
     """
-    pois = await fetch_osm_pois(destination)
+    pois, prominence_ok = await _fetch_osm_pois_with_meta(destination)
     # Thin/single-category-dominated results are common for small towns and
     # "hidden gem" destinations whose few landmark/nature POIs are spread
     # wider than the default 5km while restaurants cluster densely near the
@@ -366,15 +665,35 @@ async def ingest_osm_pois(destination: str) -> int:
     # final; a wider-radius fetch is effectively a superset area so it's
     # never worse, only potentially the same.
     if pois and _is_thin_or_dominated(pois):
-        expanded_pois = await fetch_osm_pois(destination, radius_m=settings.osm_poi_radius_expanded_m)
+        expanded_pois, expanded_prominence_ok = await _fetch_osm_pois_with_meta(
+            destination, radius_m=settings.osm_poi_radius_expanded_m
+        )
         if expanded_pois and (len(expanded_pois) > len(pois) or not _is_thin_or_dominated(expanded_pois)):
             logger.info(
                 "%r: default 5km radius was thin/dominated (%d POIs), expanded to %dm radius (%d POIs)",
                 destination, len(pois), settings.osm_poi_radius_expanded_m, len(expanded_pois),
             )
-            pois = expanded_pois
+            pois, prominence_ok = expanded_pois, expanded_prominence_ok
     if not pois:
         return 0
+
+    # A broad-pass-only result looks perfectly healthy to every other check
+    # here — right count, well-spread categories — while containing none of
+    # the landmarks the destination is actually known for. Overwriting real
+    # stored data with it would be a silent regression, so keep what's there
+    # and let the caller retry. For a destination with nothing stored yet,
+    # degraded data still beats no data, so this only guards overwrites.
+    if not prominence_ok:
+        existing_count = count_destination_points(
+            get_qdrant(), settings.qdrant_collection_osm, destination
+        )
+        if existing_count:
+            logger.warning(
+                "%r: Overpass prominence pass failed, so the %d fetched POIs carry no landmark "
+                "ranking — keeping the %d POIs already stored rather than overwriting them.",
+                destination, len(pois), existing_count,
+            )
+            return existing_count
 
     # A non-empty but severely degraded fetch (e.g. Overpass silently
     # returning a near-empty/truncated result after exhausting retries,

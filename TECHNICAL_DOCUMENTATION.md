@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.39.0 (Hidden-gem name matching rebuilt on a shared, diacritic-safe matcher — and the root cause found upstream: OSM POI names were being stored in the local language, leaving 17 destinations unmatchable and showing English users Japanese/Greek/Thai place names)
+**Version:** 10.40.0 (OSM POI pools ranked by prominence — the Overpass query only ever asked for `node` elements, so landmarks mapped as areas were structurally unreachable: Kiyomizu-dera, Kinkaku-ji, Red Fort and Wat Arun could never enter the pool at all, no matter how the 60 slots were ranked)
 **Last Updated:** July 25, 2026  
 **Status:** Production-ready MVP
 
@@ -1500,7 +1500,44 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.40.0 Changes (July 2026) — The POI pool: famous landmarks were unreachable, not out-ranked
+
+Taken up as v10.39.0's top follow-up, "rank the OSM POI pool by prominence". Ranking was needed, but it was the *second* of two causes, and on its own it would have changed nothing for the worst destinations — the landmarks were not losing a competition for the 60 slots, they were never candidates.
+
+| Change | Detail |
+|---|---|
+| 🔴 **The Overpass query only ever asked for `node` elements** | Famous sites are mapped as *areas*. A live probe settled it: Kiyomizu-dera, Kinkaku-ji and Ginkaku-ji are `way` elements and Delhi's Jama Masjid a `relation`, so a `node[...]` query could never return them however the results were ranked. Small neighbourhood shrines and cafés — which *are* nodes — held the slots by default. The tell was in the code already: `_build_overpass_query` asked for `out center` and the parser read `element["center"]`, both of which only mean anything for ways/relations. Only the query kind was missing. |
+| ⚠️ **Why the one-line fix (`node` → `nwr`) does not work** | Overpass's `out <limit>` truncates in element-type order, **nodes first**. So a capped `nwr` query returns an all-node result and silently drops every way and relation — live-verified: an `nwr` query for Kyoto capped at 3000 came back 3000/3000 nodes. It would have looked like a working fix. Removing the cap instead is the other extreme: an uncapped all-ways query times out on public Overpass in any dense city (Kyoto 504'd on all three mirrors). |
+| ✅ **A second, prominence-filtered pass** | Nodes + ways + relations, restricted to elements carrying `wikidata`, over a wider 15km radius, with **no result cap** (a cap would reintroduce the nodes-first truncation above). The `wikidata` filter is what makes an uncapped query affordable: Delhi returns 159 elements, Kyoto 345, Bangkok 668 — not tens of thousands. Merged ahead of the existing broad node pass, which is unchanged. |
+| **`wikidata` alone, measured — not a regex over `wikidata\|wikipedia\|heritage`** | The wider filter was tried on the same cities and is not worth it: Istanbul gained 7 elements out of 836 for double the query time (42s → 89s), and Bangkok's wider query **timed out on every mirror after 202s** where the `wikidata` one succeeded in 36s. Nearly everything tagged `wikipedia` or `heritage` carries `wikidata` too. |
+| ✅ **Prominence scoring** | A plain weighted tag count — `wikidata`/`wikipedia` 3 each, `heritage` 2 (+2 more for `heritage=1`, OSM's convention for world/UNESCO listing), `website` 1, `name:en` 1. Deliberately not learned or LLM-derived: it runs over every element of every ingestion with no API budget, and it only has to beat *arrival order*, which is what it replaces. It measures how well-documented a place is — the part OSM can tell us for free — not how good a visit would be. |
+| ✅ **Selection by prominence tier, not by category equality** | The existing round-robin gave **a cinema exactly the same claim on a slot as the Red Fort**: with the prominence pass merged in but round-robin unchanged, Delhi's 60 came back with 4 cinemas and 4 art galleries but only 4 attractions, and Red Fort/Humayun's Tomb/Qutub Minar/India Gate still missed out. Selection now runs in descending prominence tiers, round-robinning across categories *within* each tier. Across tiers prominence wins; within a tier no category can crowd out the others; and when nothing carries a prominence signal the pool collapses to a single tier — byte-identical to the previous behaviour. |
+| ✅ **Per-category hard cap (settles a question left open since v10.37.0)** | Tiers alone don't bound the tail — a monument-dense city has dozens of *equally* prominent monuments that would take every slot before a museum got one. A category is now capped at 25% of the pool, half the data-completeness gate's `MAX_CATEGORY_SHARE=0.5` so pools clear that gate with margin rather than sitting on the line. POIs past the cap are deferred behind everything else, not discarded, so a thinly-mapped destination still fills its quota. This is the "per-category hard cap in `osm.py`" option the Paris-metro/temple-town skew decision was parked on. |
+| 🔴 **New data-loss guard: a failed prominence pass must not overwrite good data** | Hit live on the first run — Delhi's prominence query 403'd on all three mirrors, and the broad-pass-only fallback returned a full 60 well-distributed POIs containing **none** of Red Fort, Humayun's Tomb, Qutub Minar, India Gate, Lotus Temple, Jama Masjid or Lodhi Gardens. Every existing health check passed it. The prominence pass's success is now tracked explicitly (it cannot be inferred from the POIs) and a failed pass will not overwrite an already-populated destination. A destination with nothing stored still ingests — degraded data beats none — and an *empty* prominence result is treated as success, since a rural destination genuinely may have no `wikidata`-tagged POI. |
+
+**The tuning was measured, not guessed.** Raw Overpass results for Delhi, Kyoto and Bangkok were cached once and eight scoring/selection variants compared on identical inputs, scored as "how many of this city's genuinely famous landmarks — the ones the v10.39.0 audit found travellers naming — end up in the final 60, out of those actually present in the raw data":
+
+| Variant | Landmarks retained |
+|---|---|
+| **shipped** (weights above, cap 0.25) | **25/37** |
+| cap 0.35 / cap 0.20 / heritage 3+3 | 25/37 |
+| area bonus + nearest-centre tie-break | 25/37 |
+| area bonus alone (+1 or +2) | 24/37 |
+| nearest-centre tie-break alone | 24/37 |
+
+Two ideas worth recording as *rejected on evidence*, since both sound obviously right:
+- **Scoring areas above nodes** (a traced way/relation is "more significant" than a point) is *worse* on its own — Delhi drops 10/14 → 9/14, losing Chandni Chowk to traced buildings.
+- **Relaxing the category cap to 0.35** looked like a win on two cities (Kyoto 10→11) and evaporated at three. Not worth weakening the diversity bound for.
+
+No variant beat the shipped one, so it stays — it is also the simplest and the only one with an independent justification (half the completeness gate's threshold).
+
+**Live results** (re-ingestion in progress at time of writing; verified by reading payloads back off the cluster, not from the run log): Kyoto's pool went from 21 obscure temples + 20 small museums to Kiyomizu-dera, Kinkaku-ji, Ginkakuji, Ryōan-ji, Nijō Castle and Katsura Imperial Villa, 60/60 carrying a prominence signal, top category share 0.35 → 0.25. Delhi gained Red Fort, India Gate, Jama Masjid, Lotus Temple, Chandni Chowk, Purana Qila, Hauz Khas and Jantar Mantar (attractions 4 → 14, cinemas 4 → 1). Bangkok gained Wat Arun, Grand Palace, Chatuchak and Jim Thompson House. **Tokyo — which failed all three v10.39.0 re-ingestion attempts and was still 58/60 Japanese-script — went through on the first try at 60/60 Latin-script, 60/60 prominent, share 0.10**, closing that carried-over item. **Hidden gems moved for the first time on these destinations: Kyoto 0 → 3 (Byōdō-in, Kinkaku-ji, Murin-an), Goa 0 → 1 (Museum of Goa), and Delhi now correctly classifies Chandni Chowk as a crowd favourite** — the exact POI the v10.39.0 audit found commenters naming 4× while the pool lacked it.
+
+**What the category cap does *not* fix.** It defers over-cap POIs rather than discarding them (so a thin destination still fills its 60), which means a destination without enough *other* categories still ends up dominated. Alleppey re-ingested at **0.63 top-category share, 38 of 60 places of worship** — which is genuinely what OSM has there. So v10.40.0 removes the *artificial* skew (Paris metro, Bangkok/Delhi train stations) but not the real kind; whether to accept temple/backwater-town skew or relax the completeness gate for it remains a product call.
+
+**Known residual, and it is OSM's data, not the ranking:** Delhi's Humayun's Tomb carries only `wikidata` + a *Hindi* `wikipedia` tag — no `heritage`, no `name:en`, no `website` — so it scores 6, while the Sulabh International Museum of Toilets (fully tagged, `wikipedia:en`, website) scores 8. Delhi's OSM data barely uses `heritage` at all, so its scores bunch at 6 and ties break on arrival order. Kyoto, where `heritage=1` is used properly, ranks perfectly: Kinkaku-ji, Kiyomizu-dera, Ryōan-ji, Nijō Castle and Byōdō-in all score 12 and lead the pool. The signal that would fix Delhi is Wikidata sitelink count (how many language editions describe a place), which needs a second API and is a bigger change than this one.
 
 ### v10.39.0 Changes (July 2026) — Hidden gems: name matching, and the ingestion bug that made it moot for 17 destinations
 

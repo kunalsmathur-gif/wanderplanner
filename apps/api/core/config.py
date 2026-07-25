@@ -93,6 +93,14 @@ class Settings(BaseSettings):
     # Jaisalmer (restaurant-dominated) and Spiti/Nainital (thin OSM).
     osm_poi_radius_expanded_m: int = 15000
     osm_poi_max_results: int = 60
+    # Radius for the *prominence* Overpass pass (scrapers/osm.py). Wider than
+    # the default 5km on purpose: a city's most famous sites are routinely
+    # just outside it — live-probed 2026-07-25, Delhi at 5km misses Red Fort,
+    # Qutub Minar, Lotus Temple and Chandni Chowk, and at 15km finds all four.
+    # Affordable precisely because that pass is filtered to prominent
+    # elements, so a 3x radius still returns hundreds of results, not tens of
+    # thousands (Delhi 77 -> 159, Bangkok 668).
+    osm_prominence_radius_m: int = 15000
 
     # CORS
     allowed_origins: list[str] = ["http://localhost:3000"]
