@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import logging
 import random
+import re
 from typing import Any
 
 import httpx
@@ -141,6 +142,47 @@ out center {raw_limit};
 """.strip()
 
 
+# OSM's `name` tag holds the name in the *local* language, so a Kyoto POI is
+# stored as "清水寺" and a Cairo one in Arabic. Everything downstream reads
+# names as text a traveller would recognise or type: services/gems.py looks
+# for POI names inside English-language traveller comments, services/
+# poi_pinning.py matches them against LLM-proposed English names, and the
+# itinerary itself is rendered in English. Live-audited 2026-07-25: 59 of
+# Kyoto's 60 ingested POIs were in Japanese script and consequently matched
+# nothing at all, which is why hidden gems returned an empty list there
+# despite 237 real comments being ingested.
+#
+# A live Overpass probe found `name:en` present on 43 of 107 named Kyoto
+# nodes, and some of the rest carry the Latin form parenthesised inside the
+# local name ("新熊野神社 (Imakumano Shrine)"). Prefer those, in that order,
+# and keep the local name alongside rather than discarding it.
+_LATIN_IN_PARENS = re.compile(r"\(([^)]*)\)")
+_LATIN_LETTER = re.compile(r"[A-Za-z]")
+
+
+def _display_name(tags: dict[str, str]) -> str:
+    """The name to store for a POI: English where OSM knows one, else the
+    local name (which is already Latin script for most destinations)."""
+    for key in ("name:en", "int_name"):
+        value = (tags.get(key) or "").strip()
+        if value:
+            return value
+
+    name = (tags.get("name") or "").strip()
+    if not name:
+        return ""
+
+    # Only treat a bracketed Latin fragment as a translation when the rest of
+    # the name has no Latin in it. Otherwise the brackets are a disambiguator
+    # ("Victoria (Seychelles)") and promoting them would rename the POI.
+    outside = _LATIN_IN_PARENS.sub("", name)
+    if not _LATIN_LETTER.search(outside):
+        for inner in _LATIN_IN_PARENS.findall(name):
+            if _LATIN_LETTER.search(inner):
+                return inner.strip()
+    return name
+
+
 def _poi_type(tags: dict[str, str]) -> str:
     for tag, label in POI_TAG_QUERIES.items():
         key, value = tag.split("=", 1)
@@ -214,10 +256,14 @@ async def fetch_osm_pois(
     seen_names: set[str] = set()
     for element in data.get("elements", []):
         tags: dict[str, str] = element.get("tags", {})
-        name = tags.get("name")
+        name = _display_name(tags)
         if not name or name in seen_names:
             continue  # skip unnamed nodes — useless for itinerary display
         seen_names.add(name)
+        # Retained so a comment or query written in the local script can still
+        # be matched (services/gems.py checks both) and so the traveller can
+        # be shown the name that is actually on the signage.
+        local_name = (tags.get("name") or "").strip()
 
         poi_lat = element.get("lat") or (element.get("center") or {}).get("lat")
         poi_lon = element.get("lon") or (element.get("center") or {}).get("lon")
@@ -228,6 +274,7 @@ async def fetch_osm_pois(
         pois.append({
             "destination": destination,
             "name": name,
+            "name_local": local_name if local_name != name else "",
             "poi_type": poi_type,
             "lat": float(poi_lat),
             "lon": float(poi_lon),

@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.38.3 (Transactional email is live — `wanderplanner.org` verified with Resend and wired into prod; Resend keys added to log redaction; a unit test that was silently hitting the live Qdrant cluster fixed)
+**Version:** 10.39.0 (Hidden-gem name matching rebuilt on a shared, diacritic-safe matcher — and the root cause found upstream: OSM POI names were being stored in the local language, leaving 17 destinations unmatchable and showing English users Japanese/Greek/Thai place names)
 **Last Updated:** July 25, 2026  
 **Status:** Production-ready MVP
 
@@ -1500,7 +1500,27 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.39.0 Changes (July 2026) — Hidden gems: name matching, and the ingestion bug that made it moot for 17 destinations
+
+Picked up as "gem-intel name matching under-fires" (the open item from v10.38.2). A read-only audit of the live corpus first — 8 destinations, real `osm_pois` + `youtube_comments` — because the premise deserved checking before tuning anything. **It did not survive the check.** Normalisation and aliasing recovered roughly **one POI per destination**, and the aggressive part of it recovered as many false matches as real ones. Three other causes were doing the actual damage.
+
+| Change | Detail |
+|---|---|
+| 🔴 **OSM POI names were being stored in the local language** | `scrapers/osm.py` read `tags.get("name")`, which OSM defines as the name *in the local language*. So Kyoto's POIs went into the cluster as 清水寺 and Cairo's in Arabic. Everything downstream treats a POI name as text an English-speaking traveller would recognise — gems searches for it in comments, `poi_pinning` matches it against LLM-proposed names, **and the itinerary renders it to the user**. Live audit across all 170 ingested destinations: **17 had ≥10% of names in a non-Latin script, 9 of them above 66%** — Tokyo 58/60, Taipei 56/60, Seoul 56/60, Athens 54/60, Tbilisi 53/60, Osaka 53/60, Cairo 50/60, Kyoto 49/60, Bangkok 40/60. Now prefers `name:en`, then `int_name`, then a Latin fragment parenthesised inside an otherwise non-Latin name (`新熊野神社 (Imakumano Shrine)`), keeping the original in a new `name_local` payload field. A live Overpass probe confirmed the data is there to use: `name:en` on 43 of 107 named Kyoto nodes. |
+| 🔴 **Gem candidates were dominated by transport nodes** | Istanbul's entire live gem list was Kadıköy, Karaköy and Beyoğlu — three metro stops. Jaipur's second-strongest match was a POI literally named "Railway Station"; Khajuraho's strongest was a station called "Khajuraho". `services/gems.py` now excludes `train station`/`airport` POI types from both lists (they are ingested deliberately, for route anchoring — they are just not somewhere to send a traveller as a find), and excludes any POI whose name is the destination itself. |
+| **New `services/name_matching.py`** | `normalize_name()` + `name_variants()` + `build_mention_pattern()`, shared with `services/poi_pinning.py`, which had its own half of the same logic. Variants cover what OSM actually does: a comma-appended locality (`Marine Drive, Kochi`), a trailing structural word (`Matangeshwar Temple` → `matangeshwar`), a parenthesised translation. Matching is word-boundary-anchored so a short derived core can't match inside a longer word. |
+| **The variant rules are calibrated against the corpus, not guessed** | Aggressive core-name stripping produced `Central Park` → `central`, `Moti Park` → `moti`, `The village` → `village` — all live false positives. The distinctiveness guard (a *derived* single-token variant must be 8+ characters) is exactly where the audit's real recoveries — `immanuel`, `sitaramji`, `matangeshwar` — separate from those. Every one of those strings is a test case in `tests/unit/test_name_matching.py`. |
+| 🐛 **Diacritic folding silently deleted letters NFKD can't decompose** | Turkish dotless `ı` has no combining decomposition, so "decompose, drop combining marks" turned **Kadıköy into "kad koy"**, which matches nothing. Same for `ø ł đ ß æ œ þ`. Now explicitly folded. **This bug was live in `poi_pinning`'s normaliser too**, so interest-pinning had the same blind spot. |
+| 🐛 **Apostrophes were split rather than removed** | `St Mary's` normalised to `st mary s`, matching neither `St Marys` nor `St Mary's` as typed. Also `poi_pinning`, where it was being papered over by the fuzzy-ratio fallback. |
+| 🐛 **Sentiment scoring missed lexicon words next to punctuation** | `_sentiment_around` hand-replaced `,`, `.` and `!` before splitting, so `a real gem;` or `(peaceful)` scored zero. It now runs on already-normalised text, where every punctuation mark is a separator. |
+
+**Live result on unchanged data** (read-only, real cluster): Kochi 0 → 1 gem (Marine Drive), Khajuraho's train-station "gem" replaced by a real one (Matangeshwar Temple), Jaipur's "Railway Station" noise gone with Hawa Mahal retained, Istanbul's three metro stops correctly gone to zero.
+
+**The next bottleneck is the POI pool, not the matcher.** Delhi, Goa and Bengaluru still return zero with 100–200 comments each, and the reason is now measured rather than assumed: the places travellers actually name are **not in the ingested 60-POI pool at all**. Delhi's comments name Chandni Chowk (4×), Agrasen ki Baoli (4×), Red Fort, Humayun's Tomb, Connaught Place — none present, while 7 train stations are. Goa's name Fontainhas and Anjuna — neither present, while 24 of its 60 POIs are places of worship. `_prioritize_landmarks` round-robins across categories to stop any one dominating, but nothing in the pipeline ranks by *prominence*, so the cap fills with whatever Overpass returned first. Filed as the top follow-up.
+
+Suite **585 passed / 6 skipped / 0 failed** (+16). Ruff clean.
 
 ### v10.38.3 Changes (July 2026) — Transactional email actually works in production for the first time
 

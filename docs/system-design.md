@@ -557,10 +557,18 @@ itinerary_chain.py
          │    chains/itinerary_chain.py::_gem_guidance_block (best-effort)
          │    │
          │    ├─ Deterministic, zero-LLM: OSM-verified POIs scored by Reddit
-         │    │    community signal (mentions + lexicon sentiment ±120 chars).
-         │    │    1-6 mentions & sentiment ≥0.55 → hidden gem;
-         │    │    ≥12 mentions → crowd favourite; 0 mentions → excluded
+         │    │    + YouTube community signal (mentions + lexicon sentiment
+         │    │    ±120 chars). Crowd threshold is this destination's own
+         │    │    80th-percentile mention count clamped into [3,12]; below
+         │    │    it, sentiment ≥0.55 → hidden gem. 0 mentions → excluded
          │    │    (no community proof = never recommended)
+         │    │
+         │    ├─ Name matching via services/name_matching.py (⭐ NEW v10.39.0):
+         │    │    diacritic-folded, word-boundary-anchored, with variants for
+         │    │    OSM's naming habits ("Marine Drive, Kochi" → "marine
+         │    │    drive", "Matangeshwar Temple" → "matangeshwar"). Transport
+         │    │    POI types and a POI named after the destination itself are
+         │    │    excluded as gem candidates
          │    │
          │    ├─ Cached 24h per destination (in-process TTL + per-destination
          │    │    asyncio.Lock, stampede-safe); compute bounded to
@@ -1012,6 +1020,7 @@ Four active collections, all using `all-MiniLM-L6-v2` (384 dims, cosine distance
   "payload": {
     "text": "Short embeddable description, e.g. 'Tanah Lot Temple — temple in Bali'",
     "name": "Tanah Lot Temple",
+    "name_local": "",
     "type": "temple",
     "lat": -8.6212,
     "lon": 115.0868,
@@ -1021,6 +1030,8 @@ Four active collections, all using `all-MiniLM-L6-v2` (384 dims, cosine distance
 }
 ```
 Populated by `scrapers/osm.py::ingest_osm_pois()` from the free Overpass API (no key required); geocodes the destination, queries a ~5km radius across ~14 POI tag categories, dedupes by name. Consumed today by the Tier-2 RAG-skeleton fallback (§15); direct itinerary-grounding is a planned next step (see `docs/rag-strategy.md` §6, use case #1).
+
+**⚠️ `name` is the English name where OSM has one, not OSM's `name` tag (⭐ NEW, fixed 2026-07-25, v10.39.0).** OSM defines `name` as the name *in the local language*, so reading it directly stored Kyoto's POIs as 清水寺 and Cairo's in Arabic. Every consumer treats this field as text an English-speaking traveller would recognise: `services/gems.py` searches for it inside traveller comments, `services/poi_pinning.py` matches it against LLM-proposed names, and the itinerary renders it to the user — so those destinations were degraded across the board, not just in hidden gems. A live audit of all 170 ingested destinations found **17 with ≥10% of names in a non-Latin script and 9 above 66%** (Tokyo 58/60, Taipei 56/60, Seoul 56/60, Athens 54/60, Tbilisi 53/60, Osaka 53/60, Cairo 50/60, Kyoto 49/60, Bangkok 40/60). `_display_name()` now prefers `name:en`, then `int_name`, then a Latin fragment parenthesised inside an otherwise non-Latin name (`新熊野神社 (Imakumano Shrine)`), falling back to the local name so an untranslated POI still contributes real coordinates. The original is retained in `name_local`. **This is ingestion-time only** — the fix cannot reach already-stored points, so affected destinations need a re-fetch (`scripts/reingest_local_script_names.py`, resumable).
 
 ### `itinerary_cache` collection ✅ Live (populated organically on successful generations)
 ```json

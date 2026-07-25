@@ -15,10 +15,23 @@ from services.gems import (
     gem_prompt_block,
     get_gem_intel,
 )
+from services.name_matching import build_mention_pattern, name_variants, normalize_name
 
 
-def _poi(name: str, poi_type: str = "attraction") -> dict:
-    return {"destination": "Phuket", "name": name, "poi_type": poi_type, "lat": 7.9, "lon": 98.3}
+def _sentiment_for(text: str, name: str) -> tuple[int, int]:
+    """Score `text` around every mention of `name`, going through the same
+    normalise-then-match pipeline compute_gem_intel_sync uses."""
+    chunk_norm = normalize_name(text)
+    pattern = build_mention_pattern(name_variants(name))
+    spans = [m.span() for m in pattern.finditer(chunk_norm)] if pattern else []
+    return _sentiment_around(chunk_norm, spans)
+
+
+def _poi(name: str, poi_type: str = "attraction", name_local: str = "") -> dict:
+    return {
+        "destination": "Phuket", "name": name, "poi_type": poi_type,
+        "lat": 7.9, "lon": 98.3, "name_local": name_local,
+    }
 
 
 def _chunk(text: str, subreddit: str = "ThailandTourism") -> dict:
@@ -56,20 +69,27 @@ def _mock_client(pois: list[dict], chunks: list[dict], yt_chunks: list[dict] | N
 class TestSentimentAround:
     def test_positive_and_negative_counted_in_window(self):
         text = "banana beach is a stunning quiet gem, but patong is crowded and overrated"
-        pos, neg = _sentiment_around(text, "banana beach")
+        pos, neg = _sentiment_for(text, "Banana Beach")
         assert pos >= 3  # stunning, quiet, gem
         # patong's negativity is beyond banana beach's ±120 window? window is
         # 120 chars — the whole string fits, so negatives are counted too.
         assert neg >= 1
 
     def test_no_mention_returns_zero(self):
-        assert _sentiment_around("nothing here", "banana beach") == (0, 0)
+        assert _sentiment_for("nothing here", "Banana Beach") == (0, 0)
 
     def test_hinglish_words_counted(self):
-        pos, neg = _sentiment_around("varanasi ghats are ekdum badhiya and sundar", "varanasi ghats")
+        pos, _ = _sentiment_for("varanasi ghats are ekdum badhiya and sundar", "Varanasi Ghats")
         assert pos >= 2  # badhiya, sundar
-        pos, neg = _sentiment_around("this place is bekar and ganda, total bakwas", "this place")
+        _, neg = _sentiment_for("chowpatty is bekar and ganda, total bakwas", "Chowpatty")
         assert neg >= 3  # bekar, ganda, bakwas
+
+    def test_lexicon_word_touching_punctuation_is_still_counted(self):
+        """Normalising the chunk before splitting means every punctuation mark
+        separates tokens — the previous version hand-replaced only ",.!" so
+        "gem;" or "(peaceful)" scored nothing."""
+        pos, _ = _sentiment_for("banana beach: (peaceful) — a real gem; loved it", "Banana Beach")
+        assert pos >= 3
 
 
 class TestComputeGemIntel:
@@ -212,6 +232,111 @@ class TestComputeGemIntel:
             intel = compute_gem_intel_sync("Phuket")
         assert len(intel["gems"]) == 1
         assert intel["gems"][0]["sources"] == ["YouTube"]
+
+
+class TestNameMatching:
+    """Regressions for the 2026-07-25 live audit: raw lowercase substring
+    matching found almost nothing, so destinations with hundreds of real
+    comments still returned empty gem lists."""
+
+    def _run(self, pois, chunks, destination="Phuket"):
+        with patch("services.gems.get_qdrant", return_value=_mock_client(pois, chunks)):
+            return compute_gem_intel_sync(destination)
+
+    def test_diacritics_in_poi_name_match_ascii_comments(self):
+        """Istanbul live: 'Beyoğlu' scored zero against a comment about
+        climbing 'that Beyoglu hill'."""
+        pois = [_poi("Beyoğlu Meydanı")]
+        chunks = [_chunk("beyoglu meydani is a lovely quiet spot", "travel")]
+        intel = self._run(pois, chunks, "Istanbul")
+        assert [g["name"] for g in intel["gems"]] == ["Beyoğlu Meydanı"]
+
+    def test_structural_suffix_stripped_to_find_mention(self):
+        """Khajuraho live: 'Matangeshwar Temple' vs a comment saying
+        'Matangeshwar Mahadev wala temple'."""
+        pois = [_poi("Matangeshwar Temple")]
+        chunks = [_chunk("boht amazing, specially Matangeshwar Mahadev wala temple", "IndiaTravel")]
+        intel = self._run(pois, chunks, "Khajuraho")
+        assert [g["name"] for g in intel["gems"]] == ["Matangeshwar Temple"]
+
+    def test_comma_appended_locality_dropped(self):
+        """Kochi live: OSM's 'Marine Drive, Kochi' vs comments saying just
+        'Marine Drive'."""
+        pois = [_poi("Marine Drive, Kochi")]
+        chunks = [_chunk("Marine Drive is beautiful, loved the walk", "Kerala")]
+        intel = self._run(pois, chunks, "Kochi")
+        assert [g["name"] for g in intel["gems"]] == ["Marine Drive, Kochi"]
+
+    def test_local_name_matched_when_english_name_is_a_translation(self):
+        """Post-v10.39.0 OSM payloads keep both names. Where `name:en` is a
+        translation rather than a transliteration, the local form is a
+        genuinely different string travellers still use."""
+        pois = [_poi("Army Museum", name_local="Musée de l'Armée")]
+        chunks = [_chunk("musee de l'armee is a beautiful, quiet find", "Paris")]
+        intel = self._run(pois, chunks, "Paris")
+        assert [g["name"] for g in intel["gems"]] == ["Army Museum"]
+
+    def test_non_latin_local_name_contributes_nothing_rather_than_crashing(self):
+        """A Latin-only matcher cannot search Japanese text; the POI must
+        still rank on its English name."""
+        pois = [_poi("Kiyomizu-dera", name_local="清水寺")]
+        chunks = [_chunk("kiyomizu-dera was serene and beautiful", "JapanTravel")]
+        intel = self._run(pois, chunks, "Kyoto")
+        assert [g["name"] for g in intel["gems"]] == ["Kiyomizu-dera"]
+
+    def test_common_word_core_does_not_manufacture_mentions(self):
+        """Audit false positives: 'Central Park' must not match a bare
+        'central', nor 'Moti Park' a bare 'moti'."""
+        pois = [_poi("Central Park"), _poi("Moti Park")]
+        chunks = [_chunk("the central station is near moti bazaar, both lovely")]
+        intel = self._run(pois, chunks, "Delhi")
+        assert intel["gems"] == []
+        assert intel["crowd_favourites"] == []
+
+    def test_mention_requires_word_boundary(self):
+        pois = [_poi("Ganesh Temple")]
+        chunks = [_chunk("we went to ganeshwar, it was lovely and quiet")]
+        intel = self._run(pois, chunks, "Khajuraho")
+        assert intel["gems"] == []
+
+
+class TestNonGemPoiTypes:
+    def _run(self, pois, chunks, destination="Phuket"):
+        with patch("services.gems.get_qdrant", return_value=_mock_client(pois, chunks)):
+            return compute_gem_intel_sync(destination)
+
+    def test_train_stations_are_never_gems(self):
+        """Istanbul live: the entire gem list was Kadıköy, Karaköy and
+        Beyoğlu — three metro stops."""
+        pois = [_poi("Kadıköy", poi_type="train station")]
+        chunks = [_chunk("kadikoy is a beautiful, calm, underrated area", "travel")]
+        intel = self._run(pois, chunks, "Istanbul")
+        assert intel["gems"] == []
+
+    def test_train_stations_are_not_crowd_favourites_either(self):
+        """'De-prioritise the train station' is not advice."""
+        pois = [_poi("Railway Station", poi_type="train station")]
+        chunks = [_chunk(f"rent a scooter from the Railway Station, trip {i}") for i in range(15)]
+        intel = self._run(pois, chunks, "Jaipur")
+        assert intel["crowd_favourites"] == []
+
+    def test_visitable_types_still_rank(self):
+        pois = [_poi("Banana Beach", poi_type="beach")]
+        chunks = [_chunk("Banana Beach is a stunning quiet gem")]
+        intel = self._run(pois, chunks)
+        assert [g["name"] for g in intel["gems"]] == ["Banana Beach"]
+
+    def test_poi_named_after_the_destination_is_excluded(self):
+        """Khajuraho live: the strongest 'gem' was a POI called 'Khajuraho',
+        which matched every comment that named the town."""
+        pois = [_poi("Khajuraho"), _poi("Chaunsath Yogini Temple")]
+        chunks = [
+            _chunk("khajuraho is beautiful and worth it"),
+            _chunk("chaunsath yogini temple is a peaceful gem"),
+        ]
+        intel = self._run(pois, chunks, "Khajuraho")
+        names = {g["name"] for g in intel["gems"]} | {c["name"] for c in intel["crowd_favourites"]}
+        assert names == {"Chaunsath Yogini Temple"}
 
 
 class TestGemPromptBlock:

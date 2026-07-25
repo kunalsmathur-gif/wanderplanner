@@ -27,8 +27,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
-import unicodedata
 from difflib import SequenceMatcher
 
 from core.config import settings
@@ -38,6 +36,10 @@ from models.trip import MAX_PINNED_POIS, PinnedPOI
 # Same bounded destination-scroll helper gems.py uses — shared on purpose so
 # both verification paths stay within identical compute caps.
 from services.gems import _MAX_CHUNKS, _MAX_POIS, _scroll_destination
+
+# `_normalize` is re-exported under its original name because
+# chains/itinerary_chain.py and eval/refinement_scoring.py import it from here.
+from services.name_matching import normalize_name as _normalize
 
 logger = logging.getLogger(__name__)
 
@@ -58,18 +60,6 @@ def _interest_keywords(source_interest: str) -> set[str]:
     that as "nothing to check relevance against"."""
     norm = _normalize(source_interest)
     return {w for w in norm.split() if w and w not in _INTEREST_STOPWORDS and len(w) > 2}
-
-
-def _normalize(name: str) -> str:
-    """Lowercase, fold diacritics to their base letters (Ryōan-ji → ryoan ji,
-    Sé → se), strip remaining punctuation, collapse whitespace. Without the
-    fold, an accented candidate vs an ASCII fixture name loses the exact and
-    containment matches and survives only on fuzzy ratio."""
-    name = unicodedata.normalize("NFKD", name)
-    name = "".join(ch for ch in name if not unicodedata.combining(ch))
-    name = name.lower()
-    name = re.sub(r"[^a-z0-9\s]", " ", name)
-    return re.sub(r"\s+", " ", name).strip()
 
 
 def _names_match(candidate_norm: str, poi_norm: str) -> bool:
