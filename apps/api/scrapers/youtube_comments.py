@@ -26,7 +26,7 @@ import asyncio
 import hashlib
 import logging
 from collections import deque
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -63,7 +63,7 @@ async def _search_budget_available() -> bool:
     """Reserve one of the rolling day's `search.list` slots, or return False
     if the budget is exhausted."""
     async with _search_budget_guard:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now - _daily_search_window
         while _search_times and _search_times[0] < cutoff:
             _search_times.popleft()

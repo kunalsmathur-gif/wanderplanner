@@ -11,8 +11,8 @@ from typing import Any
 from pydantic import BaseModel
 
 from core.budget_estimator import budget_estimate_prompt_hint
-from core.currency_convert import TOP_10_CURRENCIES, currency_conversion_prompt_hint
 from core.config import settings
+from core.currency_convert import TOP_10_CURRENCIES, currency_conversion_prompt_hint
 from core.llm_client import track_gemini_usage
 from models.chat import ChatMessage
 from services.geocode import geocode_city
@@ -1138,7 +1138,7 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             ),
         )
 
-    import logging, time
+    import logging
     _log = logging.getLogger(__name__)
 
     # Retry up to 3 times on transient API errors (503, rate limit, timeout)

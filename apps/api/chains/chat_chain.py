@@ -5,9 +5,9 @@ import asyncio
 import json
 
 from core.config import settings
-from core.prompt_guard import neutralize
 from core.llm_client import track_gemini_usage
-from models.chat import ChatMessage, ChatRequest
+from core.prompt_guard import neutralize
+from models.chat import ChatRequest
 
 GUARDRAIL_SYSTEM_PROMPT = """\
 You are WanderPlanner Assistant, an expert travel advisor chatbot.

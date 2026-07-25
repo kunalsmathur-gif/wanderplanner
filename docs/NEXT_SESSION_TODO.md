@@ -2,6 +2,52 @@
 
 ---
 
+## 🆕 2026-07-25 session (later) — Ruff cleanup closed + deploy-prerequisite check (v10.38.1)
+
+Both open items from the end of the previous block. Full suite green throughout:
+**563 passed / 6 skipped / 0 failed**. `ruff check .` → *All checks passed*.
+
+**1. ✅ Ruff: repo is now lint-clean under the version CI runs.** 318 violations at `be9e30e`
+(the "257" in the earlier note was an undercount), cleared in one pass — 304 safe auto-fixes,
+13 unsafe auto-fixes (reviewed in the diff: `UP038` isinstance tuples, `UP031` percent-format in
+the `reingest_*` logging calls), 4 by hand.
+- **The version pin was never actually missing** — `ruff==0.4.9` is pinned in
+  `requirements-dev.txt` and matches the local venv, so CI and local already agreed. The real
+  drift was `pyproject.toml` still using the deprecated top-level `[tool.ruff]` `select`/`ignore`;
+  moved to `[tool.ruff.lint]`, which also silences the warning ruff printed on every run.
+- Added a `tests/**` → `E402` per-file-ignore rather than hoisting the section-banner imports in
+  `tests/unit/test_rag.py` — the grouping is deliberate and reads better than one block at top.
+- **3 latent bugs fell out of it**, which is the real payoff:
+  - `scrapers/wikivoyage.py` and `services/comparison.py` both had their module docstring *after*
+    `from __future__ import annotations`, so it was a bare string expression, not a docstring —
+    `__doc__` was `None` on both. (That's what generated 20 of the 27 `E402`s.)
+  - `chains/itinerary_chain.py::_parse_expense_breakdown` had an unresolvable `"ExpenseBreakdown"`
+    forward-ref plus a redundant in-function re-import of a module already imported at the top.
+  - `chains/feasibility_chain.py::_mock_feasibility` assigned `dest` and never used it.
+
+**2. ✅ Deploy prerequisites for the 0005 migration + scheduler job — verified, no code change
+needed.** `apps/api/railway.toml`'s `startCommand` is already
+`sh -c 'alembic upgrade head && uvicorn main:app …'`, so `0005_youtube_ingestion_state` applies
+itself on deploy, and the deploy restarts the process, which is what
+`core/scheduler.py::start_scheduler()` needs to register `youtube_comments_refresh`. Revision chain
+verified linear (`0001 → 0002 → 0003 → 0004 → 0005`). **The one genuine prod prerequisite left is
+env, not code: `YOUTUBE_API_KEY` must be set on Railway** — `_refresh_youtube_comments` returns
+early without it, so the job would register and then no-op silently forever. Worth confirming in
+the Railway dashboard right after the next deploy.
+
+### Found, not fixed — CI's mypy step is red for an unrelated reason
+
+`mypy . --ignore-missing-imports` fails *before* type-checking anything:
+`eval\config_loader.py: Source file found twice under different module names: "config_loader" and
+"eval.config_loader"` — `apps/api/eval/` has no `__init__.py`. **Confirmed pre-existing** by
+running the same command against a pristine `be9e30e` worktree, so it is not fallout from the ruff
+pass. The two fixes (add `apps/api/eval/__init__.py`, or switch the CI step to
+`--explicit-package-bases`) both change how the eval harness resolves its imports, and the harness
+does `sys.path` manipulation in several scripts — so this needs its own change with the eval
+scripts actually re-run, not a drive-by.
+
+---
+
 ## 🆕 2026-07-25 session — 4 carried-over items closed (YouTube wiring, gems dead zone, price retrieval, food anchoring)
 
 All four were long-standing "deferred pending data" items. Two of them (gems thresholds,
@@ -104,12 +150,13 @@ calibration pass to retire.
   step for this feature.
 - `_FOOD_MEALS_PER_DAY = 3.0` is still the fallback value; it just isn't used when real daily data
   exists. Calibrating it remains open, now lower-stakes.
-- Ruff: the repo is **not** ruff-clean under the currently-installed version (257 pre-existing
-  errors at HEAD, mostly `UP017`/`UP007`/`I001` style rules; sibling migrations 0003/0004 carry the
-  same `I001`). This session's files match surrounding style rather than diverging. Worth a
-  dedicated `ruff check --fix` pass + a ruff version pin, since CI runs a bare `ruff check .`.
+- ~~Ruff: the repo is **not** ruff-clean under the currently-installed version~~ — **✅ closed
+  2026-07-25 (v10.38.1).** Actual count at `be9e30e` was 318, not 257. All cleared; `ruff check .`
+  now passes. The version pin turned out to already exist (`ruff==0.4.9` in `requirements-dev.txt`,
+  matching the venv) — the real drift was the config using the deprecated top-level `[tool.ruff]`
+  `select`/`ignore`. See the 2026-07-25 (later) block at the top.
 
-**Last updated:** 2026-07-24 (latest) — manual frontend/stage bug-bash session found and fixed 5 Anya wizard bugs total: a dead-end fallback reply, a broken post-sign-in resume state sync, a ZWJ-emoji chip-tap detection bug, a misleading `(NO_DATA)` error masking real generation failures, and (found on stage after the first 3 were live) stale group-type chips repeating under the traveler-count follow-up. See "2026-07-24 session — Anya wizard bug bash" block immediately below. Previous entry: (1) full 168-destination live re-audit found the backlog nearly clear (only 10 failing, none wiki/osm-zero); fixed **3 silently mis-geocoded destinations the count-only gate can't detect** (Austin→was Nevada ghost town, La Paz→was Mexico, Valencia→was Venezuela) + re-ingested the 10 gate failures, landing at **7/12 fixed, 5 residual = genuine real-world category skew** (Paris metro + 4 temple/pilgrimage towns), not bugs. (2) Shipped the **food-grounding per-meal→per-day reconciliation** ("item A" proper fix) — now unit-aware, floor-kept-as-safety-net. See the two "2026-07-24 session" blocks further below. Prior top-priority (food under-estimation) is now resolved.
+**Last updated:** 2026-07-25 (latest) — v10.38.1 repo-wide Ruff cleanup: 318 pre-existing violations cleared, `ruff check .` now passes under the already-pinned `ruff==0.4.9`, config moved off the deprecated top-level `[tool.ruff]` section, and 3 latent bugs fixed (2 dead module docstrings, 1 unresolvable forward-ref + redundant import, 1 dead local). Also verified the 0005 migration + scheduler job need no deploy-side code change (`railway.toml` already runs `alembic upgrade head`); the only prod prerequisite left is setting `YOUTUBE_API_KEY` on Railway. Found-not-fixed: CI's mypy step is red pre-existing (`eval/` missing `__init__.py`). See the block at the top. Previous entry: manual frontend/stage bug-bash session found and fixed 5 Anya wizard bugs total: a dead-end fallback reply, a broken post-sign-in resume state sync, a ZWJ-emoji chip-tap detection bug, a misleading `(NO_DATA)` error masking real generation failures, and (found on stage after the first 3 were live) stale group-type chips repeating under the traveler-count follow-up. See "2026-07-24 session — Anya wizard bug bash" block immediately below. Previous entry: (1) full 168-destination live re-audit found the backlog nearly clear (only 10 failing, none wiki/osm-zero); fixed **3 silently mis-geocoded destinations the count-only gate can't detect** (Austin→was Nevada ghost town, La Paz→was Mexico, Valencia→was Venezuela) + re-ingested the 10 gate failures, landing at **7/12 fixed, 5 residual = genuine real-world category skew** (Paris metro + 4 temple/pilgrimage towns), not bugs. (2) Shipped the **food-grounding per-meal→per-day reconciliation** ("item A" proper fix) — now unit-aware, floor-kept-as-safety-net. See the two "2026-07-24 session" blocks further below. Prior top-priority (food under-estimation) is now resolved.
 
 ---
 

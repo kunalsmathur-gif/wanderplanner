@@ -20,6 +20,7 @@ grounding hint string injected into the feasibility/expense-estimation
 prompts — it does not replace the LLM's own estimate, it constrains it.
 """
 from __future__ import annotations
+
 import asyncio
 import logging
 

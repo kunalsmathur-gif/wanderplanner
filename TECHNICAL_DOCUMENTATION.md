@@ -1,7 +1,7 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.33.0 (Cold-start rate-limit guard added to demand-driven destination ingestion; itinerary-corpus RSS feed pool expanded with 2 more "hidden gems"-angled blogs; prior session's prompt_guard test + FieldCondition audit confirmed complete)
-**Last Updated:** July 22, 2026  
+**Version:** 10.38.1 (Repo-wide Ruff cleanup — backend is now lint-clean under the pinned `ruff==0.4.9` that CI runs; three latent bugs fixed along the way)
+**Last Updated:** July 25, 2026  
 **Status:** Production-ready MVP
 
 ---
@@ -1501,6 +1501,22 @@ curl http://localhost:8000/health
 ---
 
 ## 14. Recent Changes (v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.38.1 Changes (July 2026) — Repo-wide Ruff cleanup: backend is lint-clean under the version CI actually runs
+
+CI runs a bare `ruff check .` on `apps/api`, but the tree carried **318 pre-existing violations** at `be9e30e`, so that step had been failing on every run reaching it. Cleared in one dedicated pass. Three of the violations were latent bugs, not style noise — the value of the pass is mostly in those.
+
+| Change | Detail |
+|---|---|
+| **Ruff config modernised** | `select`/`ignore` moved from the deprecated top-level `[tool.ruff]` into `[tool.ruff.lint]` (`apps/api/pyproject.toml`). Ruff had been emitting a deprecation warning on every invocation. Added a `tests/**` → `E402` per-file-ignore: test modules deliberately group imports under section banners next to the tests that use them, which reads better than one hoisted block. |
+| **Version pin** | `ruff==0.4.9` was already pinned in `requirements-dev.txt` and matches the local venv, so CI and local now agree exactly. No pin change was needed — the drift was in the config, not the version. |
+| 🐛 **Two module docstrings were silently dead** | `scrapers/wikivoyage.py` and `services/comparison.py` placed their docstring *after* `from __future__ import annotations`, which makes it an ordinary string expression, not a docstring — both modules had `__doc__ = None`, and every subsequent import was flagged `E402`. Docstring moved to line 1 in both. |
+| 🐛 **`F821` undefined name in `chains/itinerary_chain.py`** | `_parse_expense_breakdown` annotated its return as the string `"ExpenseBreakdown"` and re-imported the symbol inside the function body — but `models.itinerary` is already imported at module level, so the local import was redundant and the forward-ref unresolvable to any type checker. `ExpenseBreakdown` hoisted into the existing module-level import; annotation is now a real reference. |
+| 🐛 **`F841` dead local in `chains/feasibility_chain.py`** | `_mock_feasibility` read `trip_summary["destination"]` into `dest` and never used it — the mock ignores the destination entirely. Removed. |
+| **Mechanical fixes (304 auto + 13 unsafe-auto)** | `I001` import sorting (98), `UP017` `timezone.utc` → `datetime.UTC` (65, safe on the `python:3.11-slim` runtime), `UP007` `Optional[X]` → `X \| Y` (36, including the runtime `response_model=` on `GET /admin/requests/me`), `F401` unused imports (16), `UP031` percent-format → `str.format` in the `scripts/reingest_*.py` logging calls (6), plus assorted `UP038`/`UP037`/`F541`/`E401`/`F811`. |
+| **Verified** | `ruff check .` → *All checks passed*. Full backend suite **563 passed / 6 skipped / 0 failed**. |
+
+**Known-unrelated CI gap (not introduced here, not fixed here):** the `mypy . --ignore-missing-imports` step fails before type-checking with `eval\config_loader.py: Source file found twice under different module names` — `apps/api/eval/` has no `__init__.py`. Confirmed identical against a pristine `be9e30e` worktree. Fixing it means either adding `apps/api/eval/__init__.py` or switching the step to `--explicit-package-bases`; both change import resolution for the eval harness, so it wants its own change.
 
 ### v10.38.0 Changes (July 2026) — YouTube ingestion automated behind a quota budget, gems classification dead zone, price-retrieval category error, food grounding anchored on observed daily data
 

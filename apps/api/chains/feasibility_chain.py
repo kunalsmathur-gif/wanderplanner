@@ -4,13 +4,13 @@ from __future__ import annotations
 import asyncio
 import json
 
-from core.config import settings
-from core.llm_client import track_gemini_usage
-from core.prompt_guard import neutralize
 from core.budget_estimator import estimate_bare_minimum_budget
 from core.budget_tiers import budget_tier_prompt_hint
-from core.cost_grounding import flight_cost_grounding_hint, accommodation_cost_grounding_hint
-from models.feasibility import FeasibilityResponse, CostBreakdown, AlternativeDestination
+from core.config import settings
+from core.cost_grounding import accommodation_cost_grounding_hint, flight_cost_grounding_hint
+from core.llm_client import track_gemini_usage
+from core.prompt_guard import neutralize
+from models.feasibility import AlternativeDestination, CostBreakdown, FeasibilityResponse
 from models.trip import TripConfig
 
 FEASIBILITY_PROMPT = """\
@@ -268,7 +268,6 @@ def _mock_feasibility(trip_summary: dict, budget_inr: int) -> FeasibilityRespons
     """Mock response for dev mode."""
     nights = trip_summary.get("nights", 4)
     people = trip_summary.get("total_people", 2)
-    dest = trip_summary.get("destination", "Tokyo")
 
     flights = 35000 * people
     visa = 6500 * people

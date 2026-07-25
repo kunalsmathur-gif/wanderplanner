@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from chains.wizard_chat_chain import _ensure_place_coords, _has_group, _resolve_origin_destination_coords
+from chains.wizard_chat_chain import (
+    _ensure_place_coords,
+    _has_group,
+    _resolve_origin_destination_coords,
+)
 from models.common import GeocodeResponse
 
 

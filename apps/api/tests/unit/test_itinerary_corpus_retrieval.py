@@ -11,13 +11,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from models.trip import TripConfig, DestinationInput, GroupComposition, KidAge
+from models.trip import DestinationInput, GroupComposition, KidAge, TripConfig
 from services.search import (
-    retrieve_itinerary_examples,
     _corpus_config_query,
     _corpus_duration_days,
     _corpus_group_type,
     _format_corpus_days_brief,
+    retrieve_itinerary_examples,
 )
 
 

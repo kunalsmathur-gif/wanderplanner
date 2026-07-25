@@ -10,11 +10,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from core.config import settings
-from core.qdrant import get_qdrant
 from core.embeddings import embed
+from core.qdrant import get_qdrant
 from models.trip import TripConfig
 
 
@@ -96,7 +96,7 @@ async def store_itinerary(trip_config: TripConfig, itinerary_raw: dict) -> None:
                         "destination": dest,
                         "cache_key": query,
                         "itinerary_json": json.dumps(clean_payload),
-                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                        "generated_at": datetime.now(UTC).isoformat(),
                     },
                 )],
             )

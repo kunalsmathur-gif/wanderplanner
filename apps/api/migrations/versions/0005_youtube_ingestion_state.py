@@ -11,8 +11,8 @@ Create Date: 2026-07-25
 
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = "0005_youtube_ingestion_state"
 down_revision = "0004_destination_ingestion_state"

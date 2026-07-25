@@ -8,7 +8,7 @@ Postgres is an in-memory sqlite engine; the scraper is mocked — fully offline.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -34,7 +34,7 @@ async def session_maker():
 
 
 async def _add(maker, destination, youtube_at, request_count=1):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with maker() as db:
         db.add(DestinationIngestionState(
             destination=destination,
@@ -64,8 +64,8 @@ class TestRefreshYoutubeComments:
 
     @pytest.mark.asyncio
     async def test_picks_up_never_ingested_and_stale_but_not_fresh(self, session_maker):
-        fresh = datetime.now(timezone.utc)
-        stale = datetime.now(timezone.utc) - timedelta(days=90)
+        fresh = datetime.now(UTC)
+        stale = datetime.now(UTC) - timedelta(days=90)
         await _add(session_maker, "NeverIngested", None)
         await _add(session_maker, "Stale", stale)
         await _add(session_maker, "Fresh", fresh)
@@ -80,7 +80,7 @@ class TestRefreshYoutubeComments:
 
     @pytest.mark.asyncio
     async def test_never_ingested_ranks_ahead_of_merely_stale(self, session_maker):
-        stale = datetime.now(timezone.utc) - timedelta(days=90)
+        stale = datetime.now(UTC) - timedelta(days=90)
         await _add(session_maker, "Stale", stale, request_count=999)
         await _add(session_maker, "NeverIngested", None, request_count=1)
 

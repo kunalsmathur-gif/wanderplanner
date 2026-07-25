@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from pydantic import BaseModel, Field, field_validator
 
 # Cap on verified must-include places carried on a trip config — keeps the

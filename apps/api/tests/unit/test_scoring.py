@@ -1,8 +1,7 @@
 """Unit tests for alignment scoring (PRD Section 6.2)."""
-import pytest
-from models.itinerary import ItineraryItem, ItineraryItemLocation
-from models.trip import TripConfig, GroupComposition, AccommodationPrefs, Budget, OriginInput
 from chains.scoring import calculate_alignment_score
+from models.itinerary import ItineraryItem, ItineraryItemLocation
+from models.trip import AccommodationPrefs, Budget, GroupComposition, OriginInput, TripConfig
 
 
 def _make_item(tags: list[str], description: str = "") -> ItineraryItem:
@@ -58,5 +57,5 @@ def test_social_penalty_applied():
 
 
 def test_weights_sum_to_one():
-    from chains.scoring import W_PERSONA, W_BUDGET, W_ACCESS
+    from chains.scoring import W_ACCESS, W_BUDGET, W_PERSONA
     assert abs((W_PERSONA + W_BUDGET + W_ACCESS) - 1.0) < 1e-9

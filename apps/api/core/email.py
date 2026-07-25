@@ -87,7 +87,7 @@ async def send_admin_request_notification(*, admin_emails: list[str], requester_
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 _RESEND_URL,
-                headers={"Authorization": f"******"},
+                headers={"Authorization": "******"},
                 json={
                     "from": settings.email_from_address,
                     "to": admin_emails,
@@ -124,7 +124,7 @@ async def send_admin_request_decision_email(*, to_email: str, approved: bool) ->
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 _RESEND_URL,
-                headers={"Authorization": f"******"},
+                headers={"Authorization": "******"},
                 json={
                     "from": settings.email_from_address,
                     "to": [to_email],

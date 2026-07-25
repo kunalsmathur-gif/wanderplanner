@@ -3,9 +3,10 @@ Alignment score: fixed weights in Phase 1 per PRD Section 6.2.
 Score is internal only — never displayed to users.
 """
 from __future__ import annotations
+
+from core.budget_tiers import resolve_budget_tier
 from models.itinerary import ItineraryItem
 from models.trip import TripConfig
-from core.budget_tiers import resolve_budget_tier
 
 # Fixed weights — Phase 1 (dynamic per-persona weights deferred to Phase 2)
 W_PERSONA = 0.5

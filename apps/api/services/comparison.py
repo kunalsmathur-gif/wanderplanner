@@ -1,5 +1,5 @@
-from __future__ import annotations
 """Comparison engine — assembles side-by-side destination data with AI qualitative analysis."""
+from __future__ import annotations
 
 import asyncio
 import json
@@ -9,10 +9,10 @@ from google import genai as google_genai
 
 from core.config import settings
 from core.llm_client import track_gemini_usage
-from models.itinerary import ComparisonResponse, ComparisonParameter
-from models.trip import TripConfig, DestinationInput
-from services.geocode import geocode_city
+from models.itinerary import ComparisonParameter, ComparisonResponse
+from models.trip import DestinationInput, TripConfig
 from services.best_time import _fetch_weather
+from services.geocode import geocode_city
 
 logger = logging.getLogger(__name__)
 

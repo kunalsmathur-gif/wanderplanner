@@ -23,7 +23,6 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 # Metrics where a LOWER number is better. Everything else defaults to
 # "higher is better". Unknown/non-numeric fields are shown but not judged.
@@ -81,7 +80,7 @@ def compare_summaries(baseline: dict, candidate: dict, threshold: float) -> tupl
             if metric in SKIP_FIELDS:
                 continue
             b_val, c_val = b_metrics.get(metric), c_metrics.get(metric)
-            if not isinstance(b_val, (int, float)) or not isinstance(c_val, (int, float)):
+            if not isinstance(b_val, int | float) or not isinstance(c_val, int | float):
                 if b_val != c_val:
                     lines.append(f"  {metric}: {b_val!r} -> {c_val!r}")
                 continue

@@ -24,7 +24,7 @@ import logging
 import os
 import sys
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 sys.path.insert(0, ".")
 
@@ -75,7 +75,7 @@ async def _upsert_state_row(destination: str, osm_count: int, wiki_count: int) -
     from db import AsyncSessionLocal
     from db_models import DestinationIngestionState
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with AsyncSessionLocal() as db:
         row = await db.get(DestinationIngestionState, destination)
         if row is None:
@@ -95,9 +95,10 @@ async def _upsert_state_row(destination: str, osm_count: int, wiki_count: int) -
 
 
 def _category_breakdown(destination: str) -> Counter:
-    from core.qdrant import get_qdrant
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
     from core.config import settings
-    from qdrant_client.models import Filter, FieldCondition, MatchValue
+    from core.qdrant import get_qdrant
 
     client = get_qdrant()
     dest_filter = Filter(must=[FieldCondition(key="destination", match=MatchValue(value=destination))])
@@ -139,7 +140,7 @@ async def main() -> None:
             "[%d/%d] %s: %d OSM POIs, %d wiki chunks. Top: %s%s",
             i, len(DESTINATIONS), destination, result["osm_count"], result["wiki_count"],
             result["top_categories"],
-            (" | errors: osm=%r wiki=%r" % (result["osm_error"], result["wiki_error"]))
+            (" | errors: osm={!r} wiki={!r}".format(result["osm_error"], result["wiki_error"]))
             if result["osm_error"] or result["wiki_error"] else "",
         )
         results.append(result)

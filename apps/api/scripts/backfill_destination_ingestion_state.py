@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from datetime import UTC
 
 sys.path.insert(0, ".")
 
@@ -24,8 +25,8 @@ logger = logging.getLogger("backfill_destination_ingestion_state")
 
 
 def _distinct_osm_destinations() -> set[str]:
-    from core.qdrant import get_qdrant
     from core.config import settings
+    from core.qdrant import get_qdrant
 
     client = get_qdrant()
     destinations: set[str] = set()
@@ -48,14 +49,15 @@ def _distinct_osm_destinations() -> set[str]:
 
 
 async def main() -> None:
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from db import AsyncSessionLocal
     from db_models import DestinationIngestionState
 
     destinations = _distinct_osm_destinations()
     logger.info("Found %d distinct destinations with OSM data", len(destinations))
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     created = 0
     async with AsyncSessionLocal() as db:
         for destination in sorted(destinations):

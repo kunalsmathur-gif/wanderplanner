@@ -7,6 +7,7 @@ tests/unit/test_osm_scraper.py and tests/unit/test_wikivoyage_scraper.py.
 """
 from __future__ import annotations
 
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -241,12 +242,12 @@ class TestSearchBudget:
 
     @pytest.mark.asyncio
     async def test_expired_window_entries_free_up_slots(self):
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         import scrapers.youtube_comments as yt
 
         # Two searches recorded 25h ago — outside the rolling 24h window.
-        stale = datetime.now(timezone.utc) - timedelta(hours=25)
+        stale = datetime.now(UTC) - timedelta(hours=25)
         yt._search_times.extend([stale, stale])
 
         with patch("scrapers.youtube_comments.settings.youtube_api_key", "fake-key"), \

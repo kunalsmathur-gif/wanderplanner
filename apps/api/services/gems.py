@@ -34,7 +34,7 @@ import logging
 import math
 import time
 
-from qdrant_client.models import Filter, FieldCondition, MatchValue
+from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from core.config import settings
 from core.qdrant import get_qdrant

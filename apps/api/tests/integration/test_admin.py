@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import func, select
@@ -56,7 +56,7 @@ async def test_admin_metrics_summary_and_timeseries_return_expected_data(
     db_session_maker,
     user_factory,
 ):
-    admin = await user_factory(email="admin@example.com", password="Password123!", is_admin=True)
+    await user_factory(email="admin@example.com", password="Password123!", is_admin=True)
     member = await user_factory(email="member@example.com", password="Password123!")
     await _login(client, "admin@example.com", "Password123!")
 
@@ -98,7 +98,7 @@ async def test_admin_metrics_summary_and_timeseries_return_expected_data(
     )
     assert summary["cost_usage"]["pexels_calls_30d"] == 2
 
-    today_key = datetime.now(timezone.utc).date().isoformat()
+    today_key = datetime.now(UTC).date().isoformat()
     timeseries = timeseries_response.json()
     assert timeseries["range"] == "7d"
     assert today_key in timeseries["series"]

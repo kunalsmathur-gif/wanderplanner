@@ -6,8 +6,7 @@ from "you're logged in but not allowed here."
 """
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -31,7 +30,7 @@ _log = logging.getLogger("wanderplanner.admin")
 _PURGE_ALL_CONFIRMATION_PHRASE = "DELETE ALL USERS"
 
 
-async def _count_events(db: AsyncSession, event_type: str, since: Optional[datetime] = None) -> int:
+async def _count_events(db: AsyncSession, event_type: str, since: datetime | None = None) -> int:
     stmt = select(func.count()).select_from(Event).where(Event.event_type == event_type)
     if since is not None:
         stmt = stmt.where(Event.created_at >= since)
@@ -43,7 +42,7 @@ async def metrics_summary(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_current_admin_user),
 ) -> dict:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     d7 = now - timedelta(days=7)
     d30 = now - timedelta(days=30)
@@ -114,7 +113,7 @@ async def metrics_timeseries(
     _admin: User = Depends(get_current_admin_user),
 ) -> dict:
     days = 7 if range == "7d" else 30
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = datetime.now(UTC) - timedelta(days=days)
 
     stmt = (
         select(
@@ -269,11 +268,11 @@ async def create_admin_request(
     return _admin_request_to_response(req, user)
 
 
-@router.get("/admin/requests/me", response_model=Optional[AdminRequestResponse])
+@router.get("/admin/requests/me", response_model=AdminRequestResponse | None)
 async def my_admin_request(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> Optional[AdminRequestResponse]:
+) -> AdminRequestResponse | None:
     """Lets the account-settings page show 'request pending / declined' UI
     without granting anything — read-only lookup of the caller's own most
     recent request."""
@@ -319,7 +318,7 @@ async def approve_admin_request(
     target.is_admin = True
     req.status = "approved"
     req.reviewed_by = admin.id
-    req.reviewed_at = datetime.now(timezone.utc)
+    req.reviewed_at = datetime.now(UTC)
     await db.commit()
 
     await log_event(db, "admin_request_approved", user_id=admin.id, metadata={"target_user_id": str(target.id)})
@@ -347,7 +346,7 @@ async def reject_admin_request(
 
     req.status = "rejected"
     req.reviewed_by = admin.id
-    req.reviewed_at = datetime.now(timezone.utc)
+    req.reviewed_at = datetime.now(UTC)
     await db.commit()
 
     await log_event(db, "admin_request_rejected", user_id=admin.id, metadata={"target_user_id": str(req.user_id)})

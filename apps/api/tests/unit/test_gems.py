@@ -10,10 +10,10 @@ import pytest
 
 import services.gems as gems
 from services.gems import (
+    _sentiment_around,
     compute_gem_intel_sync,
     gem_prompt_block,
     get_gem_intel,
-    _sentiment_around,
 )
 
 

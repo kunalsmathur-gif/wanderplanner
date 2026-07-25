@@ -1,5 +1,6 @@
-from contextlib import asynccontextmanager
 import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
@@ -10,7 +11,25 @@ from core.config import settings
 from core.logging_config import configure_logging
 from core.rate_limit import limiter
 from core.scheduler import start_scheduler, stop_scheduler
-from routers import itinerary, comparison, best_time, search, geocode, feasibility, chat, recommend_cities, chat_refine, reddit_highlights, travel_tips, extract_trip, share, wizard_chat, auth, admin, analytics
+from routers import (
+    admin,
+    analytics,
+    auth,
+    best_time,
+    chat,
+    chat_refine,
+    comparison,
+    extract_trip,
+    feasibility,
+    geocode,
+    itinerary,
+    recommend_cities,
+    reddit_highlights,
+    search,
+    share,
+    travel_tips,
+    wizard_chat,
+)
 
 configure_logging()
 

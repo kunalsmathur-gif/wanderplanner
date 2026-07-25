@@ -3,10 +3,9 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
+from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
-
-from alembic import context
 
 # Make `apps/api` importable so `core.config` / `db_models` resolve when
 # Alembic is invoked from this directory (matches how uvicorn is run).

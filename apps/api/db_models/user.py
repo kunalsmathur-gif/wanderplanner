@@ -1,7 +1,7 @@
 from __future__ import annotations
-from typing import Optional
-from datetime import datetime
+
 import uuid
+from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, String, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -23,23 +23,23 @@ class User(Base):
     # Stored as-is at the DB layer; TLS in transit + disk-level encryption
     # (managed Postgres provider, e.g. RDS/Cloud SQL encryption-at-rest) covers
     # PII at rest. Never log these fields (see core/logging_config.py filters).
-    email: Mapped[Optional[str]] = mapped_column(String(320), unique=True, index=True, nullable=True)
-    phone: Mapped[Optional[str]] = mapped_column(String(20), unique=True, index=True, nullable=True)
+    email: Mapped[str | None] = mapped_column(String(320), unique=True, index=True, nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(20), unique=True, index=True, nullable=True)
 
     # Argon2id hash — never store/compare plaintext passwords.
-    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Google "sub" claim — stable unique identifier for SSO-linked accounts.
-    google_sub: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True, nullable=True)
+    google_sub: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
 
-    display_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Consent timestamp for signup ToS/privacy policy acceptance — required
     # for DPDP/GDPR-style consent recordkeeping.
-    consent_accepted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    consent_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

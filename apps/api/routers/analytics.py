@@ -1,10 +1,10 @@
 """Lightweight client-side analytics beacons (session starts, external API
 calls made from the Next.js server, e.g. the YouTube-thumbnail route which
 has no backend counterpart of its own)."""
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
 
 from core.analytics import log_event
 from core.auth_dependency import get_optional_user
@@ -19,7 +19,7 @@ _ALLOWED_CLIENT_EVENTS = {"session_start", "youtube_thumbnail_call", "youtube_th
 
 class ClientEventRequest(BaseModel):
     event_type: str
-    metadata: Optional[dict] = None
+    metadata: dict | None = None
 
 
 @router.post("/analytics/client-event")
@@ -27,7 +27,7 @@ class ClientEventRequest(BaseModel):
 async def client_event(
     request: Request,
     body: ClientEventRequest,
-    user: Optional[User] = Depends(get_optional_user),
+    user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     if body.event_type not in _ALLOWED_CLIENT_EVENTS:

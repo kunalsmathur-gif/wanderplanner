@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import jwt
 from argon2 import PasswordHasher
@@ -36,7 +36,7 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def create_access_token(user_id: uuid.UUID) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": str(user_id),
         "iat": now,
@@ -60,7 +60,7 @@ def generate_refresh_token() -> tuple[str, str, datetime]:
     """Return (raw_token, sha256_hash, expires_at). Only the hash is stored."""
     raw = secrets.token_urlsafe(48)
     token_hash = hashlib.sha256(raw.encode()).hexdigest()
-    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_ttl_days)
+    expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_ttl_days)
     return raw, token_hash, expires_at
 
 
@@ -68,7 +68,7 @@ def generate_password_reset_token() -> tuple[str, str, datetime]:
     """Return (raw_token, sha256_hash, expires_at) for the forgot-password flow."""
     raw = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw.encode()).hexdigest()
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.password_reset_token_ttl_minutes)
+    expires_at = datetime.now(UTC) + timedelta(minutes=settings.password_reset_token_ttl_minutes)
     return raw, token_hash, expires_at
 
 

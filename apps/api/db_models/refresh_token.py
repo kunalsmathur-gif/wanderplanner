@@ -1,7 +1,7 @@
 from __future__ import annotations
-from typing import Optional
-from datetime import datetime
+
 import uuid
+from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -26,10 +26,10 @@ class RefreshToken(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
 
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Best-effort device context for session management / abuse detection.
-    user_agent: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    ip_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # hashed, never raw IP
+    user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)  # hashed, never raw IP
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

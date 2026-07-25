@@ -1,19 +1,18 @@
 import asyncio
 import json
-import uuid
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chains.itinerary_chain import generate_itinerary
-from core.analytics import log_event, flush_llm_usage
+from core.analytics import flush_llm_usage, log_event
 from core.auth_dependency import get_current_user
 from core.config import settings
 from core.errors import sanitize_error
-from core.rate_limit import LLM_RATE_LIMIT, limiter
 from core.llm_usage import reset_usage
+from core.rate_limit import LLM_RATE_LIMIT, limiter
 from db import get_db
 from db_models import User
 from models.itinerary import GenerateItineraryRequest
@@ -101,7 +100,7 @@ async def _stream_generation(trip_config: TripConfig, db: AsyncSession, user: Us
             # torn down once nobody can receive its result.
             if not task.done():
                 task.cancel()
-    except asyncio.TimeoutError:
+    except TimeoutError:
         yield await send("error", {
             "code": "LLM_TIMEOUT",
             "message": "Generation timed out. Please try again.",

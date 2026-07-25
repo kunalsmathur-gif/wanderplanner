@@ -11,9 +11,9 @@ record_usage() just does nothing rather than raising.
 from __future__ import annotations
 
 from contextvars import ContextVar
-from typing import Any, Optional
+from typing import Any
 
-_usage_ctx: ContextVar[Optional[list]] = ContextVar("_usage_ctx", default=None)
+_usage_ctx: ContextVar[list | None] = ContextVar("_usage_ctx", default=None)
 
 
 def reset_usage() -> None:

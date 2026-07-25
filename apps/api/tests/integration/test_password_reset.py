@@ -1,7 +1,7 @@
 """Integration tests for forgot-password and password reset token flows."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -94,7 +94,7 @@ async def test_reset_password_rejects_expired_token(client, db_session_maker, us
             PasswordResetToken(
                 user_id=user.id,
                 token_hash=token_hash,
-                expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+                expires_at=datetime.now(UTC) - timedelta(minutes=1),
             )
         )
         await session.commit()

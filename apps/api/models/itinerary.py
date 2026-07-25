@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from pydantic import BaseModel, Field
-from models.trip import TripConfig, DestinationInput
+
+from models.trip import DestinationInput, TripConfig
 
 
 class ItineraryItemLocation(BaseModel):
