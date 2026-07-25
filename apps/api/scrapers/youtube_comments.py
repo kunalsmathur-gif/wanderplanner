@@ -25,6 +25,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+from collections import deque
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -42,6 +44,40 @@ _API_BASE = "https://www.googleapis.com/youtube/v3"
 _MAX_FETCH_ATTEMPTS = 3
 _RETRY_BASE_DELAY_S = 5.0
 
+# Rolling-24h search budget (see settings.youtube_daily_search_budget).
+# `search.list` costs 100 of the free tier's 10,000 daily units, so the two
+# *automatic* callers — the cold-start gate (services/destination_ingestion.py,
+# itself capped at 5 cold starts/hour = up to 120/day) and the scheduler
+# refresh loop — could between them exhaust the day's quota and leave manual
+# re-ingestion or eval runs unable to search at all. This is a process-global
+# window, the same shape and for the same reason as
+# destination_ingestion.py's `_cold_start_budget_available()`: cheap, no new
+# infra, and it degrades to "no videos found" (which every caller already
+# handles) rather than an error.
+_daily_search_window = timedelta(hours=24)
+_search_times: deque[datetime] = deque()
+_search_budget_guard = asyncio.Lock()
+
+
+async def _search_budget_available() -> bool:
+    """Reserve one of the rolling day's `search.list` slots, or return False
+    if the budget is exhausted."""
+    async with _search_budget_guard:
+        now = datetime.now(timezone.utc)
+        cutoff = now - _daily_search_window
+        while _search_times and _search_times[0] < cutoff:
+            _search_times.popleft()
+        if len(_search_times) >= settings.youtube_daily_search_budget:
+            return False
+        _search_times.append(now)
+        return True
+
+
+def reset_search_budget() -> None:
+    """Clear the rolling search-budget window. Test hook — production code
+    never needs this (the window self-expires)."""
+    _search_times.clear()
+
 
 def _search_query(destination: str) -> str:
     # "hidden places" / "things to do" phrasing surfaces India's large
@@ -51,22 +87,38 @@ def _search_query(destination: str) -> str:
     return f"{destination} travel guide hidden places things to do"
 
 
-async def search_travel_videos(destination: str) -> list[dict[str, str]]:
+async def search_travel_videos(
+    destination: str, query: str | None = None, max_results: int | None = None
+) -> list[dict[str, str]]:
     """Discover up to `settings.youtube_videos_per_destination` relevant
     video IDs for a destination via `search.list`. Returns `[]` (not an
-    exception) when no API key is configured, so callers can treat "no key"
-    and "no results" the same way — best-effort by design, same as every
-    other ingestion source in this codebase."""
+    exception) when no API key is configured or the rolling-24h search
+    budget is exhausted, so callers can treat "no key", "over budget" and
+    "no results" the same way — best-effort by design, same as every other
+    ingestion source in this codebase.
+
+    `query` overrides the default hidden-gems-flavoured search phrasing —
+    scrapers/itinerary_corpus.py passes an itinerary-shaped query
+    ("3 day X itinerary travel vlog") because it's looking for trip-plan
+    videos to extract day structure from, not comment sentiment."""
     if not settings.youtube_api_key:
         logger.info("YOUTUBE_API_KEY not set — skipping video discovery for %r", destination)
+        return []
+
+    if not await _search_budget_available():
+        logger.warning(
+            "YouTube search budget exhausted (%d searches/24h) — skipping video discovery for %r",
+            settings.youtube_daily_search_budget,
+            destination,
+        )
         return []
 
     params = {
         "key": settings.youtube_api_key,
         "part": "snippet",
-        "q": _search_query(destination),
+        "q": query or _search_query(destination),
         "type": "video",
-        "maxResults": settings.youtube_videos_per_destination,
+        "maxResults": max_results or settings.youtube_videos_per_destination,
         "relevanceLanguage": "en",
         "safeSearch": "moderate",
     }

@@ -1,5 +1,114 @@
 # Next-Session TODO — Post-Cloud-migration cleanup → Reddit approval → Phase 2
 
+---
+
+## 🆕 2026-07-25 session — 4 carried-over items closed (YouTube wiring, gems dead zone, price retrieval, food anchoring)
+
+All four were long-standing "deferred pending data" items. Two of them (gems thresholds,
+`_FOOD_MEALS_PER_DAY`) were deferred specifically because tuning a magic number without
+calibration data just moves the guess — so both were fixed **structurally** instead, in ways
+that don't require a new guessed constant. Full suite green: **529 passed / 6 skipped / 0 failed**
+(+54 tests, from 475). Changes uncommitted pending review.
+
+**1. ✅ YouTube ingestion wired into the cold-start gate + scheduler (was manual-only).**
+The blocker was quota, not plumbing: `search.list` costs 100 of the free tier's 10,000 daily
+units, and the cold-start gate allows 5/hour = up to 120/day = 12,000 units, i.e. wiring it in
+naively would have blown the daily quota and starved manual/eval runs. Added a rolling-24h
+search budget in `scrapers/youtube_comments.py` (`_search_budget_available()`, same shape as
+`destination_ingestion.py`'s existing cold-start window, `settings.youtube_daily_search_budget=80`
+≈ 8,000 units with headroom). With that guard in place:
+- `services/destination_ingestion.py` now ingests YouTube comments on first request, gated on
+  `youtube_ingest_on_cold_start` + a key being set. Over budget → returns 0 and leaves
+  `youtube_last_ingested_at` NULL so the scheduler retries; it never records a destination as
+  freshly-ingested-but-empty.
+- New `core/scheduler.py::_refresh_youtube_comments` job on its own longer cadence
+  (`youtube_refresh_days=14`, `youtube_refresh_batch_size=20`), **NULL-first then demand-ranked**
+  (`request_count` DESC) so limited quota goes to what users actually ask for.
+- New column `destination_ingestion_state.youtube_last_ingested_at` + migration
+  `0005_youtube_ingestion_state` (applied and verified locally).
+- **Bug found and fixed while wiring**: the cold-start `asyncio.gather` had no
+  `return_exceptions`, so a raising OSM fetch discarded an already-successful Wikivoyage scrape.
+  Each source is now independent.
+
+**2. ✅ `itinerary_corpus.py` now discovers videos live instead of using the empty static list.**
+`discover_youtube_itinerary_videos()` reuses `search_travel_videos()` (shared client + quota
+budget) with an **itinerary-shaped** query, deliberately distinct from the hidden-gems phrasing,
+over a new India-weighted `YOUTUBE_ITINERARY_SEED_DESTINATIONS` (10 India / 6 international —
+correcting the pattern where every prior seed list under-served domestic destinations).
+Discovered titles are filtered through the existing `_is_itinerary_shaped()` (search relevance
+happily returns "10 THINGS TO KNOW" videos with no day structure). `YOUTUBE_ITINERARY_VIDEO_IDS`
+is kept as a manual supplement and deduped against, so the module still works keyless.
+
+**3. ✅ gems.py dead zone fixed — and it was a bug, not a tuning problem.**
+The old fixed pair (gem ≤ 6, crowd ≥ 12) left POIs mentioned **7–11 times classified as neither**,
+so they vanished from both lists — exactly what happened to Jaipur's only match (Hawa Mahal,
+8 mentions), which is why the feature returned empty despite having real signal. Absolute counts
+also can't be right for two corpus sizes at once (8 mentions means "obscure" in a 500-comment
+corpus and "the most talked-about place here" in a 30-comment one). Replaced with a **per-destination
+percentile split** (`_crowd_mention_threshold`, top ~20%), clamped into
+`[_CROWD_MIN_MENTIONS=3, _CROWD_ABSOLUTE_MENTIONS=12]`, falling back to the absolute ceiling below
+`_MIN_POIS_FOR_RELATIVE_SPLIT=5` mentioned POIs (a percentile over 1–2 POIs is meaningless). The
+two branches now **partition** every mentioned POI — the sentiment floor is the only remaining
+reason one lands in neither list, which is deliberate. This is scale-free, so it stays correct as
+ingestion coverage grows rather than needing a re-tune per destination.
+
+**4. ✅ Price-grounding retrieval fixed — the ranking gap AND two silent bugs behind it.**
+Root cause was a category error: presence of a price is a **lexical** property, but selection was
+being done **semantically**. A casual "Choki dani 700 per person" comment is topically about a
+restaurant, not about "cost", so it carries almost no signal for a price-flavoured query to rank on
+and never made the top-N cut. Fixes:
+- New `core/cost_grounding.py::_scroll_price_candidates_sync` — bounded destination-filtered scroll
+  (400 chunks/collection) keeping chunks that literally contain a price, via the same regex the
+  extractor uses (`has_price_mention`). Merged ahead of the semantic pass in a new
+  `community_price_samples()`, kept separate from `community_price_snippets()` so the prompt-hint
+  callers' token budget is untouched.
+- **Silent bug 1**: snippets were head-truncated at 280 chars, so any chunk whose price sat past
+  char 280 was passed on with the price already cut off — it looked on-topic and contributed
+  nothing, invisibly. The prompt path now uses `price_focused_excerpt()` (window centred on the
+  price, keeping the trailing "per person"/"per night" qualifier in view).
+- **Silent bug 2**: the extraction path shouldn't truncate *at all* — only a regex reads it, and a
+  280-char excerpt discards additional prices later in the same chunk (Wikivoyage "Eat"/"Sleep"
+  sections routinely list several). Now passes full chunk text.
+- **Live-verified read-only against the real cluster**: price-bearing snippets found went 0→1
+  (Jaipur), 0→3 (Paris), 1→3 (London) vs. the semantic-only path. Dropping the extraction-path
+  truncation took Paris from 1→2 extractable amounts, which **crossed `min_samples` and produced
+  the first non-None food grounding this feature has ever returned** (₹3,375/day).
+
+**5. ✅ `_FOOD_MEALS_PER_DAY` no longer unconditionally load-bearing; the floor is now conditional.**
+Rather than invent a calibration number, the multiplier was demoted to a *fallback*. New
+`core/price_extraction.py::food_per_day_estimate_inr` returns `(value, directly_observed)`:
+- enough amounts already expressed **per-day** ("we spent ₹900 a day on food") → used directly,
+  **no multiplier involved at all**, `directly_observed=True`;
+- otherwise → per-meal amounts scaled by `_FOOD_MEALS_PER_DAY` and pooled, `directly_observed=False`.
+
+`core/budget_estimator.py::_grounded_food_per_day` then applies the safety floor **only to the
+reconciled path**. The floor's entire justification was "the meals/day factor is uncalibrated, so a
+low result may be an artefact" — that reasoning doesn't apply to a directly-observed daily figure,
+which *is* the "anchored against real daily-spend data" condition the floor was always meant to be
+temporary pending. So directly-observed figures are now trusted in both directions (same latitude
+stay grounding already has), while reconciled ones stay floored. Net effect: the uncalibrated
+constant becomes progressively less relevant as ingestion improves, instead of needing a one-off
+calibration pass to retire.
+
+### Still open after this session (real findings from the live run, not hand-waving)
+
+- **Grounding still returns None for most destinations — but the reason has changed.** It is now a
+  *corpus density* problem, not a retrieval one: destinations yield 0–2 extractable on-topic
+  amounts and `min_samples=2` isn't met. Mumbai/Delhi/Goa/Bengaluru/London all found price-bearing
+  chunks but zero *food-priced* ones. More ingestion (item 2) or Reddit (item 4) is the unblock.
+- **Snippet-level context matching is coarse and produced a live false positive.** Paris's grounded
+  ₹3,375/day is partly contaminated by a €5 *bus fare* from a chunk that mentions food words
+  elsewhere, so it passed `FOOD_CONTEXT_KEYWORDS`. The floor correctly discarded it (3,375 < flat
+  6,546 → `food_community_based=False`), which is the floor doing exactly its job — but per-amount
+  proximity matching (rather than whole-snippet) is the real fix, and is now the highest-value next
+  step for this feature.
+- `_FOOD_MEALS_PER_DAY = 3.0` is still the fallback value; it just isn't used when real daily data
+  exists. Calibrating it remains open, now lower-stakes.
+- Ruff: the repo is **not** ruff-clean under the currently-installed version (257 pre-existing
+  errors at HEAD, mostly `UP017`/`UP007`/`I001` style rules; sibling migrations 0003/0004 carry the
+  same `I001`). This session's files match surrounding style rather than diverging. Worth a
+  dedicated `ruff check --fix` pass + a ruff version pin, since CI runs a bare `ruff check .`.
+
 **Last updated:** 2026-07-24 (latest) — manual frontend/stage bug-bash session found and fixed 5 Anya wizard bugs total: a dead-end fallback reply, a broken post-sign-in resume state sync, a ZWJ-emoji chip-tap detection bug, a misleading `(NO_DATA)` error masking real generation failures, and (found on stage after the first 3 were live) stale group-type chips repeating under the traveler-count follow-up. See "2026-07-24 session — Anya wizard bug bash" block immediately below. Previous entry: (1) full 168-destination live re-audit found the backlog nearly clear (only 10 failing, none wiki/osm-zero); fixed **3 silently mis-geocoded destinations the count-only gate can't detect** (Austin→was Nevada ghost town, La Paz→was Mexico, Valencia→was Venezuela) + re-ingested the 10 gate failures, landing at **7/12 fixed, 5 residual = genuine real-world category skew** (Paris metro + 4 temple/pilgrimage towns), not bugs. (2) Shipped the **food-grounding per-meal→per-day reconciliation** ("item A" proper fix) — now unit-aware, floor-kept-as-safety-net. See the two "2026-07-24 session" blocks further below. Prior top-priority (food under-estimation) is now resolved.
 
 ---

@@ -169,3 +169,86 @@ class TestColdStartRateLimit:
         async with session_maker() as db:
             row = await db.get(DestinationIngestionState, "Overbooked City")
             assert row is None  # not persisted, so it can be retried once the window clears
+
+
+class TestYoutubeColdStartIngestion:
+    """YouTube comments feed services/gems.py. Unlike OSM/Wikivoyage (free,
+    unmetered) this spends a metered API quota, so it's opt-out and its own
+    budget guard decides whether it actually runs."""
+
+    @pytest.mark.asyncio
+    async def test_youtube_ingested_on_first_request_when_enabled(self, session_maker):
+        with patch("services.destination_ingestion.geocode_city", new=AsyncMock(return_value=object())), \
+             patch("services.destination_ingestion.settings.youtube_api_key", "fake-key"), \
+             patch("services.destination_ingestion.settings.youtube_ingest_on_cold_start", True), \
+             patch("scrapers.osm.ingest_osm_pois", new=AsyncMock(return_value=12)), \
+             patch("scrapers.wikivoyage.ingest_wikivoyage", new=AsyncMock(return_value=5)), \
+             patch("scrapers.youtube_comments.ingest_youtube_comments", new=AsyncMock(return_value=30)) as mock_yt:
+            await di.ensure_destination_ingested("Jaipur")
+
+        mock_yt.assert_awaited_once_with("Jaipur")
+        async with session_maker() as db:
+            row = await db.get(DestinationIngestionState, "Jaipur")
+            assert row.youtube_last_ingested_at is not None
+
+    @pytest.mark.asyncio
+    async def test_youtube_skipped_without_api_key(self, session_maker):
+        with patch("services.destination_ingestion.geocode_city", new=AsyncMock(return_value=object())), \
+             patch("services.destination_ingestion.settings.youtube_api_key", ""), \
+             patch("scrapers.osm.ingest_osm_pois", new=AsyncMock(return_value=12)), \
+             patch("scrapers.wikivoyage.ingest_wikivoyage", new=AsyncMock(return_value=5)), \
+             patch("scrapers.youtube_comments.ingest_youtube_comments", new=AsyncMock()) as mock_yt:
+            await di.ensure_destination_ingested("Jaipur")
+
+        mock_yt.assert_not_awaited()
+        async with session_maker() as db:
+            row = await db.get(DestinationIngestionState, "Jaipur")
+            assert row is not None                      # OSM/wiki still ingested
+            assert row.youtube_last_ingested_at is None  # scheduler will pick it up
+
+    @pytest.mark.asyncio
+    async def test_youtube_skipped_when_disabled_by_setting(self, session_maker):
+        with patch("services.destination_ingestion.geocode_city", new=AsyncMock(return_value=object())), \
+             patch("services.destination_ingestion.settings.youtube_api_key", "fake-key"), \
+             patch("services.destination_ingestion.settings.youtube_ingest_on_cold_start", False), \
+             patch("scrapers.osm.ingest_osm_pois", new=AsyncMock(return_value=12)), \
+             patch("scrapers.wikivoyage.ingest_wikivoyage", new=AsyncMock(return_value=5)), \
+             patch("scrapers.youtube_comments.ingest_youtube_comments", new=AsyncMock()) as mock_yt:
+            await di.ensure_destination_ingested("Jaipur")
+
+        mock_yt.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_zero_youtube_comments_leaves_timestamp_null_for_retry(self, session_maker):
+        """Over budget / no videos / comments disabled must not mark the
+        destination as freshly-ingested-but-empty."""
+        with patch("services.destination_ingestion.geocode_city", new=AsyncMock(return_value=object())), \
+             patch("services.destination_ingestion.settings.youtube_api_key", "fake-key"), \
+             patch("services.destination_ingestion.settings.youtube_ingest_on_cold_start", True), \
+             patch("scrapers.osm.ingest_osm_pois", new=AsyncMock(return_value=12)), \
+             patch("scrapers.wikivoyage.ingest_wikivoyage", new=AsyncMock(return_value=5)), \
+             patch("scrapers.youtube_comments.ingest_youtube_comments", new=AsyncMock(return_value=0)):
+            await di.ensure_destination_ingested("Jaipur")
+
+        async with session_maker() as db:
+            row = await db.get(DestinationIngestionState, "Jaipur")
+            assert row.youtube_last_ingested_at is None
+
+    @pytest.mark.asyncio
+    async def test_one_source_failing_does_not_discard_the_others(self, session_maker):
+        """Regression: a single gather() without return_exceptions threw away
+        a successful wiki scrape whenever the OSM fetch raised."""
+        with patch("services.destination_ingestion.geocode_city", new=AsyncMock(return_value=object())), \
+             patch("services.destination_ingestion.settings.youtube_api_key", "fake-key"), \
+             patch("services.destination_ingestion.settings.youtube_ingest_on_cold_start", True), \
+             patch("scrapers.osm.ingest_osm_pois", new=AsyncMock(side_effect=RuntimeError("overpass 504"))), \
+             patch("scrapers.wikivoyage.ingest_wikivoyage", new=AsyncMock(return_value=5)), \
+             patch("scrapers.youtube_comments.ingest_youtube_comments", new=AsyncMock(return_value=30)) as mock_yt:
+            await di.ensure_destination_ingested("Jaipur")
+
+        # The wiki and YouTube work still happened and the row still exists.
+        mock_yt.assert_awaited_once()
+        async with session_maker() as db:
+            row = await db.get(DestinationIngestionState, "Jaipur")
+            assert row is not None
+            assert row.youtube_last_ingested_at is not None

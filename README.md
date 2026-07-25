@@ -259,6 +259,10 @@ Open `http://localhost:3000`.
 | `PASSWORD_RESET_TOKEN_TTL_MINUTES` | Reset-link TTL (default: 30) | ❌ |
 | `QDRANT_URL` | Qdrant instance URL (default: `:memory:`) | ❌ |
 | `PEXELS_API_KEY` | Optional Pexels API key for itinerary day photos in exported PDFs | ❌ |
+| `YOUTUBE_API_KEY` | YouTube Data API v3 key — powers hidden-gem sentiment (video comments) and itinerary-video discovery. Every code path is a documented no-op without it | ❌ |
+| `YOUTUBE_DAILY_SEARCH_BUDGET` | Max `search.list` calls per rolling 24h (default: 80). The free quota is 10,000 units/day and each search costs 100, so this keeps automatic ingestion from starving manual/eval runs | ❌ |
+| `YOUTUBE_INGEST_ON_COLD_START` | Ingest YouTube comments on a destination's first request (default: `true`). Set `false` to keep YouTube ingestion scheduler-only | ❌ |
+| `YOUTUBE_REFRESH_DAYS` | Scheduler cadence for refreshing YouTube comment data (default: 14) | ❌ |
 | `ALLOWED_ORIGINS` | CORS origins (e.g. `http://localhost:3000`) | ✅ |
 
 ---
@@ -276,6 +280,14 @@ Open `http://localhost:3000`.
 ---
 
 ## Changelog
+
+### v5.12 — Automated YouTube Ingestion, Hidden-Gem Classification Fix, Price-Grounding Retrieval Fix (July 2026)
+- ✅ **NEW: YouTube ingestion is now automatic.** Hidden-gem sentiment (video comments) is ingested on a destination's first request and refreshed on a 14-day schedule, instead of only when run by hand. It's the first *metered* data source in the app, so both automatic callers sit behind a rolling-24h search budget — without it, the cold-start path alone could have spent ~12,000 units against a 10,000/day quota and starved manual/eval runs.
+- ✅ **NEW: itinerary videos are discovered live** instead of read from a hand-curated (and empty) list — searched with an itinerary-shaped query over an India-weighted destination seed list and filtered to titles that actually look like day-by-day plans.
+- ✅ **FIXED: hidden gems could silently return nothing despite having real data.** Places mentioned 7–11 times matched neither the "gem" nor the "crowd favourite" rule and vanished from both lists — which is exactly what happened to Jaipur's only match. Classification is now relative to each destination's own mention distribution, so it also stays correct as ingested coverage grows rather than needing a re-tune per city.
+- ✅ **FIXED: budget grounding never found the price mentions it was looking for.** Search was ranking by topic ("is this text *about* cost?"), but a real comment like "Choki dani 700 per person" is about a restaurant — so it never surfaced. Prices are now found by looking for prices. Two silent bugs came out with it: snippets were being cut off mid-way, discarding the very amounts being searched for. Live-verified against production data: price-bearing snippets found went 0→3 for Paris, and the first-ever real food-cost grounding came through.
+- ✅ **CHANGED: food-cost estimates prefer real per-day spend data** over converting per-meal prices with an assumed meals-per-day figure. The safety floor that prevented under-budgeting now applies only when that assumption is actually involved — real observed daily data is trusted in both directions.
+- 54 new tests, full backend suite green (529 passed, 6 skipped, 0 failed). Docs updated: `TECHNICAL_DOCUMENTATION.md` (§14 v10.38), `docs/rag-strategy.md` (§3L, §3M), `docs/DEMO_DAY_FAQ_CHEATSHEET.md` (Q7/Q13/Q14), `docs/system-design.md`, `docs/NEXT_SESSION_TODO.md`.
 
 ### v5.11 — ⚠️ Commercial-Licensing Fix: budgetyourtrip.com → Wikivoyage + Inside Airbnb, New Airbnb-Based Stay Estimates (July 2026)
 - ✅ **FIXED: `_COST_MATRIX`'s hotel-pricing source violated commercial-use terms.** budgetyourtrip.com (used for `stay_per_night_pp`) and Numbeo (used for premium-tier `food_per_day_pp`) both turned out to require a paid license for this kind of commercial use. Re-sourced `stay_per_night_pp` onto real Wikivoyage (CC BY-SA 3.0) hotel-listing prices, reconstructed to the same figures via an empirically-derived multiplier — numbers barely move, provenance is now compliant.

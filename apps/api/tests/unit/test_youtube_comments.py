@@ -14,8 +14,18 @@ import pytest
 from scrapers.youtube_comments import (
     fetch_video_comments,
     ingest_youtube_comments,
+    reset_search_budget,
     search_travel_videos,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_budget():
+    """The rolling-24h search budget is process-global, so it would otherwise
+    leak across tests in this module."""
+    reset_search_budget()
+    yield
+    reset_search_budget()
 
 SEARCH_RESPONSE = {
     "items": [
@@ -192,3 +202,79 @@ class TestIngestYoutubeComments:
 
         assert count == 0
         mock_qdrant.upsert.assert_not_called()
+
+
+class TestSearchBudget:
+    """`search.list` costs 100 of the free tier's 10,000 daily units. Now that
+    ingestion runs automatically (cold-start gate + scheduler) rather than only
+    by hand, a rolling-24h cap keeps automatic traffic from exhausting the
+    day's quota and starving manual/eval runs."""
+
+    @pytest.mark.asyncio
+    async def test_stops_searching_once_budget_is_exhausted(self):
+        with patch("scrapers.youtube_comments.settings.youtube_api_key", "fake-key"), \
+             patch("scrapers.youtube_comments.settings.youtube_daily_search_budget", 2), \
+             patch("scrapers.youtube_comments.httpx.AsyncClient") as mock_client_cls:
+            mock_client = mock_client_cls.return_value.__aenter__.return_value
+            mock_client.get = AsyncMock(return_value=_mock_response(SEARCH_RESPONSE))
+
+            assert await search_travel_videos("Jaipur") != []
+            assert await search_travel_videos("Udaipur") != []
+            # Third call is over budget — returns empty WITHOUT an API call.
+            assert await search_travel_videos("Jodhpur") == []
+            assert mock_client.get.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_budget_is_not_consumed_when_no_api_key(self):
+        """A keyless no-op must not burn budget slots — otherwise configuring a
+        key later would find the window already spent."""
+        with patch("scrapers.youtube_comments.settings.youtube_api_key", ""), \
+             patch("scrapers.youtube_comments.settings.youtube_daily_search_budget", 1):
+            await search_travel_videos("Jaipur")
+
+        with patch("scrapers.youtube_comments.settings.youtube_api_key", "fake-key"), \
+             patch("scrapers.youtube_comments.settings.youtube_daily_search_budget", 1), \
+             patch("scrapers.youtube_comments.httpx.AsyncClient") as mock_client_cls:
+            mock_client = mock_client_cls.return_value.__aenter__.return_value
+            mock_client.get = AsyncMock(return_value=_mock_response(SEARCH_RESPONSE))
+            assert await search_travel_videos("Jaipur") != []
+
+    @pytest.mark.asyncio
+    async def test_expired_window_entries_free_up_slots(self):
+        from datetime import datetime, timedelta, timezone
+
+        import scrapers.youtube_comments as yt
+
+        # Two searches recorded 25h ago — outside the rolling 24h window.
+        stale = datetime.now(timezone.utc) - timedelta(hours=25)
+        yt._search_times.extend([stale, stale])
+
+        with patch("scrapers.youtube_comments.settings.youtube_api_key", "fake-key"), \
+             patch("scrapers.youtube_comments.settings.youtube_daily_search_budget", 2), \
+             patch("scrapers.youtube_comments.httpx.AsyncClient") as mock_client_cls:
+            mock_client = mock_client_cls.return_value.__aenter__.return_value
+            mock_client.get = AsyncMock(return_value=_mock_response(SEARCH_RESPONSE))
+            assert await search_travel_videos("Jaipur") != []
+
+        assert mock_client.get.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_custom_query_overrides_default_phrasing(self):
+        """scrapers/itinerary_corpus.py searches for day-by-day trip plans, not
+        the hidden-gems phrasing this module defaults to."""
+        with patch("scrapers.youtube_comments.settings.youtube_api_key", "fake-key"), \
+             patch("scrapers.youtube_comments.httpx.AsyncClient") as mock_client_cls:
+            mock_client = mock_client_cls.return_value.__aenter__.return_value
+            mock_client.get = AsyncMock(return_value=_mock_response(SEARCH_RESPONSE))
+            await search_travel_videos("Kerala", query="Kerala itinerary travel vlog")
+
+        params = mock_client.get.await_args.kwargs["params"]
+        assert params["q"] == "Kerala itinerary travel vlog"
+
+    @pytest.mark.asyncio
+    async def test_ingest_returns_zero_when_over_budget(self):
+        """Over budget must degrade to 'no data' (which leaves the state row's
+        timestamp NULL so the scheduler retries), never raise."""
+        with patch("scrapers.youtube_comments.settings.youtube_api_key", "fake-key"), \
+             patch("scrapers.youtube_comments.settings.youtube_daily_search_budget", 0):
+            assert await ingest_youtube_comments("Jaipur") == 0

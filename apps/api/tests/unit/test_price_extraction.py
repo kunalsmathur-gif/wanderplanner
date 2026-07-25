@@ -4,7 +4,10 @@ from core.price_extraction import (
     FOOD_CONTEXT_KEYWORDS,
     STAY_CONTEXT_KEYWORDS,
     extract_price_mentions_inr,
+    food_per_day_estimate_inr,
+    has_price_mention,
     median_price_inr,
+    price_focused_excerpt,
 )
 
 STAY_BOUNDS = (300, 50_000)
@@ -250,3 +253,117 @@ def test_median_food_per_day_mixes_meal_and_daily_correctly():
         snippets, *FOOD_PP_BOUNDS, min_samples=2,
         context_keywords=FOOD_CONTEXT_KEYWORDS, per_day_meal_multiplier=3.0,
     ) == 900.0
+
+
+# ---------------------------------------------------------------------------
+# Lexical price detection (retrieval fix — see core/cost_grounding.py::
+# community_price_samples for why selection is lexical rather than semantic)
+# ---------------------------------------------------------------------------
+
+def test_has_price_mention_detects_all_three_passes():
+    assert has_price_mention("Room was ₹4500 a night.")           # symbol pass
+    assert has_price_mention("Choki dani 700 per person, worth")  # bare-unit pass
+    assert has_price_mention("we paid 1200 for the guide")        # price-verb pass
+
+
+def test_has_price_mention_rejects_bare_numbers_without_price_context():
+    # The same guards the extractor uses: timestamps/counts/dates aren't prices.
+    assert not has_price_mention("watch at 10:30 for the temple shot")
+    assert not has_price_mention("this video has 45000 views")
+    assert not has_price_mention("no numbers here at all")
+
+
+def test_price_focused_excerpt_keeps_a_late_price_in_view():
+    """A blind text[:280] silently drops an amount sitting past the cutoff —
+    the snippet then looks on-topic but contributes nothing extractable."""
+    text = "background chatter " * 30 + "the thali was ₹250 per plate honestly"
+    assert len(text) > 280
+    excerpt = price_focused_excerpt(text, width=280)
+    assert "₹250" in excerpt
+    assert len(excerpt) <= 280
+    # And the amount stays extractable end-to-end from the excerpt.
+    assert extract_price_mentions_inr([excerpt], *FOOD_PP_BOUNDS,
+                                      context_keywords=FOOD_CONTEXT_KEYWORDS) == [250.0]
+
+
+def test_price_focused_excerpt_keeps_trailing_unit_phrase():
+    text = "x" * 400 + " dinner cost ₹800 per person at that place"
+    excerpt = price_focused_excerpt(text, width=280)
+    assert "₹800 per person" in excerpt
+
+
+def test_price_focused_excerpt_falls_back_to_head_truncation():
+    text = "a" * 500
+    assert price_focused_excerpt(text, width=280) == "a" * 280
+
+
+def test_price_focused_excerpt_leaves_short_text_untouched():
+    assert price_focused_excerpt("Thali ₹200.") == "Thali ₹200."
+
+
+# ---------------------------------------------------------------------------
+# Food per-day estimate: directly-observed daily data vs. reconciled per-meal
+# ---------------------------------------------------------------------------
+
+def test_food_per_day_prefers_directly_observed_daily_amounts():
+    """When enough amounts are already per-day, no meals/day factor is applied
+    and the result is flagged directly_observed — this is what lets the caller
+    drop its safety floor (core/budget_estimator.py::_grounded_food_per_day)."""
+    snippets = [
+        "We spent ₹900 per day on food easily.",
+        "Food budget was about ₹1100 a day for meals.",
+        "A single thali is ₹200.",  # per-meal, must NOT be scaled into the result
+    ]
+    value, directly_observed = food_per_day_estimate_inr(
+        snippets, *FOOD_PP_BOUNDS, min_samples=2, context_keywords=FOOD_CONTEXT_KEYWORDS,
+    )
+    assert directly_observed is True
+    assert value == 1000.0  # median(900, 1100) — the ₹200 meal is excluded entirely
+
+
+def test_food_per_day_falls_back_to_reconciled_when_daily_data_is_thin():
+    snippets = [
+        "Breakfast thali ₹200 at the cafe.",
+        "Lunch buffet was ₹300 per person, great.",
+    ]
+    value, directly_observed = food_per_day_estimate_inr(
+        snippets, *FOOD_PP_BOUNDS, min_samples=2,
+        context_keywords=FOOD_CONTEXT_KEYWORDS, meals_per_day=3.0,
+    )
+    assert directly_observed is False
+    assert value == 750.0  # median(200*3, 300*3)
+
+
+def test_food_per_day_pools_when_only_one_daily_mention_exists():
+    """One daily mention is below min_samples, so it pools with the reconciled
+    per-meal amounts rather than being trusted alone."""
+    snippets = [
+        "We spent ₹900 per day on food.",
+        "Thali was ₹200.",
+        "Dinner ₹300 per person.",
+    ]
+    value, directly_observed = food_per_day_estimate_inr(
+        snippets, *FOOD_PP_BOUNDS, min_samples=2,
+        context_keywords=FOOD_CONTEXT_KEYWORDS, meals_per_day=3.0,
+    )
+    assert directly_observed is False
+    assert value == 900.0  # median(900, 600, 900)
+
+
+def test_food_per_day_returns_none_without_enough_signal():
+    value, directly_observed = food_per_day_estimate_inr(
+        ["The food was great but I forget what we paid."], *FOOD_PP_BOUNDS,
+        min_samples=2, context_keywords=FOOD_CONTEXT_KEYWORDS,
+    )
+    assert (value, directly_observed) == (None, False)
+
+
+def test_food_per_day_applies_bounds_to_the_reconciled_value():
+    """Bounds must apply after scaling, not before — a ₹4000 'dish' becomes an
+    implausible ₹12000/day and is dropped."""
+    value, _ = food_per_day_estimate_inr(
+        ["Some restaurant meal was ₹4000, splurge.", "Another dish ₹3800 there."],
+        *FOOD_PP_BOUNDS, min_samples=1,
+        context_keywords=FOOD_CONTEXT_KEYWORDS, meals_per_day=3.0,
+    )
+    assert value is None

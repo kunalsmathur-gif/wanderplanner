@@ -19,10 +19,13 @@ All four sources below are free and require no paid API key:
     from `scrapers/reddit.py` (no OAuth/PRAW credentials needed) filtered down
     to itinerary-shaped titles (e.g. "10 day itinerary for...").
   - YouTube caption transcripts via `youtube_transcript_api`, which needs only
-    a video ID (no API key). NOTE: discovering *which* video IDs are relevant
-    would normally use the YouTube Data API (requires a key/quota) — to stay
-    strictly keyless, this module accepts an explicit, curated list of video
-    IDs rather than performing a live YouTube search.
+    a video ID (no API key). Video *discovery* is now live via the YouTube
+    Data API's `search.list` (`discover_youtube_itinerary_videos()`, reusing
+    scrapers/youtube_comments.py's client + shared quota budget) over an
+    India-weighted seed destination list, filtered to itinerary-shaped titles.
+    That path is the only one here that needs a key: it is a documented no-op
+    without one, falling back to the manual `YOUTUBE_ITINERARY_VIDEO_IDS`
+    list, so this module still works keyless — just with fewer videos.
 """
 from __future__ import annotations
 
@@ -286,14 +289,71 @@ async def scrape_reddit_trip_reports() -> list[dict[str, Any]]:
 # 4. YouTube caption transcripts (youtube_transcript_api, no API key needed)
 # ---------------------------------------------------------------------------
 
-# Discovering *which* videos are relevant would normally require the YouTube
-# Data API (needs a key/quota) — to stay strictly keyless/free, this is a
-# small curated seed list of well-known trip-vlog/itinerary video IDs rather
-# than a live search. Extend this list manually as good videos are found.
+# Manual seed list, kept as a supplement to (not a replacement for) the live
+# discovery below: transcripts themselves need no API key, so a hand-curated
+# video ID still works when `YOUTUBE_API_KEY` is unset or its search budget is
+# exhausted. Extend as good videos are found.
 YOUTUBE_ITINERARY_VIDEO_IDS: list[dict[str, str]] = [
     # Intentionally empty by default — populate with known-good video IDs,
     # e.g. {"video_id": "dQw4w9WgXcQ", "title": "..."}
 ]
+
+# Destinations to run live itinerary-video discovery for. Deliberately
+# India-weighted from day one (docs/NEXT_SESSION_TODO.md item 3's "India
+# domestic-travel coverage findings": the main user cohort is Indian, and
+# every previous seed list in this codebase under-served domestic destinations
+# — `KNOWN_DESTINATIONS` shipped with 11 India entries out of ~134, and
+# `WIKIVOYAGE_ITINERARY_TITLES` with 1 of 5). Kept short because each entry
+# costs a 100-unit `search.list` call against a 10,000/day quota shared with
+# hidden-gems comment ingestion.
+YOUTUBE_ITINERARY_SEED_DESTINATIONS: list[str] = [
+    # India (majority — domestic trip-vlog ecosystem is large and under-indexed
+    # by the blog/Wikivoyage sources this corpus otherwise draws on)
+    "Rajasthan", "Kerala", "Goa", "Ladakh", "Himachal Pradesh",
+    "Rishikesh", "Varanasi", "Meghalaya", "Andaman Islands", "Karnataka",
+    # International — the most-requested outbound destinations for the same cohort
+    "Bali", "Thailand", "Vietnam", "Dubai", "Singapore", "Japan",
+]
+
+
+def _itinerary_search_query(destination: str) -> str:
+    """Itinerary-shaped phrasing, distinct from
+    scrapers/youtube_comments.py's hidden-gems default: this corpus wants
+    day-by-day trip plans to extract structure from, not comment sentiment."""
+    return f"{destination} itinerary travel vlog day by day trip plan"
+
+
+async def discover_youtube_itinerary_videos() -> list[dict[str, str]]:
+    """Live per-destination video discovery via the YouTube Data API, replacing
+    the previously manual-only `YOUTUBE_ITINERARY_VIDEO_IDS` list.
+
+    Returns `[]` when no API key is configured (or the shared rolling-24h
+    search budget is exhausted) — the manual seed list above still applies in
+    that case, so this degrades to the old behaviour rather than breaking.
+
+    Discovered titles are filtered through the same `_is_itinerary_shaped()`
+    check the RSS path uses: `search.list` relevance alone happily returns
+    "10 THINGS TO KNOW BEFORE..." videos, which have no day structure for the
+    downstream extraction chain to work with.
+    """
+    from scrapers.youtube_comments import search_travel_videos
+
+    if not settings.youtube_api_key:
+        return []
+
+    discovered: list[dict[str, str]] = []
+    for destination in YOUTUBE_ITINERARY_SEED_DESTINATIONS:
+        try:
+            videos = await search_travel_videos(
+                destination, query=_itinerary_search_query(destination)
+            )
+        except Exception as e:
+            logger.warning("YouTube itinerary discovery failed for %s: %s", destination, e)
+            continue
+        for video in videos:
+            if _is_itinerary_shaped(video.get("title", "")):
+                discovered.append(video)
+    return discovered
 
 
 async def fetch_youtube_transcript(video_id: str, title: str = "") -> dict[str, Any] | None:
@@ -322,9 +382,20 @@ async def fetch_youtube_transcript(video_id: str, title: str = "") -> dict[str, 
 
 
 async def scrape_all_youtube_transcripts() -> list[dict[str, Any]]:
+    """Fetch transcripts for the manual seed list plus any live-discovered
+    itinerary videos, deduped by video ID (a manually-curated video can also
+    surface in search results — fetching its transcript twice would emit a
+    duplicate corpus doc)."""
+    entries = list(YOUTUBE_ITINERARY_VIDEO_IDS) + await discover_youtube_itinerary_videos()
+
     docs: list[dict[str, Any]] = []
-    for entry in YOUTUBE_ITINERARY_VIDEO_IDS:
-        doc = await fetch_youtube_transcript(entry["video_id"], entry.get("title", ""))
+    seen: set[str] = set()
+    for entry in entries:
+        video_id = entry.get("video_id", "")
+        if not video_id or video_id in seen:
+            continue
+        seen.add(video_id)
+        doc = await fetch_youtube_transcript(video_id, entry.get("title", ""))
         if doc:
             docs.append(doc)
     return docs

@@ -79,7 +79,7 @@ from datetime import date
 from typing import Any
 
 from core.airbnb_pricing import airbnb_hotel_equivalent_pp_inr
-from core.cost_grounding import community_median_price_inr
+from core.cost_grounding import community_food_per_day_inr, community_median_price_inr
 from core.distance_pricing import flight_band_inr
 from core.price_extraction import FOOD_CONTEXT_KEYWORDS, STAY_CONTEXT_KEYWORDS
 
@@ -432,12 +432,17 @@ _FOOD_PP_BOUNDS = (100, 10_000)
 # This factor reconciles a per-meal figure to a per-day one — the standard
 # three-meals-a-day, applied only to amounts NOT already tagged per-day (see
 # core/price_extraction.py::_iter_raw_amounts, which leaves e.g. "₹X per day"
-# mentions un-scaled so they aren't double-counted). It is a principled
-# default, not a calibrated one; the food floor (see `_grounded_or_flat`)
-# keeps the result safe in the meantime — grounding can only ever *raise*
-# food above the researched flat bare-minimum, never undercut it — so an
-# imperfect factor can't produce a harmful under-estimate. Recalibrate
-# against real per-day food-spend data when it's available.
+# mentions un-scaled so they aren't double-counted).
+#
+# It is a principled default, not a calibrated one — so rather than treat it
+# as permanent, `_grounded_food_per_day()` below only uses it as a *fallback*:
+# when a destination's corpus contains enough amounts already expressed
+# per-day, those are used directly and this factor never enters the
+# calculation. It therefore becomes progressively less load-bearing as
+# ingestion coverage grows, instead of needing a one-off calibration pass to
+# retire. Recalibrate against real per-day food-spend data when enough of it
+# exists to derive a number from; until then the floor (below) bounds the
+# damage on the fallback path.
 _FOOD_MEALS_PER_DAY = 3.0
 
 
@@ -448,8 +453,6 @@ async def _grounded_or_flat(
     flat_default: float,
     bounds: tuple[float, float],
     context_keywords: frozenset[str] | None = None,
-    floor: bool = False,
-    per_day_meal_multiplier: float | None = None,
 ) -> tuple[float, bool]:
     """Real per-destination community-reported figure (INR) if the free RAG
     collections have enough signal for it, else the hand-authored flat
@@ -457,26 +460,11 @@ async def _grounded_or_flat(
     case today, see core/cost_grounding.py) just falls back, never blocks
     the estimate.
 
-    `per_day_meal_multiplier` (food only) reconciles per-meal/per-dish
-    community prices to a per-day figure before comparison — see
-    `_FOOD_MEALS_PER_DAY` and core/price_extraction.py. Without it, food
-    grounding almost never cleared the floor (a single meal costs less than a
-    day's food) so `food_community_based` was effectively always False; with
-    it, a genuinely food-expensive destination's real per-day figure can
-    exceed the flat default and correctly flip the flag True.
-
-    `floor=True` discards a grounded figure that comes in *below* the flat
-    default, using the flat default instead (and reporting it as not
-    community-based). This is for the food line item specifically: even after
-    the per-day reconciliation above, the meals/day factor is an uncalibrated
-    default, so the floor stays as a safety net — food grounding can only ever
-    *raise* the estimate above the researched flat bare-minimum, never undercut
-    it (a below-flat grounded food figure produced harmful under-estimates —
-    e.g. Venice food ₹1,190/day vs a realistic ₹6,546, NEXT_SESSION_TODO
-    "item A", 2026-07-22). Mirrors feasibility_chain.py's existing
-    `max(llm_estimate, deterministic_floor)`. Stay does NOT use this (a
-    below-flat grounded stay figure can legitimately reflect a genuinely cheap
-    destination)."""
+    Used by the stay line item, whose amounts are already per-night and which
+    deliberately has no floor (a below-flat grounded stay figure can legitimately
+    reflect a genuinely cheap destination). Food needs a per-day reconciliation
+    and a provenance-conditional floor, which don't fit this signature — see
+    `_grounded_food_per_day` below."""
     dest_city = city or country
     if not dest_city:
         return flat_default, False
@@ -484,11 +472,56 @@ async def _grounded_or_flat(
         grounded = await community_median_price_inr(
             dest_city, query_suffix, bounds[0], bounds[1],
             context_keywords=context_keywords,
-            per_day_meal_multiplier=per_day_meal_multiplier,
         )
     except Exception:
         grounded = None
-    if grounded is not None and (not floor or grounded >= flat_default):
+    if grounded is not None:
+        return grounded, True
+    return flat_default, False
+
+
+async def _grounded_food_per_day(
+    city: str | None,
+    country: str | None,
+    flat_default: float,
+) -> tuple[float, bool]:
+    """Food counterpart to `_grounded_or_flat`, with a provenance-conditional
+    floor.
+
+    The floor exists because the per-meal→per-day reconciliation multiplies by
+    an *assumed* meals/day, and a wrong assumption in the low direction
+    produces a harmful under-estimate (a user under-budgets a "bare minimum"
+    and gets a bad surprise — Venice food came out at ₹1,190/day against a
+    realistic ₹6,546 before the floor was added, NEXT_SESSION_TODO "item A").
+
+    But that reasoning is specific to the reconciled path. When the corpus
+    yields enough amounts *already expressed per-day*, no multiplier is
+    involved — the figure is a real observed daily spend, which is exactly the
+    "anchored against real daily-spend data" condition the floor was always
+    meant to be temporary pending. So the floor is applied per-estimate rather
+    than unconditionally: reconciled figures stay floored, directly-observed
+    ones are trusted in both directions and can legitimately come in below the
+    hand-authored flat default for a genuinely cheap destination (the same
+    latitude stay grounding already has).
+    """
+    dest_city = city or country
+    if not dest_city:
+        return flat_default, False
+    try:
+        grounded, directly_observed = await community_food_per_day_inr(
+            dest_city,
+            "food meal daily cost per person",
+            _FOOD_PP_BOUNDS[0],
+            _FOOD_PP_BOUNDS[1],
+            context_keywords=FOOD_CONTEXT_KEYWORDS,
+            meals_per_day=_FOOD_MEALS_PER_DAY,
+        )
+    except Exception:
+        return flat_default, False
+
+    if grounded is None:
+        return flat_default, False
+    if directly_observed or grounded >= flat_default:
         return grounded, True
     return flat_default, False
 
@@ -558,9 +591,8 @@ async def estimate_bare_minimum_budget(
     airbnb_requested = wants_airbnb_stay(hint_text)
     if airbnb_requested:
         stay_pp_base = round(stay_pp_base * _AIRBNB_STAY_DISCOUNT_MULTIPLIER)
-    food_pp_base, food_community_based = await _grounded_or_flat(
-        city, country, "food meal daily cost per person", rates["food_per_day_pp"], _FOOD_PP_BOUNDS,
-        context_keywords=FOOD_CONTEXT_KEYWORDS, floor=True, per_day_meal_multiplier=_FOOD_MEALS_PER_DAY,
+    food_pp_base, food_community_based = await _grounded_food_per_day(
+        city, country, rates["food_per_day_pp"],
     )
     stay_pp_per_night = stay_pp_base * season_multiplier
     food_pp_per_day = food_pp_base

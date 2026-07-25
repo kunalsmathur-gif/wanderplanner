@@ -77,6 +77,73 @@ async def _refresh_osm_pois():
         await asyncio.sleep(settings.osm_ingest_delay_seconds)
 
 
+async def _refresh_youtube_comments():
+    """Refresh the `youtube_comments` sentiment corpus (services/gems.py) for
+    demand-ranked destinations whose YouTube data is stale or was never
+    ingested.
+
+    Kept as its own job rather than folded into `_refresh_osm_pois` because it
+    has fundamentally different economics: OSM/Wikivoyage are free unmetered
+    public APIs refreshed weekly, while `search.list` costs 100 of the free
+    tier's 10,000 daily units. So this runs on a longer cadence
+    (`youtube_refresh_days`), is capped per run (`youtube_refresh_batch_size`),
+    and sits behind scrapers/youtube_comments.py's own rolling-24h budget.
+
+    Ordered by `request_count` DESC so a limited quota is spent on the
+    destinations users actually ask for most, and NULL-first so destinations
+    that never got YouTube data (ingested before a key existed, or during an
+    exhausted-budget window) are picked up ahead of merely-stale ones.
+    """
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import or_, select
+    from db import AsyncSessionLocal
+    from db_models import DestinationIngestionState
+    from scrapers.youtube_comments import ingest_youtube_comments
+
+    if not settings.youtube_api_key:
+        logger.info("YOUTUBE_API_KEY not set — skipping YouTube comment refresh")
+        return
+
+    stale_before = datetime.now(timezone.utc) - timedelta(days=settings.youtube_refresh_days)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(DestinationIngestionState.destination)
+            .where(
+                or_(
+                    DestinationIngestionState.youtube_last_ingested_at.is_(None),
+                    DestinationIngestionState.youtube_last_ingested_at < stale_before,
+                )
+            )
+            .order_by(
+                DestinationIngestionState.youtube_last_ingested_at.is_(None).desc(),
+                DestinationIngestionState.request_count.desc(),
+            )
+            .limit(settings.youtube_refresh_batch_size)
+        )
+        destinations = [row[0] for row in result.all()]
+
+    for destination in destinations:
+        now = datetime.now(timezone.utc)
+        try:
+            count = await ingest_youtube_comments(destination)
+        except Exception as e:
+            logger.warning("YouTube comment refresh failed for %s: %s", destination, e)
+            continue
+        if not count:
+            # Over budget, no videos found, or comments disabled everywhere.
+            # Deliberately leave the timestamp untouched so the next run
+            # retries this destination instead of marking it fresh-but-empty.
+            logger.info("YouTube comment refresh for %s returned 0 comments — will retry next run", destination)
+            continue
+        async with AsyncSessionLocal() as db:
+            row = await db.get(DestinationIngestionState, destination)
+            if row is not None:
+                row.youtube_last_ingested_at = now
+                await db.commit()
+        await asyncio.sleep(settings.osm_ingest_delay_seconds)
+
+
 async def start_scheduler():
     _scheduler.add_job(
         _refresh_reddit,
@@ -94,6 +161,12 @@ async def start_scheduler():
         _refresh_itinerary_corpus,
         trigger=IntervalTrigger(days=settings.itinerary_corpus_refresh_days),
         id="itinerary_corpus_refresh",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        _refresh_youtube_comments,
+        trigger=IntervalTrigger(days=settings.youtube_refresh_days),
+        id="youtube_comments_refresh",
         replace_existing=True,
     )
     _scheduler.start()
