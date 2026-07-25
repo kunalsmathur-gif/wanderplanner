@@ -1,5 +1,26 @@
+import os
+
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Env vars that can identify the deployment as production, in priority order.
+# `ENVIRONMENT` is ours; the `RAILWAY_*` pair is injected by Railway itself.
+_PRODUCTION_ENV_VARS = ("ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_ENVIRONMENT")
+
+
+def is_production() -> bool:
+    """True when this process is the production deployment.
+
+    Checking only `ENVIRONMENT` is not enough: Railway never sets a bare
+    `ENVIRONMENT` var, it injects `RAILWAY_ENVIRONMENT_NAME=production` (and
+    `RAILWAY_ENVIRONMENT`). Because nothing set `ENVIRONMENT` on the Railway
+    service, both prod guards below were dead code *in the only deployment
+    they were written to protect* — the cookie validator in particular would
+    not have fired even with `COOKIE_SAMESITE` unset, silently reinstating
+    the cross-site session-drop bug it exists to prevent. Read live from the
+    environment (not cached) so tests can monkeypatch it.
+    """
+    return any((os.getenv(var) or "").lower() == "production" for var in _PRODUCTION_ENV_VARS)
 
 
 class Settings(BaseSettings):
@@ -198,9 +219,7 @@ class Settings(BaseSettings):
     def _require_real_secret_in_prod(cls, v: str) -> str:
         # Fails loudly in CI/prod if someone forgets to set a real secret,
         # rather than silently signing tokens with a well-known default.
-        import os
-
-        if v == "change-me-in-production" and os.getenv("ENVIRONMENT", "development") == "production":
+        if v == "change-me-in-production" and is_production():
             raise ValueError("JWT_SECRET must be set to a strong random value in production.")
         return v
 
@@ -216,9 +235,7 @@ class Settings(BaseSettings):
         # app just can't see the session), and signing back in appears to
         # loop forever. Fails loudly at startup instead of shipping this
         # silently, the same way `jwt_secret` above already does.
-        import os
-
-        if os.getenv("ENVIRONMENT", "development") != "production":
+        if not is_production():
             return self
         if self.cookie_samesite.lower() == "lax":
             raise ValueError(

@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.38.1 (Repo-wide Ruff cleanup — backend is now lint-clean under the pinned `ruff==0.4.9` that CI runs; three latent bugs fixed along the way)
+**Version:** 10.38.2 (Production-detection fix — the `COOKIE_SAMESITE`/`JWT_SECRET` startup guards were inert on Railway; first full YouTube comment backfill, 80 destinations / 11,838 comments)
 **Last Updated:** July 25, 2026  
 **Status:** Production-ready MVP
 
@@ -1501,6 +1501,20 @@ curl http://localhost:8000/health
 ---
 
 ## 14. Recent Changes (v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.38.2 Changes (July 2026) — The production guards were never running in production; first full YouTube backfill
+
+A prod-env audit (prompted by "is `YOUTUBE_API_KEY` set?") turned up two live misconfigurations and one dead safety net. All three are fixed.
+
+| Change | Detail |
+|---|---|
+| 🔴 **`is_production()` — the v10.26 cookie guard was inert on Railway** | Both prod validators in `core/config.py` gated on `os.getenv("ENVIRONMENT", "development") != "production"`. **Railway never sets a bare `ENVIRONMENT`** — it injects `RAILWAY_ENVIRONMENT_NAME` / `RAILWAY_ENVIRONMENT`. So the `COOKIE_SAMESITE` validator *and* the `JWT_SECRET` validator have returned early on every production boot since they were written. Prod is correct today only because `COOKIE_SAMESITE=none` happens to be set by hand; deleting or mistyping it would have silently reinstated the cross-site session-drop bug the guard exists to prevent. New `is_production()` helper recognises all three vars and is used by both validators. |
+| **Why the tests didn't catch it** | Every test in `test_config_validation.py` did `monkeypatch.setenv("ENVIRONMENT", "production")` first — they proved the guard works *when told it is production*, and nothing asserted that the real deployment ever tells it that. Added 6 tests: `Settings()` with no cookie config under `RAILWAY_ENVIRONMENT_NAME=production` must raise; a Railway *staging* env must **not** be held to prod rules; default `JWT_SECRET` rejected under Railway-production; plus an autouse fixture clearing all three markers so a developer running under `railway run` gets CI's results. |
+| **Prod env fixes (applied live)** | `YOUTUBE_API_KEY` was absent → set. 🔴 `NOMINATIM_USER_AGENT` was still `wanderplan/1.0` — the 2026-07-21 Wikimedia-403 fix only ever reached `.env`/`.env.example`/the code default, and **a Railway variable overrides the code default**, so prod had been sending the policy-violating UA (shared with Nominatim/Overpass) the whole time. Now `WanderPlannerBot/1.0 (https://github.com/kunalsmathur-gif/wanderplanner)`. |
+| **New: `scripts/ingest_youtube_full.py`** | One-time backfill neither automatic caller could have done: the cold-start gate only fires on a first-ever request, and `_refresh_youtube_comments` uses an `IntervalTrigger` with no `start_date`, so its first fire is 14 days after boot. Scheduler-identical ordering (NULL-first, then `request_count` DESC), resumable JSONL state, stops cleanly on the rolling search budget. **Result: 80/80 destinations, 11,838 comments, 0 failures**, verified against the live cluster (`youtube_comments` 12,429 points / 84 destinations). Stopped exactly on budget with 90 destinations left for a follow-up run. |
+| **Verified: the API key is not leaked to logs** | httpx logs full request URLs at INFO and YouTube passes the key as a query param, so this was checked rather than assumed: `logging_config.RedactionFilter`'s `AIza…` pattern rewrites it to `[redacted-key]` before the formatter runs. Standalone scripts using `logging.basicConfig` get no such filter, so the new script sets `httpx` to WARNING. |
+
+**Live spot-check of the v10.38.0 gems dead-zone fix, now that real data exists:** `compute_gem_intel_sync("Jaipur")` returns Hawa Mahal (9 mentions, sentiment 0.67, source YouTube) — the exact POI that fell into the old 7–11 dead zone and returned empty. **Still open:** most destinations return 0 gems (Kyoto, Kochi, Khajuraho all 0 with 150–240 comments each). The matcher requires an OSM POI *name* to appear literally in comment text, which under-fires wherever locals/vloggers use a different name than OSM records — and where it does fire it can surface thin signal (Istanbul's only gem is "Kadıköy", a train station, at 2 mentions). Name-normalisation/aliasing is the next step for this feature.
 
 ### v10.38.1 Changes (July 2026) — Repo-wide Ruff cleanup: backend is lint-clean under the version CI actually runs
 

@@ -2,6 +2,55 @@
 
 ---
 
+## 🆕 2026-07-25 session (latest) — prod env audit, dead prod guards fixed, first full YouTube backfill (v10.38.2)
+
+Started as "is `YOUTUBE_API_KEY` set in prod?" and turned up two live misconfigurations plus a
+safety net that had never once fired. Suite **569 passed / 6 skipped / 0 failed**, ruff clean.
+
+**1. 🔴 The production guards were not running in production.** `core/config.py`'s cookie and
+`JWT_SECRET` validators both gated on `os.getenv("ENVIRONMENT", "development") != "production"`,
+and **Railway never sets a bare `ENVIRONMENT`** — it injects `RAILWAY_ENVIRONMENT_NAME` and
+`RAILWAY_ENVIRONMENT`. So the v10.26 fix for the cross-site cookie bug (the one where a signed-in
+user got bounced to sign-in mid-generation and their purpose/budget didn't persist) has been
+*inert on every prod boot since it was written*. Prod is correct today only because
+`COOKIE_SAMESITE=none` is set by hand — delete it and the app would boot happily on the `lax`
+default and the bug returns silently. Fixed with a new `is_production()` helper recognising all
+three markers. **The tests were the reason this hid so well: every one of them set
+`ENVIRONMENT=production` itself, so they proved the guard works when told it's production and
+never checked that the deployment says so.** Added 6 tests including the no-cookie-config-under-
+Railway-production case and a staging-is-not-production case.
+
+**2. Prod env vars corrected (live).** `YOUTUBE_API_KEY` was absent → set. `NOMINATIM_USER_AGENT`
+was still the old `wanderplan/1.0` → **a Railway variable overrides the `core/config.py` default,
+so the 2026-07-21 Wikimedia-403 fix never reached prod at all.** Now correct. **Generalizable: when
+a fix changes a config default that also exists as a Railway variable, the variable wins — check
+prod env, not just the code.**
+
+**3. ✅ First full YouTube backfill: 80 destinations, 11,838 comments, 0 failures.** New
+`scripts/ingest_youtube_full.py` (scheduler-identical ordering, resumable, budget-aware). Verified
+live: `youtube_comments` now holds **12,429 points across 84 destinations**. Stopped exactly on the
+80-search daily budget — **90 destinations remain, re-run the script tomorrow** (it resumes from
+its JSONL state; no flags needed).
+
+### Still open after this session
+
+- **`PEXELS_API_KEY` and `RESEND_API_KEY` are both unset in prod and exist nowhere locally** —
+  photos and all transactional email (password reset, admin-request notifications) are silently
+  disabled in production. Both need a key from the user. `EMAIL_FROM_ADDRESS` is unset too and
+  Resend needs it.
+- **Gem intel returns 0 for most destinations even with real data now.** Jaipur works (Hawa Mahal,
+  9 mentions, sentiment 0.67 — the exact POI the v10.38.0 dead-zone fix targeted), but Kyoto,
+  Kochi and Khajuraho all return 0 with 150–240 comments each, and Istanbul's only gem is a train
+  station at 2 mentions. Matching requires an OSM POI name to appear *literally* in comment text,
+  so it under-fires wherever vloggers use a different name than OSM records. **Name
+  normalisation/aliasing is the highest-value next step for this feature** — and there is finally
+  enough corpus to calibrate against.
+- The YouTube scheduler job's first fire is **14 days after boot** (`IntervalTrigger`, no
+  `start_date`). Only Reddit is seeded at startup. Not a bug, but quota-spending refreshes are
+  invisible for a fortnight after any deploy.
+
+---
+
 ## 🆕 2026-07-25 session (later) — Ruff cleanup closed + deploy-prerequisite check (v10.38.1)
 
 Both open items from the end of the previous block. Full suite green throughout:
@@ -156,7 +205,7 @@ calibration pass to retire.
   matching the venv) — the real drift was the config using the deprecated top-level `[tool.ruff]`
   `select`/`ignore`. See the 2026-07-25 (later) block at the top.
 
-**Last updated:** 2026-07-25 (latest) — v10.38.1 repo-wide Ruff cleanup: 318 pre-existing violations cleared, `ruff check .` now passes under the already-pinned `ruff==0.4.9`, config moved off the deprecated top-level `[tool.ruff]` section, and 3 latent bugs fixed (2 dead module docstrings, 1 unresolvable forward-ref + redundant import, 1 dead local). Also verified the 0005 migration + scheduler job need no deploy-side code change (`railway.toml` already runs `alembic upgrade head`); the only prod prerequisite left is setting `YOUTUBE_API_KEY` on Railway. Found-not-fixed: CI's mypy step is red pre-existing (`eval/` missing `__init__.py`). See the block at the top. Previous entry: manual frontend/stage bug-bash session found and fixed 5 Anya wizard bugs total: a dead-end fallback reply, a broken post-sign-in resume state sync, a ZWJ-emoji chip-tap detection bug, a misleading `(NO_DATA)` error masking real generation failures, and (found on stage after the first 3 were live) stale group-type chips repeating under the traveler-count follow-up. See "2026-07-24 session — Anya wizard bug bash" block immediately below. Previous entry: (1) full 168-destination live re-audit found the backlog nearly clear (only 10 failing, none wiki/osm-zero); fixed **3 silently mis-geocoded destinations the count-only gate can't detect** (Austin→was Nevada ghost town, La Paz→was Mexico, Valencia→was Venezuela) + re-ingested the 10 gate failures, landing at **7/12 fixed, 5 residual = genuine real-world category skew** (Paris metro + 4 temple/pilgrimage towns), not bugs. (2) Shipped the **food-grounding per-meal→per-day reconciliation** ("item A" proper fix) — now unit-aware, floor-kept-as-safety-net. See the two "2026-07-24 session" blocks further below. Prior top-priority (food under-estimation) is now resolved.
+**Last updated:** 2026-07-25 (latest) — v10.38.2: the `COOKIE_SAMESITE`/`JWT_SECRET` prod guards were **inert on Railway** (they keyed off an `ENVIRONMENT` var Railway never sets) — fixed with `is_production()` + 6 regression tests; `NOMINATIM_USER_AGENT` in Railway was still the old `wanderplan/1.0` so the Wikimedia-403 fix had never reached prod; `YOUTUBE_API_KEY` set; first full YouTube backfill ran (80 destinations, 11,838 comments, 90 left for tomorrow). See the block at the top. Previous entry: v10.38.1 repo-wide Ruff cleanup: 318 pre-existing violations cleared, `ruff check .` now passes under the already-pinned `ruff==0.4.9`, config moved off the deprecated top-level `[tool.ruff]` section, and 3 latent bugs fixed (2 dead module docstrings, 1 unresolvable forward-ref + redundant import, 1 dead local). Also verified the 0005 migration + scheduler job need no deploy-side code change (`railway.toml` already runs `alembic upgrade head`); the only prod prerequisite left is setting `YOUTUBE_API_KEY` on Railway. Found-not-fixed: CI's mypy step is red pre-existing (`eval/` missing `__init__.py`). See the block at the top. Previous entry: manual frontend/stage bug-bash session found and fixed 5 Anya wizard bugs total: a dead-end fallback reply, a broken post-sign-in resume state sync, a ZWJ-emoji chip-tap detection bug, a misleading `(NO_DATA)` error masking real generation failures, and (found on stage after the first 3 were live) stale group-type chips repeating under the traveler-count follow-up. See "2026-07-24 session — Anya wizard bug bash" block immediately below. Previous entry: (1) full 168-destination live re-audit found the backlog nearly clear (only 10 failing, none wiki/osm-zero); fixed **3 silently mis-geocoded destinations the count-only gate can't detect** (Austin→was Nevada ghost town, La Paz→was Mexico, Valencia→was Venezuela) + re-ingested the 10 gate failures, landing at **7/12 fixed, 5 residual = genuine real-world category skew** (Paris metro + 4 temple/pilgrimage towns), not bugs. (2) Shipped the **food-grounding per-meal→per-day reconciliation** ("item A" proper fix) — now unit-aware, floor-kept-as-safety-net. See the two "2026-07-24 session" blocks further below. Prior top-priority (food under-estimation) is now resolved.
 
 ---
 
