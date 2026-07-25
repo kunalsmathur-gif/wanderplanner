@@ -13,6 +13,14 @@ on r/x") so the recommendation is checkable, not vibes.
 Every gem candidate comes from the `osm_pois` collection, so a hallucinated
 place can never be recommended — if OSM doesn't know it, we don't rank it.
 
+Linking the two sides is `services/name_matching.py`: OSM writes "Matangeshwar
+Temple", "Marine Drive, Kochi" and "Beyoğlu" where a traveller types
+"Matangeshwar", "Marine Drive" and "Beyoglu". Comparing raw lowercase
+substrings (what this module did until v10.39.0) found none of those, which is
+most of why the feature returned empty lists for destinations that had
+hundreds of real comments.
+
+
 Scale / latency / concurrency / cost design:
 - **Zero LLM calls, zero external APIs, zero new infra** — deterministic
   lexicon math over collections we already ingest on a schedule.
@@ -38,11 +46,15 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from core.config import settings
 from core.qdrant import get_qdrant
+from services.name_matching import build_mention_pattern, name_variants, normalize_name
 
 logger = logging.getLogger(__name__)
 
-# Bounded-compute caps. 300 POIs × 800 chunks ≈ 240k substring checks —
-# hundreds of ms of CPU at the very worst, once per destination per day.
+# Bounded-compute caps. 300 POIs × 800 chunks × a handful of name variants
+# each ≈ half a million substring checks — hundreds of ms of CPU at the very
+# worst, once per destination per day. The word-boundary regex runs only on
+# chunks that clear the substring prefilter, so it costs nothing on the
+# overwhelming majority that contain no candidate name at all.
 _MAX_POIS = 300
 _MAX_CHUNKS = 800
 _CACHE_TTL_SECONDS = 24 * 3600
@@ -101,13 +113,16 @@ _NEGATIVE_WORDS = frozenset({
     "bekar", "bekaar", "ganda", "faaltu", "bakwas", "mehenga", "mehanga", "dhoka",
 })
 
-# POI names that are a single generic word produce false mention matches
-# ("park", "market", …) — exclude them from matching entirely.
-_GENERIC_NAMES = frozenset({
-    "park", "museum", "temple", "beach", "market", "cafe", "restaurant",
-    "hotel", "church", "garden", "lake", "fort", "mall", "zoo", "bar",
-    "castle", "tower", "bridge", "station", "harbour", "harbor",
-})
+# POI types that are orientation landmarks rather than places anyone visits
+# for their own sake. They are ingested on purpose (scrapers/osm.py keeps
+# transport nodes so the itinerary LLM can anchor routes), but recommending
+# one as a hidden gem is nonsense, and live output was full of exactly that:
+# Istanbul's entire gem list was Kadıköy, Karaköy and Beyoğlu — three metro
+# stops — while Jaipur's second-strongest match was a POI literally named
+# "Railway Station" and Paris's candidate pool is almost all metro stations
+# (the known category-share skew in docs/NEXT_SESSION_TODO.md). Excluded from
+# crowd favourites too: "de-prioritise the train station" is not advice.
+_NON_GEM_POI_TYPES = frozenset({"train station", "airport"})
 
 # destination -> (computed_at_epoch, intel dict)
 _cache: dict[str, tuple[float, dict]] = {}
@@ -129,20 +144,21 @@ def _scroll_destination(client, collection: str, destination: str, limit: int) -
     return [p.payload or {} for p in points]
 
 
-def _sentiment_around(chunk_lower: str, name_lower: str) -> tuple[int, int]:
+def _sentiment_around(chunk_norm: str, spans: list[tuple[int, int]]) -> tuple[int, int]:
     """Count positive/negative lexicon words within ±_SENTIMENT_WINDOW chars
-    of every occurrence of `name_lower` in `chunk_lower`."""
+    of each matched mention in `chunk_norm`.
+
+    Both arguments come from the normalised pipeline: `chunk_norm` has already
+    been folded and stripped of punctuation by name_matching.normalize_name,
+    so a plain whitespace split yields clean lexicon tokens (the previous
+    version hand-replaced a few punctuation marks and missed the rest).
+    """
     pos = neg = 0
-    start = 0
-    while True:
-        idx = chunk_lower.find(name_lower, start)
-        if idx == -1:
-            break
-        window = chunk_lower[max(0, idx - _SENTIMENT_WINDOW): idx + len(name_lower) + _SENTIMENT_WINDOW]
-        words = set(window.replace(",", " ").replace(".", " ").replace("!", " ").split())
+    for start, end in spans:
+        window = chunk_norm[max(0, start - _SENTIMENT_WINDOW): end + _SENTIMENT_WINDOW]
+        words = set(window.split())
         pos += len(words & _POSITIVE_WORDS)
         neg += len(words & _NEGATIVE_WORDS)
-        start = idx + len(name_lower)
     return pos, neg
 
 
@@ -194,28 +210,55 @@ def compute_gem_intel_sync(destination: str) -> dict:
     if not pois or not chunks:
         return {"gems": [], "crowd_favourites": []}
 
-    # Pre-lowercase chunk texts once — the inner loop is pure substring search.
-    chunk_lowers = [(t.lower(), label) for t, label in chunks]
+    # Normalise chunk text once — folded and punctuation-stripped, so POI
+    # names meet comment text in the same alphabet. Without this a diacritic
+    # in the OSM name ("Beyoğlu", "Musée Grévin") made the POI unfindable in
+    # comments typed on an English keyboard.
+    chunk_norms = [(normalize_name(t), label) for t, label in chunks]
 
     # Pass 1 — score every POI with at least one community mention. The
     # gem/crowd split can't happen inline any more: the crowd threshold is
     # derived from the destination's own mention distribution, which isn't
     # known until every POI has been counted.
+    destination_norm = normalize_name(destination)
     scored: list[dict] = []
     for poi in pois:
         name = (poi.get("name") or "").strip()
-        name_lower = name.lower()
-        if len(name_lower) < 4 or name_lower in _GENERIC_NAMES:
+        if poi.get("poi_type") in _NON_GEM_POI_TYPES:
+            continue
+        # A POI named after the destination itself is the destination, not a
+        # find within it — live-observed: Khajuraho's strongest "gem" was a
+        # POI called "Khajuraho", matching every comment that named the town.
+        if normalize_name(name) == destination_norm:
+            continue
+
+        # `name_local` is only present on POIs ingested after scrapers/osm.py
+        # started preferring an English name. It earns its keep when `name:en`
+        # is a *translation* rather than a transliteration — OSM's "Musée de
+        # l'Armée"/"Army Museum" — where the local form is a genuinely
+        # different string a comment might use. A non-Latin local name
+        # normalises to nothing and simply contributes no variants, which is
+        # the honest outcome: this matcher works in one alphabet.
+        variants = name_variants(name)
+        variants += [v for v in name_variants(poi.get("name_local") or "") if v not in variants]
+        pattern = build_mention_pattern(variants)
+        if pattern is None:
             continue
 
         mentions = 0
         pos_total = neg_total = 0
         sources: list[str] = []
-        for chunk_lower, label in chunk_lowers:
-            if name_lower not in chunk_lower:
+        for chunk_norm, label in chunk_norms:
+            # Cheap substring prefilter before the regex — keeps the inner
+            # loop at the same cost as the old plain-substring scan, with the
+            # boundary check paid only on the few chunks that can match.
+            if not any(v in chunk_norm for v in variants):
+                continue
+            spans = [m.span() for m in pattern.finditer(chunk_norm)]
+            if not spans:
                 continue
             mentions += 1
-            pos, neg = _sentiment_around(chunk_lower, name_lower)
+            pos, neg = _sentiment_around(chunk_norm, spans)
             pos_total += pos
             neg_total += neg
             if label and label not in sources:

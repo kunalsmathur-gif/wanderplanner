@@ -22,11 +22,46 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from scrapers.osm import _prioritize_landmarks, fetch_osm_pois
+from scrapers.osm import _display_name, _prioritize_landmarks, fetch_osm_pois
 
 
 def _make_element(osm_id: int, name: str, tags: dict[str, str], lat: float = 51.5, lon: float = -0.1) -> dict:
     return {"id": osm_id, "lat": lat, "lon": lon, "tags": {"name": name, **tags}}
+
+
+class TestDisplayName:
+    """OSM's `name` tag is the *local-language* name. Live-audited
+    2026-07-25: 59 of Kyoto's 60 ingested POIs were stored in Japanese script,
+    so services/gems.py could never find them in English-language traveller
+    comments and hidden gems returned an empty list for the city despite 237
+    ingested comments. A live Overpass probe found `name:en` on 43 of 107
+    named Kyoto nodes."""
+
+    def test_prefers_name_en(self):
+        assert _display_name({"name": "興正寺", "name:en": "Koshoji Temple"}) == "Koshoji Temple"
+
+    def test_falls_back_to_int_name(self):
+        assert _display_name({"name": "白峯神宮", "int_name": "Shiramine Jingu"}) == "Shiramine Jingu"
+
+    def test_extracts_latin_parenthetical_from_local_script_name(self):
+        """Some nodes carry no name:en but bracket the Latin form inline."""
+        assert _display_name({"name": "新熊野神社 (Imakumano Shrine)"}) == "Imakumano Shrine"
+
+    def test_parenthetical_left_alone_when_name_is_already_latin(self):
+        """Brackets on a Latin name are a disambiguator, not a translation —
+        promoting them would rename the POI to its country."""
+        assert _display_name({"name": "Victoria (Seychelles)"}) == "Victoria (Seychelles)"
+
+    def test_latin_local_name_passes_through_unchanged(self):
+        assert _display_name({"name": "Kadıköy"}) == "Kadıköy"
+
+    def test_untranslated_local_script_name_is_kept(self):
+        """Better a name we can't match than no POI at all — it still carries
+        real coordinates for the itinerary."""
+        assert _display_name({"name": "正覺寺"}) == "正覺寺"
+
+    def test_unnamed_node_yields_empty(self):
+        assert _display_name({"tourism": "attraction"}) == ""
 
 
 class TestPrioritizeLandmarks:
@@ -104,6 +139,29 @@ class TestFetchOsmPoisTruncation:
 
         assert len(pois) == 2
         assert "Tower Bridge" in {p["name"] for p in pois}
+
+    @pytest.mark.asyncio
+    async def test_ingested_name_is_english_with_local_name_retained(self):
+        elements = [
+            _make_element(1, "清水寺", {"tourism": "attraction", "name:en": "Kiyomizu-dera"}),
+            _make_element(2, "Nishiki Market", {"shop": "marketplace"}),
+        ]
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {"elements": elements}
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("scrapers.osm.httpx.AsyncClient", return_value=mock_client):
+            pois = await fetch_osm_pois("Kyoto", lat=35.0116, lon=135.7681)
+
+        by_name = {p["name"]: p for p in pois}
+        assert "Kiyomizu-dera" in by_name
+        assert by_name["Kiyomizu-dera"]["name_local"] == "清水寺"
+        # Nothing to retain when the local name is the one we're already using.
+        assert by_name["Nishiki Market"]["name_local"] == ""
 
     @pytest.mark.asyncio
     async def test_returns_empty_list_on_network_failure(self):

@@ -2,7 +2,7 @@
 
 ---
 
-## ✅ DO THIS NEXT — open items as of 2026-07-25 (v10.38.2)
+## ✅ DO THIS NEXT — open items as of 2026-07-25 (v10.39.0)
 
 Ordered by value. Items 1 and 2 are the two that move the product; 3 is blocked on the user; 4–5
 are hygiene. Narrative and evidence for each is in the session block immediately below.
@@ -17,16 +17,32 @@ cd apps/api && venv/Scripts/python.exe scripts/ingest_youtube_full.py
 Verify persistence against the real cluster afterwards (`youtube_comments` point count + distinct
 destinations), not just the run log — it was 12,429 points / 84 destinations after run 1.
 
-**2. 🎯 Gem-intel name matching — the highest-value feature work now unblocked.**
-`services/gems.py` only counts a POI mention when an OSM POI *name* appears **literally** in
-comment text, so it under-fires badly: with 150–240 real comments each, Kyoto, Kochi and Khajuraho
-all return **0 gems**, and Istanbul's only gem is "Kadıköy" (a train station) at 2 mentions.
-Jaipur does work (Hawa Mahal, 9 mentions, sentiment 0.67), which confirms the v10.38.0 dead-zone
-fix itself is sound — the gap is name matching, not classification. Wanted: normalisation +
-aliasing (diacritics, "-ji"/"Fort"/"Palace" suffixes, romanisation variants, common short forms),
-ideally validated against the corpus that now exists rather than tuned blind. Note this is the
-same class of problem as the price-grounding `context_keywords` gap in the v10.38.0 block below —
-both are "matched the whole blob instead of the specific span".
+**2. 🎯 Rank the OSM POI pool by prominence — it is now the binding constraint on hidden gems.**
+~~Gem-intel name matching~~ — **✅ done 2026-07-25 (v10.39.0)**, along with the upstream ingestion
+bug behind it. What that work uncovered is the real ceiling: for every destination still returning
+zero, **the places travellers actually name are not in the ingested 60-POI pool at all.** Measured,
+not assumed:
+
+| Destination | comments | what commenters actually name | in the pool? |
+|---|---|---|---|
+| Kyoto | 237 | Fushimi Inari ×5, Tofukuji ×4, Arashiyama ×4 | **none** — nor Kiyomizu-dera or Kinkaku-ji. 21 obscure temples + 20 small museums hold the 60 slots |
+| Delhi | 135 | Chandni Chowk ×4, Agrasen ki Baoli ×4, Red Fort, Humayun's Tomb, Connaught Place | none — but 7 train stations are |
+| Bangkok | 126 | Wat Arun, Wat Pho, Sukhumvit, Phaya Thai | none — 12 of 60 are train stations |
+| Goa | 203 | Fontainhas ×2, Anjuna ×2 | neither — 24 of 60 are places of worship |
+| Bengaluru | 100 | Nandi Hills ×3 | no — 14 places of worship, 11 memorials |
+| Istanbul | 209 | Grand Bazaar ×2, Üsküdar ×2 | neither — 6 of 60 are train stations |
+
+`scrapers/osm.py::_prioritize_landmarks` round-robins across categories so no single one dominates
+the cap, which fixed the old food/drink starvation — but **nothing in the pipeline ranks by
+prominence**, so the 60 slots fill with whatever Overpass returned first. Kyoto's Kiyomizu-dera and
+a nameless neighbourhood shrine have exactly equal claim on a slot today. Options worth weighing:
+score by OSM tag richness (**`wikidata`/`wikipedia`/`heritage`/`website` presence is a strong,
+free prominence signal** and is exactly what the famous sites carry), weight `tourism=attraction` +
+`historic=*` above `amenity=place_of_worship` in the round-robin, or raise `osm_poi_max_results`
+for dense cities. Note this also fixes itinerary quality generally, not just gems — the same pool
+is what grounds generation. It is the same root cause as the open `MAX_CATEGORY_SHARE` decision
+further down, so settle the two together. Changing selection means re-ingesting all 170
+destinations, so budget an Overpass run.
 
 **3. ⛔ Blocked on the user — `PEXELS_API_KEY`.**
 Unset on Railway *and* absent from `apps/api/.env`, `.env.example` and `apps/web/.env.local`, so
@@ -67,9 +83,22 @@ correct — unless the API also moves to `api.wanderplanner.org`, which would ma
 ⚠️ Keep DNS at Spaceship: switching nameservers to Vercel would drop the Resend records out of the
 authoritative zone and silently un-verify email.
 
+**7. Tokyo's OSM re-ingestion never succeeded — one destination still on local-script names.**
+16 of the 17 affected destinations were re-fetched successfully in v10.39.0; **Tokyo failed every
+attempt** across three separate runs (504 from `overpass-api.de`, 403 from the `.fr` mirror — its
+query is the densest of the batch). Its existing data was left intact, so it is still 58/60
+Japanese-script and unmatchable. The script is resumable and takes no flags — just re-run it, ideally
+at a quieter hour for the public Overpass instances:
+```bash
+cd apps/api && venv/Scripts/python.exe scripts/reingest_local_script_names.py
+```
+
 **Also still carried over from earlier blocks (unchanged, detail further down):**
 - Price grounding: per-amount proximity matching instead of whole-snippet `context_keywords` (a €5
-  Paris bus fare entered the food median from a chunk that mentioned food elsewhere).
+  Paris bus fare entered the food median from a chunk that mentioned food elsewhere). **This is the
+  same shape as the gem name-matching problem fixed in v10.39.0** — matching the whole blob instead
+  of the specific span — so the approach there (normalise once, match with an anchored pattern,
+  keep spans) is a usable template.
 - `_FOOD_MEALS_PER_DAY = 3.0` calibration — now lower-stakes, only used when no directly-observed
   daily figure exists.
 - Open user decision on the 5 residual `MAX_CATEGORY_SHARE` failures (Paris metro density +
@@ -84,7 +113,68 @@ authoritative zone and silently un-verify email.
 
 ---
 
-## 🆕 2026-07-25 session (latest) — prod env audit, dead prod guards fixed, first full YouTube backfill (v10.38.2)
+## 🆕 2026-07-25 session (latest) — hidden-gem name matching, and the ingestion bug underneath it (v10.39.0)
+
+Taken up as "gem-intel name matching under-fires". **The premise did not survive a look at the real
+data**, which is the main lesson from the session: a read-only audit of 8 destinations' live
+`osm_pois` + `youtube_comments` showed normalisation and aliasing recover about **one POI per
+destination**, and the aggressive part of it recovers as many false matches as real ones. Three
+other causes were doing the damage.
+
+**1. 🔴 OSM POI names were being stored in the local language.** `scrapers/osm.py` read
+`tags.get("name")`, which OSM defines as the name *in the local language* — so Kyoto's POIs went
+into the cluster as 清水寺 and Cairo's in Arabic. Every consumer treats that field as text an
+English-speaking traveller would recognise: gems searches for it in comments, `poi_pinning` matches
+it against LLM-proposed names, **and the itinerary renders it to the user**. So this was never a
+gems bug; those destinations were degraded across the board and English users were being shown
+Japanese, Greek and Thai place names. Audit across all 170 ingested destinations: **17 with ≥10% of
+names in a non-Latin script, 9 above 66%** (Tokyo 58/60, Taipei 56/60, Seoul 56/60, Athens 54/60,
+Tbilisi 53/60, Osaka 53/60, Cairo 50/60, Kyoto 49/60, Bangkok 40/60). Now prefers `name:en`, then
+`int_name`, then a Latin fragment parenthesised inside an otherwise non-Latin name — a live
+Overpass probe confirmed `name:en` exists on 43 of 107 named Kyoto nodes.
+
+**2. 🔴 Gem candidates were dominated by transport nodes.** Istanbul's entire live gem list was
+Kadıköy, Karaköy and Beyoğlu — three metro stops. Jaipur's second-strongest match was a POI named
+"Railway Station"; Khajuraho's strongest was a station called "Khajuraho". `train station`/`airport`
+types and any POI named after the destination itself are now excluded from both lists.
+
+**3. ✅ New `services/name_matching.py`**, shared with `poi_pinning.py` (which had its own half of
+the same logic). Diacritic-folded, word-boundary-anchored, with variants for OSM's actual naming
+habits. **Two latent bugs fell out, both live in the pinning path too:** NFKD-based folding
+*deleted* letters it cannot decompose, so Turkish "Kadıköy" became "kad koy" (same for `ø ł đ ß æ
+œ þ`); and apostrophes were split rather than removed, so "St Mary's" became "st mary s", matching
+neither spelling. A third: `_sentiment_around` hand-replaced only `,`, `.` and `!` before splitting,
+so a lexicon word touching any other punctuation — `a real gem;`, `(peaceful)` — scored nothing.
+
+**4. ✅ Re-ingested 16 of 17 affected destinations** via new
+`scripts/reingest_local_script_names.py` (resumable JSONL state). Latin-script names across that
+set went **49% → 82%**; Kathmandu and Chiang Mai are now 60/60, Bangkok 59/60, Tbilisi 58/60, Seoul
+and Cairo 57/60. **Tokyo failed all attempts** (Overpass 504/403 — see item 7 above); its existing
+data was left intact rather than overwritten with a partial fetch.
+
+**Live result on unchanged data:** Kochi 0 → 1 gem (Marine Drive), Khajuraho's train-station "gem"
+replaced by a real one (Matangeshwar Temple), Jaipur's "Railway Station" noise gone with Hawa Mahal
+retained, Istanbul's three metro stops correctly gone to zero.
+
+Suite **585 passed / 6 skipped / 0 failed** (+16). Ruff clean.
+
+### Still open after this session
+
+- **The POI pool is now the ceiling** — consolidated as item 2 in the checklist at the top, with the
+  per-destination evidence. Kyoto proves it cleanly: after re-ingestion its pool has proper English
+  names (Renge Temple, Shiramine Jingu, Koshoji Temple, Kyoto Tower) and still returns zero gems,
+  because Kiyomizu-dera, Fushimi Inari, Kinkaku-ji and Arashiyama are **not in the pool at all**.
+- **Tokyo still needs its re-ingestion** — item 7 above.
+- **The refinement eval was not re-run.** `services/poi_pinning.py::_normalize` changed behaviour
+  (diacritic and apostrophe fixes), and `eval/refinement_scoring.py` uses it via `_names_match`.
+  Both changes are strictly more permissive — an exact match now lands where the fuzzy-ratio
+  fallback used to, so scores should hold or improve — but that is reasoning, not a measurement.
+  Worth a run when the eval harness is next exercised (remember to copy live raw results to a dated
+  `live_YYYYMMDD_*.json` **before** the offline gate overwrites them).
+
+---
+
+## 2026-07-25 session — prod env audit, dead prod guards fixed, first full YouTube backfill (v10.38.2)
 
 Started as "is `YOUTUBE_API_KEY` set in prod?" and turned up two live misconfigurations plus a
 safety net that had never once fired. Suite **569 passed / 6 skipped / 0 failed**, ruff clean.
@@ -290,7 +380,7 @@ calibration pass to retire.
   matching the venv) — the real drift was the config using the deprecated top-level `[tool.ruff]`
   `select`/`ignore`. See the 2026-07-25 (later) block at the top.
 
-**Last updated:** 2026-07-25 (latest) — v10.38.2: the `COOKIE_SAMESITE`/`JWT_SECRET` prod guards were **inert on Railway** (they keyed off an `ENVIRONMENT` var Railway never sets) — fixed with `is_production()` + 6 regression tests; `NOMINATIM_USER_AGENT` in Railway was still the old `wanderplan/1.0` so the Wikimedia-403 fix had never reached prod; `YOUTUBE_API_KEY` set; first full YouTube backfill ran (80 destinations, 11,838 comments, 90 left for tomorrow). See the block at the top. Previous entry: v10.38.1 repo-wide Ruff cleanup: 318 pre-existing violations cleared, `ruff check .` now passes under the already-pinned `ruff==0.4.9`, config moved off the deprecated top-level `[tool.ruff]` section, and 3 latent bugs fixed (2 dead module docstrings, 1 unresolvable forward-ref + redundant import, 1 dead local). Also verified the 0005 migration + scheduler job need no deploy-side code change (`railway.toml` already runs `alembic upgrade head`); the only prod prerequisite left is setting `YOUTUBE_API_KEY` on Railway. Found-not-fixed: CI's mypy step is red pre-existing (`eval/` missing `__init__.py`). See the block at the top. Previous entry: manual frontend/stage bug-bash session found and fixed 5 Anya wizard bugs total: a dead-end fallback reply, a broken post-sign-in resume state sync, a ZWJ-emoji chip-tap detection bug, a misleading `(NO_DATA)` error masking real generation failures, and (found on stage after the first 3 were live) stale group-type chips repeating under the traveler-count follow-up. See "2026-07-24 session — Anya wizard bug bash" block immediately below. Previous entry: (1) full 168-destination live re-audit found the backlog nearly clear (only 10 failing, none wiki/osm-zero); fixed **3 silently mis-geocoded destinations the count-only gate can't detect** (Austin→was Nevada ghost town, La Paz→was Mexico, Valencia→was Venezuela) + re-ingested the 10 gate failures, landing at **7/12 fixed, 5 residual = genuine real-world category skew** (Paris metro + 4 temple/pilgrimage towns), not bugs. (2) Shipped the **food-grounding per-meal→per-day reconciliation** ("item A" proper fix) — now unit-aware, floor-kept-as-safety-net. See the two "2026-07-24 session" blocks further below. Prior top-priority (food under-estimation) is now resolved.
+**Last updated:** 2026-07-25 (latest) — v10.39.0: hidden-gem name matching rebuilt on a new shared `services/name_matching.py`, but the audit that preceded it found the real cause upstream — **`scrapers/osm.py` was storing OSM's local-language `name` tag**, leaving 17 destinations (Tokyo 58/60, Seoul 56/60, Kyoto 49/60 …) with unmatchable names and showing English users Japanese/Greek/Thai place names in itineraries. Fixed to prefer `name:en`; 16 of 17 re-ingested (49% → 82% Latin-script), Tokyo still pending on Overpass failures. Gems also stopped recommending metro stops. Three latent bugs fixed along the way, two of them live in the interest-pinning path as well (NFKD folding *deleted* `ı`/`ø`/`ł`, apostrophes were split not removed). **The new ceiling is the POI pool, not the matcher** — see item 2 at the top. Previous entry: v10.38.2: the `COOKIE_SAMESITE`/`JWT_SECRET` prod guards were **inert on Railway** (they keyed off an `ENVIRONMENT` var Railway never sets) — fixed with `is_production()` + 6 regression tests; `NOMINATIM_USER_AGENT` in Railway was still the old `wanderplan/1.0` so the Wikimedia-403 fix had never reached prod; `YOUTUBE_API_KEY` set; first full YouTube backfill ran (80 destinations, 11,838 comments, 90 left for tomorrow). See the block at the top. Previous entry: v10.38.1 repo-wide Ruff cleanup: 318 pre-existing violations cleared, `ruff check .` now passes under the already-pinned `ruff==0.4.9`, config moved off the deprecated top-level `[tool.ruff]` section, and 3 latent bugs fixed (2 dead module docstrings, 1 unresolvable forward-ref + redundant import, 1 dead local). Also verified the 0005 migration + scheduler job need no deploy-side code change (`railway.toml` already runs `alembic upgrade head`); the only prod prerequisite left is setting `YOUTUBE_API_KEY` on Railway. Found-not-fixed: CI's mypy step is red pre-existing (`eval/` missing `__init__.py`). See the block at the top. Previous entry: manual frontend/stage bug-bash session found and fixed 5 Anya wizard bugs total: a dead-end fallback reply, a broken post-sign-in resume state sync, a ZWJ-emoji chip-tap detection bug, a misleading `(NO_DATA)` error masking real generation failures, and (found on stage after the first 3 were live) stale group-type chips repeating under the traveler-count follow-up. See "2026-07-24 session — Anya wizard bug bash" block immediately below. Previous entry: (1) full 168-destination live re-audit found the backlog nearly clear (only 10 failing, none wiki/osm-zero); fixed **3 silently mis-geocoded destinations the count-only gate can't detect** (Austin→was Nevada ghost town, La Paz→was Mexico, Valencia→was Venezuela) + re-ingested the 10 gate failures, landing at **7/12 fixed, 5 residual = genuine real-world category skew** (Paris metro + 4 temple/pilgrimage towns), not bugs. (2) Shipped the **food-grounding per-meal→per-day reconciliation** ("item A" proper fix) — now unit-aware, floor-kept-as-safety-net. See the two "2026-07-24 session" blocks further below. Prior top-priority (food under-estimation) is now resolved.
 
 ---
 
