@@ -2,10 +2,11 @@
 
 ---
 
-## ✅ DO THIS NEXT — open items as of 2026-07-25 (v10.39.0)
+## ✅ DO THIS NEXT — open items as of 2026-07-26 (v10.40.0)
 
-Ordered by value. Items 1 and 2 are the two that move the product; 3 is blocked on the user; 4–5
-are hygiene. Narrative and evidence for each is in the session block immediately below.
+Ordered by value. Item 1 and item 2's remaining data run are what move the product; 3 is blocked
+on the user; 4–6 are hygiene. Narrative and evidence for each is in the session block immediately
+below.
 
 **1. Finish the YouTube backfill — 90 destinations still have no comment data.**
 The 2026-07-25 run covered 80 of 170 and stopped exactly on the rolling 80-search/day quota budget
@@ -17,32 +18,46 @@ cd apps/api && venv/Scripts/python.exe scripts/ingest_youtube_full.py
 Verify persistence against the real cluster afterwards (`youtube_comments` point count + distinct
 destinations), not just the run log — it was 12,429 points / 84 destinations after run 1.
 
-**2. 🎯 Rank the OSM POI pool by prominence — it is now the binding constraint on hidden gems.**
-~~Gem-intel name matching~~ — **✅ done 2026-07-25 (v10.39.0)**, along with the upstream ingestion
-bug behind it. What that work uncovered is the real ceiling: for every destination still returning
-zero, **the places travellers actually name are not in the ingested 60-POI pool at all.** Measured,
-not assumed:
+**2. ✅ DONE 2026-07-25 (v10.40.0) — the pool is ranked by prominence. What's left is the data run.**
+Ranking was genuinely missing, but it was the *second* of two causes and would have changed nothing
+on its own: **the Overpass query only ever asked for `node` elements**, and famous landmarks are
+mapped as areas (Kiyomizu-dera, Kinkaku-ji, Ginkaku-ji are `way`s; Delhi's Jama Masjid a
+`relation`). They were unreachable, not out-ranked. Fixed with a second prominence-filtered `nwr`
+pass, tiered prominence selection, and a 25% per-category cap — which also settles the open
+`MAX_CATEGORY_SHARE` question further down. Full narrative in the session block below and in
+TECHNICAL_DOCUMENTATION §14.
 
-| Destination | comments | what commenters actually name | in the pool? |
-|---|---|---|---|
-| Kyoto | 237 | Fushimi Inari ×5, Tofukuji ×4, Arashiyama ×4 | **none** — nor Kiyomizu-dera or Kinkaku-ji. 21 obscure temples + 20 small museums hold the 60 slots |
-| Delhi | 135 | Chandni Chowk ×4, Agrasen ki Baoli ×4, Red Fort, Humayun's Tomb, Connaught Place | none — but 7 train stations are |
-| Bangkok | 126 | Wat Arun, Wat Pho, Sukhumvit, Phaya Thai | none — 12 of 60 are train stations |
-| Goa | 203 | Fontainhas ×2, Anjuna ×2 | neither — 24 of 60 are places of worship |
-| Bengaluru | 100 | Nandi Hills ×3 | no — 14 places of worship, 11 memorials |
-| Istanbul | 209 | Grand Bazaar ×2, Üsküdar ×2 | neither — 6 of 60 are train stations |
+**What remains is only the re-ingestion run**, since selection changes are ingestion-time only.
+Resumable, no flags:
+```bash
+cd apps/api && venv/Scripts/python.exe scripts/reingest_prominence_ranking.py
+```
+**Re-run until it reports `0 still pending`.** A destination whose *prominence pass* failed is
+deliberately left un-done and retried next run — Overpass 403s/504s are routine and the prominence
+query is the heavier of the two. Bangkok hit exactly this on the first pass and was correctly left
+on its old data rather than overwritten. The script gives up after 3 attempts per destination so a
+genuinely unremarkable place can't loop forever. **This also subsumes old item 7** (Tokyo's
+local-script names) — the same run re-fetches Tokyo.
 
-`scrapers/osm.py::_prioritize_landmarks` round-robins across categories so no single one dominates
-the cap, which fixed the old food/drink starvation — but **nothing in the pipeline ranks by
-prominence**, so the 60 slots fill with whatever Overpass returned first. Kyoto's Kiyomizu-dera and
-a nameless neighbourhood shrine have exactly equal claim on a slot today. Options worth weighing:
-score by OSM tag richness (**`wikidata`/`wikipedia`/`heritage`/`website` presence is a strong,
-free prominence signal** and is exactly what the famous sites carry), weight `tourism=attraction` +
-`historic=*` above `amenity=place_of_worship` in the round-robin, or raise `osm_poi_max_results`
-for dense cities. Note this also fixes itinerary quality generally, not just gems — the same pool
-is what grounds generation. It is the same root cause as the open `MAX_CATEGORY_SHARE` decision
-further down, so settle the two together. Changing selection means re-ingesting all 170
-destinations, so budget an Overpass run.
+**Early live results** (first destinations through the new pipeline, real cluster): Kyoto's pool
+went from 21 obscure temples + 20 small museums to Kiyomizu-dera, Kinkaku-ji, Ginkakuji, Ryōan-ji,
+Nijō Castle and Katsura Imperial Villa, with 60/60 carrying a prominence signal and top category
+share 0.35 → 0.25; Delhi gained Red Fort, India Gate, Jama Masjid, Lotus Temple, Chandni Chowk,
+Purana Qila, Hauz Khas and Jantar Mantar (attractions 4 → 14, cinemas 4 → 1). **Hidden gems moved
+for the first time on these destinations: Kyoto 0 → 3 (Byōdō-in, Kinkaku-ji, Murin-an), Goa 0 → 1
+(Museum of Goa), and Delhi now correctly classifies Chandni Chowk as a crowd favourite** — the
+exact POI the v10.39.0 audit found commenters naming 4× and the pool lacking.
+
+**Next prominence signal, when this needs to go further:** Delhi is the weak case, and it's OSM's
+data rather than the ranking. Humayun's Tomb carries only `wikidata` + a *Hindi* `wikipedia` tag —
+no `heritage`, no `name:en` — so it scores 6, while the fully-tagged Sulabh Museum of Toilets
+scores 8. Delhi barely uses `heritage`, so scores bunch at 6 and ties break on arrival order.
+Kyoto, where `heritage=1` is used properly, ranks perfectly (Kinkaku-ji, Kiyomizu-dera, Ryōan-ji,
+Nijō Castle, Byōdō-in all score 12). The fix is **Wikidata sitelink count** — how many language
+Wikipedias describe a place, the classic fame proxy — free and batchable (50 ids/call) but a second
+API and its own change. **Don't re-try the two ideas already measured and rejected:** scoring areas
+above nodes made Delhi *worse* (10/14 → 9/14, losing Chandni Chowk), and relaxing the category cap
+to 0.35 gained nothing across three cities.
 
 **3. ⛔ Blocked on the user — `PEXELS_API_KEY`.**
 Unset on Railway *and* absent from `apps/api/.env`, `.env.example` and `apps/web/.env.local`, so
@@ -83,15 +98,20 @@ correct — unless the API also moves to `api.wanderplanner.org`, which would ma
 ⚠️ Keep DNS at Spaceship: switching nameservers to Vercel would drop the Resend records out of the
 authoritative zone and silently un-verify email.
 
-**7. Tokyo's OSM re-ingestion never succeeded — one destination still on local-script names.**
-16 of the 17 affected destinations were re-fetched successfully in v10.39.0; **Tokyo failed every
-attempt** across three separate runs (504 from `overpass-api.de`, 403 from the `.fr` mirror — its
-query is the densest of the batch). Its existing data was left intact, so it is still 58/60
-Japanese-script and unmatchable. The script is resumable and takes no flags — just re-run it, ideally
-at a quieter hour for the public Overpass instances:
-```bash
-cd apps/api && venv/Scripts/python.exe scripts/reingest_local_script_names.py
-```
+**7. ✅ DONE — Tokyo's OSM re-ingestion, closed by item 2's run.**
+Tokyo was still 58/60 Japanese-script after failing every v10.39.0 attempt. The v10.40.0
+re-ingestion re-fetches all 169 destinations through the same `_display_name()` fix, and Tokyo went
+through on the first try: **60/60 Latin-script names, 60/60 carrying a prominence signal, top
+category share 0.10** (Hama-rikyū Gardens, Rikugi Garden, Sumida Aquarium, Tokyo Sea Life Park,
+Former Asakura Estate …). Verified by reading the stored payloads back off the cluster, not from the
+run log. (`scripts/reingest_local_script_names.py` is now redundant — kept for provenance.)
+
+⚠️ **Related finding worth acting on if Overpass keeps hurting:** `overpass.openstreetmap.fr`
+answered **403 to 5 of 5 requests** during this session while the other two mirrors were serving —
+it is hard-refusing us, not rate-limiting. v10.40.0 stopped that from wasting a backoff sleep
+(`_is_hard_refusal` rotates off a 4xx immediately), but the mirror is still dead weight in the
+rotation. If it stays refusing, drop it from `osm_overpass_fallback_mirrors` and find a
+replacement.
 
 **Also still carried over from earlier blocks (unchanged, detail further down):**
 - Price grounding: per-amount proximity matching instead of whole-snippet `context_keywords` (a €5
@@ -101,9 +121,17 @@ cd apps/api && venv/Scripts/python.exe scripts/reingest_local_script_names.py
   keep spans) is a usable template.
 - `_FOOD_MEALS_PER_DAY = 3.0` calibration — now lower-stakes, only used when no directly-observed
   daily figure exists.
-- Open user decision on the 5 residual `MAX_CATEGORY_SHARE` failures (Paris metro density +
-  4 temple/pilgrimage towns): accept as real-world skew, relax the threshold for pilgrimage towns,
-  or build the per-category hard cap in `osm.py`.
+- ~~Open user decision on the 5 residual `MAX_CATEGORY_SHARE` failures~~ — **✅ mechanism settled in
+  v10.40.0** by taking the third option, the per-category hard cap in `osm.py`: a category is capped
+  at 25% of the pool during selection, half the gate's 0.5 threshold. **But it does not resolve the
+  genuine-skew cases, and the first data confirms that:** the cap *defers* over-cap POIs rather than
+  discarding them (so thin destinations still fill their 60), which means a destination without
+  enough other categories still ends up dominated. Alleppey re-ingested at **0.63 top-category share
+  — 38 of 60 places of worship** — because that is what is actually mapped there. So the remaining
+  question is unchanged and still a product call: **accept temple/backwater towns as real-world
+  skew, or relax the gate for them.** What v10.40.0 removed is the *artificial* skew (Paris metro,
+  Bangkok/Delhi train stations); what's left is real. Re-check Paris, Dharamshala, Mahabaleshwar and
+  Khajuraho against the gate when the run reaches them.
 - Reddit ingestion still 403s in prod on every boot — ask whether the OAuth app review came
   through, then rewire `scrapers/reddit.py` to the authenticated API.
 - Non-blocking timing note: the YouTube scheduler job uses `IntervalTrigger` with no `start_date`,
@@ -113,7 +141,86 @@ cd apps/api && venv/Scripts/python.exe scripts/reingest_local_script_names.py
 
 ---
 
-## 🆕 2026-07-25 session (latest) — hidden-gem name matching, and the ingestion bug underneath it (v10.39.0)
+## 🆕 2026-07-25/26 session (latest) — the POI pool: landmarks were unreachable, not out-ranked (v10.40.0)
+
+Taken up as "rank the OSM POI pool by prominence" (the previous session's top item). Ranking was
+genuinely missing — but **it was the second of two causes, and on its own it would have fixed
+nothing.**
+
+**1. 🔴 The Overpass query only ever asked for `node` elements.** Famous landmarks are mapped as
+*areas*. A live probe settled it in one shot: Kiyomizu-dera, Kinkaku-ji and Ginkaku-ji are `way`
+elements, Delhi's Jama Masjid a `relation`. They were never candidates for the 60 slots at all, so
+no amount of ranking would have surfaced them. The tell was already in the code — the query asked
+for `out center` and the parser read `element["center"]`, both meaningless for nodes. Only the
+query kind was missing.
+
+**2. ⚠️ The obvious one-line fix is a trap that looks like it works.** Switching the broad query to
+`nwr` does *not* work: Overpass's `out <limit>` truncates in element-type order, **nodes first**, so
+a capped `nwr` query returns an all-node result and silently drops every way and relation —
+verified, an `nwr` query for Kyoto capped at 3000 came back 3000/3000 nodes. Removing the cap is
+the other extreme and simply times out in a dense city. **Generalisable: when a result cap and a
+type filter interact, check what the cap truncates *by* — a full-looking result set is not evidence
+the filter worked.**
+
+**3. ✅ Prominence is fetched as its own pass.** `nwr` + `["wikidata"]`, 15km, **no cap** (a cap
+would reintroduce the truncation above). The filter is what makes an uncapped query affordable:
+Delhi 159 elements, Kyoto 345, Bangkok 668. A wider `wikidata|wikipedia|heritage` regex filter was
+measured and rejected — +7 elements out of 836 for Istanbul at double the time, and a full timeout
+on Bangkok.
+
+**4. ✅ Selection by prominence tier, then a per-category cap.** With the prominence pass merged but
+round-robin unchanged, Delhi came back with 4 cinemas and 4 art galleries but only 4 attractions —
+**round-robin gave a cinema exactly the same claim on a slot as the Red Fort.** Selection now runs
+in descending prominence tiers, round-robinning across categories *within* each tier, then caps any
+category at 25% of the pool. With no prominence signal anywhere the pool collapses to one tier and
+behaves exactly as before, so the old anti-domination guarantee is preserved rather than replaced.
+
+**5. 🔴 New data-loss guard, found by being bitten by it.** Delhi's prominence query 403'd on all
+three mirrors mid-verification, and the broad-pass-only fallback returned a **full 60 POIs, well
+distributed across 22 categories, top share 0.07 — and containing none of Red Fort, Humayun's Tomb,
+Qutub Minar, India Gate, Lotus Temple, Jama Masjid or Lodhi Gardens.** Every existing health check
+passed it, including the thin/dominated data-loss guard. The prominence pass's success is now
+tracked explicitly (it *cannot* be inferred from the POIs) and won't overwrite an already-populated
+destination. **Generalisable, and the same shape as the v10.37.0 mis-geocoding lesson: a
+completeness check that counts and distributes can't see a pool that is complete but wrong.**
+
+**The tuning was measured, not guessed** — raw Overpass results for Delhi/Kyoto/Bangkok cached once,
+then 8 variants compared offline on identical inputs, scored by how many genuinely famous landmarks
+land in the final 60. **No variant beat the shipped one (25/37).** Two that sound obviously right
+are *worse* and are recorded so nobody re-tries them: scoring areas above nodes (Delhi 10/14 →
+9/14, losing Chandni Chowk to traced buildings), and relaxing the cap to 0.35 (looked like +1 on
+two cities, evaporated at three).
+
+**Live results so far** (re-ingestion still running at time of writing):
+
+| | before | after |
+|---|---|---|
+| Kyoto pool | 21 obscure temples + 20 small museums, no Kiyomizu-dera | Kiyomizu-dera, Kinkaku-ji, Ginkakuji, Ryōan-ji, Nijō Castle, Katsura Imperial Villa; 60/60 with a prominence signal; top share 0.35 → 0.25 |
+| Delhi pool | 7 train stations, no Red Fort | Red Fort, India Gate, Jama Masjid, Lotus Temple, Chandni Chowk, Purana Qila, Hauz Khas, Jantar Mantar; attractions 4 → 14, cinemas 4 → 1 |
+| Bangkok pool | 12 train stations, no Wat Arun | Wat Arun, Grand Palace, Chatuchak, Jim Thompson House; 60/60 prominent |
+| Istanbul pool | 6 train stations, no Grand Bazaar | 60/60 prominent, top share 0.25 |
+| Tokyo | 58/60 Japanese-script (failed 3 v10.39.0 runs) | **60/60 Latin-script, 60/60 prominent, share 0.10** — closes old item 7 |
+| Hidden gems | Kyoto 0, Goa 0, Delhi 0 | **Kyoto 3** (Byōdō-in, Kinkaku-ji, Murin-an), **Goa 1** (Museum of Goa), **Delhi** now classifies **Chandni Chowk** as a crowd favourite — the exact POI the v10.39.0 audit found commenters naming 4× and the pool lacking |
+
+**What the cap does *not* fix, measured:** it defers over-cap POIs rather than discarding them, so a
+destination that lacks other categories still ends up dominated. Alleppey came back at **0.63
+top-category share (38/60 places of worship)** — that is genuinely what is mapped there. The
+artificial skew (Paris metro, Bangkok/Delhi train stations) is gone; the real skew is not, and
+whether to accept it or relax the gate for pilgrimage/backwater towns is still a product call.
+
+Suite **612 passed / 6 skipped / 0 failed** (+27). Ruff clean.
+
+### Still open after this session
+
+- **The re-ingestion run itself** — item 2 at the top. Re-run until `0 still pending`.
+- **Delhi's residual weakness is OSM's data, not the ranking** — Humayun's Tomb carries only
+  `wikidata` + a Hindi `wikipedia` tag and scores 6, below the fully-tagged Sulabh Museum of
+  Toilets at 8. Wikidata sitelink count is the signal that would fix it. Detail in item 2.
+- **`overpass.openstreetmap.fr` is hard-refusing us** (403 on 5/5) — see item 7.
+
+---
+
+## 2026-07-25 session — hidden-gem name matching, and the ingestion bug underneath it (v10.39.0)
 
 Taken up as "gem-intel name matching under-fires". **The premise did not survive a look at the real
 data**, which is the main lesson from the session: a read-only audit of 8 destinations' live
@@ -380,7 +487,7 @@ calibration pass to retire.
   matching the venv) — the real drift was the config using the deprecated top-level `[tool.ruff]`
   `select`/`ignore`. See the 2026-07-25 (later) block at the top.
 
-**Last updated:** 2026-07-25 (latest) — v10.39.0: hidden-gem name matching rebuilt on a new shared `services/name_matching.py`, but the audit that preceded it found the real cause upstream — **`scrapers/osm.py` was storing OSM's local-language `name` tag**, leaving 17 destinations (Tokyo 58/60, Seoul 56/60, Kyoto 49/60 …) with unmatchable names and showing English users Japanese/Greek/Thai place names in itineraries. Fixed to prefer `name:en`; 16 of 17 re-ingested (49% → 82% Latin-script), Tokyo still pending on Overpass failures. Gems also stopped recommending metro stops. Three latent bugs fixed along the way, two of them live in the interest-pinning path as well (NFKD folding *deleted* `ı`/`ø`/`ł`, apostrophes were split not removed). **The new ceiling is the POI pool, not the matcher** — see item 2 at the top. Previous entry: v10.38.2: the `COOKIE_SAMESITE`/`JWT_SECRET` prod guards were **inert on Railway** (they keyed off an `ENVIRONMENT` var Railway never sets) — fixed with `is_production()` + 6 regression tests; `NOMINATIM_USER_AGENT` in Railway was still the old `wanderplan/1.0` so the Wikimedia-403 fix had never reached prod; `YOUTUBE_API_KEY` set; first full YouTube backfill ran (80 destinations, 11,838 comments, 90 left for tomorrow). See the block at the top. Previous entry: v10.38.1 repo-wide Ruff cleanup: 318 pre-existing violations cleared, `ruff check .` now passes under the already-pinned `ruff==0.4.9`, config moved off the deprecated top-level `[tool.ruff]` section, and 3 latent bugs fixed (2 dead module docstrings, 1 unresolvable forward-ref + redundant import, 1 dead local). Also verified the 0005 migration + scheduler job need no deploy-side code change (`railway.toml` already runs `alembic upgrade head`); the only prod prerequisite left is setting `YOUTUBE_API_KEY` on Railway. Found-not-fixed: CI's mypy step is red pre-existing (`eval/` missing `__init__.py`). See the block at the top. Previous entry: manual frontend/stage bug-bash session found and fixed 5 Anya wizard bugs total: a dead-end fallback reply, a broken post-sign-in resume state sync, a ZWJ-emoji chip-tap detection bug, a misleading `(NO_DATA)` error masking real generation failures, and (found on stage after the first 3 were live) stale group-type chips repeating under the traveler-count follow-up. See "2026-07-24 session — Anya wizard bug bash" block immediately below. Previous entry: (1) full 168-destination live re-audit found the backlog nearly clear (only 10 failing, none wiki/osm-zero); fixed **3 silently mis-geocoded destinations the count-only gate can't detect** (Austin→was Nevada ghost town, La Paz→was Mexico, Valencia→was Venezuela) + re-ingested the 10 gate failures, landing at **7/12 fixed, 5 residual = genuine real-world category skew** (Paris metro + 4 temple/pilgrimage towns), not bugs. (2) Shipped the **food-grounding per-meal→per-day reconciliation** ("item A" proper fix) — now unit-aware, floor-kept-as-safety-net. See the two "2026-07-24 session" blocks further below. Prior top-priority (food under-estimation) is now resolved.
+**Last updated:** 2026-07-26 (latest) — v10.40.0: the POI pool is ranked by prominence, but the headline finding is that ranking was the *second* of two causes — **`scrapers/osm.py` only ever queried `node` elements**, and famous landmarks are mapped as areas (Kiyomizu-dera, Kinkaku-ji, Ginkaku-ji are `way`s; Delhi's Jama Masjid a `relation`), so they were **unreachable, not out-ranked**. Fixed with a second prominence-filtered `nwr` pass (uncapped on purpose — Overpass's `out <limit>` truncates nodes-first, so a cap silently drops every way), tiered prominence selection, and a 25% per-category cap that also settles the long-open `MAX_CATEGORY_SHARE` question. A new guard stops a *failed* prominence pass from overwriting good data with a full-looking-but-landmark-less pool — found by being bitten by it on Delhi. Tuning was measured against cached raw Overpass data across 3 cities, 8 variants; nothing beat the shipped config, and two plausible-sounding ideas were measurably worse. Live: Kyoto gems 0 → 3, Goa 0 → 1, Delhi now flags Chandni Chowk as a crowd favourite. **The 169-destination re-ingestion is the remaining work — re-run the script until `0 still pending`.** Previous entry: v10.39.0: hidden-gem name matching rebuilt on a new shared `services/name_matching.py`, but the audit that preceded it found the real cause upstream — **`scrapers/osm.py` was storing OSM's local-language `name` tag**, leaving 17 destinations (Tokyo 58/60, Seoul 56/60, Kyoto 49/60 …) with unmatchable names and showing English users Japanese/Greek/Thai place names in itineraries. Fixed to prefer `name:en`; 16 of 17 re-ingested (49% → 82% Latin-script), Tokyo still pending on Overpass failures. Gems also stopped recommending metro stops. Three latent bugs fixed along the way, two of them live in the interest-pinning path as well (NFKD folding *deleted* `ı`/`ø`/`ł`, apostrophes were split not removed). **The new ceiling is the POI pool, not the matcher** — see item 2 at the top. Previous entry: v10.38.2: the `COOKIE_SAMESITE`/`JWT_SECRET` prod guards were **inert on Railway** (they keyed off an `ENVIRONMENT` var Railway never sets) — fixed with `is_production()` + 6 regression tests; `NOMINATIM_USER_AGENT` in Railway was still the old `wanderplan/1.0` so the Wikimedia-403 fix had never reached prod; `YOUTUBE_API_KEY` set; first full YouTube backfill ran (80 destinations, 11,838 comments, 90 left for tomorrow). See the block at the top. Previous entry: v10.38.1 repo-wide Ruff cleanup: 318 pre-existing violations cleared, `ruff check .` now passes under the already-pinned `ruff==0.4.9`, config moved off the deprecated top-level `[tool.ruff]` section, and 3 latent bugs fixed (2 dead module docstrings, 1 unresolvable forward-ref + redundant import, 1 dead local). Also verified the 0005 migration + scheduler job need no deploy-side code change (`railway.toml` already runs `alembic upgrade head`); the only prod prerequisite left is setting `YOUTUBE_API_KEY` on Railway. Found-not-fixed: CI's mypy step is red pre-existing (`eval/` missing `__init__.py`). See the block at the top. Previous entry: manual frontend/stage bug-bash session found and fixed 5 Anya wizard bugs total: a dead-end fallback reply, a broken post-sign-in resume state sync, a ZWJ-emoji chip-tap detection bug, a misleading `(NO_DATA)` error masking real generation failures, and (found on stage after the first 3 were live) stale group-type chips repeating under the traveler-count follow-up. See "2026-07-24 session — Anya wizard bug bash" block immediately below. Previous entry: (1) full 168-destination live re-audit found the backlog nearly clear (only 10 failing, none wiki/osm-zero); fixed **3 silently mis-geocoded destinations the count-only gate can't detect** (Austin→was Nevada ghost town, La Paz→was Mexico, Valencia→was Venezuela) + re-ingested the 10 gate failures, landing at **7/12 fixed, 5 residual = genuine real-world category skew** (Paris metro + 4 temple/pilgrimage towns), not bugs. (2) Shipped the **food-grounding per-meal→per-day reconciliation** ("item A" proper fix) — now unit-aware, floor-kept-as-safety-net. See the two "2026-07-24 session" blocks further below. Prior top-priority (food under-estimation) is now resolved.
 
 ---
 
