@@ -12,11 +12,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from scrapers.itinerary_corpus import (
+    YOUTUBE_ITINERARY_SEED_DESTINATIONS,
     _is_itinerary_shaped,
+    discover_youtube_itinerary_videos,
     scrape_travel_blog_feed,
     scrape_wikivoyage_itinerary,
     scrape_reddit_trip_reports,
     fetch_youtube_transcript,
+    scrape_all_youtube_transcripts,
     collect_itinerary_corpus_raw,
 )
 
@@ -228,3 +231,103 @@ class TestCollectItineraryCorpusRaw:
 
         sources = {d["source"] for d in docs}
         assert sources == {"travel_blog", "reddit_trip_report"}
+
+
+class TestYoutubeItineraryDiscovery:
+    """Video discovery used to be a manual-only static list; it now searches
+    live via the YouTube Data API (shared client + quota budget with
+    scrapers/youtube_comments.py) over an India-weighted seed list."""
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_without_api_key(self):
+        with patch("scrapers.itinerary_corpus.settings.youtube_api_key", ""), \
+             patch("scrapers.youtube_comments.search_travel_videos", new=AsyncMock()) as mock_search:
+            assert await discover_youtube_itinerary_videos() == []
+        mock_search.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_keeps_only_itinerary_shaped_titles(self):
+        """search.list relevance happily returns '10 THINGS TO KNOW' videos,
+        which have no day structure for the extraction chain to work with."""
+        results = [
+            {"video_id": "v1", "title": "5 Day Kerala Itinerary on a Budget"},
+            {"video_id": "v2", "title": "Top 10 Things To Know Before Visiting Kerala"},
+        ]
+        with patch("scrapers.itinerary_corpus.settings.youtube_api_key", "fake-key"), \
+             patch("scrapers.itinerary_corpus.YOUTUBE_ITINERARY_SEED_DESTINATIONS", ["Kerala"]), \
+             patch("scrapers.youtube_comments.search_travel_videos", new=AsyncMock(return_value=results)):
+            videos = await discover_youtube_itinerary_videos()
+
+        assert [v["video_id"] for v in videos] == ["v1"]
+
+    @pytest.mark.asyncio
+    async def test_uses_itinerary_shaped_query_not_hidden_gems_phrasing(self):
+        with patch("scrapers.itinerary_corpus.settings.youtube_api_key", "fake-key"), \
+             patch("scrapers.itinerary_corpus.YOUTUBE_ITINERARY_SEED_DESTINATIONS", ["Kerala"]), \
+             patch("scrapers.youtube_comments.search_travel_videos", new=AsyncMock(return_value=[])) as mock_search:
+            await discover_youtube_itinerary_videos()
+
+        query = mock_search.await_args.kwargs["query"]
+        assert "itinerary" in query
+        assert "hidden places" not in query
+
+    @pytest.mark.asyncio
+    async def test_one_destination_failing_does_not_abort_the_rest(self):
+        async def _flaky(destination, query=None, max_results=None):
+            if destination == "Kerala":
+                raise RuntimeError("quota error")
+            return [{"video_id": "v2", "title": "3 Day Goa Itinerary"}]
+
+        with patch("scrapers.itinerary_corpus.settings.youtube_api_key", "fake-key"), \
+             patch("scrapers.itinerary_corpus.YOUTUBE_ITINERARY_SEED_DESTINATIONS", ["Kerala", "Goa"]), \
+             patch("scrapers.youtube_comments.search_travel_videos", new=_flaky):
+            videos = await discover_youtube_itinerary_videos()
+
+        assert [v["video_id"] for v in videos] == ["v2"]
+
+    @pytest.mark.asyncio
+    async def test_seed_list_is_india_weighted(self):
+        """Every previous seed list in this repo under-served domestic
+        destinations; this one must not repeat that."""
+        india = {
+            "Rajasthan", "Kerala", "Goa", "Ladakh", "Himachal Pradesh",
+            "Rishikesh", "Varanasi", "Meghalaya", "Andaman Islands", "Karnataka",
+        }
+        seeds = set(YOUTUBE_ITINERARY_SEED_DESTINATIONS)
+        assert len(seeds & india) > len(seeds - india)
+
+    @pytest.mark.asyncio
+    async def test_transcripts_merge_manual_and_discovered_and_dedupe(self):
+        """A manually-curated video that also surfaces in search must not be
+        fetched (and emitted) twice."""
+        fetched: list[str] = []
+
+        async def _fake_fetch(video_id, title=""):
+            fetched.append(video_id)
+            return {"source": "youtube_captions", "video_id": video_id}
+
+        with patch("scrapers.itinerary_corpus.YOUTUBE_ITINERARY_VIDEO_IDS",
+                   [{"video_id": "dup", "title": "7 Day Manual Itinerary"}]), \
+             patch("scrapers.itinerary_corpus.discover_youtube_itinerary_videos",
+                   new=AsyncMock(return_value=[
+                       {"video_id": "dup", "title": "7 Day Manual Itinerary"},
+                       {"video_id": "new", "title": "4 Day Discovered Itinerary"},
+                   ])), \
+             patch("scrapers.itinerary_corpus.fetch_youtube_transcript", new=_fake_fetch):
+            docs = await scrape_all_youtube_transcripts()
+
+        assert fetched == ["dup", "new"]
+        assert len(docs) == 2
+
+    @pytest.mark.asyncio
+    async def test_transcripts_still_work_keyless_via_manual_list(self):
+        async def _fake_fetch(video_id, title=""):
+            return {"source": "youtube_captions", "video_id": video_id}
+
+        with patch("scrapers.itinerary_corpus.settings.youtube_api_key", ""), \
+             patch("scrapers.itinerary_corpus.YOUTUBE_ITINERARY_VIDEO_IDS",
+                   [{"video_id": "manual", "title": "7 Day Itinerary"}]), \
+             patch("scrapers.itinerary_corpus.fetch_youtube_transcript", new=_fake_fetch):
+            docs = await scrape_all_youtube_transcripts()
+
+        assert [d["video_id"] for d in docs] == ["manual"]

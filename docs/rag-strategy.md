@@ -353,6 +353,32 @@ Both `embed()` (sentence-transformers, CPU-bound) and the sync `QdrantClient`'s 
 
 **Fix:** every blocking call (`embed`, `client.search`, `client.scroll`) is now wrapped in `asyncio.to_thread()`. Additionally, `retrieve_context()` batch-embeds all 3 query variants in a single `embed()` call instead of 3 separate ones (sentence-transformers batches efficiently). Post-fix throughput at concurrency=50 improved from ~10 → ~23.6 req/s before hybrid/HyDE/reranking were layered back on top (which add their own, expected, additional cost — see §3J).
 
+### 3L — Lexical Price-Candidate Retrieval ✅ DONE (v10.38)
+
+Cost grounding (`core/cost_grounding.py` → `core/price_extraction.py`) mines real per-destination stay/food prices out of the same free collections everything else uses. It had been a live no-op for months, and the standing assumption was "not enough ingested data yet". Re-examining it showed the retrieval step had a **category error** in it: whether a chunk contains a price is a **lexical** property, but candidate selection was being done **semantically**.
+
+A casual comment like *"Choki dani 700 per person"* is topically about a restaurant, not about the abstract subject of "cost", so it embeds far away from a price-flavoured query (`"{dest} food meal daily cost per person price cost INR budget"`) and never survived into the top-`limit` results. No amount of query tuning fixes that — the signal the ranker needs simply isn't in the text.
+
+**Fix — select lexically, rank semantically as a complement:**
+- `_scroll_price_candidates_sync()` does a bounded destination-filtered `scroll` (400 chunks × 3 collections, pure regex, run via `asyncio.to_thread`) and keeps chunks that literally contain a price, using the *same* regex the extractor uses (`has_price_mention()`), so "would be selected" and "would yield an amount" can't drift apart.
+- `community_price_samples()` merges those ahead of the existing semantic pass (deduped, capped at 24). It is kept **separate** from `community_price_snippets()` because that function's output goes verbatim into LLM prompts, where a wider result set is real token bloat; `community_price_samples()` output is only ever read by a regex.
+
+Two silent bugs surfaced while doing this, both of which had been quietly suppressing grounding independently of ranking:
+1. **Truncation was cutting the price off.** Snippets were head-truncated at 280 chars, so any chunk whose only amount sat past that point arrived with the amount already removed — it still looked on-topic and simply contributed nothing, with no way to observe the loss. The prompt path now uses `price_focused_excerpt()`, a window centred on the amount that keeps the trailing "per person"/"per night" qualifier in view.
+2. **The extraction path shouldn't truncate at all.** Only a regex reads it, and an excerpt discards *additional* prices later in the same chunk — Wikivoyage "Eat"/"Sleep" sections routinely list several, and the median needs all of them.
+
+**Live result (read-only, real cluster):** price-bearing snippets found went 0→1 (Jaipur), 0→3 (Paris), 1→3 (London) versus semantic-only. Dropping the extraction-path truncation took Paris from 1→2 extractable amounts, crossing `min_samples=2` and producing the first non-`None` food grounding this feature has ever returned.
+
+**Honest status:** grounding still returns `None` for most destinations — but the cause has moved from *retrieval* to *corpus density* (0–2 extractable on-topic amounts per destination against `min_samples=2`). One known precision gap remains: `context_keywords` matching is **whole-snippet**, not per-amount, so a chunk that mentions food words anywhere can contribute an unrelated in-bounds amount (live-observed: a €5 bus fare landing in Paris's food median). The estimator's floor caught it, but per-amount proximity matching is the real fix and the next highest-value step here.
+
+### 3M — Metered-Source Quota Budget ✅ DONE (v10.38)
+
+Every ingestion source before YouTube was free and unmetered (Overpass, Wikimedia, Reddit's public JSON), so "ingest on demand" needed no spend control beyond politeness delays. The YouTube Data API is the first metered one: `search.list` costs 100 of a 10,000-unit daily quota.
+
+That matters because it interacts badly with demand-driven ingestion (§8 of `scaling-tech-challenges.md`): the cold-start gate allows 5 first-request ingestions/hour ≈ 120/day ≈ 12,000 units — i.e. automating YouTube ingestion naively would have exceeded the daily quota outright and, worse, left nothing for manual re-ingestion or eval runs. `scrapers/youtube_comments.py::_search_budget_available()` adds a process-global rolling-24h cap (`settings.youtube_daily_search_budget = 80`), structurally identical to the existing cold-start window. Over budget degrades to "no videos found" — an outcome every caller already handles — and deliberately leaves `youtube_last_ingested_at` NULL so the scheduler retries later rather than recording the destination as freshly-ingested-but-empty.
+
+**Generalisable rule for future metered sources** (TripAdvisor, Google Places — both in §9's roadmap): pair demand-driven ingestion with an explicit budget window, and make exhaustion a *retryable no-op* rather than an error or a false success.
+
 ---
 
 ## 4. RAG as Fallback for Real-Time API Failures ✅ DONE
@@ -551,8 +577,8 @@ This is fundamentally different from the existing wiki/reddit collections:
 | **Lonely Planet** (lonelyplanet.com/itineraries) | Structured `n-day` itinerary pages | `httpx` + BeautifulSoup; `<section>` tags are clean | Free | Monthly |
 | **Wikivoyage** | Authoritative destination guides | Official **Wikimedia API** (`action=parse`) — structured, stable, no scraping | Free | Quarterly |
 | **Reddit trip reports** (r/travel, r/solotravel, r/indiatravel) | "My X-day trip to Y" self-posts | **As actually implemented: keyless public JSON feed** (`reddit.com/r/{sub}/top.json`), not PRAW/OAuth — correcting this table, which described an earlier plan rather than the shipped code (`scrapers/reddit.py`) | Free | Daily |
-| **YouTube captions** | Travel vlog day-by-day descriptions | **`youtube-transcript-api`** — extracts manual/auto-generated captions by video ID; **no API key needed** | Free | Weekly |
-| **YouTube comments** (planned, 2026-07-16) | Place mentions + sentiment from travel-video comment threads — same signal shape as Reddit posts | Official **YouTube Data API v3**: `search.list` (100 units/query) to discover destination videos, `commentThreads.list` (1 unit/call) to pull top comments | Free (10k units/day quota) | Weekly, alongside Reddit refresh |
+| **YouTube captions** | Travel vlog day-by-day descriptions | **`youtube-transcript-api`** — extracts manual/auto-generated captions by video ID; **no API key needed**. Video *discovery* is live as of v10.38 (`discover_youtube_itinerary_videos()`, shares the Data-API client + quota budget below); the manual video-ID list remains a keyless supplement | Free (transcripts); discovery uses the quota below | Monthly, with the itinerary-corpus job |
+| **YouTube comments** (shipped v10.30; **automated v10.38**) | Place mentions + sentiment from travel-video comment threads — same signal shape as Reddit posts | Official **YouTube Data API v3**: `search.list` (100 units/query) to discover destination videos, `commentThreads.list` (1 unit/call) to pull top comments | Free (10k units/day quota) | On a destination's first request (cold-start gate) + a 14-day scheduler refresh — both behind a rolling-24h search budget (see §8b) |
 
 **Phase v1 — Premium, high-fidelity sources (add after v0 pipeline is stable):**
 
@@ -1039,7 +1065,7 @@ More context signal, fewer tokens, better output.
 | P1 | `generated_itineraries` collection + store on generate | 4 hrs | ❌ Pending — learning flywheel not yet started |
 | P2 | Travel blog scraper — `feedparser` + BeautifulSoup (Nomadic Matt, Planet D) | 1 day | ✅ Done (v10.11) — `scrapers/itinerary_corpus.py::scrape_travel_blog_feed`, raw fetch only. **Feed list updated (v10.28)**: Planet D's RSS started failing (connection-reset, confirmed dead); replaced with Uncornered Market (general adventure) and Bruised Passports (India-focused, closes this pool's India coverage gap) — both live-verified, ingested into production (`itinerary_corpus` 1→4 points) |
 | P2 | Reddit trip-report ingester — direct public-JSON search (`q=itinerary`), itinerary-shaped title filter | 4 hrs | ✅ Done (v10.11) — `scrapers/itinerary_corpus.py::scrape_reddit_trip_reports`; kept the existing keyless direct-JSON approach instead of adding PRAW OAuth (no new required credentials) |
-| P2 | YouTube `youtube-transcript-api` scraper (no API key) | 4 hrs | ✅ Done (v10.11) — `scrapers/itinerary_corpus.py::fetch_youtube_transcript`; video-ID discovery stays out of scope (would need the paid/keyed YouTube Data API), so a curated seed list of video IDs is used instead of live search |
+| P2 | YouTube `youtube-transcript-api` scraper (no API key) | 4 hrs | ✅ Done (v10.11) — `scrapers/itinerary_corpus.py::fetch_youtube_transcript`. **Video-ID discovery now live (v10.38)**: `discover_youtube_itinerary_videos()` reuses `scrapers/youtube_comments.py::search_travel_videos()` (shared Data-API client + rolling-24h quota budget) with an *itinerary-shaped* query over an India-weighted seed destination list, filtered through `_is_itinerary_shaped()` — `search.list` relevance alone happily returns "10 things to know" videos with no day structure. Degrades to the curated manual list when no key is set, so the module is still usable keyless |
 | P2 | Extraction LLM chain → structured `ItineraryCorpusDoc` + `itinerary_corpus` Qdrant collection (config+content dual embedding, quality scoring, monthly scheduler job) | 1 day | ✅ Done (v10.12) — `chains/itinerary_corpus_extraction_chain.py`; retrieval (wiring into the generation prompt) is the separate `itinerary-corpus-retrieval` roadmap item |
 | P2 | Unified metadata schema normalisation across all scrapers | 3 hrs | ❌ Pending — consistent filters; `attraction_type` precision retrieval |
 | P2 | Quality score background task (session signals) | 4 hrs | ❌ Pending — enables persona-based re-ranking |

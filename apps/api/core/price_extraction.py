@@ -163,6 +163,55 @@ def _iter_raw_amounts(text: str):
         yield amount, is_daily
 
 
+def _first_price_offset(text: str) -> int | None:
+    """Character offset of the earliest price-shaped mention in `text`, or
+    None if it has none. Same three passes (and the same equal-length masking)
+    as `_iter_raw_amounts`, so "contains a price" here means exactly what
+    "would yield an amount" means there."""
+    masked = _AMOUNT_RE.sub(lambda m: " " * len(m.group(0)), text)
+    offsets = [
+        m.start()
+        for m in (
+            _AMOUNT_RE.search(text),
+            _BARE_AMOUNT_UNIT_SUFFIX_RE.search(masked),
+            _PRICE_VERB_PREFIX_RE.search(masked),
+        )
+        if m is not None
+    ]
+    return min(offsets) if offsets else None
+
+
+def has_price_mention(text: str) -> bool:
+    """True when `text` contains at least one price-shaped mention.
+
+    Lets callers select snippets *lexically* — by whether a price is actually
+    present — instead of relying on dense-vector similarity to a price-flavoured
+    query, which measures "is about the topic of cost" and demonstrably fails to
+    surface short casual mentions like "Choki dani 700 per person" (they carry
+    almost no topical signal for an embedding to latch onto). See
+    core/cost_grounding.py::community_price_samples."""
+    return _first_price_offset(text) is not None
+
+
+def price_focused_excerpt(text: str, width: int = 280) -> str:
+    """Excerpt of `text` centred on its first price mention.
+
+    Retrieved chunks get truncated before extraction to bound prompt/CPU cost,
+    but a blind `text[:width]` silently discards the price whenever it sits
+    past `width` — the snippet then looks on-topic and contributes nothing,
+    which is invisible from the outside (it just reads as "no signal found").
+    Keeps ~a third of the window ahead of the amount so the trailing unit
+    phrase ("per person", "/night") that qualifies it stays in view.
+    Falls back to a plain head-truncation when there's no price to centre on."""
+    if len(text) <= width:
+        return text
+    offset = _first_price_offset(text)
+    if offset is None:
+        return text[:width]
+    start = max(0, offset - width // 3)
+    return text[start:start + width]
+
+
 def extract_price_mentions_inr(
     snippets: list[str],
     low_bound: float,
@@ -203,6 +252,56 @@ def extract_price_mentions_inr(
             if low_bound <= value <= high_bound:
                 amounts.append(value)
     return amounts
+
+
+def food_per_day_estimate_inr(
+    snippets: list[str],
+    low_bound: float,
+    high_bound: float,
+    min_samples: int = 2,
+    context_keywords: frozenset[str] | None = None,
+    meals_per_day: float = 3.0,
+) -> tuple[float | None, bool]:
+    """Per-day food figure for a destination, plus whether it was *directly
+    observed* as a daily rate.
+
+    Returns `(median_inr_per_day, directly_observed)`.
+
+    Two tiers, preferring real data over reconstruction:
+
+    1. **Directly observed** — enough amounts already expressed per-day/per-night
+       ("we spent ₹2000 a day on food"). These need no meals/day factor at all,
+       so `directly_observed=True` and the result carries no uncalibrated
+       assumption. This is the tier that lets the caller drop its safety floor.
+    2. **Reconciled** — not enough daily mentions, so per-meal/per-dish amounts
+       (the dominant Wikivoyage "Eat"-listing case) are scaled by
+       `meals_per_day` and pooled with any daily ones. `directly_observed=False`:
+       the result depends on an assumed meals/day and should stay floored.
+
+    Splitting the tiers is what makes the meals/day factor progressively less
+    load-bearing as ingestion improves, rather than permanently baked in: any
+    destination whose corpus grows enough real daily mentions stops using it.
+    Returns `(None, False)` when neither tier reaches `min_samples`."""
+    daily: list[float] = []
+    reconciled: list[float] = []
+    for text in snippets:
+        if not _snippet_has_context(text, context_keywords):
+            continue
+        for raw, is_daily in _iter_raw_amounts(text):
+            if is_daily:
+                if low_bound <= raw <= high_bound:
+                    daily.append(raw)
+            else:
+                scaled = raw * meals_per_day
+                if low_bound <= scaled <= high_bound:
+                    reconciled.append(scaled)
+
+    if len(daily) >= min_samples:
+        return statistics.median(daily), True
+    pooled = daily + reconciled
+    if len(pooled) >= min_samples:
+        return statistics.median(pooled), False
+    return None, False
 
 
 def median_price_inr(

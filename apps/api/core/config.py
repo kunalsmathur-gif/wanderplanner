@@ -121,6 +121,26 @@ class Settings(BaseSettings):
     youtube_comments_per_video: int = 50
     youtube_videos_per_destination: int = 5
 
+    # Quota guard for the above. `search.list` is the expensive call (100
+    # units); the free tier allows 10,000 units/day, i.e. ~100 searches if
+    # nothing else spends quota that day. Both automatic callers (the
+    # cold-start gate in services/destination_ingestion.py and the scheduler
+    # refresh below) go through scrapers/youtube_comments.py's rolling-24h
+    # budget, so automatic ingestion can never exhaust the daily quota and
+    # leave manual/eval runs unable to search. 80 searches ≈ 8,000 units,
+    # plus ~1 unit per commentThreads.list call, leaves real headroom.
+    youtube_daily_search_budget: int = 80
+    # Cold-start ingestion is opt-out: unlike OSM/Wikivoyage (free, unmetered
+    # public APIs) this spends a real quota, so it's worth being able to turn
+    # off without unsetting the key entirely (which would also disable the
+    # manual/eval paths).
+    youtube_ingest_on_cold_start: bool = True
+    youtube_refresh_days: int = 14
+    # Per-run cap on the scheduler's refresh loop — the daily budget above is
+    # the real ceiling; this just stops one run from consuming all of it in a
+    # single burst, leaving none for cold starts until the window rolls.
+    youtube_refresh_batch_size: int = 20
+
     log_level: str = "INFO"
 
     # Optional error-tracking/APM (Sentry). Unset by default — a missing DSN

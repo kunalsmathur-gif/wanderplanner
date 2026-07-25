@@ -47,10 +47,31 @@ _MAX_POIS = 300
 _MAX_CHUNKS = 800
 _CACHE_TTL_SECONDS = 24 * 3600
 
-# Classification thresholds (tunable without redeploy via future settings if
-# needed — kept module-level constants until real-traffic data says otherwise).
-_GEM_MAX_MENTIONS = 6        # more mentions than this = too well-known to be a "gem"
-_CROWD_MIN_MENTIONS = 12     # this many mentions = crowd favourite
+# Classification thresholds.
+#
+# The gem/crowd split is computed *relative to this destination's own mention
+# distribution* rather than from a fixed pair of absolute counts. Two absolute
+# thresholds (previously 6 and 12) had a structural flaw beyond needing
+# tuning: they left a dead zone. Any POI mentioned 7-11 times was classified
+# as neither a gem nor a crowd favourite and silently vanished from both
+# lists — live-observed for Jaipur, whose single strongest match (Hawa Mahal,
+# 8 mentions) fell straight into the gap, so `compute_gem_intel_sync` returned
+# empty despite having real signal.
+#
+# Absolute counts also can't be right for more than one corpus size at a time:
+# 8 mentions means "barely known" in a destination with 500 ingested comments
+# and "the single most talked-about place here" in one with 30. The percentile
+# split below is scale-free, so it stays correct as ingestion coverage grows —
+# which matters because coverage is still actively changing per destination.
+#
+# The two guard rails keep the relative split honest at the extremes:
+_CROWD_PERCENTILE = 0.80          # top ~20% of mentioned POIs = crowd favourites
+_CROWD_MIN_MENTIONS = 3           # 1-2 mentions is never "crowd favourite", however thin the corpus
+_CROWD_ABSOLUTE_MENTIONS = 12     # this many mentions is a crowd favourite regardless of percentile
+# Below this many mentioned POIs a percentile is meaningless (with 1-2 POIs the
+# top 20% is just "the highest one", which would make a lone 5-mention POI a
+# "crowd favourite" and return zero gems) — fall back to the absolute ceiling.
+_MIN_POIS_FOR_RELATIVE_SPLIT = 5
 _GEM_MIN_SENTIMENT = 0.55    # Laplace-smoothed positive ratio floor for gems
 _SENTIMENT_WINDOW = 120      # chars of context around a mention scanned for sentiment
 _MAX_GEMS = 10
@@ -125,6 +146,23 @@ def _sentiment_around(chunk_lower: str, name_lower: str) -> tuple[int, int]:
     return pos, neg
 
 
+def _crowd_mention_threshold(mention_counts: list[int]) -> int:
+    """Mention count at or above which a POI counts as a crowd favourite for
+    *this* destination — see the threshold block above for why this is
+    relative rather than absolute.
+
+    Clamped into [_CROWD_MIN_MENTIONS, _CROWD_ABSOLUTE_MENTIONS] so a
+    well-covered destination can't push the bar so high that genuinely
+    famous places get called gems, and a thin one can't push it so low that
+    a couple of passing mentions reads as a crowd.
+    """
+    if len(mention_counts) < _MIN_POIS_FOR_RELATIVE_SPLIT:
+        return _CROWD_ABSOLUTE_MENTIONS
+    ordered = sorted(mention_counts)
+    idx = min(int(len(ordered) * _CROWD_PERCENTILE), len(ordered) - 1)
+    return max(_CROWD_MIN_MENTIONS, min(ordered[idx], _CROWD_ABSOLUTE_MENTIONS))
+
+
 def compute_gem_intel_sync(destination: str) -> dict:
     """One bounded pass over osm_pois × community-sentiment chunks for
     `destination`. Blends every configured sentiment source (currently
@@ -159,8 +197,11 @@ def compute_gem_intel_sync(destination: str) -> dict:
     # Pre-lowercase chunk texts once — the inner loop is pure substring search.
     chunk_lowers = [(t.lower(), label) for t, label in chunks]
 
-    gems: list[dict] = []
-    crowd: list[dict] = []
+    # Pass 1 — score every POI with at least one community mention. The
+    # gem/crowd split can't happen inline any more: the crowd threshold is
+    # derived from the destination's own mention distribution, which isn't
+    # known until every POI has been counted.
+    scored: list[dict] = []
     for poi in pois:
         name = (poi.get("name") or "").strip()
         name_lower = name.lower()
@@ -186,7 +227,7 @@ def compute_gem_intel_sync(destination: str) -> dict:
         # Laplace smoothing so a single unopposed positive word doesn't read
         # as 100% and zero-signal mentions read as neutral 0.5.
         sentiment = (pos_total + 1) / (pos_total + neg_total + 2)
-        entry = {
+        scored.append({
             "name": name,
             "poi_type": poi.get("poi_type", ""),
             "lat": poi.get("lat", 0.0),
@@ -196,10 +237,23 @@ def compute_gem_intel_sync(destination: str) -> dict:
             "sources": sources[:2],
             # Fewer mentions rank higher at equal sentiment — that's the gem.
             "gem_score": round(sentiment / math.log2(2 + mentions), 4),
-        }
-        if mentions >= _CROWD_MIN_MENTIONS:
+        })
+
+    if not scored:
+        return {"gems": [], "crowd_favourites": []}
+
+    # Pass 2 — classify against this destination's own distribution. The two
+    # branches partition every mentioned POI, so nothing can fall between them
+    # the way the old fixed 6/12 pair allowed; the sentiment floor is now the
+    # only reason a mentioned POI appears in neither list, which is deliberate
+    # (a poorly-reviewed obscure place is not a "hidden gem").
+    crowd_threshold = _crowd_mention_threshold([e["mentions"] for e in scored])
+    gems: list[dict] = []
+    crowd: list[dict] = []
+    for entry in scored:
+        if entry["mentions"] >= crowd_threshold:
             crowd.append(entry)
-        elif mentions <= _GEM_MAX_MENTIONS and sentiment >= _GEM_MIN_SENTIMENT:
+        elif entry["sentiment"] >= _GEM_MIN_SENTIMENT:
             gems.append(entry)
 
     gems.sort(key=lambda g: g["gem_score"], reverse=True)

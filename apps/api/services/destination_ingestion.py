@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
+from core.config import settings
 from db import AsyncSessionLocal
 from db_models import DestinationIngestionState
 from services.geocode import geocode_city
@@ -96,13 +97,45 @@ async def ensure_destination_ingested(destination: str) -> None:
 
             osm_count = 0
             wiki_count = 0
+            youtube_count = 0
+            youtube_attempted = False
             try:
                 from scrapers.osm import ingest_osm_pois
                 from scrapers.wikivoyage import ingest_wikivoyage
-                osm_count, wiki_count = await asyncio.gather(
-                    ingest_osm_pois(destination),
-                    ingest_wikivoyage(destination),
+
+                tasks = [ingest_osm_pois(destination), ingest_wikivoyage(destination)]
+
+                # YouTube comments are the hidden-gems sentiment source
+                # (services/gems.py). Unlike OSM/Wikivoyage — free, unmetered
+                # public APIs — this spends a real metered quota, which is why
+                # it stayed manual-only until now. It's safe to run
+                # automatically because scrapers/youtube_comments.py enforces
+                # its own rolling-24h search budget: over budget, it returns 0
+                # rather than overspending, and the NULL youtube_last_ingested_at
+                # left behind makes the scheduler pick the destination up later.
+                youtube_attempted = bool(
+                    settings.youtube_ingest_on_cold_start and settings.youtube_api_key
                 )
+                if youtube_attempted:
+                    from scrapers.youtube_comments import ingest_youtube_comments
+                    tasks.append(ingest_youtube_comments(destination))
+
+                # return_exceptions: one source failing must not discard the
+                # others' already-completed work (before YouTube was added a
+                # raising OSM fetch also threw away a successful wiki scrape).
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                counts: list[int] = []
+                for source_name, result in zip(("OSM", "Wikivoyage", "YouTube"), results):
+                    if isinstance(result, Exception):
+                        logger.warning(
+                            "%s ingestion failed for new destination %r: %s",
+                            source_name, destination, result, exc_info=result,
+                        )
+                        counts.append(0)
+                    else:
+                        counts.append(result or 0)
+                osm_count, wiki_count = counts[0], counts[1]
+                youtube_count = counts[2] if len(counts) > 2 else 0
             except Exception:
                 logger.warning("Ingestion failed for new destination %r", destination, exc_info=True)
 
@@ -121,8 +154,20 @@ async def ensure_destination_ingested(destination: str) -> None:
                 destination=destination,
                 osm_last_ingested_at=now,
                 wiki_last_ingested_at=now,
+                # Left NULL when YouTube wasn't attempted (no key / disabled)
+                # or produced nothing (over budget, no videos, comments off) —
+                # the scheduler's refresh loop treats NULL as "never ingested"
+                # and retries it, so a quota-exhausted cold start self-heals.
+                youtube_last_ingested_at=now if youtube_count else None,
                 request_count=1,
                 last_requested_at=now,
             ))
             await db.commit()
-            logger.info("First-request ingestion complete for %r (%d OSM POIs)", destination, osm_count or 0)
+            logger.info(
+                "First-request ingestion complete for %r (%d OSM POIs, %d wiki chunks, %d YouTube comments%s)",
+                destination,
+                osm_count or 0,
+                wiki_count or 0,
+                youtube_count or 0,
+                "" if youtube_attempted else "; YouTube skipped",
+            )

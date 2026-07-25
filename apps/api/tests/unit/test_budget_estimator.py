@@ -9,6 +9,7 @@ overridable by real community-reported data when the RAG corpus has it
 so `community_median_price_inr` is mocked to return None by default here,
 matching that real-world state).
 """
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -38,19 +39,38 @@ def no_community_grounding():
         yield
 
 
-def community_grounding(*, stay: float | None = None, food: float | None = None):
-    """Returns a patch() context manager that makes community_median_price_inr
-    answer `stay` for accommodation queries and `food` for food queries."""
+def community_grounding(
+    *, stay: float | None = None, food: float | None = None, food_directly_observed: bool = False
+):
+    """Returns a context manager patching both grounding entry points: stay
+    goes through `community_median_price_inr`, food through
+    `community_food_per_day_inr` (which additionally reports whether the figure
+    was directly observed as a daily rate — see core/price_extraction.py::
+    food_per_day_estimate_inr).
 
-    def _fake(dest_city, query_suffix, low, high, min_samples=2, limit=5,
-              context_keywords=None, per_day_meal_multiplier=None):
+    `food_directly_observed=False` (the default) models the reconciled
+    per-meal path, which stays subject to the flat-value floor."""
+
+    def _fake_stay(dest_city, query_suffix, low, high, min_samples=2, limit=5,
+                   context_keywords=None):
         if "hotel" in query_suffix or "accommodation" in query_suffix:
             return stay
-        if "food" in query_suffix or "meal" in query_suffix:
-            return food
         return None
 
-    return patch("core.budget_estimator.community_median_price_inr", new=AsyncMock(side_effect=_fake))
+    def _fake_food(dest_city, query_suffix, low, high, min_samples=2, limit=5,
+                   context_keywords=None, meals_per_day=3.0):
+        return food, food_directly_observed
+
+    @contextmanager
+    def _both():
+        with patch(
+            "core.budget_estimator.community_median_price_inr", new=AsyncMock(side_effect=_fake_stay)
+        ), patch(
+            "core.budget_estimator.community_food_per_day_inr", new=AsyncMock(side_effect=_fake_food)
+        ):
+            yield
+
+    return _both()
 
 
 async def test_missing_group_returns_none():

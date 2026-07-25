@@ -23,6 +23,12 @@ class DestinationIngestionState(Base):
     destination: Mapped[str] = mapped_column(String(120), primary_key=True)
     osm_last_ingested_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     wiki_last_ingested_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Tracked separately from OSM/wiki: YouTube ingestion spends a metered
+    # API quota, so it has its own (longer) refresh cadence and can legitimately
+    # be NULL on a destination whose OSM/wiki data is fully populated — either
+    # because no API key was configured at ingestion time or the rolling search
+    # budget was exhausted that day.
+    youtube_last_ingested_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     request_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     last_requested_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

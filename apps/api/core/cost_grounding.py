@@ -20,6 +20,7 @@ grounding hint string injected into the feasibility/expense-estimation
 prompts — it does not replace the LLM's own estimate, it constrains it.
 """
 from __future__ import annotations
+import asyncio
 import logging
 
 from core.config import settings
@@ -28,6 +29,82 @@ from models.trip import TripConfig
 from services.search import semantic_search
 
 logger = logging.getLogger(__name__)
+
+# Bounded-compute caps for the lexical price sweep below. 400 chunks per
+# collection × 3 collections of pure regex is single-digit milliseconds of
+# CPU, and only runs on the budget-estimation path (not per itinerary request).
+_PRICE_SCAN_MAX_CHUNKS = 400
+# Cap on price-bearing snippets handed to the median. Well above `min_samples`
+# so the median is stable, low enough to stay bounded on a well-ingested city.
+_MAX_PRICE_SAMPLES = 24
+
+
+def _price_collections() -> list[str]:
+    return [
+        settings.qdrant_collection_wiki,
+        settings.qdrant_collection_reddit,
+        settings.qdrant_collection_youtube_comments,
+    ]
+
+
+def _scroll_price_candidates_sync(
+    destination: str,
+    collections: list[str],
+    context_keywords: frozenset[str] | None,
+    max_chunks: int = _PRICE_SCAN_MAX_CHUNKS,
+) -> list[str]:
+    """Every chunk for `destination` that literally contains a price mention.
+
+    This is the fix for the retrieval half of the grounding no-op. Semantic
+    search ranks by similarity to a price-flavoured query, which is the wrong
+    question: a casual "Choki dani 700 per person" comment is topically about a
+    restaurant, not about "cost", so it ranks far below generic prose that
+    merely discusses money and never makes the top-`limit` cut. Presence of a
+    price is a *lexical* property, so it's tested lexically — a bounded scroll
+    plus the same regex the extractor itself uses, no embedding involved.
+
+    Pure CPU + N Qdrant scrolls — call via asyncio.to_thread. Best-effort per
+    collection: a missing/unindexed collection is skipped, never fatal.
+    """
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+    from core.price_extraction import _snippet_has_context, has_price_mention
+    from core.qdrant import get_qdrant
+
+    client = get_qdrant()
+    dest_filter = Filter(
+        must=[FieldCondition(key="destination", match=MatchValue(value=destination))]
+    )
+
+    snippets: list[str] = []
+    for collection in collections:
+        try:
+            points, _ = client.scroll(
+                collection_name=collection,
+                scroll_filter=dest_filter,
+                limit=max_chunks,
+                with_payload=True,
+                with_vectors=False,
+            )
+        except Exception:
+            logger.debug("Price-candidate scroll failed for %s/%s", destination, collection, exc_info=True)
+            continue
+        for point in points:
+            payload = point.payload or {}
+            text = payload.get("text") or payload.get("text_preview") or ""
+            if not text or not _snippet_has_context(text, context_keywords):
+                continue
+            if not has_price_mention(text):
+                continue
+            # Full chunk text, deliberately NOT excerpted: this path is only
+            # ever read by a regex, so the 280-char excerpt that keeps the
+            # prompt path's token budget in check would here just discard any
+            # *additional* prices later in the same chunk (live-observed —
+            # Wikivoyage "Eat"/"Sleep" sections routinely list several in one
+            # chunk, and the median needs all of them). Bounded by chunk size
+            # × max_chunks, which is already small.
+            snippets.append(text)
+    return snippets
 
 
 def estimate_flight_cost_range_inr(trip_config: TripConfig) -> tuple[int, int] | None:
@@ -63,16 +140,64 @@ async def community_price_snippets(dest_city: str, query_suffix: str, limit: int
             query=f"{dest_city} {query_suffix} price cost INR budget",
             destination=dest_city,
             limit=limit,
-            collections=[
-                settings.qdrant_collection_wiki,
-                settings.qdrant_collection_reddit,
-                settings.qdrant_collection_youtube_comments,
-            ],
+            collections=_price_collections(),
         )
-        return [r.text[:280] for r in results]
+        # Excerpt around the price rather than head-truncating: a chunk whose
+        # only amount sits past char 280 used to be handed on with the amount
+        # already cut off (see price_focused_excerpt).
+        from core.price_extraction import price_focused_excerpt
+        return [price_focused_excerpt(r.text) for r in results]
     except Exception:
         logger.warning("Community price snippet search failed for %s — continuing without it.", dest_city, exc_info=True)
         return []
+
+
+async def community_price_samples(
+    dest_city: str,
+    query_suffix: str,
+    context_keywords: frozenset[str] | None = None,
+    limit: int = 5,
+) -> list[str]:
+    """Snippets to extract a real price figure from — a superset of
+    `community_price_snippets`, built for the *extraction* path rather than
+    the prompt-hint path.
+
+    Two sources, deliberately in this order:
+      1. A lexical sweep for chunks that actually contain a price
+         (`_scroll_price_candidates_sync`) — catches the casual, low-topical-
+         signal mentions dense retrieval ranks too low to ever return.
+      2. The existing semantic search, kept as a complement so a phrasing the
+         regex misses can still contribute via topical similarity.
+
+    Kept separate from `community_price_snippets` because that function's
+    output goes verbatim into LLM prompts (`flight_cost_grounding_hint`,
+    `accommodation_cost_grounding_hint`) where a wider result set would be
+    real token bloat; here the snippets are only ever read by a regex.
+    """
+    if not dest_city:
+        return []
+
+    try:
+        lexical = await asyncio.to_thread(
+            _scroll_price_candidates_sync, dest_city, _price_collections(), context_keywords
+        )
+    except Exception:
+        logger.warning("Lexical price sweep failed for %s — continuing without it.", dest_city, exc_info=True)
+        lexical = []
+
+    semantic = await community_price_snippets(dest_city, query_suffix, limit=limit)
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for snippet in lexical + semantic:
+        key = snippet[:120]
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(snippet)
+        if len(merged) >= _MAX_PRICE_SAMPLES:
+            break
+    return merged
 
 
 async def community_median_price_inr(
@@ -103,9 +228,36 @@ async def community_median_price_inr(
     core/price_extraction.py::extract_price_mentions_inr."""
     from core.price_extraction import median_price_inr
 
-    snippets = await community_price_snippets(dest_city, query_suffix, limit=limit)
+    snippets = await community_price_samples(
+        dest_city, query_suffix, context_keywords=context_keywords, limit=limit
+    )
     return median_price_inr(
         snippets, low_bound, high_bound, min_samples, context_keywords, per_day_meal_multiplier
+    )
+
+
+async def community_food_per_day_inr(
+    dest_city: str,
+    query_suffix: str,
+    low_bound: float,
+    high_bound: float,
+    min_samples: int = 2,
+    limit: int = 5,
+    context_keywords: frozenset[str] | None = None,
+    meals_per_day: float = 3.0,
+) -> tuple[float | None, bool]:
+    """Food-specific counterpart to `community_median_price_inr`, returning
+    `(per_day_inr, directly_observed)` — see
+    core/price_extraction.py::food_per_day_estimate_inr. The caller
+    (core/budget_estimator.py) uses `directly_observed` to decide whether its
+    safety floor still applies."""
+    from core.price_extraction import food_per_day_estimate_inr
+
+    snippets = await community_price_samples(
+        dest_city, query_suffix, context_keywords=context_keywords, limit=limit
+    )
+    return food_per_day_estimate_inr(
+        snippets, low_bound, high_bound, min_samples, context_keywords, meals_per_day
     )
 
 

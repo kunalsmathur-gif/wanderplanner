@@ -127,32 +127,67 @@ class TestAirbnbHotelEquivalentFallback:
 
 
 class TestFoodGroundingFloor:
-    """The food line item reconciles per-meal community prices to a per-day
-    figure (per_day_meal_multiplier=_FOOD_MEALS_PER_DAY) and then floors it at
-    the flat _COST_MATRIX value (floor=True): Wikivoyage 'Eat' prices are
-    per-dish/per-meal, so grounding can only ever *raise* food above the
-    researched flat bare-minimum, never undercut it. Stay has no such floor
-    and no reconciliation (NEXT_SESSION_TODO 'item A')."""
+    """The food line item's floor is *provenance-conditional*
+    (`_grounded_food_per_day`).
+
+    A figure reconciled from per-meal prices depends on the uncalibrated
+    `_FOOD_MEALS_PER_DAY` assumption, so it stays floored at the flat
+    _COST_MATRIX value — grounding can only raise food, never undercut it
+    (NEXT_SESSION_TODO 'item A'). A figure read directly from amounts already
+    expressed per-day involves no multiplier at all, so it is trusted in both
+    directions — that is the 'anchored against real daily-spend data'
+    condition the floor was always meant to be temporary pending. Stay has
+    neither reconciliation nor floor."""
 
     @pytest.mark.asyncio
-    async def test_food_grounding_below_flat_is_floored_and_not_flagged_community(self):
-        from core.budget_estimator import _FOOD_PP_BOUNDS, _grounded_or_flat
+    async def test_reconciled_food_below_flat_is_floored_and_not_flagged_community(self):
+        from core.budget_estimator import _grounded_food_per_day
 
-        with patch("core.budget_estimator.community_median_price_inr", new=AsyncMock(return_value=400.0)):
-            val, based = await _grounded_or_flat(
-                "Venice", "Italy", "food meal daily cost per person", 6546, _FOOD_PP_BOUNDS, floor=True
-            )
+        with patch(
+            "core.budget_estimator.community_food_per_day_inr",
+            new=AsyncMock(return_value=(400.0, False)),
+        ):
+            val, based = await _grounded_food_per_day("Venice", "Italy", 6546)
         assert (val, based) == (6546, False)  # per-dish 400 discarded, flat used, reported honestly
 
     @pytest.mark.asyncio
-    async def test_food_grounding_above_flat_is_used(self):
-        from core.budget_estimator import _FOOD_PP_BOUNDS, _grounded_or_flat
+    async def test_reconciled_food_above_flat_is_used(self):
+        """A genuinely food-expensive destination whose reconciled per-day
+        figure exceeds the flat default grounds food upward and flags it
+        community-based — the point of the item-A proper fix."""
+        from core.budget_estimator import _grounded_food_per_day
 
-        with patch("core.budget_estimator.community_median_price_inr", new=AsyncMock(return_value=8000.0)):
-            val, based = await _grounded_or_flat(
-                "Venice", "Italy", "food meal daily cost per person", 6546, _FOOD_PP_BOUNDS, floor=True
-            )
-        assert (val, based) == (8000.0, True)  # legitimately-higher grounding still wins
+        with patch(
+            "core.budget_estimator.community_food_per_day_inr",
+            new=AsyncMock(return_value=(8000.0, False)),
+        ):
+            val, based = await _grounded_food_per_day("Venice", "Italy", 6546)
+        assert (val, based) == (8000.0, True)
+
+    @pytest.mark.asyncio
+    async def test_directly_observed_food_below_flat_is_kept(self):
+        """The floor does NOT apply to a directly-observed daily figure: no
+        meals/day assumption was involved, so a genuinely cheap destination's
+        real reported daily spend is allowed to come in under the flat value."""
+        from core.budget_estimator import _grounded_food_per_day
+
+        with patch(
+            "core.budget_estimator.community_food_per_day_inr",
+            new=AsyncMock(return_value=(900.0, True)),
+        ):
+            val, based = await _grounded_food_per_day("Hanoi", "Vietnam", 1800)
+        assert (val, based) == (900.0, True)
+
+    @pytest.mark.asyncio
+    async def test_no_grounding_falls_back_to_flat(self):
+        from core.budget_estimator import _grounded_food_per_day
+
+        with patch(
+            "core.budget_estimator.community_food_per_day_inr",
+            new=AsyncMock(return_value=(None, False)),
+        ):
+            val, based = await _grounded_food_per_day("Nowhere", None, 1800)
+        assert (val, based) == (1800, False)
 
     @pytest.mark.asyncio
     async def test_stay_grounding_below_flat_is_kept_no_floor(self):
@@ -160,59 +195,39 @@ class TestFoodGroundingFloor:
 
         with patch("core.budget_estimator.community_median_price_inr", new=AsyncMock(return_value=500.0)):
             val, based = await _grounded_or_flat(
-                "Goa", "India", "hotel accommodation nightly rate per person", 2000, _STAY_PP_BOUNDS, floor=False
+                "Goa", "India", "hotel accommodation nightly rate per person", 2000, _STAY_PP_BOUNDS
             )
         assert (val, based) == (500.0, True)  # a genuinely-cheap stay is allowed below flat
 
     @pytest.mark.asyncio
-    async def test_estimator_floors_food_but_keeps_below_flat_stay(self):
-        """End-to-end: one low grounded value hits both line items; food (floored)
-        ignores it, stay (no floor) uses it — proving the floor is food-only."""
+    async def test_estimator_floors_reconciled_food_but_keeps_below_flat_stay(self):
+        """End-to-end: a low value hits both line items; food (reconciled, so
+        floored) ignores it, stay (no floor) uses it."""
 
-        async def _low(dest, query_suffix, low, high, context_keywords=None, per_day_meal_multiplier=None):
-            # A single per-meal figure; even reconciled to per-day it stays
-            # below both the flat food (1800) and flat stay (2000) budget-tier
-            # values, so it exercises the floor (food) vs no-floor (stay) split.
-            return 400.0 * (per_day_meal_multiplier or 1)
+        async def _low_stay(dest, query_suffix, low, high, context_keywords=None):
+            return 400.0
 
-        with patch("core.budget_estimator.community_median_price_inr", new=_low):
+        with patch("core.budget_estimator.community_median_price_inr", new=_low_stay), patch(
+            "core.budget_estimator.community_food_per_day_inr",
+            new=AsyncMock(return_value=(1200.0, False)),
+        ):
             est = await estimate_bare_minimum_budget(_config())  # Colombo, budget tier
-        assert est["food_community_based"] is False  # floored to flat
+        assert est["food_community_based"] is False  # reconciled + below flat -> floored
         assert est["stay_community_based"] is True    # below-flat stay grounding kept
 
     @pytest.mark.asyncio
-    async def test_food_call_passes_per_day_multiplier_but_stay_does_not(self):
-        """The food line item must reconcile per-meal->per-day (multiplier set);
-        the stay line item must not (its amounts are already per-night)."""
-        from core.budget_estimator import _FOOD_MEALS_PER_DAY, estimate_bare_minimum_budget
+    async def test_estimator_keeps_directly_observed_food_below_flat(self):
+        """Same end-to-end path, but with a directly-observed daily figure —
+        it survives below the flat default and is honestly flagged as
+        community-based."""
 
-        seen: dict[str, float | None] = {}
+        async def _none(dest, query_suffix, low, high, context_keywords=None):
+            return None
 
-        async def _capture(dest, query_suffix, low, high, min_samples=2, limit=5,
-                           context_keywords=None, per_day_meal_multiplier=None):
-            key = "food" if "food" in query_suffix else "stay"
-            seen[key] = per_day_meal_multiplier
-            return None  # force flat fallback; we only care about the kwargs
-
-        with patch("core.budget_estimator.community_median_price_inr", new=_capture):
-            await estimate_bare_minimum_budget(_config())
-
-        assert seen["food"] == _FOOD_MEALS_PER_DAY
-        assert seen["stay"] is None
-
-    @pytest.mark.asyncio
-    async def test_reconciled_food_above_flat_flips_community_true(self):
-        """A genuinely food-expensive destination whose reconciled per-day
-        figure exceeds the flat default correctly grounds food upward and
-        flags it community-based — the whole point of the item-A proper fix."""
-        from core.budget_estimator import _FOOD_PP_BOUNDS, _FOOD_MEALS_PER_DAY, _grounded_or_flat
-
-        # community_median_price_inr already returns the reconciled per-day
-        # median here (the multiplier is applied inside it); 8000 > flat 6546.
-        with patch("core.budget_estimator.community_median_price_inr", new=AsyncMock(return_value=8000.0)):
-            val, based = await _grounded_or_flat(
-                "Venice", "Italy", "food meal daily cost per person", 6546, _FOOD_PP_BOUNDS,
-                floor=True, per_day_meal_multiplier=_FOOD_MEALS_PER_DAY,
-            )
-        assert (val, based) == (8000.0, True)
+        with patch("core.budget_estimator.community_median_price_inr", new=_none), patch(
+            "core.budget_estimator.community_food_per_day_inr",
+            new=AsyncMock(return_value=(1200.0, True)),
+        ):
+            est = await estimate_bare_minimum_budget(_config())
+        assert est["food_community_based"] is True
 

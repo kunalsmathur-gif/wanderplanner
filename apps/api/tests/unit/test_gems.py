@@ -123,6 +123,63 @@ class TestComputeGemIntel:
         assert self._run([], []) == {"gems": [], "crowd_favourites": []}
         assert self._run([_poi("Banana Beach")], []) == {"gems": [], "crowd_favourites": []}
 
+    def test_mid_range_mention_count_is_not_silently_dropped(self):
+        """Regression: the old fixed thresholds (gem <= 6, crowd >= 12) left a
+        dead zone — a POI mentioned 7-11 times landed in neither list and
+        vanished. Live-observed for Jaipur, whose only match (Hawa Mahal,
+        8 mentions) fell in the gap, so the whole feature returned empty."""
+        pois = [_poi("Hawa Mahal")]
+        chunks = [_chunk(f"Hawa Mahal is beautiful and worth it, visit {i}") for i in range(8)]
+        intel = self._run(pois, chunks)
+        assert (intel["gems"] + intel["crowd_favourites"]) != [], "8 mentions fell into the old dead zone"
+        assert intel["gems"][0]["name"] == "Hawa Mahal"
+        assert intel["gems"][0]["mentions"] == 8
+
+    def test_every_mentioned_poi_is_classified_or_fails_sentiment_only(self):
+        """The two branches must partition mentioned POIs: the sentiment floor
+        is the only legitimate reason one appears in neither list."""
+        pois = [_poi(f"Place Number {i}") for i in range(8)]
+        chunks = []
+        for i in range(8):
+            # i+1 mentions each -> counts 1..8 spanning the old dead zone.
+            chunks += [_chunk(f"Place Number {i} is lovely and quiet") for _ in range(i + 1)]
+        intel = self._run(pois, chunks)
+        classified = {g["name"] for g in intel["gems"]} | {c["name"] for c in intel["crowd_favourites"]}
+        assert classified == {f"Place Number {i}" for i in range(8)}
+
+    def test_crowd_threshold_is_relative_to_this_destinations_distribution(self):
+        """The most-mentioned POI in a thin corpus is a crowd favourite even
+        though its absolute count would have read as a 'gem' before — an
+        absolute threshold can't be right for two corpus sizes at once."""
+        pois = [_poi("Busy Cove")] + [_poi(f"Quiet Cove {i}") for i in range(5)]
+        chunks = [_chunk(f"Busy Cove was packed, visit {i}") for i in range(7)]
+        for i in range(5):
+            chunks.append(_chunk(f"Quiet Cove {i} is a stunning quiet gem"))
+        intel = self._run(pois, chunks)
+        assert [c["name"] for c in intel["crowd_favourites"]] == ["Busy Cove"]
+        assert {g["name"] for g in intel["gems"]} == {f"Quiet Cove {i}" for i in range(5)}
+
+    def test_thin_corpus_falls_back_to_absolute_threshold(self):
+        """Below _MIN_POIS_FOR_RELATIVE_SPLIT a percentile is meaningless — a
+        lone 5-mention POI must stay a gem, not become 'the crowd'."""
+        pois = [_poi("Solo Cove")]
+        chunks = [_chunk(f"Solo Cove is a stunning quiet gem, trip {i}") for i in range(5)]
+        intel = self._run(pois, chunks)
+        assert [g["name"] for g in intel["gems"]] == ["Solo Cove"]
+        assert intel["crowd_favourites"] == []
+
+    def test_relative_threshold_never_exceeds_absolute_ceiling(self):
+        """A well-covered destination must not push the bar so high that
+        genuinely famous places get recommended as hidden gems."""
+        pois = [_poi("Famous Palace")] + [_poi(f"Mega Site {i}") for i in range(5)]
+        chunks = [_chunk(f"Famous Palace is lovely, day {i}") for i in range(14)]
+        for i in range(5):
+            chunks += [_chunk(f"Mega Site {i} is lovely, day {j}") for j in range(40)]
+        intel = self._run(pois, chunks)
+        crowd_names = {c["name"] for c in intel["crowd_favourites"]}
+        assert "Famous Palace" in crowd_names  # 14 mentions >= absolute ceiling of 12
+        assert intel["gems"] == []
+
     def test_fewer_mentions_rank_higher_at_equal_sentiment(self):
         pois = [_poi("Quiet Cove"), _poi("Known Cove")]
         chunks = (
