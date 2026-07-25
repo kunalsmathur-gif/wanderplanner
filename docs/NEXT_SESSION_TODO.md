@@ -28,15 +28,18 @@ ideally validated against the corpus that now exists rather than tuned blind. No
 same class of problem as the price-grounding `context_keywords` gap in the v10.38.0 block below —
 both are "matched the whole blob instead of the specific span".
 
-**3. ⛔ Blocked on the user — two prod API keys that exist nowhere.**
-`PEXELS_API_KEY` and `RESEND_API_KEY` are unset on Railway *and* absent from `apps/api/.env`,
-`.env.example` and `apps/web/.env.local`, so there is nothing to copy from. Both default to `""`
-in `core/config.py`, so the features fail silently rather than erroring:
-- Pexels → day photos never load in production.
-- Resend → **all transactional email is dead in prod**: password reset, admin-request
-  notification, admin-request decision. Also needs `EMAIL_FROM_ADDRESS`, which is unset too.
-Once supplied, set them the same way as `YOUTUBE_API_KEY` was (see the Railway notes below) and
-re-verify with a masked `variable list`.
+**3. ⛔ Blocked on the user — `PEXELS_API_KEY`.**
+Unset on Railway *and* absent from `apps/api/.env`, `.env.example` and `apps/web/.env.local`, so
+there is nothing to copy from. Defaults to `""` in `core/config.py`, so day photos silently never
+load in production rather than erroring. Once supplied, set it the same way as the others (see the
+Railway notes below) and re-verify with a masked `variable list`.
+
+~~`RESEND_API_KEY`~~ — **✅ done 2026-07-25 (v10.38.3).** `wanderplanner.org` bought at Spaceship
+and verified with Resend (DKIM + return-path MX/SPF + DMARC live at the registrar);
+`RESEND_API_KEY` and `EMAIL_FROM_ADDRESS=Wanderplanner <no-reply@wanderplanner.org>` set on
+Railway. **Not yet smoke-tested with a real send** — nobody has actually triggered a password
+reset against prod since it went live, so the first real confirmation is still outstanding.
+Note the sending region is `ap-northeast-1`.
 
 **4. Optional hygiene — rotate the YouTube API key.**
 The 2026-07-25 backfill script logged full httpx request URLs before it was patched, so the raw
@@ -53,6 +56,16 @@ Confirmed pre-existing against a pristine `be9e30e` worktree. Both fixes (add
 `apps/api/eval/__init__.py`, or switch the CI step to `--explicit-package-bases`) change import
 resolution for the eval harness, which does `sys.path` manipulation in several scripts — so it
 needs its own change with the eval scripts actually re-run, not a drive-by.
+
+**6. The website is still on `wanderplanner-web.vercel.app`.**
+The domain is bought and its DNS is live, but nothing points at Vercel yet. If/when you move the
+frontend to `wanderplanner.org`, **three prod settings must change together or the app breaks**:
+`ALLOWED_ORIGINS` on Railway (missing the new origin = every API call CORS-fails, app looks
+totally broken), `FRONTEND_BASE_URL` on Railway (stale = password-reset links point at the old
+host), and Vercel's own domain config. Cookies stay cross-site so `COOKIE_SAMESITE=none` remains
+correct — unless the API also moves to `api.wanderplanner.org`, which would make it same-site.
+⚠️ Keep DNS at Spaceship: switching nameservers to Vercel would drop the Resend records out of the
+authoritative zone and silently un-verify email.
 
 **Also still carried over from earlier blocks (unchanged, detail further down):**
 - Price grounding: per-amount proximity matching instead of whole-snippet `context_keywords` (a €5

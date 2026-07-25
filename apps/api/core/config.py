@@ -211,7 +211,11 @@ class Settings(BaseSettings):
 
     # Transactional email (Resend) — used for password reset links
     resend_api_key: str = ""
-    email_from_address: str = "Wanderplanner <no-reply@wanderplanner.app>"
+    # Must be on a domain verified with Resend, or every send 403s. The
+    # default was `wanderplanner.app`, a domain nobody owns — so the fallback
+    # was guaranteed to fail. `wanderplanner.org` is the real verified sending
+    # domain (DKIM/SPF/DMARC live at the registrar as of 2026-07-25).
+    email_from_address: str = "Wanderplanner <no-reply@wanderplanner.org>"
     password_reset_token_ttl_minutes: int = 30
 
     @field_validator("jwt_secret")

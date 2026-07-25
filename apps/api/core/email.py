@@ -21,10 +21,14 @@ async def send_password_reset_email(*, to_email: str, reset_url: str) -> bool:
     (the /auth/password/forgot endpoint always returns a generic success
     response regardless, to avoid account enumeration)."""
     if not settings.resend_api_key:
-        # Local/dev convenience only — this branch is never reached in prod
-        # since RESEND_API_KEY is always configured there. Logging the raw
-        # link here (instead of just a warning) lets developers exercise the
-        # reset flow end-to-end without a real email provider.
+        # Local/dev convenience. Logging the raw link here (instead of just a
+        # warning) lets developers exercise the reset flow end-to-end without
+        # a real email provider. This comment used to assert the branch was
+        # unreachable in prod "since RESEND_API_KEY is always configured
+        # there" — it wasn't configured there at all until 2026-07-25, so
+        # this *was* the production path, quietly writing live reset links
+        # into the Railway logs. Don't restate that invariant here; the guard
+        # in core/config.py is what enforces prod config, not a comment.
         _log.warning(
             "RESEND_API_KEY not configured — password reset email not sent. "
             "Local dev reset link for %s: %s",

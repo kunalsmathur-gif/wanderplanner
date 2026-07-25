@@ -31,11 +31,25 @@ def _config(**overrides):
 
 @pytest.fixture(autouse=True)
 def no_community_grounding():
-    """Default: simulate today's real-world state (Reddit/Wikivoyage
-    collections empty) so these tests are deterministic and don't hit the
-    network. Tests that want to exercise the grounded path override this
-    via `community_grounding(...)`."""
-    with patch("core.budget_estimator.community_median_price_inr", new=AsyncMock(return_value=None)):
+    """Default: simulate "the corpus has nothing for this destination" so
+    these tests are deterministic. Tests that want the grounded path override
+    this via `community_grounding(...)`.
+
+    Both entry points must be patched. Only `community_median_price_inr` was
+    stubbed here originally — food went through the same function back then —
+    but v10.38.0 split food onto `community_food_per_day_inr`, and that one
+    was left reaching the *live* Qdrant Cloud cluster. It stayed green purely
+    because the corpus was empty; the first real YouTube ingestion (2026-07-25,
+    11,838 comments) gave Colombo genuine food signal and
+    `test_stay_and_food_fall_back_to_flat_tier_when_corpus_empty` started
+    failing on `food_community_based is True`. A unit test must not depend on
+    what happens to be in a shared cloud database.
+    """
+    with patch(
+        "core.budget_estimator.community_median_price_inr", new=AsyncMock(return_value=None)
+    ), patch(
+        "core.budget_estimator.community_food_per_day_inr", new=AsyncMock(return_value=(None, False))
+    ):
         yield
 
 
