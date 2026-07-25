@@ -21,7 +21,12 @@ from core.config import settings
 # Conservative on purpose: today there are no user accounts, but this must
 # already be in place before email/PII fields are added (doc's own guidance).
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
-_APIKEY_RE = re.compile(r"\b(AIza[0-9A-Za-z_\-]{10,}|sk-[A-Za-z0-9]{10,}|gsk_[A-Za-z0-9]{10,})\b")
+_APIKEY_RE = re.compile(
+    r"\b(AIza[0-9A-Za-z_\-]{10,}"      # Google (YouTube Data API, Maps)
+    r"|sk-[A-Za-z0-9]{10,}"            # OpenAI
+    r"|gsk_[A-Za-z0-9]{10,}"           # Groq
+    r"|re_[A-Za-z0-9_\-]{10,})\b"      # Resend
+)
 _PHONE_RE = re.compile(r"\b(?:\+?\d{1,3}[-.\s]?)?\d{10}\b")
 
 _REDACTIONS = (

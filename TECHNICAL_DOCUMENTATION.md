@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.38.2 (Production-detection fix — the `COOKIE_SAMESITE`/`JWT_SECRET` startup guards were inert on Railway; first full YouTube comment backfill, 80 destinations / 11,838 comments)
+**Version:** 10.38.3 (Transactional email is live — `wanderplanner.org` verified with Resend and wired into prod; Resend keys added to log redaction; a unit test that was silently hitting the live Qdrant cluster fixed)
 **Last Updated:** July 25, 2026  
 **Status:** Production-ready MVP
 
@@ -1501,6 +1501,21 @@ curl http://localhost:8000/health
 ---
 
 ## 14. Recent Changes (v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.38.3 Changes (July 2026) — Transactional email actually works in production for the first time
+
+`RESEND_API_KEY` had never been set on Railway, so every password-reset and admin-notification email in production took the "no key" branch: no send, and the raw reset link written to the Railway logs. Now configured end to end against a real verified domain.
+
+| Change | Detail |
+|---|---|
+| **Sending domain** | `wanderplanner.org` registered and verified with Resend — DKIM (`resend._domainkey`), return-path `MX` + SPF (`send`), and DMARC (`_dmarc`) live at the registrar, all four confirmed by direct DNS query against both a public resolver and the authoritative nameserver before verifying. `*.vercel.app` cannot be used for this: Resend requires DNS records the subdomain's owner can't add. |
+| **Prod config** | `RESEND_API_KEY` + `EMAIL_FROM_ADDRESS=Wanderplanner <no-reply@wanderplanner.org>` set on Railway. |
+| 🐛 **The default from-address was a domain nobody owns** | `core/config.py` defaulted to `no-reply@wanderplanner.app`, so even with a key present every send would have 403'd on an unverified domain. Default and `.env.example` now point at the real verified domain, with a comment explaining the constraint. |
+| **Stale comment removed in `core/email.py`** | It claimed the no-key branch "is never reached in prod since RESEND_API_KEY is always configured there." The key was never configured there, so that branch *was* the production path — quietly writing live reset links into logs. Replaced with a note on what actually enforces prod config (the `core/config.py` guard, not a comment). |
+| **Log redaction covers Resend keys** | `_APIKEY_RE` matched `AIza…`/`sk-…`/`gsk_…` but not `re_…`. Added, and the whole filter now has direct test coverage (`tests/unit/test_logging_redaction.py`) — including the live case of httpx logging a YouTube URL with the key in the query string. |
+| 🐛 **A "unit" test was silently hitting the live Qdrant Cloud cluster** | `test_budget_estimator.py`'s autouse fixture stubbed `community_median_price_inr` but not `community_food_per_day_inr` — v10.38.0 split food onto a second entry point and the fixture was never updated, so food grounding reached the real cluster on every run. It stayed green only because the corpus was empty; the 11,838-comment YouTube backfill gave Colombo genuine food signal and `test_stay_and_food_fall_back_to_flat_tier_when_corpus_empty` began failing. Now both entry points are stubbed — the file runs in 0.12s instead of 18.8s, which is the real tell that it had been doing network I/O all along. |
+
+Suite **576 passed / 6 skipped / 0 failed**. Ruff clean.
 
 ### v10.38.2 Changes (July 2026) — The production guards were never running in production; first full YouTube backfill
 
