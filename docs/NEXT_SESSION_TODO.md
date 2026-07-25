@@ -2,6 +2,75 @@
 
 ---
 
+## ✅ DO THIS NEXT — open items as of 2026-07-25 (v10.38.2)
+
+Ordered by value. Items 1 and 2 are the two that move the product; 3 is blocked on the user; 4–5
+are hygiene. Narrative and evidence for each is in the session block immediately below.
+
+**1. Finish the YouTube backfill — 90 destinations still have no comment data.**
+The 2026-07-25 run covered 80 of 170 and stopped exactly on the rolling 80-search/day quota budget
+(`search.list` = 100 of 10,000 daily units). The script is resumable from its JSONL state, so this
+is a single command with no flags — repeat on consecutive days until it reports `remaining: 0`:
+```bash
+cd apps/api && venv/Scripts/python.exe scripts/ingest_youtube_full.py
+```
+Verify persistence against the real cluster afterwards (`youtube_comments` point count + distinct
+destinations), not just the run log — it was 12,429 points / 84 destinations after run 1.
+
+**2. 🎯 Gem-intel name matching — the highest-value feature work now unblocked.**
+`services/gems.py` only counts a POI mention when an OSM POI *name* appears **literally** in
+comment text, so it under-fires badly: with 150–240 real comments each, Kyoto, Kochi and Khajuraho
+all return **0 gems**, and Istanbul's only gem is "Kadıköy" (a train station) at 2 mentions.
+Jaipur does work (Hawa Mahal, 9 mentions, sentiment 0.67), which confirms the v10.38.0 dead-zone
+fix itself is sound — the gap is name matching, not classification. Wanted: normalisation +
+aliasing (diacritics, "-ji"/"Fort"/"Palace" suffixes, romanisation variants, common short forms),
+ideally validated against the corpus that now exists rather than tuned blind. Note this is the
+same class of problem as the price-grounding `context_keywords` gap in the v10.38.0 block below —
+both are "matched the whole blob instead of the specific span".
+
+**3. ⛔ Blocked on the user — two prod API keys that exist nowhere.**
+`PEXELS_API_KEY` and `RESEND_API_KEY` are unset on Railway *and* absent from `apps/api/.env`,
+`.env.example` and `apps/web/.env.local`, so there is nothing to copy from. Both default to `""`
+in `core/config.py`, so the features fail silently rather than erroring:
+- Pexels → day photos never load in production.
+- Resend → **all transactional email is dead in prod**: password reset, admin-request
+  notification, admin-request decision. Also needs `EMAIL_FROM_ADDRESS`, which is unset too.
+Once supplied, set them the same way as `YOUTUBE_API_KEY` was (see the Railway notes below) and
+re-verify with a masked `variable list`.
+
+**4. Optional hygiene — rotate the YouTube API key.**
+The 2026-07-25 backfill script logged full httpx request URLs before it was patched, so the raw
+key is sitting in that run's local console log. **Production logging is not affected** —
+`core/logging_config.py`'s `RedactionFilter` rewrites `AIza…` to `[redacted-key]` before the
+formatter runs, verified with a fake key. Only standalone scripts using `logging.basicConfig`
+bypass the filter, and `scripts/ingest_youtube_full.py` now sets `httpx` to WARNING. So this is
+cleanup of a local artifact, not an exposure — rotate if you'd rather not leave it lying around.
+
+**5. CI's mypy step is red, pre-existing.**
+`mypy . --ignore-missing-imports` dies before type-checking with `eval\config_loader.py: Source
+file found twice under different module names` because `apps/api/eval/` has no `__init__.py`.
+Confirmed pre-existing against a pristine `be9e30e` worktree. Both fixes (add
+`apps/api/eval/__init__.py`, or switch the CI step to `--explicit-package-bases`) change import
+resolution for the eval harness, which does `sys.path` manipulation in several scripts — so it
+needs its own change with the eval scripts actually re-run, not a drive-by.
+
+**Also still carried over from earlier blocks (unchanged, detail further down):**
+- Price grounding: per-amount proximity matching instead of whole-snippet `context_keywords` (a €5
+  Paris bus fare entered the food median from a chunk that mentioned food elsewhere).
+- `_FOOD_MEALS_PER_DAY = 3.0` calibration — now lower-stakes, only used when no directly-observed
+  daily figure exists.
+- Open user decision on the 5 residual `MAX_CATEGORY_SHARE` failures (Paris metro density +
+  4 temple/pilgrimage towns): accept as real-world skew, relax the threshold for pilgrimage towns,
+  or build the per-category hard cap in `osm.py`.
+- Reddit ingestion still 403s in prod on every boot — ask whether the OAuth app review came
+  through, then rewire `scrapers/reddit.py` to the authenticated API.
+- Non-blocking timing note: the YouTube scheduler job uses `IntervalTrigger` with no `start_date`,
+  so its **first fire is 14 days after boot** and any deploy resets that clock. Only Reddit is
+  seeded at startup (`main.py::_seed_reddit`). Near-term prod YouTube ingestion therefore comes
+  from the cold-start gate, or from running the script above.
+
+---
+
 ## 🆕 2026-07-25 session (latest) — prod env audit, dead prod guards fixed, first full YouTube backfill (v10.38.2)
 
 Started as "is `YOUTUBE_API_KEY` set in prod?" and turned up two live misconfigurations plus a
@@ -34,20 +103,23 @@ its JSONL state; no flags needed).
 
 ### Still open after this session
 
-- **`PEXELS_API_KEY` and `RESEND_API_KEY` are both unset in prod and exist nowhere locally** —
-  photos and all transactional email (password reset, admin-request notifications) are silently
-  disabled in production. Both need a key from the user. `EMAIL_FROM_ADDRESS` is unset too and
-  Resend needs it.
-- **Gem intel returns 0 for most destinations even with real data now.** Jaipur works (Hawa Mahal,
-  9 mentions, sentiment 0.67 — the exact POI the v10.38.0 dead-zone fix targeted), but Kyoto,
-  Kochi and Khajuraho all return 0 with 150–240 comments each, and Istanbul's only gem is a train
-  station at 2 mentions. Matching requires an OSM POI name to appear *literally* in comment text,
-  so it under-fires wherever vloggers use a different name than OSM records. **Name
-  normalisation/aliasing is the highest-value next step for this feature** — and there is finally
-  enough corpus to calibrate against.
-- The YouTube scheduler job's first fire is **14 days after boot** (`IntervalTrigger`, no
-  `start_date`). Only Reddit is seeded at startup. Not a bug, but quota-spending refreshes are
-  invisible for a fortnight after any deploy.
+Consolidated into the **"✅ DO THIS NEXT"** checklist at the top of this file — items 1 (finish the
+backfill, 90 destinations left), 2 (gem-intel name matching), 3 (Pexels/Resend keys, blocked on
+the user), 4 (optional YouTube key rotation) and the 14-day `IntervalTrigger` timing note.
+
+### Railway notes for the next session (the CLI is not on PATH)
+
+Run it via `npx --yes @railway/cli@latest` with **explicit flags** — the link entries in
+`~/.railway/config.json` are stale and point at a project id that 404s:
+```bash
+npx --yes @railway/cli@latest variable list --project 82ad930d-3ae8-404e-8e92-6e5e926741f2 --service api --environment production --json
+```
+⚠️ That command prints **raw secret values** — pipe it through a mask (name + length) rather than
+echoing it. To set a value, prefer the `variable set "KEY=$var"` arg form: piping a secret in via
+`--stdin` from PowerShell 5.1 **prepends a UTF-8 BOM (U+FEFF)** to the stored value, which happened
+during this session and would have made every YouTube API call fail. Verify after setting with
+`[int]$value[0]` (65279 = BOM) and an ordinal string compare — PowerShell's `-eq`/`-ceq` reported a
+misleading `True` against the BOM-prefixed value.
 
 ---
 
