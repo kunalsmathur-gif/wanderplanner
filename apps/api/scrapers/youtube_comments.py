@@ -128,13 +128,29 @@ async def search_travel_videos(
         async with httpx.AsyncClient(timeout=15) as client:
             try:
                 resp = await client.get(f"{_API_BASE}/search", params=params)
+                if resp.status_code in (403, 429):
+                    # Quota exhaustion is terminal for the rest of the quota day,
+                    # not a transient blip: retrying spends 3 calls against a
+                    # 100/day `search.list` cap and cannot succeed on any of
+                    # them. `fetch_video_comments` below already applies this
+                    # rule to 403; search had no equivalent, which is how one
+                    # exhausted day turned into 141 wasted calls.
+                    logger.warning(
+                        "YouTube search.list refused for %r (HTTP %d — quota or rate limit); "
+                        "not retrying", destination, resp.status_code,
+                    )
+                    return []
                 resp.raise_for_status()
                 data = resp.json()
                 break
             except Exception as e:
                 if attempt == _MAX_FETCH_ATTEMPTS:
+                    # `e` is deliberately not interpolated: httpx embeds the
+                    # full request URL -- API key included -- in
+                    # HTTPStatusError's message.
                     logger.warning(
-                        "YouTube search.list failed for %r after %d attempts: %s", destination, attempt, e
+                        "YouTube search.list failed for %r after %d attempts: %s",
+                        destination, attempt, type(e).__name__,
                     )
                     return []
                 await asyncio.sleep(_RETRY_BASE_DELAY_S * attempt)
@@ -181,7 +197,8 @@ async def fetch_video_comments(video_id: str) -> list[dict[str, Any]]:
             except Exception as e:
                 if attempt == _MAX_FETCH_ATTEMPTS:
                     logger.warning(
-                        "YouTube commentThreads.list failed for %r after %d attempts: %s", video_id, attempt, e
+                        "YouTube commentThreads.list failed for %r after %d attempts: %s",
+                        video_id, attempt, type(e).__name__,
                     )
                     return []
                 await asyncio.sleep(_RETRY_BASE_DELAY_S * attempt)

@@ -40,7 +40,12 @@ from pathlib import Path
 
 sys.path.insert(0, ".")
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+from core.logging_config import configure_script_logging  # noqa: E402
+
+# Not logging.basicConfig(): that attaches no filters, so a caught httpx
+# exception (whose message carries the full request URL, API key included)
+# would land in the console verbatim. See core/logging_config.py.
+configure_script_logging()
 logger = logging.getLogger("reingest_local_script_names")
 
 # Overpass rate-limits by convention and gets slower the longer a batch runs;

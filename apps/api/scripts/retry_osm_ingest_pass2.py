@@ -9,7 +9,12 @@ import sys
 
 sys.path.insert(0, ".")
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+from core.logging_config import configure_script_logging  # noqa: E402
+
+# Not logging.basicConfig(): that attaches no filters, so a caught httpx
+# exception (whose message carries the full request URL, API key included)
+# would land in the console verbatim. See core/logging_config.py.
+configure_script_logging()
 logger = logging.getLogger("retry_osm_ingest_pass2")
 
 DELAY_SECONDS = 12.0

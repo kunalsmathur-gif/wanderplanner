@@ -46,13 +46,12 @@ from pathlib import Path
 
 sys.path.insert(0, ".")
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-# The app's own logging (core/logging_config.py) redacts `AIza…` keys from
-# every record, but a standalone script using basicConfig gets no such filter
-# — and httpx logs full request URLs at INFO, which for YouTube means the API
-# key in the query string lands in the console/CI log verbatim. Nothing here
-# needs httpx's per-request chatter, so drop it below INFO.
-logging.getLogger("httpx").setLevel(logging.WARNING)
+from core.logging_config import configure_script_logging, redact  # noqa: E402
+
+# Not logging.basicConfig(): that attaches no filters, so a caught httpx
+# exception (whose message carries the full request URL, API key included)
+# would land in the console verbatim. See core/logging_config.py.
+configure_script_logging()
 logger = logging.getLogger("ingest_youtube_full")
 
 DELAY_SECONDS = 2.0
@@ -172,8 +171,13 @@ async def main() -> None:
             row["comments"] = count
         except Exception as e:
             row["comments"] = 0
-            row["error"] = f"{type(e).__name__}: {e}"
-            logger.warning("[%d/%d] %s FAILED: %s", i, len(pending), destination, e)
+            # Redacted explicitly: this string goes into the JSONL state file,
+            # which no logging filter sees, and an httpx error message carries
+            # the full request URL including the API key.
+            row["error"] = redact(f"{type(e).__name__}: {e}")
+            logger.warning(
+                "[%d/%d] %s FAILED: %s", i, len(pending), destination, row["error"],
+            )
             _record(row)
             results.append(row)
             continue
