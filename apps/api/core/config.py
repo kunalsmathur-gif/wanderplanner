@@ -150,15 +150,30 @@ class Settings(BaseSettings):
     youtube_comments_per_video: int = 50
     youtube_videos_per_destination: int = 5
 
-    # Quota guard for the above. `search.list` is the expensive call (100
-    # units); the free tier allows 10,000 units/day, i.e. ~100 searches if
-    # nothing else spends quota that day. Both automatic callers (the
-    # cold-start gate in services/destination_ingestion.py and the scheduler
-    # refresh below) go through scrapers/youtube_comments.py's rolling-24h
-    # budget, so automatic ingestion can never exhaust the daily quota and
-    # leave manual/eval runs unable to search. 80 searches ≈ 8,000 units,
-    # plus ~1 unit per commentThreads.list call, leaves real headroom.
-    youtube_daily_search_budget: int = 80
+    # Quota guard for the above. `search.list` is the expensive call (100 of
+    # the free tier's 10,000 units/day) — but the unit quota is NOT what binds.
+    # It carries a second, dedicated cap: `defaultSearchListPerDayPerProject`,
+    # 100 calls per project per day, on its own meter. So the real ceiling is
+    # 100 searches/day however many units are left, and this budget of 80 is
+    # 80% of the day rather than the headroom an earlier version of this
+    # comment claimed. Measured against the live API on 2026-07-26 (a 429 body
+    # names the metric and its limit); see TECHNICAL_DOCUMENTATION §14 v10.40.1.
+    # Both quotas reset at midnight Pacific, not UTC.
+    #
+    # Both automatic callers (the cold-start gate in
+    # services/destination_ingestion.py and the scheduler refresh below) go
+    # through scrapers/youtube_comments.py's rolling-24h budget. Note that
+    # budget is per-process, so it bounds any one process — not the project's
+    # daily total across prod, scripts and eval runs combined.
+    #
+    # Set to the provider cap rather than below it (raised from 80 on
+    # 2026-07-26): with the real ceiling known to be 100, holding back 20 was
+    # reserving headroom this process cannot actually protect — a concurrent
+    # prod cold-start spends from the same project quota and never consults
+    # this window. So this is now a "don't exceed the provider" bound, and the
+    # thing that degrades gracefully on exhaustion is the 429 handling, not the
+    # margin. Callers already treat "no videos found" as a retryable no-op.
+    youtube_daily_search_budget: int = 100
     # Cold-start ingestion is opt-out: unlike OSM/Wikivoyage (free, unmetered
     # public APIs) this spends a real quota, so it's worth being able to turn
     # off without unsetting the key entirely (which would also disable the

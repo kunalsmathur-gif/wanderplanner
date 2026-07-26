@@ -13,12 +13,14 @@ Ordering deliberately mirrors `core/scheduler.py::_refresh_youtube_comments`
 -- NULL `youtube_last_ingested_at` first, then `request_count` DESC -- so if
 the quota runs out partway, it ran out on the least-demanded destinations.
 
-Quota is the real constraint, not politeness: `search.list` costs 100 of the
-free tier's 10,000 daily units and every destination needs exactly one, so a
-day's ceiling is ~100 destinations no matter how long the script runs. It
-stops cleanly at `settings.youtube_daily_search_budget` (default 80, leaving
-headroom for cold-start ingestion and eval runs) rather than burning the
-quota to zero, and reports what is left for a follow-up run tomorrow.
+Quota is the real constraint, not politeness. `search.list` costs 100 of the
+free tier's 10,000 daily units, but the *binding* limit is a separate
+per-endpoint cap — `defaultSearchListPerDayPerProject`, 100 calls per project
+per day — and every destination needs exactly one, so a day's ceiling is 100
+destinations no matter how long the script runs. It stops cleanly at
+`settings.youtube_daily_search_budget` and reports what is left for a
+follow-up run tomorrow. Note the quota resets at **midnight Pacific**: a run
+started at 08:00 UTC is still on the previous quota day.
 
 Real writes against the production Qdrant Cloud cluster -- the same cluster
 Railway reads from, so ingested comments are live for prod immediately.
@@ -38,6 +40,7 @@ import asyncio
 import json
 import logging
 import sys
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -56,12 +59,27 @@ DELAY_SECONDS = 2.0
 STATE_PATH = "scripts/out/ingest_youtube_full_state.jsonl"
 SUMMARY_PATH = "scripts/out/ingest_youtube_full_summary.json"
 
+# Same rationale and shape as scripts/reingest_prominence_ranking.py: retry a
+# destination that produced nothing a bounded number of times, then accept the
+# result. See _load_done().
+MAX_ATTEMPTS_PER_DESTINATION = 3
+
 
 def _load_done(fresh: bool) -> dict[str, dict]:
+    """Destinations needing no further work, keyed to their last record.
+
+    "Done" means comments were actually ingested. A recorded failure or an
+    empty result stays *pending* — the same rule the scheduler follows by
+    leaving `youtube_last_ingested_at` NULL, so a transient search failure is
+    retried rather than written off as a recorded-but-empty success. Falling
+    back to attempt count stops a destination nobody has vlogged about from
+    spending a `search.list` call on every future run forever.
+    """
     path = Path(STATE_PATH)
     if fresh or not path.exists():
         return {}
     done: dict[str, dict] = {}
+    attempts: Counter = Counter()
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -69,7 +87,10 @@ def _load_done(fresh: bool) -> dict[str, dict]:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        done[row["destination"]] = row
+        destination = row["destination"]
+        attempts[destination] += 1
+        if row.get("comments") or attempts[destination] >= MAX_ATTEMPTS_PER_DESTINATION:
+            done[destination] = row
     return done
 
 
@@ -165,7 +186,12 @@ async def main() -> None:
             # retryable no-op, never a recorded-but-empty success.
             row["retryable_no_op"] = True
 
-        logger.info("[%d/%d] %s: %d comments ingested", i, len(pending), destination, count)
+        if count:
+            logger.info("[%d/%d] %s: %d comments ingested", i, len(pending), destination, count)
+        else:
+            # Not a success. Said plainly, because "0 comments ingested" reads
+            # like one in a run log and hid 47 consecutive quota failures once.
+            logger.warning("[%d/%d] %s: NO comments — stays pending", i, len(pending), destination)
         _record(row)
         results.append(row)
         await asyncio.sleep(DELAY_SECONDS)
@@ -185,7 +211,9 @@ async def main() -> None:
         "failed": len(failed),
         "searches_used": len(yt._search_times),
         "stopped_on_budget": stopped_on_budget,
-        "remaining": len(destinations) - len(done) - len(results),
+        # Re-read state so this applies the same done-rule the next run will:
+        # anything that failed or came back empty is still pending, not done.
+        "remaining": len(destinations) - len(_load_done(False)),
     }
     Path(SUMMARY_PATH).parent.mkdir(parents=True, exist_ok=True)
     Path(SUMMARY_PATH).write_text(json.dumps(summary | {"results": results}, indent=2), encoding="utf-8")
