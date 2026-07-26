@@ -475,13 +475,26 @@ triaging by eye is what caught the README.
 `docs/system-design.md`, `docs/PRD.md`, `docs/scaling-tech-challenges.md`,
 `TECHNICAL_DOCUMENTATION.md`, `docs/itinerary-generation-flow.md`.
 
+**Second pass, same day:** `docs/GTM_STRATEGY.md` (all 5 mentions — moat claim, Bet 1, gem scoring,
+budget-estimator proof point, roadmap row), `docs/pitch-deck/index.html` (the live deck, both
+mentions), and `docs/MARKET_RESEARCH.md`. An earlier version of this list put those three under
+"left alone"; that was superseded.
+
+🔒 **`docs/MARKET_RESEARCH.md`'s remaining Reddit mention is DELIBERATE — do not remove it.**
+Confirmed by the user 2026-07-27. The persona line ("high trust in peer/community content")
+describes where the **user** places trust, which is a true market observation about Indian
+travellers and is completely independent of which sources we ingest. Stripping it would make the
+market research *wrong*, not cleaner. It carries an inline annotation saying so; keep both.
+
 **Deliberately left alone — rewriting them would falsify the record:**
 - **Changelog / version-history sections** (`TECHNICAL_DOCUMENTATION.md` §14, README's version log,
   rag-strategy's "✅ DONE" roadmap rows). These describe what shipped at the time and were true then.
 - **Dated audit artifacts**: `BUG_FIXES_SUMMARY.md`, `docs/UI_UX_AUDIT_2026-07-13.md`,
-  `E2E_SANITY_REPORT.md`, `test_e2e_sanity.md`, `docs/MARKET_RESEARCH.md`,
-  `MULTI_CITY_IMPLEMENTATION.md`, `docs/STARTUP_EVALUATION.md`, `docs/GTM_STRATEGY.md`,
-  `docs/eval-set.md`.
+  `E2E_SANITY_REPORT.md`, `test_e2e_sanity.md`, `MULTI_CITY_IMPLEMENTATION.md`,
+  `docs/STARTUP_EVALUATION.md`, `docs/eval-set.md`.
+- **`docs/pitch-deck/index-2026-07-11-evaluation.html`** — a dated snapshot of the deck. One of its
+  two mentions is also the *user-behaviour* kind ("Users juggle Google Maps, Skyscanner, Reddit
+  threads, and spreadsheets"), which describes the problem being solved and is true regardless.
 - **Code-behaviour documentation that is still literally true**: `scrapers/reddit.py` still exists,
   still defines the live `KNOWN_DESTINATIONS` list, and the `reddit` collection is still *read* by
   `services/search.py`, `services/gems.py` and `core/cost_grounding.py::_price_collections()`.
