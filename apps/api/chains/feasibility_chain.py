@@ -73,12 +73,11 @@ async def check_feasibility(trip_config: TripConfig) -> FeasibilityResponse:
 
     # Calculate trip nights
     dates = trip_config.dates if isinstance(trip_config.dates, dict) else trip_config.dates.__dict__
-    if hasattr(trip_config.dates, 'start'):
-        start = trip_config.dates.start
-        end = trip_config.dates.end
-    else:
-        start = dates.get('start') or dates.get('start_date')
-        end = dates.get('end') or dates.get('end_date')
+    # `TripConfig.dates` is declared as a plain dict, but this chain is also
+    # driven by the eval harness with model-shaped configs -- getattr tolerates
+    # both without the attribute access being dead code under the declared type.
+    start = getattr(trip_config.dates, 'start', None) or dates.get('start') or dates.get('start_date')
+    end = getattr(trip_config.dates, 'end', None) or dates.get('end') or dates.get('end_date')
 
     nights = 4  # default
     if start and end:

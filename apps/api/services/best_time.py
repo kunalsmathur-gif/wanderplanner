@@ -37,7 +37,7 @@ async def _fetch_weather(destination: str) -> list[MonthlyWeather]:
     except Exception:
         return []
 
-    params = {
+    params: dict[str, str | float] = {
         "latitude": geo.lat,
         "longitude": geo.lon,
         "start_date": "2023-01-01",

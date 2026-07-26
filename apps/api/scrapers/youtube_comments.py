@@ -113,7 +113,7 @@ async def search_travel_videos(
         )
         return []
 
-    params = {
+    params: dict[str, str | int] = {
         "key": settings.youtube_api_key,
         "part": "snippet",
         "q": query or _search_query(destination),
@@ -155,7 +155,7 @@ async def fetch_video_comments(video_id: str) -> list[dict[str, Any]]:
     if not settings.youtube_api_key:
         return []
 
-    params = {
+    params: dict[str, str | int] = {
         "key": settings.youtube_api_key,
         "part": "snippet",
         "videoId": video_id,

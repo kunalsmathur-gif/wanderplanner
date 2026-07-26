@@ -123,7 +123,9 @@ def delete_stale_destination_points(
 
     Returns the number of stale points deleted.
     """
-    stale_ids: list[int] = []
+    # Qdrant point ids are int *or* str (`PointId`), and the payload here is
+    # whatever the caller upserted, so don't narrow to int.
+    stale_ids: list[int | str] = []
     offset = None
     while True:
         points, offset = client.scroll(

@@ -69,7 +69,7 @@ def _call_gemini(model: str, prompt: str, json_mode: bool = True) -> tuple[str, 
     from google import genai
     from google.genai import types as genai_types
     client = genai.Client(api_key=settings.gemini_api_key)
-    config_kwargs = {"temperature": 0.4}
+    config_kwargs: dict[str, Any] = {"temperature": 0.4}
     if json_mode:
         config_kwargs["response_mime_type"] = "application/json"
     resp = client.models.generate_content(

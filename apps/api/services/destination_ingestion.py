@@ -124,7 +124,12 @@ async def ensure_destination_ingested(destination: str) -> None:
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 counts: list[int] = []
                 for source_name, result in zip(("OSM", "Wikivoyage", "YouTube"), results):
-                    if isinstance(result, Exception):
+                    # BaseException, not Exception: `gather(return_exceptions=True)`
+                    # also hands back CancelledError, which does *not* inherit
+                    # from Exception. Narrowing on Exception let that fall to the
+                    # else branch, append the exception object itself to `counts`,
+                    # and read as a truthy — i.e. successful — ingestion count.
+                    if isinstance(result, BaseException):
                         logger.warning(
                             "%s ingestion failed for new destination %r: %s",
                             source_name, destination, result, exc_info=result,
