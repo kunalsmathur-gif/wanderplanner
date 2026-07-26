@@ -2,13 +2,27 @@
 
 ---
 
-## ✅ DO THIS NEXT — open items as of 2026-07-26 (v10.40.1)
+## ✅ DO THIS NEXT — open items as of 2026-07-26 (v10.40.2)
 
-Ordered by value. Item 1 and item 2's remaining data run are what move the product; 3 is blocked
-on the user; 4–6 are hygiene. Narrative and evidence for each is in the session block immediately
-below.
+Ordered by value. **Items 1, 2 (code), 5 and 7 are done** — item 2's re-ingestion *data run* is
+the one thing still in flight and is what moves the product now. 3 is blocked on the user; 4 and 6
+are hygiene. Narrative and evidence for each is in the session blocks below.
 
-**1. Finish the YouTube backfill — 90 destinations still have no comment data.**
+**1. ✅ DONE 2026-07-26 (v10.40.2) — the YouTube comment corpus is complete: 170/170 destinations.**
+The final 90 went through on a fresh Pacific quota day: 90 ingested, **13,477 comments**. Verified
+on the real cluster, not the run log — `youtube_comments` holds **25,347 points across 172
+destinations** (was 12,429 / 84). 8 of the 90 failed on the first pass with Qdrant
+`read/write operation timed out` — *not* quota — and all 8 succeeded on an immediate retry, so they
+were transient. **The v10.40.1 resume fix is what made that recoverable**: the run reported
+`remaining: 8` and left them pending, where the old code would have recorded them done and
+abandoned them. Note a Qdrant-write failure still costs a `search.list` call, since the search
+succeeded first — which against a 100/day cap is exactly why the resume semantics matter.
+
+Keeping the quota facts below, since any future re-ingestion runs into them again.
+
+<details>
+<summary>Original item 1 — the quota constraint (still accurate)</summary>
+
 The 2026-07-25 run covered 80 of 170. A 2026-07-26 retry **failed on all 47 destinations it
 reached** and turned up the real constraint (full narrative in TECHNICAL_DOCUMENTATION §14 v10.40.1):
 
@@ -38,6 +52,8 @@ pending` at WARNING instead of the old success-shaped `0 comments ingested`. But
 `search_travel_videos` still retries a 429 three times — see the carried-over list below — so if
 anything consumes the day's quota first, the tail of the run burns 3 calls per destination
 achieving nothing.
+
+</details>
 
 **2. ✅ DONE 2026-07-25 (v10.40.0) — the pool is ranked by prominence. What's left is the data run.**
 Ranking was genuinely missing, but it was the *second* of two causes and would have changed nothing
@@ -112,13 +128,24 @@ optional**, and the real fix is to stop logging the URL at all:
   fixes every present and future script at once. **Preferred** — it removes the class of bug rather
   than this instance of it.
 
-**5. CI's mypy step is red, pre-existing.**
-`mypy . --ignore-missing-imports` dies before type-checking with `eval\config_loader.py: Source
-file found twice under different module names` because `apps/api/eval/` has no `__init__.py`.
-Confirmed pre-existing against a pristine `be9e30e` worktree. Both fixes (add
-`apps/api/eval/__init__.py`, or switch the CI step to `--explicit-package-bases`) change import
-resolution for the eval harness, which does `sys.path` manipulation in several scripts — so it
-needs its own change with the eval scripts actually re-run, not a drive-by.
+**5. ✅ DONE 2026-07-26 (v10.40.2) — CI's mypy step is green: `Success: no issues found in 166 source files`.**
+Two corrections to how this was recorded. **(a) It was never eval-specific** — `scripts/` has the
+same no-`__init__.py` shape, and excluding `eval/` just moved the abort there. **(b) Only one of the
+two candidate fixes touches runtime**: `explicit_package_bases` is a mypy-only setting with no
+effect on import resolution, so the eval harness's `sys.path` manipulation is untouched and **no
+eval re-run was needed** — the caution recorded here applied to the `__init__.py` option alone. It
+now lives in `pyproject.toml` (so local and CI agree; `.github/workflows` unchanged), along with a
+`venv/` exclusion that CI never needed but local runs did.
+
+The abort was hiding **91 errors across 54 sites**, since mypy had never actually type-checked the
+codebase. All cleared. **Three were real bugs** — a cancelled cold-start ingestion reading as a
+*successful* one (`isinstance(result, Exception)` misses `CancelledError`, which is a
+`BaseException`), and two in the comparison path (a `None` winner raising `ValidationError` and
+killing the whole comparison; attribute access on a plain dict). Two more latent ones fell out of
+harness code. Full detail in TECHNICAL_DOCUMENTATION §14 v10.40.2.
+
+⚠️ **If you add a file under `eval/` or `scripts/`, mypy now type-checks it** — that's the point,
+but it does mean CI can newly fail on code that would previously have been skipped.
 
 **6. The website is still on `wanderplanner-web.vercel.app`.**
 The domain is bought and its DNS is live, but nothing points at Vercel yet. If/when you move the
@@ -576,7 +603,7 @@ calibration pass to retire.
   matching the venv) — the real drift was the config using the deprecated top-level `[tool.ruff]`
   `select`/`ignore`. See the 2026-07-25 (later) block at the top.
 
-**Last updated:** 2026-07-26 (latest) — v10.40.1: the YouTube backfill was **metering against the wrong quota** — `search.list` has its own hard cap of 100 calls/project/day (`defaultSearchListPerDayPerProject`), a separate meter from the 10,000 units/day the code models, and it resets at **midnight Pacific**, so a retry launched at 08:00 UTC is still on the *previous* quota day. All 47 destinations the retry reached failed while logging `0 comments ingested` — a clean-looking log. Underneath it, `_load_done()` was recording those failures as completed work, which would have silently abandoned all 47; fixed to the attempt-capped idiom the prominence script already used, and the bogus rows stripped (nothing had reached Qdrant). Found-and-deferred: `search_travel_videos` retries a 429 three times, and the API key reaches standalone script logs via `raise_for_status()`'s URL-bearing exception message — a different path from the httpx one previously recorded as fixed (prod unaffected, `RedactionFilter` covers it). Previous entry: v10.40.0: the POI pool is ranked by prominence, but the headline finding is that ranking was the *second* of two causes — **`scrapers/osm.py` only ever queried `node` elements**, and famous landmarks are mapped as areas (Kiyomizu-dera, Kinkaku-ji, Ginkaku-ji are `way`s; Delhi's Jama Masjid a `relation`), so they were **unreachable, not out-ranked**. Fixed with a second prominence-filtered `nwr` pass (uncapped on purpose — Overpass's `out <limit>` truncates nodes-first, so a cap silently drops every way), tiered prominence selection, and a 25% per-category cap that also settles the long-open `MAX_CATEGORY_SHARE` question. A new guard stops a *failed* prominence pass from overwriting good data with a full-looking-but-landmark-less pool — found by being bitten by it on Delhi. Tuning was measured against cached raw Overpass data across 3 cities, 8 variants; nothing beat the shipped config, and two plausible-sounding ideas were measurably worse. Live: Kyoto gems 0 → 3, Goa 0 → 1, Delhi now flags Chandni Chowk as a crowd favourite. **The 169-destination re-ingestion is the remaining work — re-run the script until `0 still pending`.** Previous entry: v10.39.0: hidden-gem name matching rebuilt on a new shared `services/name_matching.py`, but the audit that preceded it found the real cause upstream — **`scrapers/osm.py` was storing OSM's local-language `name` tag**, leaving 17 destinations (Tokyo 58/60, Seoul 56/60, Kyoto 49/60 …) with unmatchable names and showing English users Japanese/Greek/Thai place names in itineraries. Fixed to prefer `name:en`; 16 of 17 re-ingested (49% → 82% Latin-script), Tokyo still pending on Overpass failures. Gems also stopped recommending metro stops. Three latent bugs fixed along the way, two of them live in the interest-pinning path as well (NFKD folding *deleted* `ı`/`ø`/`ł`, apostrophes were split not removed). **The new ceiling is the POI pool, not the matcher** — see item 2 at the top. Previous entry: v10.38.2: the `COOKIE_SAMESITE`/`JWT_SECRET` prod guards were **inert on Railway** (they keyed off an `ENVIRONMENT` var Railway never sets) — fixed with `is_production()` + 6 regression tests; `NOMINATIM_USER_AGENT` in Railway was still the old `wanderplan/1.0` so the Wikimedia-403 fix had never reached prod; `YOUTUBE_API_KEY` set; first full YouTube backfill ran (80 destinations, 11,838 comments, 90 left for tomorrow). See the block at the top. Previous entry: v10.38.1 repo-wide Ruff cleanup: 318 pre-existing violations cleared, `ruff check .` now passes under the already-pinned `ruff==0.4.9`, config moved off the deprecated top-level `[tool.ruff]` section, and 3 latent bugs fixed (2 dead module docstrings, 1 unresolvable forward-ref + redundant import, 1 dead local). Also verified the 0005 migration + scheduler job need no deploy-side code change (`railway.toml` already runs `alembic upgrade head`); the only prod prerequisite left is setting `YOUTUBE_API_KEY` on Railway. Found-not-fixed: CI's mypy step is red pre-existing (`eval/` missing `__init__.py`). See the block at the top. Previous entry: manual frontend/stage bug-bash session found and fixed 5 Anya wizard bugs total: a dead-end fallback reply, a broken post-sign-in resume state sync, a ZWJ-emoji chip-tap detection bug, a misleading `(NO_DATA)` error masking real generation failures, and (found on stage after the first 3 were live) stale group-type chips repeating under the traveler-count follow-up. See "2026-07-24 session — Anya wizard bug bash" block immediately below. Previous entry: (1) full 168-destination live re-audit found the backlog nearly clear (only 10 failing, none wiki/osm-zero); fixed **3 silently mis-geocoded destinations the count-only gate can't detect** (Austin→was Nevada ghost town, La Paz→was Mexico, Valencia→was Venezuela) + re-ingested the 10 gate failures, landing at **7/12 fixed, 5 residual = genuine real-world category skew** (Paris metro + 4 temple/pilgrimage towns), not bugs. (2) Shipped the **food-grounding per-meal→per-day reconciliation** ("item A" proper fix) — now unit-aware, floor-kept-as-safety-net. See the two "2026-07-24 session" blocks further below. Prior top-priority (food under-estimation) is now resolved.
+**Last updated:** 2026-07-26 (latest) — v10.40.2: **the YouTube comment corpus is complete (170/170 destinations, 25,347 points / 172 destinations verified on the cluster)**, and **`mypy .` runs for the first time** — the recorded "add an `__init__.py`" framing was wrong twice over (it was never eval-specific, and the `explicit_package_bases` option is mypy-only with no runtime effect, so no eval re-run was needed). The crawl abort was hiding **91 errors across 54 sites**, now zero; three were real bugs, including a cancelled cold-start ingestion that read as a *successful* one. Previous entry: v10.40.1: the YouTube backfill was **metering against the wrong quota** — `search.list` has its own hard cap of 100 calls/project/day (`defaultSearchListPerDayPerProject`), a separate meter from the 10,000 units/day the code models, and it resets at **midnight Pacific**, so a retry launched at 08:00 UTC is still on the *previous* quota day. All 47 destinations the retry reached failed while logging `0 comments ingested` — a clean-looking log. Underneath it, `_load_done()` was recording those failures as completed work, which would have silently abandoned all 47; fixed to the attempt-capped idiom the prominence script already used, and the bogus rows stripped (nothing had reached Qdrant). Found-and-deferred: `search_travel_videos` retries a 429 three times, and the API key reaches standalone script logs via `raise_for_status()`'s URL-bearing exception message — a different path from the httpx one previously recorded as fixed (prod unaffected, `RedactionFilter` covers it). Previous entry: v10.40.0: the POI pool is ranked by prominence, but the headline finding is that ranking was the *second* of two causes — **`scrapers/osm.py` only ever queried `node` elements**, and famous landmarks are mapped as areas (Kiyomizu-dera, Kinkaku-ji, Ginkaku-ji are `way`s; Delhi's Jama Masjid a `relation`), so they were **unreachable, not out-ranked**. Fixed with a second prominence-filtered `nwr` pass (uncapped on purpose — Overpass's `out <limit>` truncates nodes-first, so a cap silently drops every way), tiered prominence selection, and a 25% per-category cap that also settles the long-open `MAX_CATEGORY_SHARE` question. A new guard stops a *failed* prominence pass from overwriting good data with a full-looking-but-landmark-less pool — found by being bitten by it on Delhi. Tuning was measured against cached raw Overpass data across 3 cities, 8 variants; nothing beat the shipped config, and two plausible-sounding ideas were measurably worse. Live: Kyoto gems 0 → 3, Goa 0 → 1, Delhi now flags Chandni Chowk as a crowd favourite. **The 169-destination re-ingestion is the remaining work — re-run the script until `0 still pending`.** Previous entry: v10.39.0: hidden-gem name matching rebuilt on a new shared `services/name_matching.py`, but the audit that preceded it found the real cause upstream — **`scrapers/osm.py` was storing OSM's local-language `name` tag**, leaving 17 destinations (Tokyo 58/60, Seoul 56/60, Kyoto 49/60 …) with unmatchable names and showing English users Japanese/Greek/Thai place names in itineraries. Fixed to prefer `name:en`; 16 of 17 re-ingested (49% → 82% Latin-script), Tokyo still pending on Overpass failures. Gems also stopped recommending metro stops. Three latent bugs fixed along the way, two of them live in the interest-pinning path as well (NFKD folding *deleted* `ı`/`ø`/`ł`, apostrophes were split not removed). **The new ceiling is the POI pool, not the matcher** — see item 2 at the top. Previous entry: v10.38.2: the `COOKIE_SAMESITE`/`JWT_SECRET` prod guards were **inert on Railway** (they keyed off an `ENVIRONMENT` var Railway never sets) — fixed with `is_production()` + 6 regression tests; `NOMINATIM_USER_AGENT` in Railway was still the old `wanderplan/1.0` so the Wikimedia-403 fix had never reached prod; `YOUTUBE_API_KEY` set; first full YouTube backfill ran (80 destinations, 11,838 comments, 90 left for tomorrow). See the block at the top. Previous entry: v10.38.1 repo-wide Ruff cleanup: 318 pre-existing violations cleared, `ruff check .` now passes under the already-pinned `ruff==0.4.9`, config moved off the deprecated top-level `[tool.ruff]` section, and 3 latent bugs fixed (2 dead module docstrings, 1 unresolvable forward-ref + redundant import, 1 dead local). Also verified the 0005 migration + scheduler job need no deploy-side code change (`railway.toml` already runs `alembic upgrade head`); the only prod prerequisite left is setting `YOUTUBE_API_KEY` on Railway. Found-not-fixed: CI's mypy step is red pre-existing (`eval/` missing `__init__.py`). See the block at the top. Previous entry: manual frontend/stage bug-bash session found and fixed 5 Anya wizard bugs total: a dead-end fallback reply, a broken post-sign-in resume state sync, a ZWJ-emoji chip-tap detection bug, a misleading `(NO_DATA)` error masking real generation failures, and (found on stage after the first 3 were live) stale group-type chips repeating under the traveler-count follow-up. See "2026-07-24 session — Anya wizard bug bash" block immediately below. Previous entry: (1) full 168-destination live re-audit found the backlog nearly clear (only 10 failing, none wiki/osm-zero); fixed **3 silently mis-geocoded destinations the count-only gate can't detect** (Austin→was Nevada ghost town, La Paz→was Mexico, Valencia→was Venezuela) + re-ingested the 10 gate failures, landing at **7/12 fixed, 5 residual = genuine real-world category skew** (Paris metro + 4 temple/pilgrimage towns), not bugs. (2) Shipped the **food-grounding per-meal→per-day reconciliation** ("item A" proper fix) — now unit-aware, floor-kept-as-safety-net. See the two "2026-07-24 session" blocks further below. Prior top-priority (food under-estimation) is now resolved.
 
 ---
 

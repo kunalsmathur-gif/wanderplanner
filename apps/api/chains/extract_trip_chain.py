@@ -139,8 +139,7 @@ async def _fetch_url_text(url: str) -> str:
                     location = resp.headers.get("location")
                     if not location:
                         return ""
-                    next_url = httpx.URL(current_url).join(location)
-                    next_url = str(next_url)
+                    next_url = str(httpx.URL(current_url).join(location))
                     try:
                         current_host, current_ip = _assert_public_host(next_url)
                     except _UnsafeUrlError:

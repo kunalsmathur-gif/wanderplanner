@@ -25,7 +25,7 @@ REFINEMENT_DATASET_PATH = Path(__file__).parents[2] / "eval" / "refinement_fidel
 
 
 def _pois(category_counts: dict[str, int]) -> list[dict]:
-    pois = []
+    pois: list[dict] = []
     for category, count in category_counts.items():
         pois.extend({"poi_type": category, "name": f"{category} {i}"} for i in range(count))
     return pois

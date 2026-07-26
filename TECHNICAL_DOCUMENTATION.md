@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.40.1 (the YouTube backfill meters against the wrong quota — `search.list` has its own 100-calls/day/project cap, separate from the 10,000-unit quota the code models — and the resume state was recording those quota failures as completed work, which would have abandoned 47 destinations silently)
+**Version:** 10.40.2 (YouTube comment corpus complete at 170/170 destinations — 25,347 points verified on the cluster; and `mypy .` runs for the first time, going from an abort-before-checking to `Success: no issues found in 166 source files`, which surfaced three real bugs: a cancelled ingestion reading as a success, and two in the comparison path)
 **Last Updated:** July 26, 2026  
 **Status:** Production-ready MVP
 
@@ -1501,6 +1501,32 @@ curl http://localhost:8000/health
 ---
 
 ## 14. Recent Changes (v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.40.2 Changes (July 2026) — YouTube corpus complete; mypy runs for the first time and finds three real bugs
+
+Two carried-over items closed. Suite **646 passed / 6 skipped / 0 failed** (full tree, unit + integration), `ruff check .` clean, and **`mypy .` now reports `Success: no issues found in 166 source files`** — from 91 errors.
+
+**1. ✅ The YouTube comment corpus is complete: 170/170 destinations.** The 90 outstanding destinations went through in one pass on a fresh Pacific quota day, plus a retry for stragglers: 90 ingested, **13,477 comments**. Verified against the real cluster rather than the run log — `youtube_comments` holds **25,347 points across 172 destinations**, up from 12,429 / 84.
+
+**Worth recording: 8 of the 90 failed on the first pass with Qdrant `read/write operation timed out`, not quota** — and all 8 succeeded on an immediate retry, so they were transient cluster blips. The initial hypothesis was contention with the concurrently-running prominence re-ingestion; that was wrong, since failures continued at a similar rate after that job was paused. The v10.40.1 resume fix is what made this recoverable: the run reported `remaining: 8` and left them pending, where the old code would have recorded all 8 as done and abandoned them. **Each failure still costs a `search.list` call** (the search succeeds, only the Qdrant write fails), which against a 100/day cap is the real reason the resume semantics matter.
+
+**2. ✅ CI's mypy step: the crawl abort is fixed, and the 91 errors behind it are cleared.**
+
+The recorded cause was `apps/api/eval/` missing an `__init__.py`, with a note that both candidate fixes change import resolution for the eval harness and so need the eval scripts re-run. **That is true of adding `__init__.py`, but not of the alternative**: `explicit_package_bases` is a mypy-only setting with no runtime effect whatsoever, so the entry points and their `sys.path` manipulation are untouched. Set in `pyproject.toml` rather than the CI command so local and CI agree; `.github/workflows` is unchanged. The missing `__init__.py` was also **not specific to `eval/`** — `scripts/` has the same shape, and excluding `eval/` merely moved the abort there. Also excluded `venv/`, which CI never sees but a local run was type-checking.
+
+With the crawl fixed, mypy type-checked 166 files for the first time. **Three were real bugs:**
+
+| Bug | Detail |
+|---|---|
+| 🔴 `services/destination_ingestion.py` — a cancelled ingestion read as a *success* | The cold-start gather narrowed on `isinstance(result, Exception)`, but `gather(return_exceptions=True)` also returns `CancelledError`, which inherits `BaseException`, **not** `Exception`. A cancelled source fell through to the else branch, appended the exception object itself to `counts`, and then read as truthy — i.e. as a non-zero ingestion count, so `if not osm_count and not wiki_count` treated the destination as populated. |
+| 🔴 `services/comparison.py` — one missing LLM key killed the whole comparison | `winner=row.get("winner")` passes `None` into `ComparisonParameter.winner`, which is `str = ""` and non-optional, so any row the LLM returned without a `winner` key raised a pydantic `ValidationError` — taking out the entire qualitative comparison, not just that row. |
+| 🔴 `services/comparison.py` — guaranteed `AttributeError` | `trip_config.dates.duration_days` is attribute access on a plain `dict`. `TripConfig.dates` is declared `dict` and its documented shape is `{"start", "end", "flexible"}`; `duration_days` is a key the wizard may add, so this is now `.get("duration_days")`. |
+
+**Everything else was a false positive, fixed by making the invariant explicit rather than suppressing it.** No blanket `# type: ignore` was added; the three that exist carry a specific error code and a one-line reason (two stdlib/third-party stub gaps — `sys.stdout.reconfigure`, slowapi's handler signature — and one test helper mimicking `httpx.HTTPStatusError`). Highlights: the two `expires_at < now` checks in `routers/auth.py` were safe only via `or` short-circuiting, which mypy cannot correlate across two variables, and now share an `_as_utc()` helper that also removes a duplicated naive-datetime block; `RefreshToken.__table__.update()` became `update(RefreshToken)`, the modern properly-typed API; `set_cookie`'s options are a `TypedDict`, with `cookie_samesite` narrowed at the call site rather than tightened in config, where making pydantic reject anything outside the literal set would turn a today-working value like `"None"` into a refuses-to-boot error. `user.email` is genuinely nullable (a Google-SSO account can carry only `google_sub`), so the password-reset path now checks it.
+
+**Two smaller latent bugs also fell out of the harness code:** `scripts/_regen_budget_anchors.py` indexed `estimate_bare_minimum_budget()`'s result without a `None` check (it returns `None` when it cannot estimate, e.g. unknown group size — a `TypeError` mid-run), and `eval/run_budget_comparison.py` fed `None` totals from failed extractions straight into `coefficient_of_variation`, which now drops them rather than counting them.
+
+**Generalisable:** 55 of the 91 errors came from **five `dict[str, object]` inference sites** — a mixed-value dict literal that is then `**`-splatted into typed parameters emits one error *per candidate parameter type*, so the error count wildly overstates the work. Two annotations alone cleared 32. Judge this kind of backlog by distinct sites (54), not by error count.
 
 ### v10.40.1 Changes (July 2026) — The YouTube backfill meters against the wrong quota, and the resume state hid it
 

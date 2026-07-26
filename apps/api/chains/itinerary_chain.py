@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
+from typing import Any
 
 from chains.safety import apply_kid_safety_filter, inject_persona_modules
 from chains.scoring import calculate_alignment_score
@@ -321,7 +322,7 @@ def _mock_itinerary(trip_config: TripConfig, tip_texts: list[str] | None = None)
             return description
         return f"{description} Local tip: {tips[idx % len(tips)]}"
 
-    days = []
+    days: list[dict[str, Any]] = []
     themes = ["Arrival & City Highlights", "Culture & Food", "Day Trip & Leisure"]
     for i in range(num_days):
         day_date = (base + timedelta(days=i)).isoformat()

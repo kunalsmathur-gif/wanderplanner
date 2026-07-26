@@ -80,7 +80,7 @@ def _call_gemini(model: str, prompt: str, json_mode: bool = True) -> tuple[str, 
     usage = getattr(resp, "usage_metadata", None)
     prompt_tokens = getattr(usage, "prompt_token_count", 0) or 0 if usage else 0
     output_tokens = getattr(usage, "candidates_token_count", 0) or 0 if usage else 0
-    return resp.text, prompt_tokens, output_tokens
+    return resp.text or "", prompt_tokens, output_tokens
 
 
 def _call_groq(model: str, prompt: str, json_mode: bool = True) -> tuple[str, int, int]:

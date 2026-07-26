@@ -129,7 +129,10 @@ async def scrape_travel_blog_feed(feed: dict[str, str], limit: int = 20) -> list
 
             published_date = None
             if entry.get("published_parsed"):
-                published_date = datetime(*entry["published_parsed"][:6], tzinfo=UTC).date().isoformat()
+                t = entry["published_parsed"]
+                published_date = datetime(
+                    t[0], t[1], t[2], t[3], t[4], t[5], tzinfo=UTC
+                ).date().isoformat()
 
             docs.append({
                 "source": "travel_blog",

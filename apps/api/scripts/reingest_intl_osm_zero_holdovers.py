@@ -141,7 +141,7 @@ async def main() -> None:
             # here since production runs against a properly migrated DB.
             logger.warning("Could not upsert destination_ingestion_state for %r: %s", destination, e)
 
-        breakdown = Counter()
+        breakdown: Counter[str] = Counter()
         try:
             breakdown = _category_breakdown(destination)
         except Exception as e:

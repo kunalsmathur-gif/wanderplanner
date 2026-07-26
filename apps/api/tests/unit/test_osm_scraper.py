@@ -695,7 +695,7 @@ class TestHardRefusalRotatesWithoutBackoff:
         response = MagicMock()
         response.status_code = status
         error = Exception(f"HTTP {status}")
-        error.response = response
+        error.response = response  # type: ignore[attr-defined]  # mimics httpx.HTTPStatusError
         return error
 
     @pytest.mark.asyncio

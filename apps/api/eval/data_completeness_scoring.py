@@ -49,7 +49,7 @@ def score_destination(
         category = (poi.get("poi_type") or "unknown").strip() or "unknown"
         category_counts[category] = category_counts.get(category, 0) + 1
 
-    top_category = max(category_counts, key=category_counts.get) if category_counts else None
+    top_category = max(category_counts, key=category_counts.__getitem__) if category_counts else None
     top_category_share = (
         category_counts[top_category] / osm_poi_count if top_category and osm_poi_count else 0.0
     )
