@@ -32,7 +32,7 @@ from services.search import semantic_search
 logger = logging.getLogger(__name__)
 
 # Bounded-compute caps for the lexical price sweep below. 400 chunks per
-# collection × 3 collections of pure regex is single-digit milliseconds of
+# collection × 4 collections of pure regex is single-digit milliseconds of
 # CPU, and only runs on the budget-estimation path (not per itinerary request).
 _PRICE_SCAN_MAX_CHUNKS = 400
 # Cap on price-bearing snippets handed to the median. Well above `min_samples`
@@ -41,10 +41,15 @@ _MAX_PRICE_SAMPLES = 24
 
 
 def _price_collections() -> list[str]:
+    # youtube_narration is the density fix (§C): comments were measured at
+    # only 1-3 money-shaped chunks per destination because people don't quote
+    # prices in comments, but vloggers state costs aloud and descriptions
+    # often carry an explicit breakdown. See scrapers/youtube_narration.py.
     return [
         settings.qdrant_collection_wiki,
         settings.qdrant_collection_reddit,
         settings.qdrant_collection_youtube_comments,
+        settings.qdrant_collection_youtube_narration,
     ]
 
 

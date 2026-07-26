@@ -110,7 +110,7 @@ Real, growing, digitally fluent, and currently underserved on Hinglish/cultural 
 An urban Indian in their 20s–30s planning a group or family trip, comfortable chatting with an AI in Hinglish, currently cross-referencing 5–6 tabs (Skyscanner, a blog, a YouTube video, a group chat) to build a plan.
 - **Time-poor, chat-native** — cause: prefers a conversational flow to a form, drives adoption of the wizard.
 - **Price-sensitive on the tool, not the trip** — cause: won't pay a subscription for planning, but will spend real money on the trip itself once planned.
-- **High trust in peer/community content (Reddit, YouTube)** — cause: values social-proof-grounded recommendations over generic listicles.
+- **High trust in peer/community content** — cause: values social-proof-grounded recommendations over generic listicles. *(This describes where the **user** places trust — forums, Reddit threads, YouTube comments — not where WanderPlanner sources data. Our own community signal comes from YouTube comments; Reddit was retired as an ingestion source on 2026-07-26. The persona insight is unaffected by that and still holds.)*
 
 #### Core Jobs
 1. **When** planning a multi-day trip with a group, feeling overwhelmed switching between five tools, **I want to** get a day-by-day itinerary that fits my budget and group **with success criteria** ready in minutes, in my own mix of English/Hindi, **in order to** start actually booking things and feel excited about the trip, not stressed.

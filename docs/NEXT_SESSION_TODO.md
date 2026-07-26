@@ -5,8 +5,10 @@
 ## ✅ DO THIS NEXT — open items as of 2026-07-26 (v10.40.6)
 
 Ordered by value. **Items 1, 2 (code), 5 and 7 are done** — item 2's re-ingestion *data run* is
-the one thing still in flight and is what moves the product now. 3 is blocked on the user; 4 and 6
-are hygiene. Narrative and evidence for each is in the session blocks below.
+the one thing still in flight and is what moves the product now: **140 of 169 destinations are
+done, 29 are still pending**, and all 29 are pending for the same reason, which is worth reading
+before the next run (item 2). 3 is blocked on the user; 4 and 6 are hygiene. Narrative and evidence
+for each is in the session blocks below.
 
 **1. ✅ DONE 2026-07-26 (v10.40.2) — the YouTube comment corpus is complete: 170/170 destinations.**
 The final 90 went through on a fresh Pacific quota day: 90 ingested, **13,477 comments**. Verified
@@ -75,6 +77,113 @@ query is the heavier of the two. Bangkok hit exactly this on the first pass and 
 on its old data rather than overwritten. The script gives up after 3 attempts per destination so a
 genuinely unremarkable place can't loop forever. **This also subsumes old item 7** (Tokyo's
 local-script names) — the same run re-fetches Tokyo.
+
+#### Where the run actually stands (measured 2026-07-26 from the state file, not the run log)
+
+**Status after the 2026-07-27 retry pass: 161 done, 8 pending.** The pass recovered 21 of the 29 —
+London and Osaka both went 0 → **60/60** prominence, Varanasi 0 → 40, Nairobi 0 → 37, Darjeeling
+0 → 28 — which confirms the diagnosis below (stochastic mirror availability, so re-running works).
+
+🔴 **The 8 that remain are all at `attempts=2`, so the next run is their LAST.** At 3 attempts the
+script accepts a destination regardless of its prominence result, which means one more unlucky pass
+records them as done on stale, unranked data — exactly what happened to Amalfi. **Drop the dead
+`overpass.openstreetmap.fr` mirror before spending their final attempt** (it answers 403 to
+everything, and `_PROMINENCE_FETCH_ATTEMPTS = 4` rotates over three mirrors, so attempt 3 always
+lands on it and is guaranteed wasted). Still pending: Jaisalmer, Lyon, Medellin, Montreal, Nice,
+Oslo, Pondicherry, Siem Reap.
+
+<details>
+<summary>How the 29 were originally identified (2026-07-26)</summary>
+
+The batch reached the end of the alphabet at 17:46 UTC (23:16 IST), having touched **all 169**. But
+reaching a destination is not finishing it: replaying `_load_state()`'s own rule
+(`osm_count and (prominent or attempts >= 3)`) gave **140 done, 29 still pending**, every one of
+them at `attempt=1`.
+
+⚠️ **Do not measure this run by "did every destination get a row".** All 169 have rows and all 169
+have `stored > 0`, because the *base* OSM pass succeeded everywhere — count the ones carrying a
+prominence signal instead. This is the same trap as v10.40.1's `0 comments ingested` run log and
+v10.40.0's complete-but-wrong pool: the shape of the output looked finished, and the content was not.
+
+**All 29 pending share one symptom: `prominent = 0` with `error = null`.** The base pass succeeded,
+the prominence pass failed on every mirror (diagnosed below — it *failed*, it did not come back
+empty), and the script correctly declined to call that done.
+The list is not the thin rural places the retry rule was written for — it includes **Rome, Venice,
+Paris, London, Sydney, Osaka, Taipei, Porto, Split, Vilnius**, which cannot plausibly have zero
+`wikidata`-tagged features:
+
+> Darjeeling, Jaisalmer, Lonavala, London, Lyon, Medellin, Montreal, Nainital, Nairobi, Nice, Osaka,
+> Oslo, Paris, Pondicherry, Porto, Pushkar, Queenstown, Riga, Rishikesh, Rome, Shillong, Siem Reap,
+> Split, Srinagar, Sydney, Taipei, Varanasi, Venice, Vilnius
+
+(Amalfi had the same symptom and is *not* in the list — it exhausted its 3 attempts and was accepted,
+per the rule above. Worth re-checking by hand, since the evidence now says its result was a failure
+rather than a genuinely unremarkable place.)
+
+</details>
+
+**Two hypotheses tested and rejected — don't redo them:**
+- *Not a throttling window.* Failures interleave with clean successes minutes apart: Rome `prom=0`
+  at 15:30 UTC, San Francisco `prom=60` at 15:36 UTC. Successes and failures alternate throughout.
+  (The state file's `at` is UTC — beware tooling that renders it in local IST, +5:30.)
+- *Not partial degradation.* The outcome is near-binary — a destination gets `prominent=60` or
+  `prominent=0`, with genuine middles (Oaxaca 7, Ooty 19, Phuket 49) rare. The prominence pass either
+  wholly works or wholly returns nothing.
+
+#### ✅ Diagnosed 2026-07-27 with live Overpass probes — the mechanism, and two wrong guesses
+
+**The mechanism is confirmed, and nothing is broken in our code.** The prominence pass fails on
+every mirror, so `_fetch_overpass` returns `None`; `prominence_ok` is then `False`, and
+`ingest_osm_pois`'s data-loss guard (osm.py, "keeping the N POIs already stored rather than
+overwriting them") **keeps the old pool and returns `existing_count`**. That is exactly the
+`osm_count > 0, stored = 60, prominent = 0, error = null` signature — a *successful protection of
+good data*, not a silent failure. The pre-v10.40.0 pool it preserved has no `prominence` payload
+field at all, which is why the readback is 0 of 60 rather than merely low.
+
+**Live mirror health** (Rome, the full 25-clause prominence query, 15km):
+
+| mirror | result |
+|---|---|
+| `overpass-api.de` | **HTTP 504** in 13–16s, HTML body |
+| `overpass.kumi.systems` | **ReadTimeout** after 122s (client cap is 120s) |
+| `overpass.openstreetmap.fr` | **HTTP 403**, `"This service is only available to white-listed usages"` |
+
+That 403 body is worth recording: the mirror is not rate-limiting us, it is **not open to public
+use at all**. It will never answer, which makes the case to drop it from
+`osm_overpass_fallback_mirrors` concrete rather than speculative — and note
+`_PROMINENCE_FETCH_ATTEMPTS = 4` rotates over three mirrors, so **attempt 3 always lands on the dead
+mirror and is guaranteed wasted**. Removing it buys a real third try, not just tidiness.
+
+🔴 **Wrong guess #1 — "the prominence query is timing out."** Recorded above as the place to start,
+on an elapsed-time correlation. Only partly right: one mirror does hit a client ReadTimeout, but the
+dominant mode is a *fast* 504 (8–16s) from the gateway, which is a slot refusal, not a query running
+to its 90s server-side limit. The timing correlation was real and the causal story drawn from it was
+not.
+
+🔴 **Wrong guess #2 — "radius is the lever."** Rome 504s at 15km but returns **1,023 elements at
+10km**, which looked decisive. It is not — the very next destination refuted it:
+
+| destination | 15km | 10km |
+|---|---|---|
+| Rome | 504 | ✅ 1,023 elements |
+| **Paris** | ✅ **3,013 elements** | **504** |
+| London | ✅ 2,797 | ✅ 2,166 |
+
+Paris is the exact reverse of Rome and London works at both, so **the failures are stochastic
+server-side availability, not query weight.** Do not "fix" this by lowering
+`osm_prominence_radius_m` — the measurement above says it would not help and would cost real
+coverage. Successful queries take 35–75s, so the 120s client timeout is adequate but not generous.
+
+**Therefore the 29 are transient and re-running is the fix** — confirmed on a pending small town:
+Pushkar, which failed in the batch, returned HTTP 200 on a fresh probe. No code change is required
+to finish the run.
+
+⚠️ **But mind the 3-attempt cap while re-running.** Each script run costs one attempt per
+destination, and after three the destination is accepted *whatever* its prominence result — a
+destination that is merely unlucky three times gets recorded as done on stale data. **That is what
+happened to Amalfi**, and it is the one way a re-run can make things quietly worse. If a
+destination is still failing after two runs, drop the dead mirror (above) before spending its last
+attempt.
 
 **Early live results** (first destinations through the new pipeline, real cluster): Kyoto's pool
 went from 21 obscure temples + 20 small museums to Kiyomizu-dera, Kinkaku-ji, Ginkakuji, Ryōan-ji,
@@ -220,8 +329,28 @@ replacement.
   — 38 of 60 places of worship** — because that is what is actually mapped there. So the remaining
   question is unchanged and still a product call: **accept temple/backwater towns as real-world
   skew, or relax the gate for them.** What v10.40.0 removed is the *artificial* skew (Paris metro,
-  Bangkok/Delhi train stations); what's left is real. Re-check Paris, Dharamshala, Mahabaleshwar and
-  Khajuraho against the gate when the run reaches them.
+  Bangkok/Delhi train stations); what's left is real.
+
+  **✅ The four named for re-check have now been measured (2026-07-26, full run):** three of them
+  **pass** the 0.5 gate and are off the list — Dharamshala 0.483, Khajuraho 0.471 (restaurant, down
+  from 0.71), Mahabaleshwar 0.459. Across all 169, only **four** destinations exceed 0.5, and the
+  distribution is healthy: 128 at ≤0.25, 24 in 0.25–0.4, 13 in 0.4–0.5.
+
+  | destination | share | top category | prominence signal |
+  |---|---|---|---|
+  | Boston | 0.65 | place of worship | yes |
+  | Alleppey | 0.633 | place of worship | yes |
+  | Sri Lanka | 0.60 | place of worship | yes (5/60) |
+  | **Paris** | **0.583** | **train station** | **none — `prominent=0`** |
+
+  🔴 **Paris is not a genuine-skew case and must not be read as one.** It is one of the 29
+  destinations whose prominence pass returned nothing (see item 2), so its pool was selected without
+  any prominence signal at all — the 0.583 train-station share is the *old* pre-v10.40.0 behaviour
+  surviving, not the new cap failing on real data. **Paris's number is meaningless until it
+  re-ingests successfully**, and it is the one to re-measure first afterwards, since metro/rail
+  density is exactly the artificial skew the cap was built for. The other three carry a real
+  prominence signal, so those genuinely are the product call described above — and it is now a
+  three-destination decision, not five.
 - Reddit ingestion still 403s in prod on every boot — ask whether the OAuth app review came
   through, then rewire `scrapers/reddit.py` to the authenticated API.
 - Non-blocking timing note: the YouTube scheduler job uses `IntervalTrigger` with no `start_date`,
@@ -258,7 +387,7 @@ Tokyo's 2 qualifying comments yielded 6 amounts, so **the extractor was capturin
 present** — the shortfall was never extraction recall. `food_per_day_estimate_inr` returned `None`
 for all 8 destinations spot-checked, before and after v10.40.4.
 
-### A. 🔴 Wikivoyage `<section>` parser fix — UNCOMMITTED, highest value
+### A. 🔴 Wikivoyage `<section>` parser fix — committed; the data run is what's left
 
 `_parse_sections` collected only `("p", "ul", "li")`. MediaWiki wraps every **subsection** in a
 `<section>` element, and Wikivoyage keeps its Budget / Mid-range / Splurge **priced listings**
@@ -271,11 +400,18 @@ measured live:
 | Paris | 32 → 156 | 4 (unchanged) |
 | Bangkok | 31 → 143 | 0 (unchanged) |
 
-**State: the edit is in the working tree, uncommitted.** Only `ruff` and the 28 Wikivoyage tests
-were run — **the full suite has not been**. Finish that, commit, then note this is **ingestion-time
-only**: it does nothing until destinations are re-ingested, which is a third data run and must not
-overlap the prominence one. Re-measure food grounding afterwards — Jaipur should produce a real
-grounded figure for the first time.
+**State (corrected 2026-07-26): the edit is committed and pushed** — `9fa3106` on
+`feat/frontend-scaffold`, merged to `main` as `deaed8b`, both in sync with origin. The paragraph
+here previously said "in the working tree, uncommitted"; that is stale.
+
+⚠️ **Still genuinely outstanding: the full suite.** The note above recorded that only `ruff` and the
+28 Wikivoyage tests had been run, and the commit does not show otherwise — so **run the full suite
+against `9fa3106` before building on it**, rather than assuming the commit implies it passed.
+
+Then note this is **ingestion-time only**: it does nothing until destinations are re-ingested, which
+is a third data run and **must not overlap the prominence one — which is still 29 destinations short
+(item 2), so that constraint is still live.** Re-measure food grounding afterwards — Jaipur should
+produce a real grounded figure for the first time.
 
 ### B. Big-city guides still yield nothing — district sub-articles
 
@@ -283,27 +419,85 @@ Paris and Bangkok gained chunks but no food amounts: their guides delegate listi
 sub-pages (`Paris/Le_Marais`, `Paris/1st_arrondissement`, …) which the scraper never fetches. This
 is the remaining half of the Wikivoyage story and is what unblocks the big destinations.
 
-### C. YouTube transcripts + video descriptions — not started
+### C. ✅ YouTube transcripts + video descriptions — SHIPPED v10.41.0 (2026-07-27)
 
-Comments are the wrong medium; **narration is the right one** — vloggers state costs out loud.
-`scrapers/itinerary_corpus.py::fetch_youtube_transcript` already exists and needs **no API key, so
-it does not touch the 100/day `search.list` quota at all**. Video discovery is already free: the
-completed comment ingestion means we know which videos exist per destination. Descriptions often
-carry explicit cost breakdowns and cost **1 quota unit** via `videos.list` versus `search.list`'s 100.
+The premise held. New `scrapers/youtube_narration.py` → `youtube_narration` collection, wired into
+`core/cost_grounding.py::_price_collections()`. Live on Jaipur:
 
-### D. 📄 Documentation sweep — Reddit removal (not yet done)
+| corpus | chunks | money-shaped |
+|---|---|---|
+| `youtube_comments` | 149 | **0** |
+| `wiki` | 10 | 2 |
+| **`youtube_narration`** | **110** | **24** |
 
-The Reddit decision needs to propagate. **Not started**; these docs currently still present Reddit
-as a live/planned source:
+Costs essentially nothing: discovery makes **no `search.list` call** (video IDs are read back out of
+`youtube_comments`, which v10.40.2 populated for all 170 destinations), transcripts need no key, and
+descriptions are 1 unit per 50 videos. **Separate collection on purpose** — `services/gems.py`
+counts mentions as independent community signal, and a vlogger naming a place eight times in one
+video is one voice; merging would have misclassified gems as crowd favourites. A test asserts
+narration is in the price path and *not* in gems.
 
-- `docs/PRD.md`
-- `docs/rag-strategy.md` (source table, §3M, cost model)
-- `docs/system-design.md`
-- `TECHNICAL_DOCUMENTATION.md`
-- `DEMO_DAY_FAQ_CHEATSHEET.md` — **highest risk of embarrassment**: it is the answer sheet for
-  live questions, so a stale "we mine Reddit" claim gets said out loud
-- `docs/itinerary-generation-flow.md`
-- `docs/scaling-tech-challenges.md` (§8 demand-driven ingestion)
+**Two real bugs fell out, both of which were hiding the value:**
+- 🔴 **Transcripts were English-only.** Most Indian destination vlogs have **no English caption
+  track**, only a Hindi auto-generated one — an India-first product was discarding its own primary
+  market. `languages` is now a parameter; narration passes `("en", "hi")`. Jaipur went 21 → 110
+  chunks, 1 → 24 money-shaped on this fix alone.
+- 🔴 **`\b` silently fails on Devanagari.** Matras are not `\w` characters, so `\bखाना\b` never
+  matched while `\bहोटल\b` did. **0 of 24** Hindi price chunks matched any food/stay keyword.
+  `core/keyword_match.py` now uses explicit lookarounds; ASCII behaviour verified unchanged. This is
+  the *third* distinct bug in this keyword-matching family (v10.40.4/5/6 were false positives; this
+  is a false negative introduced by the fix for them). **General rule now recorded: a boundary rule
+  written for one script is an assumption about every script in the corpus.**
+
+**⚠️ Honest limits — do not read this as "food grounding is solved."** Jaipur food-context matches
+went 0 → 2 of 24 and stay 0 → 6, but `food_per_day_estimate_inr` still returns `None` for Jaipur:
+two matching *chunks* don't yield the two in-bounds *amounts* `min_samples` needs after per-amount
+sentence scoping. `_FOOD_MEALS_PER_DAY` calibration stays deferred.
+
+**Next step here — the data run, which has NOT been done.** Only Jaipur was ingested, as the
+verification case. Resumable, no flags:
+```bash
+cd apps/api && venv/Scripts/python.exe scripts/ingest_youtube_narration.py
+```
+Then re-measure food/stay grounding across destinations to see whether density now clears
+`min_samples` anywhere. Narration is also **not on the scheduler** yet — deliberate, pending a look
+at what a full run costs in wall-clock time.
+
+### D. ✅ Documentation sweep — Reddit removal (DONE 2026-07-27)
+
+All seven listed docs updated, **plus `README.md`**, which this list missed and which is the most
+public of the lot (16 mentions, including the feature list and architecture diagram). The sweep
+found **275 mentions across 18 files**, not the 7 files recorded here — enumerating rather than
+triaging by eye is what caught the README.
+
+**Files updated (current-state claims only):** `README.md`, `docs/DEMO_DAY_FAQ_CHEATSHEET.md`,
+`docs/rag-strategy.md` (+ a status banner at the top, since the file is too long to read linearly),
+`docs/system-design.md`, `docs/PRD.md`, `docs/scaling-tech-challenges.md`,
+`TECHNICAL_DOCUMENTATION.md`, `docs/itinerary-generation-flow.md`.
+
+**Deliberately left alone — rewriting them would falsify the record:**
+- **Changelog / version-history sections** (`TECHNICAL_DOCUMENTATION.md` §14, README's version log,
+  rag-strategy's "✅ DONE" roadmap rows). These describe what shipped at the time and were true then.
+- **Dated audit artifacts**: `BUG_FIXES_SUMMARY.md`, `docs/UI_UX_AUDIT_2026-07-13.md`,
+  `E2E_SANITY_REPORT.md`, `test_e2e_sanity.md`, `docs/MARKET_RESEARCH.md`,
+  `MULTI_CITY_IMPLEMENTATION.md`, `docs/STARTUP_EVALUATION.md`, `docs/GTM_STRATEGY.md`,
+  `docs/eval-set.md`.
+- **Code-behaviour documentation that is still literally true**: `scrapers/reddit.py` still exists,
+  still defines the live `KNOWN_DESTINATIONS` list, and the `reddit` collection is still *read* by
+  `services/search.py`, `services/gems.py` and `core/cost_grounding.py::_price_collections()`.
+  Descriptions of those read paths were kept and annotated, not deleted.
+
+⚠️ **Still true and still deliberate: no code was touched.** The read paths degrade to empty rather
+than erroring, so leaving them costs nothing. Removing them is a separate change.
+
+**Two things worth knowing for the next doc pass**, both found while sweeping and both left alone as
+out of scope:
+- `README.md` described Qdrant as **"(in-memory)"** in two places — stale since the 2026-07-15 Cloud
+  migration. Fixed in passing where it sat on a line being edited anyway; **`docs/system-design.md`'s
+  architecture diagram still says `Qdrant (in-memory)`.**
+- Several docs still describe the YouTube quota as "10,000 units/day," the meter that never binds.
+  The real constraint is 100 `search.list` calls/project/day (v10.40.1). Corrected in the files
+  touched here; not swept globally.
 
 ⚠️ **Docs only — do not rip Reddit out of the code in the same pass.** `scrapers/reddit.py`,
 `services/gems.py`'s multi-source blend, and `core/cost_grounding.py::_price_collections()` all

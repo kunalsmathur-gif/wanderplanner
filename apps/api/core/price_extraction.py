@@ -55,10 +55,24 @@ _AMOUNT_RE = re.compile(
 # chunks are short (~280 chars) and mostly single-topic; v10.40.4 narrowed it to
 # per-amount sentence scoping after that assumption was shown to fail on
 # multi-topic chunks (see `_amount_has_context` below).
+# Hindi/Hinglish additions (2026-07-27). India is the primary user cohort and
+# most Indian destination vlogs have no English caption track at all — only a
+# Hindi auto-generated one (see scrapers/youtube_narration.py). Those
+# transcripts carry real, specific prices, but they were invisible to grounding:
+# live-measured on Jaipur, 23 of 24 price-bearing narration chunks were
+# Devanagari and *none* matched a food or stay keyword, so every amount was
+# discarded as topically unanchored. Note these captions are Hinglish — English
+# words transliterated into Devanagari ("रूम", "कॉस्ट", "पर डे") sit alongside
+# native Hindi ("खाना", "कमरा"), so both spellings are needed.
+# Cross-script false positives are structurally impossible here (disjoint
+# codepoint ranges), so these only ever add recall.
 STAY_CONTEXT_KEYWORDS = frozenset({
     "hotel", "hotels", "room", "rooms", "night", "nights", "stay", "stayed",
     "staying", "hostel", "hostels", "guesthouse", "guesthouses", "airbnb",
     "accommodation", "lodging", "riad", "resort", "resorts", "homestay",
+    # Hindi / Hinglish
+    "होटल", "रूम", "कमरा", "कमरे", "रात", "नाइट", "ठहरने", "ठहरना", "हॉस्टल",
+    "गेस्टहाउस", "धर्मशाला", "रिसॉर्ट", "होमस्टे",
 })
 FOOD_CONTEXT_KEYWORDS = frozenset({
     "meal", "meals", "food", "restaurant", "restaurants", "lunch", "dinner",
@@ -68,6 +82,9 @@ FOOD_CONTEXT_KEYWORDS = frozenset({
     # substrings "ate" collides with plate/private/climate and "bar" with
     # barber, which is why they were absent before.
     "ate", "bistro", "diner", "canteen", "streetfood", "snack", "snacks",
+    # Hindi / Hinglish
+    "खाना", "खाने", "भोजन", "थाली", "नाश्ता", "रेस्टोरेंट", "ढाबा", "फूड",
+    "लंच", "डिनर", "ब्रेकफास्ट", "मील", "चाय", "खाया",
 })
 
 
@@ -112,6 +129,13 @@ OTHER_SPEND_KEYWORDS = frozenset({
     "scooter", "bike", "rental", "rent", "entry", "entrance", "admission",
     "museum", "temple", "tour", "guide", "spa", "massage", "souvenir",
     "shopping", "sim", "visa", "laundry",
+    # Hindi/Hinglish, and NOT optional: this set's job is to stop a topically
+    # silent amount borrowing food/stay context across a sentence about
+    # different spending. Adding Hindi food/stay words without these would let
+    # an auto-rickshaw or entry-ticket fare — the two most common priced items
+    # in an Indian travel vlog — be read as a meal price.
+    "रिक्शा", "ऑटो", "बस", "ट्रेन", "टैक्सी", "फ्लाइट", "टिकट", "किराया",
+    "स्कूटी", "बाइक", "रेंट", "एंट्री", "गाइड", "शॉपिंग", "मंदिर", "म्यूजियम",
 })
 
 

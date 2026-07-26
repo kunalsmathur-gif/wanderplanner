@@ -108,8 +108,10 @@
 │  - SSRF-hardened URL fetch in extract-trip (private-IP/metadata block)  │
 │                                                                            │
 │  Background (APScheduler):                                                │
-│  - Reddit content refresh every 6h                                        │
+│  - OSM POI + Wikivoyage refresh (demand-driven, stale rows only)          │
+│  - YouTube comment refresh (14d interval, quota-budgeted)                 │
 │  - Qdrant vector ingestion on startup                                     │
+│    (Reddit 6h refresh retired 2026-07-26 — source no longer available)    │
 └───────┬───────────────┬──────────────────┬────────────────────────────────┘
         │               │                  │
 ┌───────▼─────┐  ┌──────▼──────┐  ┌───────▼──────────────────────────────┐
@@ -117,8 +119,12 @@
 │ (in-memory) │  │  2.5 Flash  │  │                                        │
 │             │  │  (primary)  │  │  • Nominatim/OSM  — geocoding         │
 │ Collections │  │  lite / 1.5 │  │  • Open-Meteo    — weather            │
-│  - reddit   │  │  fallbacks  │  │  • Reddit JSON   — travel tips        │
-│  - wiki     │  │             │  │  • YouTube       — video thumbnails   │
+│  - wiki     │  │  fallbacks  │  │  • Wikivoyage    — destination guides │
+│  - osm_pois │  │             │  │  • YouTube       — comments/thumbnails│
+│  - youtube_ │  │             │  │  • Overpass      — POIs               │
+│    comments │  │             │  │                                       │
+│  - reddit   │  │             │  │  (Reddit JSON retired 2026-07-26;     │
+│    (frozen) │  │             │  │   collection still read, not written) │
 └─────────────┘  └─────────────┘  │  • Wikipedia API — destination photos │
                                    │    (frontend, free, no key, CORS-safe)│
                                    │  • Pexels API    — optional itinerary  │
@@ -556,8 +562,8 @@ itinerary_chain.py
          │    services/gems.py → get_gem_intel(destination) via
          │    chains/itinerary_chain.py::_gem_guidance_block (best-effort)
          │    │
-         │    ├─ Deterministic, zero-LLM: OSM-verified POIs scored by Reddit
-         │    │    + YouTube community signal (mentions + lexicon sentiment
+         │    ├─ Deterministic, zero-LLM: OSM-verified POIs scored by YouTube
+         │    │    community signal (mentions + lexicon sentiment
          │    │    ±120 chars). Crowd threshold is this destination's own
          │    │    80th-percentile mention count clamped into [3,12]; below
          │    │    it, sentiment ≥0.55 → hidden gem. 0 mentions → excluded
@@ -1063,12 +1069,14 @@ Populated by `scrapers/osm.py::ingest_osm_pois()` from the free Overpass API (no
 Key: `embed(f"{destination} {duration_days}d {pace} {purpose} trip")`. Written by `services/itinerary_cache.py::store_itinerary()` after every successful LLM generation (best-effort, never blocks the response; strips any `_`-prefixed fallback markers so degraded fallback output is never cached). Read by `get_cached_itinerary()` with `score_threshold=0.88` as Tier 1 of the fallback chain.
 
 ### Ingestion Schedule
-- **Reddit**: APScheduler, every 6h. Subreddits: `travel`, `solotravel`, `digitalnomad`, `backpacking`. Destination matching (`scrapers/reddit.py::_extract_destination()`) is limited to names already in the static `KNOWN_DESTINATIONS` list. **Currently non-functional in production** (⭐ NEW, 2026-07-16): Reddit's public JSON endpoints now 403 unauthenticated requests from any server, including Railway (confirmed via prod logs, not just this repo's dev sandbox). Reddit's API access policy has also tightened — a self-serve script key is no longer instant; it requires registering a dedicated bot account and a written app-review request (submitted 2026-07-16, pending approval). Fix in progress: switch `ingest_reddit()` to Reddit's OAuth2 API once approved.
+- **Reddit**: ⛔ **RETIRED 2026-07-26 — no longer an ingestion source.** History, since the code is still present: it ran on APScheduler every 6h over `travel`, `solotravel`, `digitalnomad`, `backpacking`, with destination matching limited to `KNOWN_DESTINATIONS`. Reddit began 403'ing unauthenticated public-JSON reads from any server including Railway (confirmed in prod logs, not just the dev sandbox), and its replacement API required a dedicated bot account plus a written app review. That review was submitted 2026-07-16 and **never issued credentials** — on 2026-07-26 the bot account's `/prefs/apps` showed no registered app at all. Rather than hold a pipeline open against an external approval with no ETA, Reddit was dropped and community grounding moved to Wikivoyage + YouTube. `scrapers/reddit.py` and the `reddit` collection's **read** paths were deliberately left in place (the collection degrades to empty rather than erroring, and still holds previously-ingested points); removing them is a separate, deliberate change tracked in `docs/NEXT_SESSION_TODO.md`.
+- **YouTube comments**: wired into both the cold-start gate and a scheduled `_refresh_youtube_comments` job. This is the one *metered* source — `search.list` has a hard cap of **100 calls per project per day** (resets midnight Pacific), so both callers sit behind a rolling-24h search budget. See §16.
+- **YouTube narration (⭐ NEW v10.41.0)**: `scrapers/youtube_narration.py` ingests video *transcripts* and *descriptions* into the `youtube_narration` collection, for price grounding. **It makes no `search.list` call**: video IDs are read back out of `youtube_comments` payloads, which the v10.40.2 backfill populated for all 170 destinations, so discovery is free and the search cap is untouched. Transcripts need no API key; descriptions cost 1 unit per 50 videos via `videos.list`. Deliberately a *separate* collection from `youtube_comments` because `services/gems.py` counts mentions as independent community signal and one vlogger repeating a place name is not that. Requests `("en", "hi")` captions — most Indian destination vlogs have no English track at all. Run via `scripts/ingest_youtube_narration.py` (resumable); not yet on the scheduler.
 - **Wiki**: `scrapers/wikivoyage.py::ingest_wikivoyage(destination)` is now wired into both the on-demand gatekeeper and the scheduled refresh loop (see demand-driven ingestion below) — the "not called from any scheduled job or request path" drift noted in earlier revisions is resolved.
 - **OSM POIs + Wiki (⭐ NEW, 2026-07-16 — demand-driven, replaces the static-list loop)**: `core/scheduler.py::_refresh_osm_pois` no longer iterates the fixed `KNOWN_DESTINATIONS` list. It now queries the new Postgres `destination_ingestion_state` table for rows past their staleness window (`osm_last_ingested_at < now() - osm_refresh_days`) and refreshes only those — i.e. destinations someone has actually requested. New destinations get ingested inline on first request via `services/destination_ingestion.py::ensure_destination_ingested()` (geocode-validates, then runs OSM + Wikivoyage ingestion, stampede-safe via a per-destination `asyncio.Lock`, same pattern as `services/gems.py`), called from `chains/itinerary_chain.py::generate_itinerary()` before any RAG retrieval. This is the design from §8 below, now implemented rather than just sketched. The old 134-destination curated list is still the seed corpus (backfilled into `destination_ingestion_state` via a one-off script) but is no longer authoritative — it's just whatever's accumulated real demand so far (105 distinct destinations with real OSM data as of 2026-07-16, up from 48 the same day after two retry passes against the real Cloud cluster; Overpass rate-limiting means ~33 popular destinations still need a future retry). **Cold-start rate cap (⭐ NEW, 2026-07-22)**: `ensure_destination_ingested()` now enforces a process-global sliding-window cap of 5 first-ever ingestions/hour (`_cold_start_budget_available()`) before doing the expensive Overpass/Wikivoyage/embedding work, so garbage/spam destination input can't run up unbounded spend — exhausted-budget requests are skipped and retried once the window clears, never persisted as "ingested." Scoped globally, not per-IP/session, since no caller identity reaches this function yet (§8 item 5 in `docs/scaling-tech-challenges.md` covers the deferred per-IP scoping).
 - **Itinerary cache**: Event-driven — written on every successful itinerary generation, no separate scheduled job.
 
-**Scaling caveat (⭐ RESOLVED 2026-07-16, was previously an open TODO):** the OSM/Reddit ingestion loop no longer iterates a static list — see the demand-driven bullet above. `docs/scaling-tech-challenges.md` §8 describes the original problem and design; it has been implemented as described.
+**Scaling caveat (⭐ RESOLVED 2026-07-16, was previously an open TODO):** the ingestion loop no longer iterates a static list — see the demand-driven bullet above. `docs/scaling-tech-challenges.md` §8 describes the original problem and design; it has been implemented as described.
 
 ### Production setup runbook (⭐ NEW — Qdrant Cloud, July 2026)
 
@@ -1081,7 +1089,7 @@ Prior to this pass, both local dev and Railway prod used `QDRANT_URL=:memory:` �
 3. **Set two env vars** in both places:
    - Local: `apps/api/.env` → `QDRANT_URL=https://<cluster-id>.<region>.aws.cloud.qdrant.io`, `QDRANT_API_KEY=<key>`
    - Railway: `railway variables --service api --set "QDRANT_URL=..." --set "QDRANT_API_KEY=..."` (or via the dashboard's Variables tab) — triggers an automatic redeploy.
-4. **No manual schema/collection setup needed** — `core/qdrant.py::_ensure_collections()` creates all 4 collections (`wiki`, `reddit`, `osm_pois`, `itinerary_cache`) automatically on first connect, same as it did against `:memory:`.
+4. **No manual schema/collection setup needed** — `core/qdrant.py::_ensure_collections()` creates every collection (`wiki`, `osm_pois`, `youtube_comments`, `youtube_narration`, `itinerary_corpus`, `itinerary_cache`, plus the now-frozen `reddit`) automatically on first connect, same as it did against `:memory:`. It also creates the `destination` payload index each one needs — see the v10.16 note; a filtered query against Qdrant Cloud 400s without it.
 5. **Verify**: `curl -X GET "https://<cluster-url>/collections" --header "api-key: <key>"` should return the collection list; both the local process and the Railway prod process connecting to the same cluster will show up in the same collection list, since it's now one shared store instead of two isolated in-memory ones.
 6. **Anything running local Colima/Docker Qdrant purely for this purpose can be torn down** (`docker compose down`) once the cloud cluster is verified working — Docker was only ever a local-dev stand-in for a persistent Qdrant instance, not a requirement.
 
@@ -1400,7 +1408,8 @@ Breaking any link in this chain prevents scrolling. `<main className="h-full">` 
 | Service | Cost |
 |---|---|
 | Gemini 2.5 Flash (itinerary + chat + tips + extraction) | ~₹15–30 |
-| Nominatim, Open-Meteo, Reddit, OSM, Wikipedia | Free |
+| Nominatim, Open-Meteo, OSM/Overpass, Wikipedia, Wikivoyage | Free |
+| YouTube Data API v3 | Free, but quota-capped (100 `search.list` calls/project/day) |
 | Vercel (frontend) | Free tier |
 | Railway (backend) | Free tier ($5 credit covers ~10M req) |
 | **Total** | **~₹15–30/month** |

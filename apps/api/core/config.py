@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     qdrant_collection_itinerary_cache: str = "itinerary_cache"
     qdrant_collection_itinerary_corpus: str = "itinerary_corpus"
     qdrant_collection_youtube_comments: str = "youtube_comments"
+    # Creator narration (transcripts + video descriptions), kept separate from
+    # youtube_comments because services/gems.py counts mentions as independent
+    # community signal and one vlogger repeating a name is not that. See
+    # scrapers/youtube_narration.py.
+    qdrant_collection_youtube_narration: str = "youtube_narration"
 
     # Embeddings
     embedding_model: str = "all-MiniLM-L6-v2"

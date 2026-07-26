@@ -24,7 +24,7 @@ WanderPlanner uses conversational AI to help you plan trips through a natural ch
 
 - 📍 Timestamped activities with locations
 - 🗺️ Interactive maps with full-screen mode
-- 🌐 Community travel tips (Reddit + Wikivoyage + AI-generated)
+- 🌐 Community travel tips (Wikivoyage + YouTube traveller comments + AI-generated)
 - 🎥 YouTube video recommendations per activity
 - ✈️ Deep-links to Skyscanner, Booking.com, Viator
 - 💰 Budget breakdown and live currency conversion
@@ -54,7 +54,7 @@ WanderPlanner uses conversational AI to help you plan trips through a natural ch
 | **🤖 AI Itinerary Engine** | Gemini 2.5 Flash generates day-by-day schedules with timestamped activities, routing, and budget allocation. 5-attempt retry + 3-tier RAG-powered fallback (cache → OSM skeleton → mock). RAG-grounded: hybrid BM25+semantic Qdrant retrieval (3 query variants w/ HyDE, RRF merge, cross-encoder rerank on the primary generation path) + time-decay + Jaccard dedup compressed to ~600 tokens. |
 | **🗺️ Interactive Maps** | OpenStreetMap with activity pins. Full-screen map mode with day-tab navigation. |
 | **🎴 Rich Activity Cards** | Compact `PolaroidCard` components — small thumbnail + text side-by-side (Wikipedia photo or YouTube thumbnail with hover zoom and link overlay), with automatic thumbnail retry and gradient-placeholder fallback if a lookup or image fails. |
-| **🌐 Travel Tips** | Gemini-powered tips + Reddit highlights with YouTube thumbnails. |
+| **🌐 Travel Tips** | Gemini-powered tips + community highlights with YouTube thumbnails. |
 | **📊 Destination Comparison** | Side-by-side AI comparison across 10 parameters: budget, weather, visa, family fit, food, romance, etc. |
 | **🌤️ Best Time Widget** | Historical weather data, tourist seasons, local events. |
 | **📤 Share Trip Link** | One-click generates a `/t/[slug]` read-only URL to share with travel companions. |
@@ -93,14 +93,15 @@ WanderPlanner uses conversational AI to help you plan trips through a natural ch
 | JWT + rotating refresh tokens | Cookie-based auth sessions (`wp_access_token`, `wp_refresh_token`) |
 | Google OAuth 2.0 | Stateless Authorization Code flow for Google SSO |
 | Resend | Transactional email delivery for password reset links |
-| Qdrant (in-memory) | Vector database — 4 collections: `wiki`, `reddit`, `osm_pois`, `itinerary_cache` |
+| Qdrant Cloud | Vector database — `wiki`, `osm_pois`, `youtube_comments`, `itinerary_corpus`, `itinerary_cache` (plus a frozen `reddit` collection, still read but no longer written) |
 | sentence-transformers | Local text embeddings (all-MiniLM-L6-v2, 384 dims) + cross-encoder reranking (ms-marco-MiniLM-L-6-v2) |
 | rank_bm25 | Lexical (BM25) retrieval, fused with semantic search via Reciprocal Rank Fusion |
 | httpx | Async HTTP client (URL fetching for Start Anywhere, Overpass API POI queries) |
-| BeautifulSoup4 | HTML parsing (Wikivoyage, Reddit) |
+| BeautifulSoup4 | HTML parsing (Wikivoyage) |
 | Open-Meteo API | Historical weather data (free, no key) |
 | Pexels API | Optional destination/activity stock photos for itinerary day cards in exported PDFs |
-| APScheduler | Background jobs (Reddit refresh every 6h, OSM POI refresh weekly) |
+| APScheduler | Background jobs (OSM POI refresh weekly, YouTube comment refresh every 14d — both demand-driven) |
+| YouTube Data API v3 | Traveller comments for hidden gems + price grounding (quota-capped: 100 `search.list` calls/project/day) |
 
 ### Infrastructure
 | Service | Role |
@@ -149,16 +150,17 @@ WanderPlanner uses conversational AI to help you plan trips through a natural ch
 │  GET  /api/admin/metrics/*     → admin analytics summaries     │
 │  POST /api/analytics/client-event → client-side analytics      │
 │                                                                 │
-│  Background: Reddit refresh every 6h · OSM POI refresh weekly  │
+│  Background: OSM POI refresh weekly · YouTube comments 14d    │
 │              Qdrant retrieval + Postgres-backed auth/analytics │
 └──────┬──────────────┬────────────────┬───────────────┬──────────┘
        │              │                │               │
 ┌──────▼──────┐ ┌─────▼──────┐  ┌─────▼──────┐ ┌──────▼─────────────────┐
 │   Qdrant    │ │   Gemini   │  │ Supabase   │ │ External APIs           │
-│ (in-memory) │ │  2.5 Flash │  │ Postgres   │ │ Google OAuth · Resend   │
-│ wiki+reddit │ │ lite/1.5   │  │ users      │ │ Nominatim · Open-Meteo  │
-│ osm_pois+   │ │ fallbacks  │  │ sessions    │ │ Reddit JSON · YouTube   │
-│ itin_cache  │ │            │  │ analytics   │ │ Overpass · Wikipedia    │
+│  (Cloud)    │ │  2.5 Flash │  │ Postgres   │ │ Google OAuth · Resend   │
+│ wiki+osm_   │ │ lite/1.5   │  │ users      │ │ Nominatim · Open-Meteo  │
+│ pois+yt_    │ │ fallbacks  │  │ sessions    │ │ YouTube · Wikivoyage    │
+│ comments+   │ │            │  │ analytics   │ │ Overpass · Wikipedia    │
+│ itin_cache  │ │            │  │             │ │                         │
 └─────────────┘ └────────────┘  └────────────┘ └─────────────────────────┘
 ```
 
@@ -215,7 +217,7 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-> **First run**: The backend populates Qdrant with Reddit/Wikivoyage content (2-3 min). `/health` returns `{"status":"ready"}` when complete.
+> **First run**: The backend populates Qdrant with Wikivoyage/OSM content (2-3 min). `/health` returns `{"status":"ready"}` when complete.
 
 ---
 
@@ -274,7 +276,8 @@ Open `http://localhost:3000`.
 | Service | Cost |
 |---|---|
 | Gemini 2.5 Flash | ~₹0.10–0.15 per session |
-| Nominatim, Open-Meteo, Reddit, OSM, Wikipedia | Free |
+| Nominatim, Open-Meteo, OSM/Overpass, Wikipedia, Wikivoyage | Free |
+| YouTube Data API v3 | Free within quota (100 `search.list` calls/project/day) |
 | Vercel / Railway | Free tiers sufficient for MVP |
 
 ---

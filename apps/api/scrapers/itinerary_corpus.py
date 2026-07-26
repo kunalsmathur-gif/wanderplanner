@@ -359,13 +359,27 @@ async def discover_youtube_itinerary_videos() -> list[dict[str, str]]:
     return discovered
 
 
-async def fetch_youtube_transcript(video_id: str, title: str = "") -> dict[str, Any] | None:
-    """Fetch the English caption transcript for a single YouTube video ID.
+async def fetch_youtube_transcript(
+    video_id: str, title: str = "", languages: tuple[str, ...] = ("en",)
+) -> dict[str, Any] | None:
+    """Fetch the caption transcript for a single YouTube video ID.
     No API key required — `youtube_transcript_api` scrapes the public
-    timedtext endpoint YouTube itself uses to render captions."""
+    timedtext endpoint YouTube itself uses to render captions.
+
+    `languages` defaults to English-only because this module's own consumer
+    (the itinerary corpus) feeds English-language few-shot examples into
+    prompts. `scrapers/youtube_narration.py` overrides it to include Hindi:
+    live-measured 2026-07-27, most Jaipur travel vlogs have *no* English
+    track and only a Hindi auto-generated one, so an India-first product
+    asking for `("en",)` alone discards exactly the domestic narration it
+    most needs. That is safe for the price path specifically because
+    `core/cost_grounding.py` finds amounts with a *lexical* scan rather than
+    semantic search, so a `₹`-bearing Hindi chunk is matched on the digits
+    regardless of how well an English-centric embedding model represents it.
+    """
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-        transcript = YouTubeTranscriptApi().fetch(video_id, languages=("en",))
+        transcript = YouTubeTranscriptApi().fetch(video_id, languages=languages)
     except Exception as e:
         logger.warning("YouTube transcript fetch failed for %s: %s", video_id, e)
         return None
