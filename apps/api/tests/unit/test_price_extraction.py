@@ -367,3 +367,105 @@ def test_food_per_day_applies_bounds_to_the_reconciled_value():
         context_keywords=FOOD_CONTEXT_KEYWORDS, meals_per_day=3.0,
     )
     assert value is None
+
+
+# --- Per-amount context scoping (v10.40.4) --------------------------------
+#
+# Whole-snippet matching asked "does this chunk mention food?" when the question
+# is "is *this amount* a food price". The live failure it allowed: a €5 Paris bus
+# fare counted into the food median because the chunk mentioned food elsewhere.
+
+FOOD_BOUNDS = (100, 20_000)
+
+
+def test_off_topic_amount_in_other_sentence_is_not_a_food_price():
+    """The live Paris case: fare and food are both present, in different
+    sentences. Only the food amount may count."""
+    snippet = (
+        "The bus into town was €5, buy the ticket at the machine. "
+        "We ate at a bistro near the hotel and dinner came to €25 each."
+    )
+    amounts = extract_price_mentions_inr(
+        [snippet], *FOOD_BOUNDS, context_keywords=FOOD_CONTEXT_KEYWORDS
+    )
+    assert amounts == [25.0 * 90.0], "the €5 bus fare must not be read as food"
+
+
+def test_nearby_keyword_across_a_sentence_boundary_is_still_excluded():
+    """Proves this is sentence scoping, not merely a character window — the
+    keyword here is only ~20 chars away, well inside the window cap."""
+    snippet = "Metro ticket €2. Dinner was lovely."
+    assert extract_price_mentions_inr(
+        [snippet], *FOOD_BOUNDS, context_keywords=FOOD_CONTEXT_KEYWORDS
+    ) == []
+
+
+def test_distant_keyword_in_one_unpunctuated_run_is_excluded_by_the_window():
+    """A comment with no terminal punctuation is one long "sentence", so the
+    ±window cap is what has to do the work."""
+    snippet = "bus was €5 " + "and then we walked around for ages " * 4 + "before dinner"
+    assert extract_price_mentions_inr(
+        [snippet], *FOOD_BOUNDS, context_keywords=FOOD_CONTEXT_KEYWORDS
+    ) == []
+
+
+def test_one_chunk_attributes_stay_and_food_amounts_separately():
+    """The payoff: a multi-topic chunk now yields the right amount for each
+    category instead of leaking both into both."""
+    snippet = "Our room was ₹3000 a night. The thali downstairs cost ₹250."
+    assert extract_price_mentions_inr(
+        [snippet], *STAY_BOUNDS, context_keywords=STAY_CONTEXT_KEYWORDS
+    ) == [3000.0]
+    assert extract_price_mentions_inr(
+        [snippet], *FOOD_BOUNDS, context_keywords=FOOD_CONTEXT_KEYWORDS
+    ) == [250.0]
+
+
+def test_no_context_keywords_still_takes_every_amount():
+    """Callers that don't opt in must be completely unaffected."""
+    snippet = "Metro ticket €2. Dinner was lovely."
+    assert extract_price_mentions_inr([snippet], 1, 20_000) == [2.0 * 90.0]
+
+
+def test_food_per_day_estimate_also_scopes_per_amount():
+    """The daily/reconciled split reads amounts through the same gate, so an
+    off-topic daily rate must not become a 'directly observed' food figure."""
+    snippet = (
+        "Scooter hire was ₹800 per day, worth it. "
+        "For food we spent about ₹1200 per day between us."
+    )
+    value, directly_observed = food_per_day_estimate_inr(
+        [snippet], *FOOD_BOUNDS, min_samples=1, context_keywords=FOOD_CONTEXT_KEYWORDS
+    )
+    assert directly_observed is True
+    assert value == 1200.0, "the scooter-hire daily rate must not enter the food figure"
+
+
+def test_topically_silent_sentence_inherits_nearby_context():
+    """"It was €25" names nothing bought, so it may borrow the previous
+    sentence's context. Strict sentence-only scoping rejected these, which
+    measured as switching food grounding off entirely on the live corpus."""
+    snippet = "We had dinner at a little place off the square. It was €25 each."
+    assert extract_price_mentions_inr(
+        [snippet], *FOOD_BOUNDS, context_keywords=FOOD_CONTEXT_KEYWORDS
+    ) == [25.0 * 90.0]
+
+
+def test_competing_spend_in_the_sentence_blocks_inheritance():
+    """The counterpart: a sentence naming another kind of spending is positive
+    evidence the amount isn't ours, so it must not widen to find 'dinner'."""
+    snippet = "We had a great dinner. The taxi back was €30."
+    assert extract_price_mentions_inr(
+        [snippet], *FOOD_BOUNDS, context_keywords=FOOD_CONTEXT_KEYWORDS
+    ) == []
+
+
+def test_single_stay_mention_is_enough_at_min_samples_one():
+    """core/budget_estimator.py's _STAY_MIN_SAMPLES=1 relies on this: after
+    per-amount scoping, thin-but-real destinations retain exactly one genuine
+    stay mention, and requiring two put them back on the flat default."""
+    snippets = ["Our room was ₹3200 a night, clean and central."]
+    assert median_price_inr(snippets, *STAY_BOUNDS, min_samples=1,
+                            context_keywords=STAY_CONTEXT_KEYWORDS) == 3200.0
+    assert median_price_inr(snippets, *STAY_BOUNDS, min_samples=2,
+                            context_keywords=STAY_CONTEXT_KEYWORDS) is None

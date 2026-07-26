@@ -204,7 +204,10 @@ class TestFoodGroundingFloor:
         """End-to-end: a low value hits both line items; food (reconciled, so
         floored) ignores it, stay (no floor) uses it."""
 
-        async def _low_stay(dest, query_suffix, low, high, context_keywords=None):
+        # Signature must track community_median_price_inr's: _grounded_or_flat
+        # wraps the call in `except Exception`, so a stale stub signature shows
+        # up as a silent fall-back to flat rather than as a TypeError.
+        async def _low_stay(dest, query_suffix, low, high, min_samples=2, context_keywords=None):
             return 400.0
 
         with patch("core.budget_estimator.community_median_price_inr", new=_low_stay), patch(

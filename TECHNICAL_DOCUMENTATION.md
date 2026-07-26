@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.40.3 (YouTube quota discipline: a 429/403 is now terminal rather than retried 3x against a 100/day cap, and all 12 standalone scripts use the app's `RedactionFilter` instead of bare `basicConfig` — which also closed a path where the API key could reach a JSONL state *file*, where no logging filter runs. Corrects a v10.40.1 claim: the cold-start gate does not over-subscribe the cap on its own. Previous: 10.40.2 — YouTube comment corpus complete at 170/170 destinations — 25,347 points verified on the cluster; and `mypy .` runs for the first time, going from an abort-before-checking to `Success: no issues found in 166 source files`, which surfaced three real bugs: a cancelled ingestion reading as a success, and two in the comparison path)
+**Version:** 10.40.4 (price grounding now matches the amount, not the blob — per-amount context scoping, plus a pre-existing bare-substring bug where FOOD's "eat" matched "great"; stay grounding accepts a single mention. Measured finding: a complete corpus is not a dense one — food grounding is corpus-limited, so the `_FOOD_MEALS_PER_DAY` calibration stays deferred, now with evidence. Previous: 10.40.3 — YouTube quota discipline: a 429/403 is now terminal rather than retried 3x against a 100/day cap, and all 12 standalone scripts use the app's `RedactionFilter` instead of bare `basicConfig` — which also closed a path where the API key could reach a JSONL state *file*, where no logging filter runs. Corrects a v10.40.1 claim: the cold-start gate does not over-subscribe the cap on its own. Previous: 10.40.2 — YouTube comment corpus complete at 170/170 destinations — 25,347 points verified on the cluster; and `mypy .` runs for the first time, going from an abort-before-checking to `Success: no issues found in 166 source files`, which surfaced three real bugs: a cancelled ingestion reading as a success, and two in the comparison path)
 **Last Updated:** July 26, 2026  
 **Status:** Production-ready MVP
 
@@ -1501,6 +1501,33 @@ curl http://localhost:8000/health
 ---
 
 ## 14. Recent Changes (v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.40.4 Changes (July 2026) — Price grounding: match the amount, not the blob
+
+The carried-over "per-amount proximity instead of whole-snippet `context_keywords`" item. Approached as the v10.39.0 gem-matching template suggested — and it turned up the same underlying bug, in a second place.
+
+| Change | Detail |
+|---|---|
+| ✅ **Context is scoped per amount, not per snippet** | `_iter_raw_amounts` now yields each amount's `(start, end)` span (valid against the source text because the symbol-pass masking is equal-length), and `_amount_has_context` asks whether *that amount* is on-topic. Sentence-first; widened to ±90 chars only when the amount's own sentence names nothing bought; and never widened when that sentence names a **competing** kind of spending (new `OTHER_SPEND_KEYWORDS` — transport, entry fees, rentals). |
+| ⚠️ **Strict sentence scoping was tried first and measured as too strict** | It correctly rejects "Metro ticket €2. Dinner was lovely." but *also* rejects "We ate at a bistro. It was €25", where the amount's sentence is topically silent. Live, that drove `food_per_day_estimate_inr` to `None` on all 8 destinations spot-checked — precision bought by switching the feature off. Hence the widen-unless-competing rule. |
+| 🔴 **Pre-existing bug: keyword matching was bare substring** | `FOOD_CONTEXT_KEYWORDS` contains `"eat"`, and `"eat" in "great"` is `True` — so any snippet saying "great views" counted as food context. Now word-boundary anchored via a cached per-set pattern. **Exactly the v10.39.0 failure shape** (match the token, not the blob), in a module nobody had connected to it. That also made `"ate"`, `"bistro"`, `"diner"` safe to add, having been unusable as substrings (`ate` ⊂ `plate`/`private`/`climate`). |
+| ✅ **Stay grounding accepts a single mention (`_STAY_MIN_SAMPLES = 1`)** | Stricter extraction pushed thin-but-real destinations back onto the flat default — Paris and Jaipur each retain exactly one genuine stay mention. Stay tolerates the lower bar better than food: its amounts are already per-night, so there is no meals/day factor to multiply a lone sample's error by. **The trade is deliberate: for such destinations one number now sets the stay line, and stay has no floor — bounds are the only guard.** |
+
+**Live A/B against the real corpus** (read-only; "old" simulated by neutralising the per-amount check, so both arms see identical retrieved snippets):
+
+| | old n → new n | old median → new |
+|---|---|---|
+| Paris food | 2 → 1 | ₹1,108 → ₹1,800 |
+| Paris stay | 2 → 1 | ₹1,702 → ₹2,988 |
+| Kyoto stay | 11 → 10 | ₹10,000 → ₹13,300 |
+
+With `_STAY_MIN_SAMPLES=1`, stay grounding is **restored for Paris (₹2,988) and Jaipur (₹1,200)** with Goa/Kyoto/Colombo unchanged.
+
+**🔴 The finding that matters most, and it corrects an assumption made earlier the same day: a complete corpus is not a dense one.** Completing the YouTube backfill (v10.40.2, 170/170 destinations) was expected to unblock the `_FOOD_MEALS_PER_DAY` calibration. It does not. Across 8 destinations there are only **0–3 extractable food amounts each**, and `food_per_day_estimate_inr` returns `None` for all of them — *before and after* this change, since `min_samples=2` is not met either way. **Food grounding is corpus-density-limited, not retrieval- or filter-limited.** Calibrating the meals/day multiplier from this data would be picking a number again, which is precisely what the original deferral existed to prevent. The item stays deferred, now with a measurement behind it rather than an assumption.
+
+**Also fixed:** `tests/unit/test_airbnb_stay_estimate.py`'s stay stub didn't accept the new `min_samples` kwarg, and `_grounded_or_flat` wraps that call in `except Exception` — so the stale signature surfaced as a silent fall-back to flat rather than a `TypeError`. Same shape as the v10.38.3 test-isolation lesson: **a broad except around a mocked call turns stub drift into a passing-looking wrong answer.**
+
+Suite **660 passed / 6 skipped / 0 failed**, ruff clean, mypy clean.
 
 ### v10.40.3 Changes (July 2026) — YouTube quota discipline: quota errors are terminal, and scripts get the app's redaction
 
