@@ -79,3 +79,25 @@ def test_tier_still_recognises_the_real_keyword():
     assert resolve_destination_tier("London", "UK") == "premium"
     assert resolve_destination_tier("Kathmandu", "Nepal") == "budget"
     assert resolve_destination_tier("Nowhereville", "Atlantis") == "moderate"
+
+
+# --- chains/wizard_chat_chain.py: "any" was matching "Germany" -------------
+
+def test_destination_chips_are_not_treated_as_generic():
+    """'Germany'/'Tuscany'/'Albany' contain 'any', so they were being classed
+    as generic 'no preference' chips and dropped from the theme-chip check."""
+    from chains.wizard_chat_chain import _GENERIC_CHIP_KEYWORDS
+
+    for chip in ("Germany", "Tuscany", "Albany", "Brittany"):
+        assert has_keyword(chip, _GENERIC_CHIP_KEYWORDS) is False, chip
+    for chip in ("No preference", "Not sure", "Skip"):
+        assert has_keyword(chip, _GENERIC_CHIP_KEYWORDS) is True, chip
+
+
+# --- services/poi_pinning.py: short interest words matched inside words ----
+
+def test_interest_keyword_does_not_match_inside_a_longer_word():
+    """_interest_keywords yields any word over two chars, so 'art' matched
+    'apartment' and 'zen' matched 'frozen', falsely confirming a wiki pin."""
+    assert has_keyword("the apartment was frozen solid", {"art", "zen"}) is False
+    assert has_keyword("the art museum and zen garden", {"art", "zen"}) is True

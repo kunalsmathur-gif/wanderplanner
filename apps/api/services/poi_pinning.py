@@ -30,6 +30,7 @@ import logging
 from difflib import SequenceMatcher
 
 from core.config import settings
+from core.keyword_match import has_keyword
 from core.qdrant import get_qdrant
 from models.trip import MAX_PINNED_POIS, PinnedPOI
 
@@ -156,7 +157,10 @@ def verify_candidates_sync(
             matched_chunks = [chunk for chunk in _wiki_chunks() if cand_norm in chunk]
             if matched_chunks and (
                 not interest_keywords
-                or any(kw in chunk for chunk in matched_chunks for kw in interest_keywords)
+                # Word-boundary: _interest_keywords yields any word over two
+                # chars, so "art" matched "apartment" and "zen" matched
+                # "frozen", falsely confirming a wiki-verified pin.
+                or any(has_keyword(chunk, interest_keywords) for chunk in matched_chunks)
             ):
                 pins.append(PinnedPOI(
                     name=candidate,
