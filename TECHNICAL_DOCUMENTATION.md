@@ -1,7 +1,7 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.40.0 (OSM POI pools ranked by prominence — the Overpass query only ever asked for `node` elements, so landmarks mapped as areas were structurally unreachable: Kiyomizu-dera, Kinkaku-ji, Red Fort and Wat Arun could never enter the pool at all, no matter how the 60 slots were ranked)
-**Last Updated:** July 25, 2026  
+**Version:** 10.40.1 (the YouTube backfill meters against the wrong quota — `search.list` has its own 100-calls/day/project cap, separate from the 10,000-unit quota the code models — and the resume state was recording those quota failures as completed work, which would have abandoned 47 destinations silently)
+**Last Updated:** July 26, 2026  
 **Status:** Production-ready MVP
 
 ---
@@ -1501,6 +1501,23 @@ curl http://localhost:8000/health
 ---
 
 ## 14. Recent Changes (v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.40.1 Changes (July 2026) — The YouTube backfill meters against the wrong quota, and the resume state hid it
+
+Taken up as "finish the YouTube backfill — 90 destinations left". The run failed on **every one of the 47 destinations it reached**, and did so while logging `0 comments ingested` for each: no exception, no failure count, a clean-looking run log. Paris, London, New York and Mumbai returning zero travel-vlog comments is what gave it away.
+
+| Change | Detail |
+|---|---|
+| 🔴 **The binding quota is not the one the code models** | `search.list` has its own dedicated cap — `defaultSearchListPerDayPerProject`, **100 calls per project per day** — which is a *separate meter* from the 10,000 units/day the code and comments reason about. `core/config.py`'s note that "80 searches ≈ 8,000 units … leaves real headroom" is measuring the non-binding quota: against the one that actually stops you, 80 of 100 is 80% with no headroom at all. Confirmed from the live 429 body (`quota_metric: youtube.googleapis.com/search_list`, `quota_limit_value: 100`), alongside `videos.list` and `i18nLanguages.list` returning 200 — the key and project were fine; only search was capped. **`youtube_daily_search_budget` is now 100, matching the cap**: holding back 20 was reserving headroom this window cannot actually protect, since a concurrent prod cold-start spends from the same project quota and never consults it. The budget is now a "don't exceed the provider" bound; graceful degradation comes from the retryable-no-op handling, not from the margin. |
+| 🔴 **The resume state recorded failures as completed work** | `_load_done()` keyed every recorded row as done regardless of outcome, so all 47 zero-comment rows would have been skipped on every future run — the destinations would have been silently abandoned, not retried. This directly contradicts the rule the module docstring describes and the scheduler follows (leave `youtube_last_ingested_at` NULL so an empty result is a *retryable no-op*, never a recorded-but-empty success). **Fixed**: a destination counts as done only if comments were actually ingested, with a 3-attempt cap so a genuinely un-vlogged place can't spend a search call on every run forever — the same idiom `scripts/reingest_prominence_ranking.py::_load_state` already used. The summary's `remaining` now re-reads state under that same rule instead of counting every attempted row as finished. |
+| ⚠️ **Quota errors are retried three times (found, not fixed)** | `scrapers/youtube_comments.py::search_travel_videos` retries every exception 3× with 5s/10s backoff. `fetch_video_comments` deliberately special-cases 403 as "not transient, don't burn retries"; search has no equivalent case, so a 429 costs **3 calls instead of 1** and cannot succeed on any of them. That is 141 wasted calls across the 47 destinations, and the 5s+10s of doomed sleeping is the uniform ~19s-per-destination cadence in the run log. |
+| ⚠️ **The budget window gives no cross-run protection (unchanged, by design)** | `_search_times` is a process-global deque, so every fresh invocation of the script starts believing the full budget is available. That is correct for the long-lived API process it was written for, and wrong for a script run repeatedly by hand. |
+| ⚠️ **Production is over-subscribed against the real cap** | The cold-start gate allows 5 ingestions/hour ≈ 120/day, each spending one `search.list` — which exceeds the 100/day project cap on its own, before any manual or eval run. Not triggered in practice yet (cold starts need first-ever destination requests), but the headroom the design assumes does not exist. |
+| ⚠️ **The API key reaches standalone logs (found, not fixed)** | `raise_for_status()` embeds the full request URL — including `key=AIza…` — in its exception message, and the scraper logs that message. **Production is unaffected**: `core/logging_config.py`'s `RedactionFilter` rewrites `AIza…` before the formatter. But scripts using `logging.basicConfig` bypass the filter, so the key was written 47 times into a local run log. The mitigation recorded against this in the previous session (silencing `httpx` to WARNING) does not cover this path — it is the scraper's own warning, not httpx's. |
+
+**Quota-day arithmetic, since it is easy to get wrong twice.** These quotas reset at **midnight Pacific**, not UTC and not local. The first backfill ran 2026-07-25 08:13 UTC, which is 01:13 **PDT on 2026-07-25**; the retry was attempted 2026-07-26 03:49 UTC, which is still 20:49 **PDT on 2026-07-25** — the *same* quota day, roughly 20 hours later by the wall clock and zero days later by the meter. The 80 calls from the first run were still on the books.
+
+**Verification.** The new resume rule was checked against the real state file (80 done / 90 pending, unchanged) and across every branch — ingested, failed-then-succeeded, empty-twice, errored, and exhausted-after-3-attempts. The 47 bogus rows were stripped from `scripts/out/ingest_youtube_full_state.jsonl` (backed up first, and only after asserting every retained row carried a non-zero count). Nothing had been written to Qdrant, so no data was lost or corrupted — the failure was entirely upstream of ingestion. `ruff check` passes.
 
 ### v10.40.0 Changes (July 2026) — The POI pool: famous landmarks were unreachable, not out-ranked
 
