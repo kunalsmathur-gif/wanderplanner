@@ -4,6 +4,7 @@ PRD Section 6.2 / Clarification #3.
 """
 from __future__ import annotations
 
+from core.keyword_match import has_keyword
 from models.itinerary import ItineraryDay, ItineraryItem, ItineraryItemLocation
 from models.trip import TripConfig
 
@@ -38,7 +39,10 @@ def _is_kid_safe(item: ItineraryItem) -> bool:
     if tag_set & KID_EXCLUDED_TAGS:
         return False
     title_lower = item.title.lower()
-    if any(kw in title_lower for kw in KID_EXCLUDED_TITLE_KEYWORDS):
+    # Word-boundary, not substring: "pub" is inside "Public Garden" and
+    # "bar" inside "Bara Imambara", both of which were being deleted from
+    # family itineraries. See core/keyword_match.py.
+    if has_keyword(title_lower, KID_EXCLUDED_TITLE_KEYWORDS):
         return False
     return True
 
