@@ -231,7 +231,90 @@ replacement.
 
 ---
 
-## 🆕 2026-07-26 session (latest) — the backfill was metering against the wrong quota (v10.40.1)
+## 🆕 TOP OF THE LIST — 2026-07-26 late session: Reddit is out, Wikivoyage/YouTube are in
+
+**Decision taken 2026-07-26: Reddit is no longer a planned ingestion source.** The OAuth app review
+never produced credentials (submitted 2026-07-16; on 2026-07-26 the bot account's `/prefs/apps` page
+showed **no developed app at all**, only Reddit's own "DevPlatform Actions" authorisation). Prod has
+403'd on every boot since the Qdrant Cloud migration. Rather than keep waiting on an external
+approval with no ETA, price/sentiment grounding now rests on Wikivoyage + YouTube.
+
+**⚠️ This was NOT the blocker it was billed as.** An earlier note in this file called Reddit "the
+biggest unblocker for food price grounding". That was wrong, and the measurement is below — no
+existing corpus had price density, so Reddit was never the deciding factor.
+
+### The measurement that drove the decision (don't re-derive this)
+
+Money-shaped text present in each corpus, measured live 2026-07-26 with a regex *looser* than the
+extractor's:
+
+| corpus | chunks/destination | money-shaped | conclusion |
+|---|---|---|---|
+| `youtube_comments` | 126–234 | **1–3** | wrong medium — people don't quote prices in comments |
+| `wiki` (Wikivoyage) | 10–48 | 0–6 | under-ingested, see item A |
+| `itinerary_corpus` | 0 | 0 | **4 points total, effectively dead** |
+
+Tokyo's 2 qualifying comments yielded 6 amounts, so **the extractor was capturing nearly everything
+present** — the shortfall was never extraction recall. `food_per_day_estimate_inr` returned `None`
+for all 8 destinations spot-checked, before and after v10.40.4.
+
+### A. 🔴 Wikivoyage `<section>` parser fix — UNCOMMITTED, highest value
+
+`_parse_sections` collected only `("p", "ul", "li")`. MediaWiki wraps every **subsection** in a
+`<section>` element, and Wikivoyage keeps its Budget / Mid-range / Splurge **priced listings**
+there — so the parser kept nothing but each section's intro prose. One-word fix (add `"section"`),
+measured live:
+
+| | chunks | food amounts |
+|---|---|---|
+| **Jaipur** | 10 → **141** | 3 → **116** |
+| Paris | 32 → 156 | 4 (unchanged) |
+| Bangkok | 31 → 143 | 0 (unchanged) |
+
+**State: the edit is in the working tree, uncommitted.** Only `ruff` and the 28 Wikivoyage tests
+were run — **the full suite has not been**. Finish that, commit, then note this is **ingestion-time
+only**: it does nothing until destinations are re-ingested, which is a third data run and must not
+overlap the prominence one. Re-measure food grounding afterwards — Jaipur should produce a real
+grounded figure for the first time.
+
+### B. Big-city guides still yield nothing — district sub-articles
+
+Paris and Bangkok gained chunks but no food amounts: their guides delegate listings to district
+sub-pages (`Paris/Le_Marais`, `Paris/1st_arrondissement`, …) which the scraper never fetches. This
+is the remaining half of the Wikivoyage story and is what unblocks the big destinations.
+
+### C. YouTube transcripts + video descriptions — not started
+
+Comments are the wrong medium; **narration is the right one** — vloggers state costs out loud.
+`scrapers/itinerary_corpus.py::fetch_youtube_transcript` already exists and needs **no API key, so
+it does not touch the 100/day `search.list` quota at all**. Video discovery is already free: the
+completed comment ingestion means we know which videos exist per destination. Descriptions often
+carry explicit cost breakdowns and cost **1 quota unit** via `videos.list` versus `search.list`'s 100.
+
+### D. 📄 Documentation sweep — Reddit removal (not yet done)
+
+The Reddit decision needs to propagate. **Not started**; these docs currently still present Reddit
+as a live/planned source:
+
+- `docs/PRD.md`
+- `docs/rag-strategy.md` (source table, §3M, cost model)
+- `docs/system-design.md`
+- `TECHNICAL_DOCUMENTATION.md`
+- `DEMO_DAY_FAQ_CHEATSHEET.md` — **highest risk of embarrassment**: it is the answer sheet for
+  live questions, so a stale "we mine Reddit" claim gets said out loud
+- `docs/itinerary-generation-flow.md`
+- `docs/scaling-tech-challenges.md` (§8 demand-driven ingestion)
+
+⚠️ **Docs only — do not rip Reddit out of the code in the same pass.** `scrapers/reddit.py`,
+`services/gems.py`'s multi-source blend, and `core/cost_grounding.py::_price_collections()` all
+still reference the `reddit` collection, and it still holds real ingested points. The collection
+degrades to empty rather than erroring, so leaving the code path costs nothing and keeps the option
+open if Reddit's API access ever reopens. Removing it is a separate, deliberate change.
+
+
+---
+
+## 2026-07-26 session (latest) — the backfill was metering against the wrong quota (v10.40.1)
 
 Taken up as "finish the YouTube backfill". The run failed on **all 47 destinations it reached**
 while logging `0 comments ingested` for each — no exception, no failure count, a clean-looking run

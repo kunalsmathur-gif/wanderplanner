@@ -160,7 +160,14 @@ def _parse_sections(html: str, destination: str, url: str) -> list[dict]:
                 break
             if sib.name == "div" and "mw-heading" in (sib.get("class") or []):
                 break
-            if sib.name in ("p", "ul", "li"):
+            # `section` matters as much as the rest: MediaWiki's current
+            # output wraps each *sub*section ("Budget", "Mid-range",
+            # "Splurge") in a <section>, and that is where Wikivoyage keeps
+            # its actual Eat/Sleep listings — the entries carrying prices.
+            # Without it this parser kept only each section's intro prose:
+            # Jaipur yielded 10 chunks and 3 price mentions from a guide whose
+            # Eat and Sleep sections are almost entirely priced listings.
+            if sib.name in ("p", "ul", "li", "section"):
                 texts.append(sib.get_text(" ", strip=True))
         if texts:
             full_text = " ".join(texts)
