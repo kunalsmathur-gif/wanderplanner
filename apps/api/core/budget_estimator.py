@@ -445,6 +445,21 @@ _FOOD_PP_BOUNDS = (100, 10_000)
 # damage on the fallback path.
 _FOOD_MEALS_PER_DAY = 3.0
 
+# Stay grounding accepts a single community mention; food still requires two.
+#
+# Per-amount context scoping (v10.40.4) made extraction stricter, and with the
+# module-wide default of 2 that pushed thin-but-real destinations back onto the
+# flat default -- Paris and Jaipur each retain exactly one genuine stay mention.
+# Stay tolerates the lower bar better than food: its amounts are already
+# per-night, so there is no meals/day reconciliation for a lone sample's error to
+# be multiplied by, and the bounds check still rejects implausible figures.
+#
+# The trade is real and deliberate: for a destination with one mention, that one
+# number now sets the stay line, and stay has no floor. Bounds are the only
+# guard. Revisit if grounded stay figures start looking erratic on thin
+# destinations -- a sanity band relative to the flat default would be the fix.
+_STAY_MIN_SAMPLES = 1
+
 
 async def _grounded_or_flat(
     city: str | None,
@@ -453,6 +468,7 @@ async def _grounded_or_flat(
     flat_default: float,
     bounds: tuple[float, float],
     context_keywords: frozenset[str] | None = None,
+    min_samples: int = 2,
 ) -> tuple[float, bool]:
     """Real per-destination community-reported figure (INR) if the free RAG
     collections have enough signal for it, else the hand-authored flat
@@ -471,6 +487,7 @@ async def _grounded_or_flat(
     try:
         grounded = await community_median_price_inr(
             dest_city, query_suffix, bounds[0], bounds[1],
+            min_samples=min_samples,
             context_keywords=context_keywords,
         )
     except Exception:
@@ -580,7 +597,7 @@ async def estimate_bare_minimum_budget(
 
     stay_pp_base, stay_community_based = await _grounded_or_flat(
         city, country, "hotel accommodation nightly rate per person", rates["stay_per_night_pp"], _STAY_PP_BOUNDS,
-        context_keywords=STAY_CONTEXT_KEYWORDS,
+        context_keywords=STAY_CONTEXT_KEYWORDS, min_samples=_STAY_MIN_SAMPLES,
     )
     stay_airbnb_fallback_used = False
     if not stay_community_based:

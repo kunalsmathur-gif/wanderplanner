@@ -47,11 +47,12 @@ _AMOUNT_RE = re.compile(
 # mentioned in the same Wikivoyage nightlife section) — live-verified this
 # actually happens: a Paris "stay" grounding query pulled in "Rex Club,
 # about €15" and "Pigalle, €20" (cover charges, not room rates) and
-# confidently reported ₹1575/night. `extract_price_mentions_inr()`'s
-# optional `context_keywords` requires at least one on-topic word to appear
-# *anywhere in the same snippet* as the amount before counting it — coarser
-# than per-amount proximity, but the snippet chunks here are short (~280
-# chars) and single-topic enough that this is a real signal, not just noise.
+# confidently reported ₹1575/night. `extract_price_mentions_inr()`'s optional
+# `context_keywords` requires an on-topic word near the amount before counting
+# it. Originally that meant "anywhere in the same snippet", on the reasoning that
+# chunks are short (~280 chars) and mostly single-topic; v10.40.4 narrowed it to
+# per-amount sentence scoping after that assumption was shown to fail on
+# multi-topic chunks (see `_amount_has_context` below).
 STAY_CONTEXT_KEYWORDS = frozenset({
     "hotel", "hotels", "room", "rooms", "night", "nights", "stay", "stayed",
     "staying", "hostel", "hostels", "guesthouse", "guesthouses", "airbnb",
@@ -61,16 +62,126 @@ FOOD_CONTEXT_KEYWORDS = frozenset({
     "meal", "meals", "food", "restaurant", "restaurants", "lunch", "dinner",
     "breakfast", "thali", "plate", "buffet", "eat", "eating", "cuisine",
     "dish", "dishes", "menu", "eatery", "eateries", "cafe", "dhaba",
+    # Safe to include now that matching is word-boundary anchored: as bare
+    # substrings "ate" collides with plate/private/climate and "bar" with
+    # barber, which is why they were absent before.
+    "ate", "bistro", "diner", "canteen", "streetfood", "snack", "snacks",
 })
 
 
+# Keyword tests are word-boundary anchored, not substring. Bare `in` matching
+# silently over-fired: FOOD's "eat" is a substring of "great", so any snippet
+# saying "great views" read as food context. Same failure shape as the v10.39.0
+# gem-name fix -- match the token, not the blob. Patterns are cached per set
+# (the sets are module-level frozensets, so this is a handful of compiles).
+_KEYWORD_RE_CACHE: dict[frozenset[str], re.Pattern[str]] = {}
+
+
+def _keyword_pattern(keywords: frozenset[str]) -> re.Pattern[str]:
+    pattern = _KEYWORD_RE_CACHE.get(keywords)
+    if pattern is None:
+        alternation = "|".join(re.escape(k) for k in sorted(keywords))
+        pattern = re.compile(r"\b(?:" + alternation + r")\b", re.IGNORECASE)
+        _KEYWORD_RE_CACHE[keywords] = pattern
+    return pattern
+
+
+def _has_keyword(text: str, keywords: frozenset[str]) -> bool:
+    return bool(_keyword_pattern(keywords).search(text))
+
+
 def _snippet_has_context(text: str, context_keywords: frozenset[str] | None) -> bool:
-    """No filter applied when `context_keywords` is None (unchanged behavior
-    for any caller that doesn't opt in)."""
+    """Whether `text` mentions the topic anywhere.
+
+    Used as a cheap pre-filter and as the chunk-selection test in
+    `core/cost_grounding.py`. Sound in that role and as a pre-filter: a keyword
+    absent from the whole snippet cannot be present in a window inside it. It is
+    *not* sufficient on its own for deciding whether a particular amount is
+    on-topic — see `_amount_has_context`.
+
+    No filter applied when `context_keywords` is None (unchanged behavior for
+    any caller that doesn't opt in)."""
     if context_keywords is None:
         return True
-    lowered = text.lower()
-    return any(keyword in lowered for keyword in context_keywords)
+    return _has_keyword(text, context_keywords)
+
+
+# Per-amount context scoping (added 2026-07-26, replacing whole-snippet-only
+# matching). The coarse test above asks "does this snippet mention food?" when
+# the question is "is *this amount* a food price" — live-observed failure: a €5
+# Paris bus fare was counted into the food median because the same chunk
+# mentioned food elsewhere. (It was discarded by the safety floor, so the median
+# was not visibly wrong — which is exactly why this needed finding rather than
+# waiting to be reported.)
+#
+# Scoped to the amount's own sentence rather than a plain ±N window, because a
+# window still admits a keyword sitting 20 chars away in a *different* sentence,
+# which is the Paris case. Capped by a window as well, since a YouTube comment
+# with no terminal punctuation at all is one long "sentence".
+_CONTEXT_WINDOW = 90
+_SENTENCE_BREAK_RE = re.compile(r"[.!?;\n]|\s-\s")
+
+
+# Kinds of spending that are *not* stay or food. Not priced by this module —
+# their only job is to mark a sentence as being about someone else's money, so a
+# topically silent amount isn't allowed to borrow context across it.
+OTHER_SPEND_KEYWORDS = frozenset({
+    "bus", "metro", "subway", "train", "taxi", "tuk", "rickshaw", "uber",
+    "flight", "flights", "ticket", "tickets", "fare", "fares", "transport",
+    "scooter", "bike", "rental", "rent", "entry", "entrance", "admission",
+    "museum", "temple", "tour", "guide", "spa", "massage", "souvenir",
+    "shopping", "sim", "visa", "laundry",
+})
+
+
+def _window_around(text: str, start: int, end: int) -> str:
+    return text[max(0, start - _CONTEXT_WINDOW): end + _CONTEXT_WINDOW]
+
+
+def _sentence_around(text: str, start: int, end: int) -> str:
+    """The amount's own sentence, bounded by `_CONTEXT_WINDOW` either way."""
+    left = max(0, start - _CONTEXT_WINDOW)
+    right = min(len(text), end + _CONTEXT_WINDOW)
+    preceding = [m.end() for m in _SENTENCE_BREAK_RE.finditer(text, left, start)]
+    if preceding:
+        left = preceding[-1]
+    following = _SENTENCE_BREAK_RE.search(text, end, right)
+    if following:
+        right = following.start()
+    return text[left:right]
+
+
+def _amount_has_context(
+    text: str, start: int, end: int, context_keywords: frozenset[str] | None
+) -> bool:
+    """Whether the amount at `text[start:end]` is about `context_keywords`.
+
+    Sentence-first, then widened only when the sentence says nothing about what
+    was bought. Strict sentence scoping alone was measured against the live
+    corpus and is *too* strict: it correctly rejects "Metro ticket €2. Dinner was
+    lovely." but also rejects "We ate at a bistro. It was €25", where the amount's
+    own sentence is topically silent and the food word is in the previous one.
+    Real prices are phrased that way often enough that sentence-only scoping drove
+    `food_per_day_estimate_inr` to None on all 8 destinations spot-checked —
+    precision bought at the cost of switching the feature off.
+
+    So: an on-topic word in the amount's own sentence accepts it; a *competing*
+    kind of spending in that sentence rejects it (that is the Paris bus fare, and
+    the signal is positive evidence, not absence of evidence); and only a sentence
+    that names no spending at all falls back to the wider window.
+    """
+    if context_keywords is None:
+        return True
+
+    sentence = _sentence_around(text, start, end)
+    if _has_keyword(sentence, context_keywords):
+        return True
+
+    competing = (STAY_CONTEXT_KEYWORDS | FOOD_CONTEXT_KEYWORDS | OTHER_SPEND_KEYWORDS) - context_keywords
+    if _has_keyword(sentence, competing):
+        return False
+
+    return _has_keyword(_window_around(text, start, end), context_keywords)
 
 # Bare-number amounts (no currency symbol/code) — common in casual YouTube
 # comments (e.g. "Choki dani 700 per person") vs. Reddit's more explicit
@@ -117,7 +228,7 @@ def _has_daily_unit(fragment: str) -> bool:
 
 
 def _iter_raw_amounts(text: str):
-    """Yield `(inr_amount, is_daily)` for every plausible price mention in
+    """Yield `(inr_amount, is_daily, start, end)` for every plausible price mention in
     `text`, across the symbol/currency-code, bare-unit-suffix, and price-verb
     passes. `is_daily` is True when the amount is explicitly a per-day/per-
     night rate; False for per-meal/per-dish/unspecified amounts (the common
@@ -127,7 +238,9 @@ def _iter_raw_amounts(text: str):
     the bare passes run, so an amount like "₹700 per person" is counted once
     (symbol pass) not twice — equal-length masking (rather than the previous
     single-space collapse) keeps every match offset aligned with `text` so
-    the trailing-context unit check reads the right characters."""
+    the trailing-context unit check reads the right characters -- and lets the
+    yielded `(start, end)` span index into `text` directly, which is what
+    `_amount_has_context` needs to scope each amount's context."""
     masked = _AMOUNT_RE.sub(lambda m: " " * len(m.group(0)), text)
 
     for m in _AMOUNT_RE.finditer(text):
@@ -141,7 +254,7 @@ def _iter_raw_amounts(text: str):
             continue
         if thousands_suffix:
             amount *= 1000
-        yield amount * rate, _has_daily_unit(text[m.end():m.end() + 20])
+        yield amount * rate, _has_daily_unit(text[m.end():m.end() + 20]), m.start(), m.end()
 
     for m in _BARE_AMOUNT_UNIT_SUFFIX_RE.finditer(masked):
         try:
@@ -152,7 +265,7 @@ def _iter_raw_amounts(text: str):
         # "500 per plate per day" would be odd, but "500 pp per day" isn't)
         # is also checked.
         is_daily = _has_daily_unit(m.group(0)) or _has_daily_unit(text[m.end():m.end() + 20])
-        yield amount, is_daily
+        yield amount, is_daily, m.start(), m.end()
 
     for m in _PRICE_VERB_PREFIX_RE.finditer(masked):
         try:
@@ -160,7 +273,7 @@ def _iter_raw_amounts(text: str):
         except ValueError:
             continue
         is_daily = _has_daily_unit(m.group(0)) or _has_daily_unit(text[m.end():m.end() + 20])
-        yield amount, is_daily
+        yield amount, is_daily, m.start(), m.end()
 
 
 def _first_price_offset(text: str) -> int | None:
@@ -225,12 +338,13 @@ def extract_price_mentions_inr(
     shouldn't be read as a nightly hotel rate).
 
     `context_keywords` (e.g. `STAY_CONTEXT_KEYWORDS`/`FOOD_CONTEXT_KEYWORDS`),
-    when given, additionally requires the snippet to contain at least one
-    on-topic word before any amount in it counts — guards against an
-    in-bounds but off-topic amount (a club cover charge, a souvenir price)
-    in a snippet that was retrieved for its overall topical similarity but
-    isn't actually about the thing being priced. No filtering when omitted
-    (existing callers unaffected).
+    when given, requires an on-topic word near *each amount* — within its own
+    sentence, capped at ±`_CONTEXT_WINDOW` chars — rather than merely somewhere
+    in the same snippet. This guards against an in-bounds but off-topic amount (a
+    club cover charge, a bus fare, a souvenir price) riding along in a snippet
+    that was retrieved for overall topical similarity, or that discusses several
+    kinds of spending at once. No filtering when omitted (existing callers
+    unaffected).
 
     `per_day_meal_multiplier`, when set (food only), reconciles per-meal to
     per-day: Wikivoyage "Eat" prices are per-dish/per-meal, so a raw median
@@ -244,7 +358,9 @@ def extract_price_mentions_inr(
     for text in snippets:
         if not _snippet_has_context(text, context_keywords):
             continue
-        for raw, is_daily in _iter_raw_amounts(text):
+        for raw, is_daily, start, end in _iter_raw_amounts(text):
+            if not _amount_has_context(text, start, end, context_keywords):
+                continue
             if per_day_meal_multiplier is not None and not is_daily:
                 value = raw * per_day_meal_multiplier
             else:
@@ -287,7 +403,9 @@ def food_per_day_estimate_inr(
     for text in snippets:
         if not _snippet_has_context(text, context_keywords):
             continue
-        for raw, is_daily in _iter_raw_amounts(text):
+        for raw, is_daily, start, end in _iter_raw_amounts(text):
+            if not _amount_has_context(text, start, end, context_keywords):
+                continue
             if is_daily:
                 if low_bound <= raw <= high_bound:
                     daily.append(raw)
