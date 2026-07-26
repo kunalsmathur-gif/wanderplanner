@@ -1,7 +1,31 @@
 # WanderPlanner — RAG Strategy: Current State, Gaps & Roadmap
-**Version:** 4.0 · **Date:** June 2026 · **Updated:** July 2, 2026
+**Version:** 4.1 · **Date:** June 2026 · **Updated:** 2026-07-27
 
 ---
+
+> ### ⚠️ Source status: Reddit was retired on 2026-07-26
+>
+> **Reddit is no longer an ingestion source.** It blocked unauthenticated reads (403 on every
+> production boot after the Qdrant Cloud migration), and its replacement API requires a written app
+> review that never issued credentials. Community price/sentiment grounding now rests on
+> **Wikivoyage + YouTube**.
+>
+> **What this means when reading the rest of this document:**
+> - Sections describing Reddit *ingestion* as live or scheduled are **historical**. Nothing writes
+>   to the `reddit` collection any more; the 6-hourly job no longer has a working source.
+> - The `reddit` collection itself still exists, still holds previously-ingested points, and is
+>   still **read** at query time (`services/search.py`, `services/gems.py`,
+>   `core/cost_grounding.py`). It degrades to empty rather than erroring, so the read paths were
+>   deliberately left in place — see `docs/NEXT_SESSION_TODO.md`. Removing them is a separate,
+>   deliberate change.
+> - Implementation records below (chunking, destination tagging, `published_date`) still describe
+>   real code in `scrapers/reddit.py` and are kept as accurate documentation of it.
+>
+> **One correction worth carrying forward:** an earlier note called Reddit "the biggest unblocker
+> for food price grounding." That was wrong. Measured live on 2026-07-26, *no* corpus had
+> meaningful price density — YouTube comments carry 1–3 money-shaped mentions per destination — so
+> Reddit was never the deciding factor. Food grounding is **corpus-density-limited**, not
+> source-count-limited.
 
 ## 1. Are We Using RAG Today?
 
@@ -15,9 +39,14 @@ WanderPlanner has a RAG infrastructure in place (Qdrant + `all-MiniLM-L6-v2` emb
 Data Sources                Qdrant Collections           Where Used
 ─────────────────────       ──────────────────           ──────────────────────
 Wikivoyage (on-demand) ──▶  wiki (384-dim)  ─────────▶  retrieve_context() → Gemini/Groq/Ollama prompt
-Reddit (every 6 hours) ──▶  reddit (384-dim) ─────────▶  retrieve_context() + /api/reddit-highlights
+YouTube comments       ──▶  youtube_comments  ────────▶  retrieve_context() + hidden gems + cost grounding
+YouTube narration      ──▶  youtube_narration ────────▶  cost grounding ONLY (deliberately not gems —
+  (transcripts + descriptions)                            one vlogger repeating a name is one voice,
+                                                          not N independent mentions)
 OSM POIs (weekly)      ──▶  osm_pois (384-dim)  ──────▶  RAG-skeleton fallback (Tier 2) + future itinerary grounding
 Itinerary generations  ──▶  itinerary_cache (384-dim) ─▶  Fallback Tier 1 (cache-hit, cosine ≥ 0.88)
+   (retired 2026-07-26) ──✗  reddit (384-dim) ─────────▶  still READ by retrieve_context() + /api/reddit-highlights,
+                                                          but no longer written to — see the banner above
 ```
 
 ### Component RAG Status
@@ -30,7 +59,7 @@ Itinerary generations  ──▶  itinerary_cache (384-dim) ─▶  Fallback Tie
 | City recommender | ❌ No | LLM-only |
 | Destination comparison | ❌ No | LLM-only |
 | Best time (seasonal data) | ⚠️ Partial | Scrapes Wikivoyage live — not yet cached in Qdrant |
-| Reddit tagging | ✅ Fixed | `_extract_destination()` matches against `KNOWN_DESTINATIONS` — **134 entries as of 2026-07-16** (not 200+, correcting a stale figure here); only 11 are India-specific despite India being the primary user cohort — expansion planned, see `docs/NEXT_SESSION_TODO.md` |
+| Reddit tagging | ⛔ Retired | Code still correct (`_extract_destination()` matches `KNOWN_DESTINATIONS` — **134 entries as of 2026-07-16**, not 200+, correcting a stale figure here), but moot: Reddit ingestion stopped 2026-07-26. The `KNOWN_DESTINATIONS` catalog itself is still live and used elsewhere; only 11 of 134 are India-specific despite India being the primary user cohort — expansion still planned, see `docs/NEXT_SESSION_TODO.md` |
 | Itinerary fallback (LLM down) | ✅ New | 3-tier fallback chain: cache → RAG skeleton (OSM POIs) → enhanced mock |
 
 ---
@@ -507,13 +536,13 @@ User trip config
 |---|---|---|---|
 | 1 | **Itinerary grounding** | wiki + osm_pois | Real POI names, correct lat/lon, no hallucinated venues |
 | 2 | **Wizard destination chips** | wiki + osm_pois | When user says "Sri Lanka", Anya suggests Colombo/Galle/Kandy with reasons from real content |
-| 3 | **Real-time traveller sentiment** | reddit | "Heads up — recent Reddit posts flag tourist scams near this area" |
-| 4 | **Budget estimates from community data** | reddit | "r/solotravel users report ₹2,500/day in Bali for mid-range" |
+| 3 | **Real-time traveller sentiment** | youtube_comments | "Heads up — recent traveller comments flag tourist scams near this area" |
+| 4 | **Budget estimates from community data** | youtube_comments + wiki | "Travellers report ₹2,500/day in Bali for mid-range" (shipped in part — see `core/cost_grounding.py`; density-limited, not wired for all destinations) |
 | 5 | **Seasonal/festival injection** | wiki + events | Automatically add Diwali festival context if dates overlap |
 | 6 | **Itinerary fallback (API down)** ✅ DONE | itinerary_cache + osm_pois | Valid day plan without LLM call (see §4) |
 | 7 | **Visa & entry rules** | visa_info | "Indians need visa on arrival for Thailand — ₹2,500 approx" |
-| 8 | **Safety advisories** | reddit + wiki | Flag destinations with recent negative posts (score-weighted) |
-| 9 | **Food & dietary context** | wiki + reddit | Inject veg-friendly restaurant names for users who selected "Pure veg food" |
+| 8 | **Safety advisories** | youtube_comments + wiki | Flag destinations with recent negative sentiment (score-weighted) |
+| 9 | **Food & dietary context** | wiki + youtube_comments | Inject veg-friendly restaurant names for users who selected "Pure veg food" |
 | 10 | **Post-gen chat refinements** | itinerary_cache | Anya answers "what's near Day 2's temple?" from RAG, not LLM parametric memory |
 
 ---
@@ -578,7 +607,7 @@ This is fundamentally different from the existing wiki/reddit collections:
 | **Nomadic Matt / The Planet D** | Blog itineraries with day breakdowns | `feedparser` (RSS) + `BeautifulSoup` for full page | Free | Monthly |
 | **Lonely Planet** (lonelyplanet.com/itineraries) | Structured `n-day` itinerary pages | `httpx` + BeautifulSoup; `<section>` tags are clean | Free | Monthly |
 | **Wikivoyage** | Authoritative destination guides | Official **Wikimedia API** (`action=parse`) — structured, stable, no scraping | Free | Quarterly |
-| **Reddit trip reports** (r/travel, r/solotravel, r/indiatravel) | "My X-day trip to Y" self-posts | **As actually implemented: keyless public JSON feed** (`reddit.com/r/{sub}/top.json`), not PRAW/OAuth — correcting this table, which described an earlier plan rather than the shipped code (`scrapers/reddit.py`) | Free | Daily |
+| ~~**Reddit trip reports**~~ (r/travel, r/solotravel, r/indiatravel) | ~~"My X-day trip to Y" self-posts~~ | ⛔ **Retired 2026-07-26.** Shipped as a keyless public JSON feed (`reddit.com/r/{sub}/top.json`, `scrapers/reddit.py`), never PRAW/OAuth. Reddit then blocked unauthenticated reads (403 on every prod boot), and the OAuth app review it now requires never issued credentials. Dropped rather than blocked on an external approval with no ETA | — | — |
 | **YouTube captions** | Travel vlog day-by-day descriptions | **`youtube-transcript-api`** — extracts manual/auto-generated captions by video ID; **no API key needed**. Video *discovery* is live as of v10.38 (`discover_youtube_itinerary_videos()`, shares the Data-API client + quota budget below); the manual video-ID list remains a keyless supplement | Free (transcripts); discovery uses the quota below | Monthly, with the itinerary-corpus job |
 | **YouTube comments** (shipped v10.30; **automated v10.38**) | Place mentions + sentiment from travel-video comment threads — same signal shape as Reddit posts | Official **YouTube Data API v3**: `search.list` (100 units/query) to discover destination videos, `commentThreads.list` (1 unit/call) to pull top comments | Free — but the binding limit is **100 `search.list` calls/project/day**, a separate meter from the 10k units (see §3M) | On a destination's first request (cold-start gate) + a 14-day scheduler refresh — both behind a rolling-24h search budget (see §8b) |
 
@@ -678,9 +707,9 @@ Not all sources are equal. Weight retrieved documents by source authority:
 | Source tier | Examples | Quality score |
 |---|---|---|
 | **Authoritative** | Lonely Planet, Nomadic Matt, Travel + Leisure | 0.90–1.00 |
-| **Community (high karma)** | Reddit posts with score > 500 | 0.75–0.90 |
-| **Community (standard)** | Reddit posts score 50–500, TripAdvisor threads | 0.55–0.75 |
-| **Community (low signal)** | Reddit score < 50, generic blogs | 0.30–0.55 |
+| **Community (high karma)** | Highly-upvoted traveller comments/threads | 0.75–0.90 |
+| **Community (standard)** | Mid-engagement traveller comments, TripAdvisor threads | 0.55–0.75 |
+| **Community (low signal)** | Low-engagement comments, generic blogs | 0.30–0.55 |
 | **Generated (WanderPlanner)** | Past generated itineraries (Section 10) | 0.60–0.85 (feedback-based) |
 
 ### Ingestion Pipeline (Scheduled)
@@ -695,9 +724,9 @@ Scheduler (APScheduler — existing)
     ├── Weekly: TripAdvisor forum scraper
     │       └── Filter threads: "day 1", "itinerary", "trip report"
     │
-    └── Daily: Reddit trip reports + YouTube descriptions
-            └── Reddit: r/travel + r/solotravel, flair=trip-report
-                YouTube: search "X day itinerary [destination]" → extract description
+    └── Daily: YouTube descriptions + transcripts
+            └── YouTube: search "X day itinerary [destination]" → extract description
+                (Reddit trip reports were part of this tier until 2026-07-26 — retired)
 ```
 
 ### Injection into LLM Prompt
@@ -978,11 +1007,11 @@ async def route_query(question: str) -> str:
   EXTERNAL CONTENT                                 QDRANT COLLECTIONS
   ─────────────────                                ──────────────────
   Wikivoyage         ──(on-demand scrape)──▶       [wiki]
-  Reddit top posts   ──(every 6 hours)────▶        [reddit]
+  YouTube comments   ──(on-demand + 14d)──▶        [youtube_comments]
   OSM POIs           ──(weekly)───────────▶        [osm_pois]              ← ingestor needed
   Travel blogs       ──(monthly)──────────▶        [itinerary_corpus]      ← NEW
-  Reddit trip rprt   ──(daily)────────────▶        [itinerary_corpus]      ← NEW
   YouTube vlogs      ──(daily)────────────▶        [itinerary_corpus]      ← NEW
+  Reddit             ──────✗ RETIRED 2026-07-26 ──▶ [reddit] (read-only remnant)
   Visa/entry rules   ──(monthly static)───▶        [visa_info]             ← NEW
   WanderPlanner output  ──(per generation)───▶        [generated_itineraries] ← NEW
   Pre-generated      ──(bootstrap)────────▶        [itinerary_cache]       ← NEW
@@ -1090,7 +1119,7 @@ More context signal, fewer tokens, better output.
 Layman framing for non-technical stakeholders: an LLM only knows what it was trained on — asked to plan a trip to a smaller destination, it will confidently invent plausible-sounding restaurants and "hidden gems" that don't exist. RAG fixes this by handing the model real, ingested source material (Wikivoyage, Reddit, OSM) before it writes anything, the way you'd hand an intern real research instead of asking them to imagine it. It measurably reduces hallucination — it does not, by itself, guarantee truth (see failure modes below).
 
 ### Where RAG shines today
-- **Grounds generation in verifiable content, not parametric guesses** — the itinerary chain injects real retrieved Wikivoyage/Reddit/OSM snippets (§2) instead of relying on Gemini's own training-data memory of a destination.
+- **Grounds generation in verifiable content, not parametric guesses** — the itinerary chain injects real retrieved Wikivoyage/YouTube-comment/OSM snippets (§2) instead of relying on Gemini's own training-data memory of a destination.
 - **Multi-tier fallback keeps the product usable under failure** — cache → RAG-skeleton (pure OSM data, no LLM) → enhanced mock (§4) means an LLM outage or a retrieval miss degrades gracefully instead of returning a hard error.
 - **Objective, repeatable evaluation** — `eval/run_rag_eval.py`'s golden-dataset IR metrics (Precision@10, Recall@10, MRR, nDCG@10) catch retrieval regressions before users do, and this exact harness is what surfaced the real production bug where RAG silently returned nothing for months (missing Qdrant payload index, fixed in `core/qdrant.py::_ensure_collections()`).
 - **Multi-query, hybrid retrieval catches what pure semantic search misses** — the BM25 + semantic RRF fusion (§2/§3) specifically catches literal nouns ("Tsukiji", "anime cafes") that embeddings alone sometimes rank lower than they should.
@@ -1098,7 +1127,7 @@ Layman framing for non-technical stakeholders: an LLM only knows what it was tra
 ### Where RAG starts failing
 - **Thin/long-tail destination coverage.** The curated corpus spans ~134 destinations, only 11 India-specific despite India being the primary user cohort (§8a in `docs/scaling-tech-challenges.md`). Outside that list, retrieval returns little-to-no real content and the model silently falls back to ungrounded general knowledge — the exact hallucination risk RAG exists to prevent, reappearing for precisely the requests where it matters most.
 - **Storage ceiling.** The free 1GB Qdrant Cloud cluster comfortably fits today's corpus (~500K–800K vectors) many times over, but is explicitly not sized for eager global destination ingestion (§8 of `docs/scaling-tech-challenges.md`) — broader coverage requires either a paid tier or smarter demand-driven ingestion, not just "add more."
-- **Live ingestion-source breakage.** Reddit ingestion is currently returning 403s in production (API approval pending, no ETA) — a real, present-day gap in hidden-gem/community-tip signal, not a hypothetical one (§8a). Every additional ingestion source (YouTube, blogs) is one more independent failure point that can silently degrade a slice of retrieval quality.
+- **Ingestion sources can disappear entirely, not just break.** Reddit began 403'ing unauthenticated reads in production and its replacement API required an app review that never issued credentials, so it was **retired as a source on 2026-07-26** rather than left as an indefinite "pending" gap (§8a). Every ingestion source (YouTube, blogs, Wikivoyage) is one more independent failure point that can silently degrade a slice of retrieval quality — and one that a third party can withdraw unilaterally. The practical lesson recorded from this: **measure what a source actually contributes before treating its loss as a blocker.** Reddit had been described internally as the key unblocker for price grounding; measurement showed no corpus had price density, so its removal changed far less than assumed.
 - **Freshness decay.** The 18-month half-life time-decay means content that isn't periodically refreshed quietly loses relevance and eventually gets filtered out of results — a destination that stops getting re-ingested slowly goes "stale" without anyone noticing.
 - **Latency/throughput tradeoff.** Cross-encoder reranking (best quality) measurably drops throughput ~3x under load, which is why it's deliberately scoped to only the final itinerary-generation call site rather than applied everywhere (§3J) — quality and scale genuinely trade off against each other here.
 - **Garbage-in-garbage-out.** RAG only grounds the model in whatever is in the database — if scraped source content itself is wrong, outdated, or low-quality, RAG will retrieve and repeat it with the same confidence as good content. This is why the composite authenticity-weighting design in `docs/scaling-tech-challenges.md` §8a (account age, engagement corroboration, duplicate-text penalties) exists — RAG reduces hallucination, it doesn't validate truth on its own.

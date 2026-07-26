@@ -1,7 +1,7 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.40.6 (the bare-substring keyword bug was in FIVE modules, not one — `"pub"` inside **"Public Garden"** was deleting kid-friendly places from family itineraries, and `"uk"` inside **"Sukhothai"** was pricing a moderate destination as premium; all three now share `core/keyword_match.py`. Previous: 10.40.4 — price grounding now matches the amount, not the blob — per-amount context scoping, plus a pre-existing bare-substring bug where FOOD's "eat" matched "great"; stay grounding accepts a single mention. Measured finding: a complete corpus is not a dense one — food grounding is corpus-limited, so the `_FOOD_MEALS_PER_DAY` calibration stays deferred, now with evidence. Previous: 10.40.3 — YouTube quota discipline: a 429/403 is now terminal rather than retried 3x against a 100/day cap, and all 12 standalone scripts use the app's `RedactionFilter` instead of bare `basicConfig` — which also closed a path where the API key could reach a JSONL state *file*, where no logging filter runs. Corrects a v10.40.1 claim: the cold-start gate does not over-subscribe the cap on its own. Previous: 10.40.2 — YouTube comment corpus complete at 170/170 destinations — 25,347 points verified on the cluster; and `mypy .` runs for the first time, going from an abort-before-checking to `Success: no issues found in 166 source files`, which surfaced three real bugs: a cancelled ingestion reading as a success, and two in the comparison path)
-**Last Updated:** July 26, 2026  
+**Version:** 10.41.0 (YouTube **narration** — transcripts + video descriptions — is a new price-grounding source, discovered for free from video IDs the comment backfill already stored, so it spends nothing against the 100/day `search.list` cap. Live-measured on Jaipur: comments carry **0** money-shaped chunks, narration carries **24**. Two real bugs fell out: transcripts were requested English-only, discarding the Hindi-only track most Indian vlogs actually have; and `\b` **silently fails on Devanagari** words ending in a matra, so `खाना`/`थाली` never matched while `होटल` did — 0 of 24 price-bearing Hindi chunks matched any food or stay keyword. Previous: 10.40.6 — the bare-substring keyword bug was in FIVE modules, not one — `"pub"` inside **"Public Garden"** was deleting kid-friendly places from family itineraries, and `"uk"` inside **"Sukhothai"** was pricing a moderate destination as premium; all three now share `core/keyword_match.py`. Previous: 10.40.4 — price grounding now matches the amount, not the blob — per-amount context scoping, plus a pre-existing bare-substring bug where FOOD's "eat" matched "great"; stay grounding accepts a single mention. Measured finding: a complete corpus is not a dense one — food grounding is corpus-limited, so the `_FOOD_MEALS_PER_DAY` calibration stays deferred, now with evidence. Previous: 10.40.3 — YouTube quota discipline: a 429/403 is now terminal rather than retried 3x against a 100/day cap, and all 12 standalone scripts use the app's `RedactionFilter` instead of bare `basicConfig` — which also closed a path where the API key could reach a JSONL state *file*, where no logging filter runs. Corrects a v10.40.1 claim: the cold-start gate does not over-subscribe the cap on its own. Previous: 10.40.2 — YouTube comment corpus complete at 170/170 destinations — 25,347 points verified on the cluster; and `mypy .` runs for the first time, going from an abort-before-checking to `Success: no issues found in 166 source files`, which surfaced three real bugs: a cancelled ingestion reading as a success, and two in the comparison path)
+**Last Updated:** July 27, 2026  
 **Status:** Production-ready MVP
 
 ---
@@ -358,7 +358,7 @@ apps/api/
 │   ├── qdrant.py             — Qdrant client singleton + collection bootstrap (4 collections)
 │   ├── embeddings.py         — sentence-transformers model singleton + embed() +
 │   │                           get_reranker()/rerank_scores() (cross-encoder, ⭐ NEW v9.0)
-│   └── scheduler.py          — APScheduler jobs: reddit refresh (6h), OSM POI refresh (weekly, ⭐ NEW v9.0)
+│   └── scheduler.py          — APScheduler jobs: OSM POI refresh (weekly), YouTube comment refresh (14d); reddit refresh retired 2026-07-26
 ├── chains/
 │   ├── itinerary_chain.py    — Gemini/Groq/Ollama itinerary gen (5× retry + 3-tier RAG fallback)
 │   ├── chat_refine_chain.py  — Anya post-gen chat (patch_config / regenerate actions)
@@ -391,7 +391,7 @@ apps/api/
 │   ├── geocode.py             — Nominatim proxy (1 req/s rate limit, LRU cache, is_country)
 │   └── pexels.py              — Async Pexels client + in-memory query cache for itinerary day photos
 ├── scrapers/
-│   ├── reddit.py             — Reddit JSON scraper → Qdrant ingestion
+│   ├── reddit.py             — ⛔ retired 2026-07-26 (source withdrawn); still defines KNOWN_DESTINATIONS, read elsewhere
 │   ├── wikivoyage.py         — Wikivoyage HTML scraper → Qdrant ingestion
 │   └── osm.py                 — ⭐ NEW (v9.0): Overpass API POI scraper → Qdrant 'osm_pois' ingestion
 ├── eval/                      — ⭐ NEW (v9.0)
@@ -675,7 +675,7 @@ Nominatim proxy with English name resolution, 1 req/s rate limiting, LRU cache.
 **Response:** `ComparisonResponse` (10 parameters per destination)
 
 ### `GET /api/travel-tips?destination={city}`
-Returns Gemini-generated tips + Reddit highlights. Cached 1 hour.
+Returns Gemini-generated tips + community highlights. Cached 1 hour. (The `reddit_highlights` response field keeps its name for API compatibility, but the underlying collection is frozen as of 2026-07-26 — it serves previously-ingested points only.)
 
 ### `GET /api/best-time/{city}`
 Open-Meteo historical weather + season metadata.
@@ -827,7 +827,7 @@ All LLM tasks use Gemini 2.5 Flash with task-specific temperature settings:
 
 ### RAG Architecture (Retrieval-Augmented Generation)
 
-WanderPlanner uses RAG to inject real traveller knowledge from Reddit, Wikivoyage, and (new) OpenStreetMap into Gemini's itinerary generation prompt. As of v9.0, retrieval is hybrid (BM25 + semantic), augmented with HyDE, optionally reranked with a cross-encoder for the primary generation path, and backed by a 3-tier RAG-powered fallback chain for LLM outages.
+WanderPlanner uses RAG to inject real traveller knowledge from Wikivoyage, YouTube traveller comments, and OpenStreetMap into Gemini's itinerary generation prompt. (Reddit was a source until 2026-07-26; its collection is still read but no longer written — see §14.) As of v9.0, retrieval is hybrid (BM25 + semantic), augmented with HyDE, optionally reranked with a cross-encoder for the primary generation path, and backed by a 3-tier RAG-powered fallback chain for LLM outages.
 
 #### How It Works
 
@@ -843,13 +843,22 @@ WanderPlanner uses RAG to inject real traveller knowledge from Reddit, Wikivoyag
    │   → upsert into Qdrant 'wiki' collection             │
    └──────────────────────────────────────────────────────┘
    ┌──────────────────────────────────────────────────────┐
-   │ scrapers/reddit.py                                   │
+   │ scrapers/reddit.py  ⛔ RETIRED 2026-07-26              │
+   │   Source withdrawn: Reddit 403s unauthenticated reads │
+   │   and its OAuth API review never issued credentials.  │
+   │   Code and the 'reddit' collection remain (read-only, │
+   │   degrades to empty); nothing writes to it any more.  │
+   │   Historic behaviour, for reference:                  │
    │   → Reddit JSON API (r/travel, r/solotravel, ...)    │
-   │   → _extract_destination(): regex against 200+ dests │
+   │   → _extract_destination(): regex against KNOWN_DESTS │
    │   → _chunk_reddit_post(): paragraph-level chunks     │
-   │      each chunk = title prefix + paragraph (≥80 chars)│
-   │   → stores published_date from created_utc           │
    │   → upsert into Qdrant 'reddit' collection            │
+   └──────────────────────────────────────────────────────┘
+   ┌──────────────────────────────────────────────────────┐
+   │ scrapers/youtube_comments.py  (replacement source)   │
+   │   → search.list video discovery (quota-budgeted)     │
+   │   → commentThreads.list comment scraping             │
+   │   → upsert into Qdrant 'youtube_comments' collection │
    └──────────────────────────────────────────────────────┘
    ┌──────────────────────────────────────────────────────┐
    │ scrapers/osm.py ⭐ NEW (v9.0)                          │
@@ -1103,7 +1112,7 @@ OUTPUT SCHEMA:
 { "days": [...], "expense_breakdown": {...} }
 
 DESTINATION RESEARCH:
-{context}   ← RAG-retrieved chunks from Qdrant (Reddit + Wikivoyage)
+{context}   ← RAG-retrieved chunks from Qdrant (Wikivoyage + YouTube comments)
 
 TRIP CONFIGURATION:
 {trip_config}
@@ -1500,7 +1509,35 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.41.0 Changes (July 2026) — YouTube narration: the right medium for prices, and two bugs that were hiding it
+
+**The premise, measured first.** v10.40.4 concluded that food grounding is corpus-*density*-limited, not retrieval-limited: comments carry only 1–3 money-shaped chunks per destination because **people don't quote prices in comments**. Vloggers, however, state costs out loud, and descriptions often carry an explicit budget breakdown. That is narration — a different corpus, not more of the same one.
+
+**New source: `scrapers/youtube_narration.py` → `youtube_narration` collection.** Wired into `core/cost_grounding.py::_price_collections()`.
+
+| | Jaipur, live |
+|---|---|
+| `youtube_comments` | 149 chunks, **0** money-shaped |
+| `wiki` | 10 chunks, 2 money-shaped |
+| **`youtube_narration`** | **110 chunks, 24 money-shaped** |
+
+**It costs almost nothing, by construction.** Video *discovery* makes no API call at all: the v10.40.2 comment backfill stored a `video_id` on every point, so the videos for a destination are read back out of Qdrant. The 100-calls/project/day `search.list` cap that binds every other YouTube path here is **untouched**. Transcripts need no key (`youtube_transcript_api`). Descriptions cost 1 unit per `videos.list` call and batch 50 IDs, so a full 170-destination run is ~20 units.
+
+**Deliberately a separate collection from `youtube_comments`.** `services/gems.py` scores hidden gems by *mention count*, and that arithmetic assumes one mention ≈ one independent person. A transcript violates it — a vlogger says "Hawa Mahal" eight times in one video and it is still one voice. Merging narration into `youtube_comments` would have inflated mention counts and misclassified gems as crowd favourites. Narration reaches the price path and is deliberately kept out of gems; a test asserts both halves.
+
+**🔴 Bug 1 — transcripts were English-only, which excluded the primary market.** `fetch_youtube_transcript` requested `languages=("en",)`. Live on Jaipur, most travel vlogs have **no English caption track**, only a Hindi auto-generated one — so an India-first product was discarding exactly the domestic narration it most needs. `languages` is now a parameter; narration passes `("en", "hi")` (English still preferred where it exists), and the itinerary-corpus path keeps its English-only default because its output feeds English few-shot prompt examples. Safe for the price path specifically because that path is **lexical**: `_scroll_price_candidates_sync` finds amounts by regex, so a Devanagari chunk containing `₹500` matches on the digits regardless of how poorly an English-centric embedding model represents the surrounding words. Effect: Jaipur narration 21 → **110 chunks**, 1 → **24** money-shaped.
+
+**🔴 Bug 2 — `\b` silently fails on Devanagari.** Python's `\b` is defined via `\w`, and Devanagari combining vowel signs (matras) are **not** word characters — `"ा".isalnum()` is `False`. So `\bखाना\b` never matched while `\bहोटल\b` did, purely because one word ends in a matra and the other in a consonant. Measured consequence: **0 of 24** price-bearing Hindi chunks matched any food or stay keyword — every amount was discarded as topically unanchored. `core/keyword_match.py` now expresses the boundary as explicit lookarounds over "word character **or** any Devanagari codepoint", which is equivalent to `\b` for ASCII (verified: `"eat"`⊄`"great"`, `"bar"`⊄`"Barbican"`, and `go_next` still does not match a bare `go`, which `scrapers/wikivoyage.py` relies on).
+
+This is the **third** distinct failure mode in this one keyword-matching family: v10.40.4/5/6 fixed bare-substring false *positives*; this is a false *negative* from the fix for those. Worth stating the general rule: **a boundary rule written for one script is an assumption about every script the corpus contains.**
+
+**Hindi/Hinglish context keywords** added to `FOOD_CONTEXT_KEYWORDS` and `STAY_CONTEXT_KEYWORDS` — and, critically, to `OTHER_SPEND_KEYWORDS`. These captions are Hinglish (English transliterated into Devanagari: `रूम`, `कॉस्ट`, `पर डे`) alongside native Hindi (`खाना`, `कमरा`), so both spellings are needed. Omitting the competing-spend half would have let the two most commonly priced items in an Indian travel vlog — rickshaw fares and entry tickets — be read as meal prices. Cross-script false positives are structurally impossible (disjoint codepoint ranges), so these only add recall.
+
+**Honest result.** Jaipur food-context matches went 0 → 2 of 24 and stay 0 → 6, but `food_per_day_estimate_inr` still returns `None` for Jaipur: two matching chunks do not yield the two in-bounds *amounts* `min_samples` requires after per-amount sentence scoping. So this is a large density gain and a real unblocking of Hindi text, **not** a claim that food grounding is now solved. `_FOOD_MEALS_PER_DAY` calibration stays deferred. The full 170-destination narration run (`scripts/ingest_youtube_narration.py`, resumable) had not been run at the time of writing — only Jaipur was ingested, as the verification case.
+
+Suite **689 passed / 6 skipped / 0 failed**; ruff and `mypy .` clean.
 
 ### v10.40.5 / v10.40.6 Changes (July 2026) — The substring bug was in five places, not one
 

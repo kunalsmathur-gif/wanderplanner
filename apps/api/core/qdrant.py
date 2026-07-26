@@ -29,6 +29,7 @@ _DESTINATION_INDEXED_COLLECTIONS = (
     "qdrant_collection_osm",
     "qdrant_collection_itinerary_corpus",
     "qdrant_collection_youtube_comments",
+    "qdrant_collection_youtube_narration",
 )
 
 
@@ -54,6 +55,7 @@ def _ensure_collections(client: QdrantClient):
         settings.qdrant_collection_osm: 384,
         settings.qdrant_collection_itinerary_cache: 384,
         settings.qdrant_collection_youtube_comments: 384,
+        settings.qdrant_collection_youtube_narration: 384,
     }
     existing = {c.name for c in client.get_collections().collections}
     for name, dim in collections.items():

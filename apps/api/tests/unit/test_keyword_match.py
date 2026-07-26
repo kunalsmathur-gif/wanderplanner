@@ -25,6 +25,42 @@ def test_empty_text_is_not_a_match():
     assert has_keyword("", {"bar"}) is False
 
 
+# --- Devanagari: `\b` silently failed on matra-final words (2026-07-27) -----
+#
+# Python's `\b` is defined via `\w`, and Devanagari combining vowel signs are
+# not word characters, so `\bखाना\b` never matched while `\bहोटल\b` did —
+# purely because one word ends in a matra and the other in a consonant. On the
+# Hindi YouTube narration corpus this meant 0 of 24 price-bearing chunks
+# matched any food or stay keyword.
+
+def test_matches_devanagari_word_ending_in_a_matra():
+    """The regression case: `\\b` cannot match these at all."""
+    assert has_keyword("हमने खाना खाया थाली ₹150 की थी", {"खाना"}) is True
+    assert has_keyword("हमने खाना खाया थाली ₹150 की थी", {"थाली"}) is True
+    assert has_keyword("ऑटो रिक्शा से गए", {"रिक्शा"}) is True
+
+
+def test_matches_devanagari_word_ending_in_a_consonant():
+    """These worked before the fix and must keep working."""
+    assert has_keyword("होटल का रूम ₹2000 पर नाइट", {"होटल"}) is True
+    assert has_keyword("होटल का रूम ₹2000 पर नाइट", {"रूम"}) is True
+
+
+def test_devanagari_keyword_does_not_match_inside_a_longer_word():
+    """Boundary semantics must still hold within the script, not just across it."""
+    assert has_keyword("खानापूर्ति", {"खाना"}) is False
+
+
+def test_ascii_boundary_semantics_are_unchanged_by_the_devanagari_fix():
+    """The lookaround pair must stay equivalent to `\\b` for ASCII."""
+    assert has_keyword("great views", {"eat"}) is False
+    assert has_keyword("Barbican Centre", {"bar"}) is False
+    assert has_keyword("Sukhothai", {"uk"}) is False
+    # `_` is a word character, so a section id like `go_next` must NOT match a
+    # bare `go` — scrapers/wikivoyage.py relies on this (documented caveat).
+    assert has_keyword("go_next", {"go"}) is False
+
+
 # --- chains/safety.py: "pub" was matching "Public Garden" ------------------
 
 def _day(*titles):

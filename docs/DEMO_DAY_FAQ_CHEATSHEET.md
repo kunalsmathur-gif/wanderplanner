@@ -24,7 +24,7 @@
 | `extract_trip_chain.py` | Extracts trip intent from a pasted URL/blog/Reddit text |
 | `recommend_cities_chain.py` | Suggests destination cities |
 | `feasibility_chain.py` | Checks trip feasibility (time/budget/logistics) |
-| `itinerary_corpus_extraction_chain.py` | Offline ingestion — turns scraped blogs/Reddit into few-shot corpus examples |
+| `itinerary_corpus_extraction_chain.py` | Offline ingestion — turns scraped blogs/travel videos into few-shot corpus examples |
 
 ### Q3. How is orchestration/handover managed — central orchestrator, or simple handoff?
 
@@ -32,9 +32,9 @@
 
 ### Q4. What context, knowledge base, and tools does each chain get?
 
-- **Shared knowledge base:** Qdrant vector DB (cloud, free 1GB tier) — 4 collections: `wiki` (Wikivoyage), `reddit` (trip reports/tips), `osm_pois` (OpenStreetMap POIs), `itinerary_corpus` (few-shot real itineraries), plus `itinerary_cache`.
+- **Shared knowledge base:** Qdrant vector DB (cloud, free 1GB tier) — `wiki` (Wikivoyage), `osm_pois` (OpenStreetMap POIs), `youtube_comments` (traveller sentiment), `itinerary_corpus` (few-shot real itineraries), plus `itinerary_cache`. A legacy `reddit` collection still holds previously-ingested points and is still read at query time, but nothing writes to it any more (see Q7).
 - **Retrieval:** hybrid semantic (sentence-transformers embeddings) + BM25 keyword search, RRF-merged, cross-encoder reranked (`ms-marco-MiniLM-L-6-v2`), HyDE query expansion — used mainly by `itinerary_chain.py`.
-- **External tools/services:** OSM Overpass API (POI ingestion), Nominatim (geocoding), Reddit public JSON feed (currently blocked, 403 in prod), Wikivoyage scraper, Pexels (hero photos), plus a 3-tier fallback (cache → RAG skeleton → enhanced mock) if the LLM call fails.
+- **External tools/services:** OSM Overpass API (POI ingestion), Nominatim (geocoding), Wikivoyage scraper, YouTube Data API v3 (traveller comments), Pexels (hero photos), plus a 3-tier fallback (cache → RAG skeleton → enhanced mock) if the LLM call fails.
 - Each chain only gets the context relevant to its own job — e.g. the itinerary chain gets RAG context + trip config; the extract-trip chain only gets the raw pasted text.
 
 ### Q5. Does each agent/chain have its own system prompt — where exactly?
@@ -59,7 +59,7 @@ All chains run on **Google Gemini** (`gemini-2.5-flash` default). Itinerary gene
 | Qdrant Cloud | Vector search / RAG knowledge base | Free tier (1GB) |
 | OSM Overpass API | POI ingestion | Free (public) |
 | Nominatim (OpenStreetMap) | Geocoding | Free (public, ToS rate-limited) |
-| Reddit public JSON feed | Trip-report/hidden-gem corpus | Free, currently 403 in prod (blocked, approval pending) |
+| ~~Reddit~~ | ~~Trip-report/hidden-gem corpus~~ | **Retired 2026-07-26 — no longer a source.** Reddit blocked unauthenticated reads, and its API now requires a written app review that never issued credentials. Rather than wait on an external approval with no ETA, that signal was moved to Wikivoyage + YouTube. See Q13. |
 | YouTube Data API v3 | Hidden-gem sentiment (video comments) + itinerary-video discovery | Free (10k units/day). The one *metered* source, so both automatic callers sit behind a rolling-24h search budget |
 | Wikivoyage | Destination guide text | Free (scraper) |
 | Pexels | Hero/day photos | Free tier |
@@ -100,7 +100,7 @@ All in `apps/api/eval/`:
 
 ### Q10. Why do we use RAG — in plain English?
 
-An LLM only knows what it was trained on — ask it to plan a trip to a smaller Indian town and it will confidently invent plausible-sounding restaurants and "hidden gems" that don't exist (hallucination). RAG fixes this by handing the model **real, fresh source material** (scraped Reddit posts, Wikivoyage guides, OpenStreetMap location data) before it writes anything — like giving an intern real research instead of asking them to imagine it.
+An LLM only knows what it was trained on — ask it to plan a trip to a smaller Indian town and it will confidently invent plausible-sounding restaurants and "hidden gems" that don't exist (hallucination). RAG fixes this by handing the model **real, fresh source material** (Wikivoyage guides, traveller comments on YouTube travel videos, OpenStreetMap location data) before it writes anything — like giving an intern real research instead of asking them to imagine it.
 
 ### Q11. How do we actually use it?
 
@@ -124,7 +124,7 @@ A hand-labeled "golden dataset" (`apps/api/eval/golden_dataset.json`) with known
 - **Thin coverage.** Curated corpus covers ~134 destinations; only 11 are India-specific despite India being the core user base. Ask about a smaller town outside that list → little-to-no real data → silent fallback to the LLM's own general knowledge (i.e., hallucination risk returns).
 - **Storage ceiling.** Free 1GB Qdrant cluster fits the current corpus many times over but is explicitly not sized for eager global expansion.
 - **Freshness decay.** 18-month half-life time-decay scoring means stale, unrefreshed destination content is gradually deprioritized and eventually filtered out.
-- **Broken ingestion pipelines.** Reddit ingestion is 403'd in production right now (real, live gap, not hypothetical) — the "hidden gems" signal leans on YouTube comments in the meantime (now ingested automatically on a destination's first request, v10.38), but Reddit's volume isn't replaced.
+- **Corpus density, not corpus size, is the live gap.** Reddit was retired as a source in v10.40 after it blocked unauthenticated reads and its API review never issued credentials. The honest framing if asked: **we measured what we'd actually lose before deciding, and it was less than assumed.** An earlier internal note called Reddit "the biggest unblocker" for price grounding; measuring money-shaped text per destination showed no corpus had real price density — YouTube comments carry only 1–3 price mentions per destination, so people simply don't quote prices in comments. The "hidden gems" signal now rests on YouTube comments (ingested automatically on a destination's first request, v10.38; corpus completed to 170/170 destinations in v10.40.2) plus Wikivoyage. **The real constraint is that a *complete* corpus is not a *dense* one** — food-cost grounding still returns "not grounded" for most destinations, and the fix is denser price-bearing text (Wikivoyage's priced listings, video transcripts where vloggers state costs aloud), not more tuning.
 - **Retrieval can be the wrong tool for the question.** Found and fixed in v10.38: semantic search ranks by topical similarity, so it never surfaced casual price mentions ("Choki dani 700 per person") for cost-grounding queries — that comment is *about a restaurant*, not *about cost*. Presence of a price is a lexical property and is now tested lexically. A useful general caution: vector search answers "what is this text about", which is not always the question being asked.
 - **Latency/throughput tradeoff.** Reranking (best quality) causes a ~3x throughput drop under load — so it's only turned on for the one call site (final itinerary generation) where it matters most.
 - **Garbage-in-garbage-out.** RAG only grounds the model in what's in the database; if scraped content is wrong or spam, RAG will confidently retrieve and repeat it. It reduces hallucination — it doesn't guarantee truth.
@@ -135,10 +135,10 @@ Full detail in `docs/rag-strategy.md` (new section: "RAG Failure Modes & Where I
 
 **Neither purely — it's a deterministic calculator with an honest fallback chain, not an LLM guess.** `core/budget_estimator.py` computes flights + stay + food as three separate numbers, each trying progressively "less specific" sources until one actually returns something, and the LLM is only asked to *present* the final number in its own words, never to invent it:
 - **Flights:** real haversine distance between the user's two cities → a distance-banded fare range; falls back to one flat number per destination tier only if coordinates aren't available yet.
-- **Stay/food:** first tries a real median price mined from the same Qdrant RAG corpus (Reddit/Wikivoyage/YouTube-comment mentions, destination-filtered, regex-verified against a currency amount near an on-topic word like "per night"/"paid"/"cost" — not just any number in a nearby sentence); if that has too little signal (still the common case for most destinations today), it falls to a real Inside-Airbnb-derived rate for a small set of seeded cities, and only then to a hand-authored flat table (itself built from real anchor research, not invented).
+- **Stay/food:** first tries a real median price mined from the same Qdrant RAG corpus (Wikivoyage/YouTube-comment mentions, destination-filtered, regex-verified against a currency amount near an on-topic word like "per night"/"paid"/"cost" — not just any number in a nearby sentence); if that has too little signal (still the common case for most destinations today), it falls to a real Inside-Airbnb-derived rate for a small set of seeded cities, and only then to a hand-authored flat table (itself built from real anchor research, not invented).
 - **Food specifically has one extra honesty rule (v10.38).** Most community price mentions are *per meal*, not per day, so turning them into a daily budget needs a meals-per-day assumption — and an assumption in the low direction would under-budget a user's trip, which is the harmful direction. So the estimator now distinguishes the two cases: when the corpus contains enough amounts already stated per *day* ("we spent ₹900 a day on food"), that figure is used directly with no assumption involved and trusted in both directions; when it only has per-meal prices, the converted figure is floored at the researched flat value so grounding can raise the estimate but never undercut it. In short: **we only let real data lower a number when the data is genuinely about that thing** — otherwise we keep the conservative figure and say so.
 - **The key discipline:** if a step finds nothing, it returns "not grounded" and moves to the next fallback — it never lets the LLM fill the gap with a guess, which is exactly the failure mode this module exists to prevent. The user-facing answer always states which rung was used (e.g. "stay cost is grounded in real traveller-reported rates for this destination") so the estimate's honesty is never overstated.
-- **Nothing is fetched live at request time** — all RAG content was scraped/embedded ahead of time and just gets searched, so a budget answer is instant and never depends on Reddit/Wikivoyage being up at that moment.
+- **Nothing is fetched live at request time** — all RAG content was scraped/embedded ahead of time and just gets searched, so a budget answer is instant and never depends on Wikivoyage/YouTube being up at that moment.
 
 Full detail in `docs/PRD.md` (Epic/budget-estimator section) and `core/budget_estimator.py`'s module docstring.
 
@@ -163,4 +163,4 @@ Full detail in `docs/GTM_STRATEGY.md` and `docs/MARKET_RESEARCH.md`.
 
 ---
 
-*Maintainer: Founder/PM · Last updated: 2026-07-19 · Companion to `docs/system-design.md`, `docs/rag-strategy.md`, `docs/scaling-tech-challenges.md`, `docs/GTM_STRATEGY.md`, `docs/MARKET_RESEARCH.md`.*
+*Maintainer: Founder/PM · Last updated: 2026-07-27 · Companion to `docs/system-design.md`, `docs/rag-strategy.md`, `docs/scaling-tech-challenges.md`, `docs/GTM_STRATEGY.md`, `docs/MARKET_RESEARCH.md`.*
