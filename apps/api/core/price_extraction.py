@@ -25,6 +25,8 @@ from __future__ import annotations
 import re
 import statistics
 
+from core.keyword_match import has_keyword as _has_keyword
+
 # Fixed, hand-authored FX-to-INR rates — a sanity-ballpark for converting
 # foreign-currency mentions in scraped posts, not a live forex feed (same
 # free-tools philosophy as the rest of this module).
@@ -67,27 +69,6 @@ FOOD_CONTEXT_KEYWORDS = frozenset({
     # barber, which is why they were absent before.
     "ate", "bistro", "diner", "canteen", "streetfood", "snack", "snacks",
 })
-
-
-# Keyword tests are word-boundary anchored, not substring. Bare `in` matching
-# silently over-fired: FOOD's "eat" is a substring of "great", so any snippet
-# saying "great views" read as food context. Same failure shape as the v10.39.0
-# gem-name fix -- match the token, not the blob. Patterns are cached per set
-# (the sets are module-level frozensets, so this is a handful of compiles).
-_KEYWORD_RE_CACHE: dict[frozenset[str], re.Pattern[str]] = {}
-
-
-def _keyword_pattern(keywords: frozenset[str]) -> re.Pattern[str]:
-    pattern = _KEYWORD_RE_CACHE.get(keywords)
-    if pattern is None:
-        alternation = "|".join(re.escape(k) for k in sorted(keywords))
-        pattern = re.compile(r"\b(?:" + alternation + r")\b", re.IGNORECASE)
-        _KEYWORD_RE_CACHE[keywords] = pattern
-    return pattern
-
-
-def _has_keyword(text: str, keywords: frozenset[str]) -> bool:
-    return bool(_keyword_pattern(keywords).search(text))
 
 
 def _snippet_has_context(text: str, context_keywords: frozenset[str] | None) -> bool:

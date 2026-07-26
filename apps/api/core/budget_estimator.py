@@ -81,6 +81,7 @@ from typing import Any
 from core.airbnb_pricing import airbnb_hotel_equivalent_pp_inr
 from core.cost_grounding import community_food_per_day_inr, community_median_price_inr
 from core.distance_pricing import flight_band_inr
+from core.keyword_match import has_keyword
 from core.price_extraction import FOOD_CONTEXT_KEYWORDS, STAY_CONTEXT_KEYWORDS
 
 # ---------------------------------------------------------------------------
@@ -117,17 +118,20 @@ _DEFAULT_TIER = "moderate"
 
 def resolve_destination_tier(city: str | None, country: str | None) -> str:
     """Hand-authored destination -> cost tier ('budget' | 'moderate' | 'premium').
-    Keyword substring match against city/country; defaults to 'moderate' when
+    Whole-word keyword match against city/country; defaults to 'moderate' when
     the destination isn't recognised (safer than assuming cheap or assuming
     expensive for an unknown place)."""
     haystack = f"{city or ''} {country or ''}".lower()
     if not haystack.strip():
         return _DEFAULT_TIER
-    if any(k in haystack for k in _PREMIUM_KEYWORDS):
+    # Word-boundary, not substring: "uk" in _PREMIUM_KEYWORDS matched
+    # "Sukhothai", pricing a moderate destination as premium. Place names are
+    # words, so this is the right test for them. See core/keyword_match.py.
+    if has_keyword(haystack, _PREMIUM_KEYWORDS):
         return "premium"
-    if any(k in haystack for k in _BUDGET_KEYWORDS):
+    if has_keyword(haystack, _BUDGET_KEYWORDS):
         return "budget"
-    if any(k in haystack for k in _MODERATE_KEYWORDS):
+    if has_keyword(haystack, _MODERATE_KEYWORDS):
         return "moderate"
     return _DEFAULT_TIER
 
