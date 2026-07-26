@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.40.5 (the bare-substring keyword bug was in three modules, not one — `"pub"` inside **"Public Garden"** was deleting kid-friendly places from family itineraries, and `"uk"` inside **"Sukhothai"** was pricing a moderate destination as premium; all three now share `core/keyword_match.py`. Previous: 10.40.4 — price grounding now matches the amount, not the blob — per-amount context scoping, plus a pre-existing bare-substring bug where FOOD's "eat" matched "great"; stay grounding accepts a single mention. Measured finding: a complete corpus is not a dense one — food grounding is corpus-limited, so the `_FOOD_MEALS_PER_DAY` calibration stays deferred, now with evidence. Previous: 10.40.3 — YouTube quota discipline: a 429/403 is now terminal rather than retried 3x against a 100/day cap, and all 12 standalone scripts use the app's `RedactionFilter` instead of bare `basicConfig` — which also closed a path where the API key could reach a JSONL state *file*, where no logging filter runs. Corrects a v10.40.1 claim: the cold-start gate does not over-subscribe the cap on its own. Previous: 10.40.2 — YouTube comment corpus complete at 170/170 destinations — 25,347 points verified on the cluster; and `mypy .` runs for the first time, going from an abort-before-checking to `Success: no issues found in 166 source files`, which surfaced three real bugs: a cancelled ingestion reading as a success, and two in the comparison path)
+**Version:** 10.40.6 (the bare-substring keyword bug was in FIVE modules, not one — `"pub"` inside **"Public Garden"** was deleting kid-friendly places from family itineraries, and `"uk"` inside **"Sukhothai"** was pricing a moderate destination as premium; all three now share `core/keyword_match.py`. Previous: 10.40.4 — price grounding now matches the amount, not the blob — per-amount context scoping, plus a pre-existing bare-substring bug where FOOD's "eat" matched "great"; stay grounding accepts a single mention. Measured finding: a complete corpus is not a dense one — food grounding is corpus-limited, so the `_FOOD_MEALS_PER_DAY` calibration stays deferred, now with evidence. Previous: 10.40.3 — YouTube quota discipline: a 429/403 is now terminal rather than retried 3x against a 100/day cap, and all 12 standalone scripts use the app's `RedactionFilter` instead of bare `basicConfig` — which also closed a path where the API key could reach a JSONL state *file*, where no logging filter runs. Corrects a v10.40.1 claim: the cold-start gate does not over-subscribe the cap on its own. Previous: 10.40.2 — YouTube comment corpus complete at 170/170 destinations — 25,347 points verified on the cluster; and `mypy .` runs for the first time, going from an abort-before-checking to `Success: no issues found in 166 source files`, which surfaced three real bugs: a cancelled ingestion reading as a success, and two in the comparison path)
 **Last Updated:** July 26, 2026  
 **Status:** Production-ready MVP
 
@@ -1502,7 +1502,7 @@ curl http://localhost:8000/health
 
 ## 14. Recent Changes (v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
 
-### v10.40.5 Changes (July 2026) — The substring bug was in three places, not one
+### v10.40.5 / v10.40.6 Changes (July 2026) — The substring bug was in five places, not one
 
 v10.40.4 found that price grounding matched keywords as bare substrings (FOOD's `"eat"` inside **"great"**). A sweep for the same shape found two more, both with user-visible consequences, and both older.
 
@@ -1517,7 +1517,22 @@ Both are the same failure shape as the v10.39.0 hidden-gem fix (match the token,
 
 **Why this class of bug hides so well:** it fails as a false *positive*, on text that looks unrelated to the feature. Nothing errors, nothing logs, and the wrong outcome (a missing itinerary item, a pricier tier) looks like a plausible product decision rather than a defect. Tests here assert both directions — that "Public Garden" survives *and* that "Sky Bar" is still removed — since the tempting way to "fix" a false positive is to delete the keyword, which would quietly disable a safety feature.
 
-Suite **668 passed / 6 skipped / 0 failed** (+8), ruff clean, mypy clean.
+
+**Audit completed (v10.40.6).** The remaining `keyword in text` call sites were swept individually rather than triaged by eye, and two more were real:
+
+| Site | Bug |
+|---|---|
+| 🔴 `chains/wizard_chat_chain.py` | `_GENERIC_CHIP_KEYWORDS` contains `"any"`, which is inside **"Germany"**, "Tuscany", "Brittany", "Albany" — those chips were classed as generic "no preference" options and dropped from the theme-chip check. |
+| 🔴 `services/poi_pinning.py` | `_interest_keywords()` yields *any* word over two characters from the user's free-text interest, so `"art"` matched **"apartment"** and `"zen"` matched **"frozen"** — falsely confirming a wiki-verified pin for an unrelated POI. |
+
+`chains/recommend_cities_chain.py`'s preference detection was converted too (low risk, but the keywords are words).
+
+**⚠️ One site must NOT be converted, and it is the reason a blanket sweep would have been wrong twice over.** `scrapers/wikivoyage.py`'s `SECTIONS_OF_INTEREST` is matched against section ids like `stay_safe` and `go_next` — and `_` is a *word* character to ``, so `go` does not match `go_next`. Word-boundary matching would silently stop several Wikivoyage sections from being ingested. Left as substring, with the underscore interaction now recorded.
+
+Phrase and error-code matches (`"503"`, `"harry potter"`, `"RESOURCE_EXHAUSTED"`) were checked and correctly left alone.
+
+
+Suite **670 passed / 6 skipped / 0 failed** (+10), ruff clean, mypy clean.
 
 ### v10.40.4 Changes (July 2026) — Price grounding: match the amount, not the blob
 

@@ -8,6 +8,7 @@ import logging
 from pydantic import BaseModel
 
 from core.config import settings
+from core.keyword_match import has_keyword
 from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize
 from models.trip import TripConfig
@@ -157,7 +158,7 @@ def _mock_response(country: str) -> RecommendCitiesResponse:
     
     # Check if this looks like preferences rather than a country (contains keywords like beach, cafe, food, etc.)
     preference_keywords = ['beach', 'cafe', 'food', 'mountain', 'culture', 'history', 'adventure', 'relax', 'party', 'shopping']
-    is_preference = any(keyword in key for keyword in preference_keywords)
+    is_preference = has_keyword(key, preference_keywords)
     
     if is_preference:
         # Return diverse popular destinations for preference-based searches

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from core.budget_estimator import budget_estimate_prompt_hint
 from core.config import settings
 from core.currency_convert import TOP_10_CURRENCIES, currency_conversion_prompt_hint
+from core.keyword_match import has_keyword
 from core.llm_client import track_gemini_usage
 from models.chat import ChatMessage
 from services.geocode import geocode_city
@@ -62,12 +63,14 @@ def _is_multi_select_chips(chips: list[str]) -> bool:
         return False
     theme_chips = [
         chip for chip in chips
-        if not any(g in chip.lower() for g in _GENERIC_CHIP_KEYWORDS)
+        # Word-boundary: "any" is inside "Germany"/"Tuscany"/"Albany", which
+        # were being classed as generic "no preference" chips and dropped.
+        if not has_keyword(chip, _GENERIC_CHIP_KEYWORDS)
     ]
     if not theme_chips:
         return False
     return all(
-        any(keyword in chip.lower() for keyword in _MULTI_SELECT_CHIP_KEYWORDS)
+        has_keyword(chip, _MULTI_SELECT_CHIP_KEYWORDS)
         for chip in theme_chips
     )
 
