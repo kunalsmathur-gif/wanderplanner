@@ -279,3 +279,44 @@ class TestSearchBudget:
         with patch("scrapers.youtube_comments.settings.youtube_api_key", "fake-key"), \
              patch("scrapers.youtube_comments.settings.youtube_daily_search_budget", 0):
             assert await ingest_youtube_comments("Jaipur") == 0
+
+
+class TestQuotaErrorsAreTerminal:
+    """`search.list` carries its own hard cap of 100 calls/project/day
+    (`defaultSearchListPerDayPerProject`), separate from the 10,000-unit daily
+    quota. Exhausting it is terminal for the rest of the quota day, so retrying
+    spends three calls against that cap and cannot succeed on any of them —
+    which is how one exhausted day produced 141 wasted calls on 2026-07-26.
+    `fetch_video_comments` already treated 403 this way; search did not."""
+
+    @pytest.mark.parametrize("status", [429, 403])
+    @pytest.mark.asyncio
+    async def test_search_does_not_retry_quota_refusal(self, status):
+        with patch("scrapers.youtube_comments.settings.youtube_api_key", "fake-key"), \
+             patch("scrapers.youtube_comments.settings.youtube_daily_search_budget", 10), \
+             patch("scrapers.youtube_comments.asyncio.sleep", AsyncMock()) as mock_sleep, \
+             patch("scrapers.youtube_comments.httpx.AsyncClient") as mock_client_cls:
+            mock_client = mock_client_cls.return_value.__aenter__.return_value
+            mock_client.get = AsyncMock(return_value=_mock_response({}, status_code=status))
+
+            assert await search_travel_videos("Jaipur") == []
+            # Exactly one call, and no backoff sleep — the whole point.
+            assert mock_client.get.await_count == 1
+            assert mock_sleep.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_search_still_retries_a_transient_error(self):
+        """The no-retry rule must be specific to quota refusals; a 500 or a
+        dropped connection is still worth retrying."""
+        with patch("scrapers.youtube_comments.settings.youtube_api_key", "fake-key"), \
+             patch("scrapers.youtube_comments.settings.youtube_daily_search_budget", 10), \
+             patch("scrapers.youtube_comments.asyncio.sleep", AsyncMock()), \
+             patch("scrapers.youtube_comments.httpx.AsyncClient") as mock_client_cls:
+            mock_client = mock_client_cls.return_value.__aenter__.return_value
+            mock_client.get = AsyncMock(side_effect=[
+                _mock_response({}, status_code=500),
+                _mock_response(SEARCH_RESPONSE),
+            ])
+
+            assert await search_travel_videos("Jaipur") != []
+            assert mock_client.get.await_count == 2

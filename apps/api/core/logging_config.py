@@ -42,6 +42,17 @@ def _redact(text: str) -> str:
     return text
 
 
+def redact(text: str) -> str:
+    """Apply the log filter's redaction to a string bound for a non-log sink.
+
+    A logging filter only covers records passing through a handler. Anything
+    written elsewhere — a resumable script's JSON state file, a report artifact —
+    bypasses it entirely, so secret-bearing text headed for disk needs this
+    explicitly.
+    """
+    return _redact(text)
+
+
 class RedactionFilter(logging.Filter):
     """Redacts PII/secret-looking substrings from the formatted log message."""
 
@@ -52,6 +63,32 @@ class RedactionFilter(logging.Filter):
         except Exception:
             pass
         return True
+
+
+def configure_script_logging(level: int = logging.INFO) -> None:
+    """Console logging for standalone scripts, with the app's redaction applied.
+
+    `logging.basicConfig()` attaches no filters, so a script can log a secret the
+    running app would have redacted. That is not hypothetical: httpx embeds the
+    full request URL — API key and all — in `HTTPStatusError`'s message, so any
+    script logging a caught exception verbatim writes the key to its console.
+
+    Plain-text (not JSON) on stderr, since these are read by a human in a
+    terminal rather than shipped to an aggregator. `httpx` is pinned to WARNING
+    because its INFO line logs every request URL.
+    """
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    handler.addFilter(RedactionFilter())
+
+    root = logging.getLogger()
+    # Replace anything basicConfig() already installed, or the record would also
+    # reach an unfiltered handler.
+    for existing in root.handlers[:]:
+        root.removeHandler(existing)
+    root.setLevel(level)
+    root.addHandler(handler)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 class JsonFormatter(logging.Formatter):
