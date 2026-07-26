@@ -52,7 +52,9 @@ from core.config import settings
 # Windows consoles default to cp1252, which can't print the ✅/❌ status
 # marks — reconfigure rather than strip them (the report file is UTF-8 anyway).
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    # sys.stdout is typed TextIO; the runtime object is a TextIOWrapper,
+    # which does have reconfigure.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
 
 # The eval must never write fixture data into a real Qdrant. Force :memory:
 # BEFORE anything calls core.qdrant.get_qdrant() (module import is safe —
@@ -78,7 +80,7 @@ from eval.refinement_scoring import (  # noqa: E402
     score_positive_case,
 )
 from models.chat import ChatMessage  # noqa: E402
-from models.trip import DestinationInput, PinnedPOI, TripConfig  # noqa: E402
+from models.trip import Budget, DestinationInput, PinnedPOI, TripConfig  # noqa: E402
 
 DATASET_PATH = Path(__file__).parent / "refinement_fidelity_dataset.json"
 OUT_DIR = Path(__file__).parent / "out"
@@ -117,7 +119,7 @@ def build_trip(case: dict) -> TripConfig:
             lat=case["dest_lat"],
             lon=case["dest_lon"],
         ),
-        budget={"amount": 150000, "currency": "INR"},
+        budget=Budget(amount=150000, currency="INR"),
     )
 
 
@@ -267,6 +269,10 @@ async def run(live: bool, baseline_path: Path | None, results_path: Path | None 
                         "interest": case["named_interest"],
                         "negative": case["negative"], "error": str(exc),
                     }
+        if result is None:
+            # Unreachable: the retry loop assigns on both the success and the
+            # failed-twice path. Explicit so the invariant isn't only implied.
+            continue
         results.append(result)
         if "error" in result:
             continue

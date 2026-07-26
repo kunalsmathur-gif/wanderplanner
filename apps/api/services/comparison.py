@@ -127,7 +127,7 @@ async def _compare_bare_minimum_budget(
 
     estimates = await asyncio.gather(*[_estimate_for(dest) for dest in destinations])
 
-    values: dict[str, str] = {}
+    values: dict[str, str | float] = {}
     totals: dict[str, float] = {}
     for dest, estimate in zip(destinations, estimates):
         if estimate is None:
@@ -143,7 +143,7 @@ async def _compare_bare_minimum_budget(
 
 
 def _compare_weather(names: list[str], data: dict) -> ComparisonParameter | None:
-    values = {}
+    values: dict[str, str | float] = {}
     for name in names:
         temp = data.get(name, {}).get("avg_temp")
         values[name] = f"{round(temp, 1)}°C annual avg" if temp is not None else "Data unavailable"
@@ -166,7 +166,7 @@ async def _compare_qualitative(
         dest_a=dest_a,
         dest_b=dest_b,
         purpose=trip_config.purpose or "leisure",
-        duration=trip_config.dates.duration_days or 7,
+        duration=trip_config.dates.get("duration_days") or 7,
         group=group_desc,
         budget=trip_config.budget.amount,
         themes=", ".join(trip_config.themes) if trip_config.themes else "general",
@@ -209,7 +209,7 @@ async def _compare_qualitative(
                 parameter=row["parameter"],
                 values={dest_a: str(row["values"].get(dest_a, "—")),
                         dest_b: str(row["values"].get(dest_b, "—"))},
-                winner=row.get("winner"),
+                winner=row.get("winner") or "",
             )
             for row in rows
             if isinstance(row, dict)

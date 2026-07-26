@@ -53,7 +53,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    # sys.stdout is typed TextIO; the runtime object is a TextIOWrapper,
+    # which does have reconfigure.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
 
 from core.budget_estimator import estimate_bare_minimum_budget  # noqa: E402
 from core.llm_client import estimate_cost_usd  # noqa: E402
@@ -168,7 +170,9 @@ async def main_async(models: list[str], runs: int) -> None:
                 per_model_results[model].append(result)
                 per_model_case_details[model].append({"case_id": case["id"], "run": run_idx, **result})
                 case_totals.append(result.get("extracted_total_inr"))
-            case_variances[case["id"]][model] = coefficient_of_variation(case_totals)
+            case_variances[case["id"]][model] = coefficient_of_variation(
+                [t for t in case_totals if t is not None]
+            )
 
     summaries = {model: aggregate_model(results) for model, results in per_model_results.items()}
 

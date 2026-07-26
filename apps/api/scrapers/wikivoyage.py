@@ -210,6 +210,12 @@ async def scrape_wikivoyage(destination: str) -> list[dict]:
                 await asyncio.sleep(_RETRY_BASE_DELAY_S * attempt)
                 continue
 
+        if resp is None:
+            # The loop above only exits by `break` (response in hand) or by
+            # returning, so this cannot happen -- but the invariant is implicit,
+            # and returning empty matches this scraper's best-effort contract.
+            return []
+
         docs = _parse_sections(resp.text, destination, url)
         if docs:
             return docs

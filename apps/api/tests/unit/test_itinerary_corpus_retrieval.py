@@ -7,6 +7,7 @@ All embeddings and Qdrant searches are mocked — fully offline.
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,7 +23,7 @@ from services.search import (
 
 
 def _trip(city: str = "Kyoto", country: str = "Japan", **overrides) -> TripConfig:
-    base = dict(
+    base: dict[str, Any] = dict(
         purpose="cultural",
         pace="moderate",
         destination=DestinationInput(city=city, country=country),

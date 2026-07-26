@@ -203,7 +203,7 @@ async def main() -> None:
                 # discard the real Qdrant ingestion writes above.
                 logger.warning("Could not upsert destination_ingestion_state for %r: %s", destination, e)
 
-            breakdown = Counter()
+            breakdown: Counter[str] = Counter()
             try:
                 breakdown = _category_breakdown(destination)
             except Exception as e:

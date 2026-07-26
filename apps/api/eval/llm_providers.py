@@ -69,7 +69,7 @@ def _call_gemini(model: str, prompt: str, json_mode: bool = True) -> tuple[str, 
     from google import genai
     from google.genai import types as genai_types
     client = genai.Client(api_key=settings.gemini_api_key)
-    config_kwargs = {"temperature": 0.4}
+    config_kwargs: dict[str, Any] = {"temperature": 0.4}
     if json_mode:
         config_kwargs["response_mime_type"] = "application/json"
     resp = client.models.generate_content(
@@ -80,7 +80,7 @@ def _call_gemini(model: str, prompt: str, json_mode: bool = True) -> tuple[str, 
     usage = getattr(resp, "usage_metadata", None)
     prompt_tokens = getattr(usage, "prompt_token_count", 0) or 0 if usage else 0
     output_tokens = getattr(usage, "candidates_token_count", 0) or 0 if usage else 0
-    return resp.text, prompt_tokens, output_tokens
+    return resp.text or "", prompt_tokens, output_tokens
 
 
 def _call_groq(model: str, prompt: str, json_mode: bool = True) -> tuple[str, int, int]:

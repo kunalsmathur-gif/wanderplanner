@@ -108,7 +108,7 @@ def recalibrate_band(band_index: int, real_round_trip_inr: float) -> list[tuple[
         bands[i][1] = min(bands[i][1], bands[i + 1][1])
         bands[i][2] = min(bands[i][2], bands[i + 1][2])
 
-    return [tuple(b) for b in bands]
+    return [(b[0], int(b[1]), int(b[2])) for b in bands]
 
 
 def recalibrate_cost_matrix(

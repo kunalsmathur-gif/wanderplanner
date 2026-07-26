@@ -20,3 +20,16 @@ ignore = ["E501"]
 python_version = "3.11"
 strict = false
 ignore_missing_imports = true
+# `eval/` and `scripts/` are directories of standalone entry points, not
+# packages — no `__init__.py`, and several manipulate `sys.path` to import the
+# app. Without this, mypy maps `eval/config_loader.py` to both `config_loader`
+# and `eval.config_loader`, calls that a duplicate, and aborts the whole run
+# before type-checking anything ("Source file found twice under different
+# module names"). This flag is mypy-only — unlike adding `__init__.py`, it has
+# no effect on runtime import resolution, so the entry points keep working
+# exactly as they did.
+explicit_package_bases = true
+# Local-only noise: CI installs into the runner's Python, so there is no venv
+# to crawl there, but a local `mypy .` otherwise type-checks site-packages'
+# stray scripts (e.g. pywin32_postinstall.py).
+exclude = ['^venv/', '^\.venv/']

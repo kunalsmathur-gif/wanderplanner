@@ -21,6 +21,11 @@ async def main(write: bool) -> None:
             "dates": case["dates"],
         }
         est = await estimate_bare_minimum_budget(tc, case.get("traveller_level_hint"))
+        if est is None:
+            # Returns None when it cannot estimate at all (e.g. unknown group
+            # size); indexing that would TypeError mid-run.
+            print(f"{case['id']}: no estimate returned -- skipped")
+            continue
         total = est["total_inr"]
         low, high = round(total * 0.85), round(total * 1.15)
         b = est["breakdown"]

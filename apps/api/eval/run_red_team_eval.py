@@ -37,7 +37,9 @@ from pathlib import Path
 from core.config import settings
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    # sys.stdout is typed TextIO; the runtime object is a TextIOWrapper,
+    # which does have reconfigure.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
 
 # Same isolation trick as the other eval runners — never touch real Qdrant.
 # Best-effort blocks (_gem_guidance_block, budget cost-grounding) degrade to
@@ -62,7 +64,13 @@ from eval.llm_providers import (  # noqa: E402
     unavailable_reason,
 )
 from eval.red_team_scoring import aggregate_model, render_report, score_case  # noqa: E402
-from models.trip import Budget, DestinationInput, GroupComposition, TripConfig  # noqa: E402
+from models.trip import (  # noqa: E402
+    Budget,
+    DestinationInput,
+    GroupComposition,
+    KidAge,
+    TripConfig,
+)
 
 DATASET_PATH = Path(__file__).parent / "red_team_dataset.json"
 OUT_DIR = Path(__file__).parent / "out"
@@ -88,7 +96,7 @@ def build_trip(case: dict) -> TripConfig:
 
     group_raw = dict(case.get("group", {}))
     kids = group_raw.pop("kids", None)
-    group = GroupComposition(**group_raw, kids=[{"age": a} for a in kids] if kids else [])
+    group = GroupComposition(**group_raw, kids=[KidAge(age=a) for a in kids] if kids else [])
 
     return TripConfig(
         purpose=purpose,

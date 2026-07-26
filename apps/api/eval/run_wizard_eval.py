@@ -40,7 +40,9 @@ from eval.wizard_checks import run_all_checks
 from models.chat import ChatMessage
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    # sys.stdout is typed TextIO; the runtime object is a TextIOWrapper,
+    # which does have reconfigure.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
 
 DATASET_PATH = Path(__file__).parent / "wizard_dataset.json"
 OUT_DIR = Path(__file__).parent / "out"

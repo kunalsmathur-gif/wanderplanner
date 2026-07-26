@@ -11,12 +11,13 @@ required and the flow works fine behind a load balancer.
 """
 import logging
 from datetime import UTC, datetime
+from typing import Literal, TypedDict, cast
 from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.analytics import log_event
@@ -49,7 +50,30 @@ _log = logging.getLogger("wanderplanner.auth")
 
 _state_serializer = URLSafeTimedSerializer(settings.jwt_secret, salt="google-oauth-state")
 
+
+class _CookieKwargs(TypedDict):
+    """Shared `Response.set_cookie` options for both session cookies.
+
+    A plain dict literal infers as `dict[str, object]`, which cannot be
+    `**`-splatted into `set_cookie`'s typed parameters.
+    """
+
+    httponly: bool
+    secure: bool
+    samesite: Literal["lax", "strict", "none"]
+    domain: str | None
+    path: str
+
 AUTH_RATE_LIMIT = "10/minute"  # brute-force/signup-spam protection
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Treat a naive stored timestamp as UTC.
+
+    Some backends (SQLite in local/dev) don't round-trip tz-aware datetimes, so
+    the value comes back naive and comparing it against an aware `now` raises.
+    """
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _user_response(user: User) -> UserResponse:
@@ -79,13 +103,19 @@ async def _issue_session(response: Response, db: AsyncSession, user: User, reque
     user.last_login_at = datetime.now(UTC)
     await db.commit()
 
-    cookie_kwargs = dict(
-        httponly=True,
-        secure=settings.cookie_secure,
-        samesite=settings.cookie_samesite,
-        domain=settings.cookie_domain or None,
-        path="/",
-    )
+    cookie_kwargs: _CookieKwargs = {
+        "httponly": True,
+        "secure": settings.cookie_secure,
+        # `cookie_samesite` is a plain `str` in config — the production
+        # validator only rejects "lax", so nothing statically guarantees one of
+        # the three legal values arrives here. Narrowed rather than tightened at
+        # the config end on purpose: making pydantic reject anything outside the
+        # literal set would turn a today-working value like "None" into a
+        # refuses-to-boot error, which is not a trade worth making for typing.
+        "samesite": cast(Literal["lax", "strict", "none"], settings.cookie_samesite),
+        "domain": settings.cookie_domain or None,
+        "path": "/",
+    }
     response.set_cookie(ACCESS_TOKEN_COOKIE, access_token, max_age=settings.access_token_ttl_minutes * 60, **cookie_kwargs)
     response.set_cookie(REFRESH_TOKEN_COOKIE, raw_refresh, max_age=settings.refresh_token_ttl_days * 86400, **cookie_kwargs)
 
@@ -274,12 +304,7 @@ async def refresh(
     stored = result.scalar_one_or_none()
 
     now = datetime.now(UTC)
-    expires_at = stored.expires_at if stored else None
-    if expires_at is not None and expires_at.tzinfo is None:
-        # Defensive: some DB backends (e.g. SQLite in local/dev) don't
-        # round-trip tz-aware datetimes — assume UTC rather than crash.
-        expires_at = expires_at.replace(tzinfo=UTC)
-    if stored is None or stored.revoked_at is not None or expires_at < now:
+    if stored is None or stored.revoked_at is not None or _as_utc(stored.expires_at) < now:
         _clear_session_cookies(response)
         raise HTTPException(status_code=401, detail="Session expired, please sign in again.")
 
@@ -352,7 +377,10 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest, db: Asy
 
     # Only password accounts can reset via email (Google-only accounts have
     # no password_hash to reset).
-    if user is not None and user.is_active:
+    # `user.email` is nullable — a Google-SSO account can carry only
+    # `google_sub`. This lookup is *by* email so it is always set here, but
+    # there is no address to send to if it somehow isn't.
+    if user is not None and user.is_active and user.email:
         raw_token, token_hash, expires_at = generate_password_reset_token()
         db.add(PasswordResetToken(user_id=user.id, token_hash=token_hash, expires_at=expires_at))
         await db.commit()
@@ -372,11 +400,7 @@ async def reset_password(request: Request, response: Response, body: ResetPasswo
     stored = result.scalar_one_or_none()
 
     now = datetime.now(UTC)
-    expires_at = stored.expires_at if stored else None
-    if expires_at is not None and expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=UTC)
-
-    if stored is None or stored.used_at is not None or expires_at < now:
+    if stored is None or stored.used_at is not None or _as_utc(stored.expires_at) < now:
         raise HTTPException(status_code=400, detail="This password reset link is invalid or has expired.")
 
     user = await db.get(User, stored.user_id)
@@ -389,7 +413,7 @@ async def reset_password(request: Request, response: Response, body: ResetPasswo
     # Changing the password invalidates every existing session — a
     # reasonable defensive measure in case the account was compromised.
     await db.execute(
-        RefreshToken.__table__.update()
+        update(RefreshToken)
         .where(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None))
         .values(revoked_at=now)
     )

@@ -46,7 +46,9 @@ from pathlib import Path
 from core.config import settings
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    # sys.stdout is typed TextIO; the runtime object is a TextIOWrapper,
+    # which does have reconfigure.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
 
 # Same isolation trick as run_refinement_eval.py — never touch real Qdrant.
 settings.qdrant_url = ":memory:"
