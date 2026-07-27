@@ -8,8 +8,12 @@ Ordered by value. **Items 1, 2 (code + data), 3, 5 and 7 are done.** Item 2's re
 finished 2026-07-27 with `0 pending` on the real Qdrant Cloud cluster — see the session block below
 for the last-mile bug it uncovered. The Resend email pipeline is now also confirmed working
 end-to-end (a real password-reset was triggered against prod and completed). Item 3's
-`PEXELS_API_KEY` is now set locally and on Railway, with a redeploy confirmed live. 4 and 6 remain
-— both are hygiene/blocked-on-user. Narrative and evidence for each is in the session blocks below.
+`PEXELS_API_KEY` is now set locally and on Railway, with a redeploy confirmed live. **Item 6 (domain
+cutover) is also done** — `wanderplanner.org`/`api.wanderplanner.org` are live; see its entry for a
+`COOKIE_SAMESITE` follow-up left deliberately undone and a critical unrelated Dockerfile bug found
+and fixed along the way (`sentence-transformers` missing from prod, breaking itinerary generation).
+Only item 4 remains, blocked on the user (YouTube key rotation in Cloud Console). Narrative and
+evidence for each is in the session blocks below.
 
 **1. ✅ DONE 2026-07-26 (v10.40.2) — the YouTube comment corpus is complete: 170/170 destinations.**
 The final 90 went through on a fresh Pacific quota day: 90 ingested, **13,477 comments**. Verified
@@ -272,15 +276,38 @@ harness code. Full detail in TECHNICAL_DOCUMENTATION §14 v10.40.2.
 ⚠️ **If you add a file under `eval/` or `scripts/`, mypy now type-checks it** — that's the point,
 but it does mean CI can newly fail on code that would previously have been skipped.
 
-**6. The website is still on `wanderplanner-web.vercel.app`.**
-The domain is bought and its DNS is live, but nothing points at Vercel yet. If/when you move the
-frontend to `wanderplanner.org`, **three prod settings must change together or the app breaks**:
-`ALLOWED_ORIGINS` on Railway (missing the new origin = every API call CORS-fails, app looks
-totally broken), `FRONTEND_BASE_URL` on Railway (stale = password-reset links point at the old
-host), and Vercel's own domain config. Cookies stay cross-site so `COOKIE_SAMESITE=none` remains
-correct — unless the API also moves to `api.wanderplanner.org`, which would make it same-site.
-⚠️ Keep DNS at Spaceship: switching nameservers to Vercel would drop the Resend records out of the
-authoritative zone and silently un-verify email.
+**6. ✅ DONE 2026-07-27 — domain cutover to `wanderplanner.org` complete.**
+Frontend now live at `wanderplanner.org` / `www.wanderplanner.org` (Vercel), API at
+`api.wanderplanner.org` (Railway custom domain, cert verified). DNS added at Spaceship — nameservers
+kept unchanged (Resend DKIM/SPF/DMARC unaffected): `A @ → 76.76.21.21`, `A www → 76.76.21.21`,
+`CNAME api → l5qq36b6.up.railway.app`, plus the Railway ownership-verification TXT record.
+`ALLOWED_ORIGINS` updated additively (old `wanderplanner-web.vercel.app` origin kept alongside the
+new ones) and `FRONTEND_BASE_URL` flipped to `https://wanderplanner.org`, each followed by a Railway
+redeploy and a `/health` check.
+
+⚠️ **`COOKIE_SAMESITE` was deliberately left at `none`, not flipped to `lax`.** Frontend and API are
+now same-site (`wanderplanner.org` / `api.wanderplanner.org` share the same eTLD+1), which would
+make `lax` viable and slightly more secure — but `core/config.py`'s `_validate_cookie_settings_for_prod`
+hard-codes the old cross-origin assumption and **raises at startup** if `cookie_samesite=lax` in
+production. That's a real code change (relaxing/updating the validator), not just an env var flip,
+and wasn't made — don't set `COOKIE_SAMESITE=lax` on Railway without first updating that validator,
+or the app will fail to start.
+
+🔴 **Also found and fixed while verifying the cutover, unrelated to domains**: `apps/api/Dockerfile`
+had never installed `requirements-ml.txt` since it was created, so `sentence-transformers` was
+missing from the production image — silently breaking itinerary generation end-to-end (both the
+primary Gemini RAG path and its fallback chain need it for embeddings; see `core/embeddings.py`).
+Fixed by installing only `sentence-transformers==3.0.0` directly in the Dockerfile rather than the
+full ml requirements file — confirmed no production code under `chains/`, `routers/`, `services/`,
+`core/` imports `langchain`/`groq`/`openai`/`anthropic`, so those stay eval-only/local-dev-only.
+Verified live: `POST /api/generate-itinerary` now returns 200 and a real itinerary.
+
+⚠️ **New non-blocking bug surfaced by the same verification, not yet fixed**: `core/analytics.py`'s
+`log_event` fails on the `itinerary_generated` event with `TypeError: Object of type DestinationInput
+is not JSON serializable` — the event's metadata carries a Pydantic model instead of a plain dict/
+JSON-safe value. Doesn't block generation (itinerary still returns fine), but that analytics event
+is silently never recorded. Needs `DestinationInput` serialized (e.g. `.model_dump()`) before being
+put in `event_metadata`.
 
 **7. ✅ DONE — Tokyo's OSM re-ingestion, closed by item 2's run.**
 Tokyo was still 58/60 Japanese-script after failing every v10.39.0 attempt. The v10.40.0
