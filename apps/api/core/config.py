@@ -86,7 +86,10 @@ class Settings(BaseSettings):
     # primary instance under back-to-back sequential load.
     osm_overpass_fallback_mirrors: list[str] = [
         "https://overpass.kumi.systems/api/interpreter",
-        "https://overpass.openstreetmap.fr/api/interpreter",
+        # overpass.openstreetmap.fr dropped 2026-07-27: answers 403
+        # ("white-listed usages only") to every request, so it was
+        # guaranteed-wasted rotation slot during the prominence
+        # re-ingestion retries (see docs/NEXT_SESSION_TODO.md).
     ]
     osm_poi_radius_m: int = 5000
     # Fallback radius tried when the default radius comes back thin/food-

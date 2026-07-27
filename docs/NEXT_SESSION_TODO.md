@@ -2,13 +2,13 @@
 
 ---
 
-## ✅ DO THIS NEXT — open items as of 2026-07-26 (v10.40.6)
+## ✅ DO THIS NEXT — open items as of 2026-07-27 (v10.40.7)
 
-Ordered by value. **Items 1, 2 (code), 5 and 7 are done** — item 2's re-ingestion *data run* is
-the one thing still in flight and is what moves the product now: **140 of 169 destinations are
-done, 29 are still pending**, and all 29 are pending for the same reason, which is worth reading
-before the next run (item 2). 3 is blocked on the user; 4 and 6 are hygiene. Narrative and evidence
-for each is in the session blocks below.
+Ordered by value. **Items 1, 2 (code + data), 5 and 7 are done.** Item 2's re-ingestion data run
+finished 2026-07-27 with `0 pending` on the real Qdrant Cloud cluster — see the session block below
+for the last-mile bug it uncovered. The Resend email pipeline is now also confirmed working
+end-to-end (a real password-reset was triggered against prod and completed). 3 is blocked on the
+user; 4 and 6 are hygiene. Narrative and evidence for each is in the session blocks below.
 
 **1. ✅ DONE 2026-07-26 (v10.40.2) — the YouTube comment corpus is complete: 170/170 destinations.**
 The final 90 went through on a fresh Pacific quota day: 90 ingested, **13,477 comments**. Verified
@@ -78,19 +78,24 @@ on its old data rather than overwritten. The script gives up after 3 attempts pe
 genuinely unremarkable place can't loop forever. **This also subsumes old item 7** (Tokyo's
 local-script names) — the same run re-fetches Tokyo.
 
-#### Where the run actually stands (measured 2026-07-26 from the state file, not the run log)
+#### Where the run actually stands (measured 2026-07-27 from the state file, not the run log)
 
-**Status after the 2026-07-27 retry pass: 161 done, 8 pending.** The pass recovered 21 of the 29 —
-London and Osaka both went 0 → **60/60** prominence, Varanasi 0 → 40, Nairobi 0 → 37, Darjeeling
-0 → 28 — which confirms the diagnosis below (stochastic mirror availability, so re-running works).
+✅ **DONE 2026-07-27 — `0 still pending`. The re-ingestion is complete on the real Qdrant Cloud
+cluster.** Dropped the dead `overpass.openstreetmap.fr` mirror from
+`osm_overpass_fallback_mirrors` first (it answered 403 to everything and was a guaranteed-wasted
+rotation slot). Jaisalmer, Lyon, Montreal, Nice, Oslo, Pondicherry and Siem Reap all got real
+prominence data on retry (Lyon/Montreal/Nice/Oslo landed 60/60). Amalfi and Medellin exhausted
+their 3 attempts against permanently-degraded Overpass responses and were accepted on their
+existing stored data, per the retry rule.
 
-🔴 **The 8 that remain are all at `attempts=2`, so the next run is their LAST.** At 3 attempts the
-script accepts a destination regardless of its prominence result, which means one more unlucky pass
-records them as done on stale, unranked data — exactly what happened to Amalfi. **Drop the dead
-`overpass.openstreetmap.fr` mirror before spending their final attempt** (it answers 403 to
-everything, and `_PROMINENCE_FETCH_ATTEMPTS = 4` rotates over three mirrors, so attempt 3 always
-lands on it and is guaranteed wasted). Still pending: Jaisalmer, Lyon, Medellin, Montreal, Nice,
-Oslo, Pondicherry, Siem Reap.
+🔴 **Found and fixed a real bug in `ingest_osm_pois` (`scrapers/osm.py`) while running this**:
+when *every* Overpass mirror failed on *both* passes (`pois` came back fully empty, as opposed to
+merely non-prominent), the function returned `0` instead of falling back to the existing stored
+count. `reingest_prominence_ranking.py`'s state loader requires `osm_count` to be truthy before its
+"accept after 3 attempts" rule can fire, so a destination hitting this path (Medellin did, three
+times in a row) would retry **forever** rather than ever being accepted. Fixed by extending the
+existing "keep existing data" guard to cover the fully-empty-fetch case too, consistent with the
+guards already just below it in the same function.
 
 <details>
 <summary>How the 29 were originally identified (2026-07-26)</summary>
@@ -214,9 +219,10 @@ Railway notes below) and re-verify with a masked `variable list`.
 ~~`RESEND_API_KEY`~~ — **✅ done 2026-07-25 (v10.38.3).** `wanderplanner.org` bought at Spaceship
 and verified with Resend (DKIM + return-path MX/SPF + DMARC live at the registrar);
 `RESEND_API_KEY` and `EMAIL_FROM_ADDRESS=Wanderplanner <no-reply@wanderplanner.org>` set on
-Railway. **Not yet smoke-tested with a real send** — nobody has actually triggered a password
-reset against prod since it went live, so the first real confirmation is still outstanding.
-Note the sending region is `ap-northeast-1`.
+Railway. **✅ Smoke-tested 2026-07-27** — `POST /api/auth/password/forgot` triggered against prod
+(`https://api-production-3e3e.up.railway.app`) for a real account, confirmed via Railway logs
+(`POST https://api.resend.com/emails "HTTP/1.1 200 OK"`), and the user confirmed the email arrived
+and the reset link worked end-to-end. Note the sending region is `ap-northeast-1`.
 
 **4. Rotate the YouTube API key.** ✅ *The code side is fixed as of v10.40.3 — see below. Only the
 rotation itself is left, and it is yours to do in the Cloud Console.*

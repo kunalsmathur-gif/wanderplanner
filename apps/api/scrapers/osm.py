@@ -675,6 +675,23 @@ async def ingest_osm_pois(destination: str) -> int:
             )
             pois, prominence_ok = expanded_pois, expanded_prominence_ok
     if not pois:
+        # A totally empty fetch (every mirror failed on both passes) is the
+        # extreme case of "no prominence signal" and must be guarded the same
+        # way as the checks below — otherwise it silently reports 0 while
+        # good existing data survives untouched, which the reingestion
+        # script's retry bookkeeping reads as permanent failure (it never
+        # graduates a destination whose ingested count is 0, even after
+        # exhausting its attempt budget). Report what's already there.
+        existing_count = count_destination_points(
+            get_qdrant(), settings.qdrant_collection_osm, destination
+        )
+        if existing_count:
+            logger.warning(
+                "%r: Overpass returned nothing on every pass/mirror — keeping the %d POIs "
+                "already stored rather than reporting an empty result.",
+                destination, existing_count,
+            )
+            return existing_count
         return 0
 
     # A broad-pass-only result looks perfectly healthy to every other check
