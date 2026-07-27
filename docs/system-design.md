@@ -569,12 +569,33 @@ itinerary_chain.py
          │    │    it, sentiment ≥0.55 → hidden gem. 0 mentions → excluded
          │    │    (no community proof = never recommended)
          │    │
+         │    ├─ ⚠️ The sentiment floor is really a "positive evidence
+         │    │    required" gate: Laplace smoothing puts a mention with no
+         │    │    lexicon word in range at exactly 0.5, below the 0.55 floor.
+         │    │    The lexicon is therefore load-bearing, and is CALIBRATED
+         │    │    against the corpus (v10.42.0), not hand-picked — words
+         │    │    like "great"/"nice"/"awesome"/"helpful" are DELIBERATELY
+         │    │    excluded because in YouTube comments they praise the video,
+         │    │    not the place (1.7-4.6x enrichment for creator context vs a
+         │    │    21.8% baseline). Adding them measures production quality
+         │    │    and reports it as place quality. See services/gems.py
+         │    │
          │    ├─ Name matching via services/name_matching.py (⭐ NEW v10.39.0):
          │    │    diacritic-folded, word-boundary-anchored, with variants for
          │    │    OSM's naming habits ("Marine Drive, Kochi" → "marine
          │    │    drive", "Matangeshwar Temple" → "matangeshwar"). Transport
          │    │    POI types and a POI named after the destination itself are
          │    │    excluded as gem candidates
+         │    │
+         │    ├─ Mention attribution across POIs (⭐ NEW v10.42.0): a chunk is
+         │    │    scored against every candidate at once, then nested matches
+         │    │    are resolved — longer containment wins, and an exact name
+         │    │    beats a derived variant at the same span. Without it a
+         │    │    comment about the "Grand Egyptian Museum" also credited the
+         │    │    "Egyptian Museum" (two real, different museums), and
+         │    │    "Lotte World Tower" stole mentions of "Lotte World".
+         │    │    Identically-named duplicate POIs (Jaipur's "Pink city" and
+         │    │    "Pink City") collapse to the better-tagged one
          │    │
          │    ├─ Cached 24h per destination (in-process TTL + per-destination
          │    │    asyncio.Lock, stampede-safe); compute bounded to

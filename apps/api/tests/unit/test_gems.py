@@ -234,6 +234,128 @@ class TestComputeGemIntel:
         assert intel["gems"][0]["sources"] == ["YouTube"]
 
 
+class TestSentimentLexiconCalibration:
+    """The 2026-07-27 re-audit measured the lexicon against 1,274 real mention
+    windows: it fired on only 29% of them, and a window with no lexicon word
+    scores exactly 0.5 — below _GEM_MIN_SENTIMENT — so "nobody used an opinion
+    word near this place" was indistinguishable from "this place is bad". That
+    alone accounted for 64 of the 94 destinations returning zero gems."""
+
+    def test_neutral_mention_scores_exactly_half_and_misses_the_floor(self):
+        """The mechanism, pinned so it can't be misread as a negative signal."""
+        pos, neg = _sentiment_for("we went to Red Fort on tuesday", "Red Fort")
+        assert (pos, neg) == (0, 0)
+        sentiment = (pos + 1) / (pos + neg + 2)
+        assert sentiment == 0.5
+        assert sentiment < gems._GEM_MIN_SENTIMENT
+
+    @pytest.mark.parametrize("word", [
+        "love", "good", "friendly", "safe", "must", "clean", "delicious",
+        "enjoyed", "fun", "historic", "excellent", "spectacular", "breathtaking",
+    ])
+    def test_place_directed_words_are_counted(self, word):
+        pos, _ = _sentiment_for(f"Banana Beach was {word}", "Banana Beach")
+        assert pos >= 1, f"{word!r} should contribute positive sentiment"
+
+    @pytest.mark.parametrize("word", [
+        "great", "nice", "awesome", "wonderful", "fantastic", "superb",
+        "helpful", "informative", "pretty", "vibrant", "scenic", "iconic",
+    ])
+    def test_video_directed_praise_is_deliberately_excluded(self, word):
+        """⚠️ These look like obvious praise and are deliberately absent.
+
+        Measured on the real corpus, every one is enriched for creator context
+        (1.65x-4.58x over a 21.8% baseline) — "nice vlog bhaiya", "great
+        video", "you guys are awesome", "helpful video". `great` (97 windows)
+        and `nice` (50) were the two biggest available recall wins and are
+        mostly praise of the vlogger, so adding them would measure production
+        quality and report it as place quality.
+
+        If you are here because you 'fixed' a gap by adding one of these, read
+        the lexicon comment in services/gems.py first."""
+        pos, _ = _sentiment_for(f"Banana Beach {word} video, thanks", "Banana Beach")
+        assert pos == 0, f"{word!r} is video-directed praise and must not score"
+
+    def test_new_negative_words_still_block_a_gem(self):
+        pois = [_poi("Tourist Trap Lane")]
+        chunks = [_chunk("Tourist Trap Lane was bad, rude staff and boring")]
+        with patch("services.gems.get_qdrant", return_value=_mock_client(pois, chunks)):
+            intel = compute_gem_intel_sync("Phuket")
+        assert intel["gems"] == []
+
+
+class TestDuplicateAndNestedNames:
+    """The 2026-07-27 re-audit found four destinations returning colliding
+    entries. They are two different defects and must not be fixed the same
+    way: identical names are one place recorded twice, nested names are
+    usually two real places sharing a prefix."""
+
+    def _run(self, pois, chunks, destination="Phuket"):
+        with patch("services.gems.get_qdrant", return_value=_mock_client(pois, chunks)):
+            return compute_gem_intel_sync(destination)
+
+    def test_identically_named_pois_collapse_to_one_entry(self):
+        """Jaipur live: OSM holds a 'Pink city' (museum) and a 'Pink City'
+        (attraction) as separate nodes, and both surfaced as separate finds in
+        the same gem list."""
+        pois = [
+            {**_poi("Pink city", "museum"), "prominence": 4},
+            {**_poi("Pink City", "attraction"), "prominence": 9},
+        ]
+        chunks = [_chunk("the Pink City is a stunning quiet gem, loved it")]
+        intel = self._run(pois, chunks)
+        assert len(intel["gems"]) == 1
+        # The better-tagged of the two duplicates is the one kept.
+        assert intel["gems"][0]["poi_type"] == "attraction"
+
+    def test_nested_name_does_not_steal_the_longer_names_mention(self):
+        """Cairo live: a comment about the Grand Egyptian Museum credited a
+        mention to the Egyptian Museum too. Both are real museums, so the
+        mention has to be attributed rather than either POI dropped."""
+        pois = [_poi("Egyptian Museum", "museum"), _poi("Grand Egyptian Museum", "museum")]
+        chunks = [_chunk("the Grand Egyptian Museum is a stunning gem, loved it")]
+        intel = self._run(pois, chunks)
+        scored = {g["name"]: g for g in intel["gems"] + intel["crowd_favourites"]}
+        assert scored["Grand Egyptian Museum"]["mentions"] == 1
+        assert "Egyptian Museum" not in scored, "shorter nested name must not be credited"
+
+    def test_both_nested_pois_keep_their_own_genuine_mentions(self):
+        """Attribution must not become suppression — the shorter name still
+        earns a mention from text that names only it."""
+        pois = [_poi("Lotte World", "attraction"), _poi("Lotte World Tower", "attraction")]
+        chunks = [
+            _chunk("Lotte World Tower is a stunning quiet gem"),
+            _chunk("Lotte World is peaceful and underrated, loved it"),
+        ]
+        intel = self._run(pois, chunks)
+        scored = {g["name"]: g for g in intel["gems"] + intel["crowd_favourites"]}
+        assert scored["Lotte World"]["mentions"] == 1
+        assert scored["Lotte World Tower"]["mentions"] == 1
+
+    def test_overlap_resolver_keeps_equal_length_and_partial_overlaps(self):
+        """Only strictly-longer containment suppresses: equal-length spans
+        can't be two different names, and a partial overlap is not nesting."""
+        # (poi_index, start, end, matched_exact_name)
+        both_exact = [(0, 0, 5, True), (1, 0, 5, True)]
+        assert gems._resolve_overlapping_mentions(both_exact) == both_exact
+        partial = [(0, 0, 6, True), (1, 4, 10, True)]
+        assert gems._resolve_overlapping_mentions(partial) == partial
+        assert gems._resolve_overlapping_mentions(
+            [(0, 0, 10, True), (1, 2, 6, True)]) == [(0, 0, 10, True)]
+
+    def test_exact_name_beats_a_derived_variant_at_the_same_span(self):
+        """Rule 2 — a POI that reached the span by peeling a structural word
+        must not outrank the POI whose real name *is* that span."""
+        assert gems._resolve_overlapping_mentions(
+            [(0, 0, 5, True), (1, 0, 5, False)]) == [(0, 0, 5, True)]
+        # Symmetric: order of the hits must not change the outcome.
+        assert gems._resolve_overlapping_mentions(
+            [(1, 0, 5, False), (0, 0, 5, True)]) == [(0, 0, 5, True)]
+
+    def test_single_hit_is_returned_untouched(self):
+        assert gems._resolve_overlapping_mentions([(3, 1, 4, True)]) == [(3, 1, 4, True)]
+
+
 class TestNameMatching:
     """Regressions for the 2026-07-25 live audit: raw lowercase substring
     matching found almost nothing, so destinations with hundreds of real

@@ -2,6 +2,76 @@
 
 ---
 
+## 🔥 QUEUE AGREED WITH THE USER 2026-07-27 (do these in order)
+
+**1. ✅ DONE — hidden-gem re-audit (shipped as v10.42.0).** Full write-up in
+`TECHNICAL_DOCUMENTATION.md` §14 v10.42.0. Headline: first 168-destination measurement; the pool
+problem from v10.39.0 is fixed, the bottleneck had moved to the sentiment floor, and destinations
+returning a gem went **44% → 54%** (total gems 127 → 172) while total matched POIs *fell* 541 → 530
+as double-counts were removed. **Two items below came out of it.**
+
+**2. ⏭️ NEXT — input validation / "monkey testing" hardening.** Probed 2026-07-27; nothing is
+validated. `models/trip.py`'s `DestinationInput.city` is a bare `str` with no `min_length`,
+`max_length` or charset constraint, and **every one of these is accepted today**: emoji-only
+(`🎉🎉🎉`), empty string, whitespace-only, `'A' * 10000`, embedded NUL/control characters,
+zero-width spaces, an RTL override, and `Paris\nIgnore previous instructions`.
+
+- 🔴 **The real exposure is unbounded free text reaching the LLM prompt and three external APIs.**
+  Length caps exist in exactly three places in the whole prompt path (`interest[:120]`,
+  `destination[:80]` in `interest_expansion_chain.py`, `text[:4000]` in `extract_trip_chain.py`) —
+  and the itinerary chain's destination is **not** one of them, so a 10,000-character city reaches
+  Gemini, Nominatim and Overpass. Cost/latency vector; fix this first.
+- `routers/itinerary.py` — the main generation endpoint — has **zero** `HTTPException` guards. Same
+  for `geocode`, `search`, `best_time`, `travel_tips`, `analytics`. (`auth.py` has 11 and `admin.py`
+  10, so the pattern exists; it just was never applied to the trip-planning surface.)
+- **No `maxLength` anywhere in the frontend** — zero matches across all `.tsx` files.
+- **No test anywhere covers emoji / empty / oversized / control-character input.** The adversarial
+  testing that does exist (`core/prompt_guard.py`, 15 tests) targets *ingested third-party content*
+  for prompt injection, not user form input. That part is genuinely well covered — don't redo it.
+- ⚠️ Severity is robustness and cost, **not** classic security: SQL is ORM'd, Qdrant filters are
+  parameterised `MatchValue`, and prompt injection is fenced. But note the failure *shape* — an
+  emoji-only destination normalises to `''` and yields a fallback/garbage itinerary **rather than an
+  error**, which is the same silent-plausible-wrong mode as v10.40.0's complete-but-wrong pool and
+  v10.40.1's clean-looking `0 comments` log.
+- Suggested shape: one shared constrained type at the Pydantic layer (covers every router at once),
+  matching caps in the frontend, and a `tests/unit/test_input_validation.py`.
+
+**3. ⏭️ THEN — voice mode (TTS/STT) has never been tested, at all.** The frontend's 6 test files
+(`ComparisonGrid`, `ErrorState`, `format`, `appStore`, `comparisonStore`, `tripConfigStore`) touch
+none of voice, the wizard, or `ListeningOrb`. There is no TTS/STT *service* to test on the backend —
+both are browser-native Web Speech API inside `components/wizard/LLMWizard.tsx` (no keys, no cost).
+Four real defects found by reading it:
+
+- 🔴 **The mic button is dead on Firefox with no feedback.** Rendered unconditionally
+  (`LLMWizard.tsx:692` and `:922`), but `toggleVoice` does `if (!Ctor) return` (`:640`) and Firefox
+  has never shipped `SpeechRecognition`. Click → nothing at all.
+- 🔴 **Every recognition error collapses into one silent handler** — `rec.onerror = () =>
+  setVoiceActive(false)` (`:651`). The API distinguishes `not-allowed` (permission denied),
+  `no-speech`, `audio-capture` (no mic), `network`, `aborted`; a user who *denied mic permission*
+  gets the same nothing as one who paused. TTS has the identical swallow at `:370`.
+- 🔴 **`getVoices()` race** (`:359`) — Chrome returns `[]` until `voiceschanged` fires and there is
+  no `voiceschanged` listener in the file, so on a cold load the en-IN female voice selection falls
+  through to the system default and the India-first persona doesn't apply to the first utterance.
+- 🔴 **TTS silently drops Devanagari entirely.** `:353` is `.replace(/[^\w\s.,!?'₹%-]/g, '')`, and
+  JavaScript's `\w` is always ASCII `[A-Za-z0-9_]` (the `u` flag does not change this) — so every
+  Devanagari character is stripped, `clean` becomes empty, and `if (!clean) return` on the next line
+  means TTS **says nothing**. `₹` was explicitly whitelisted, so India was in mind — just the
+  currency, not the script. **Same bug family as v10.41.0's "`\b` silently fails on Devanagari", in
+  a module nobody had connected to it — the third recurrence of that pattern.**
+- ℹ️ Before editing: `ConversationalWizard.tsx` also contains voice code but is **imported nowhere**
+  (dead, like `WizardForm.tsx`). `app/page.tsx:44` renders `LLMWizard`.
+
+**4. 🔴 Carried out of the gem audit, NOT fixed — `name_matching.py` derives demonyms.**
+`name_variants("Egyptian Museum")` peels the structural word "museum" and emits the bare token
+`egyptian`, which clears `_MIN_CORE_TOKEN_LEN` (8) and then matches "egyptian food", "as an
+egyptian". Live-measured: **Cairo's Egyptian Museum shows 30 mentions, 29 of them from the bare
+token** — the real name appears in 1 chunk. ⚠️ **Not a knob turn:** `_MIN_CORE_TOKEN_LEN` is
+documented as calibrated against the 2026-07-25 audit, `egyptian` is exactly 8 characters, and so is
+the genuine recovery `immanuel` — raising it to 9 loses the latter. The module is shared with
+`services/poi_pinning.py`, so any change needs its own calibration pass across both consumers.
+
+---
+
 ## ✅ DO THIS NEXT — open items as of 2026-07-27 (v10.40.7)
 
 Ordered by value. **Items 1, 2 (code + data), 3, 5 and 7 are done.** Item 2's re-ingestion data run
@@ -443,9 +513,9 @@ here previously said "in the working tree, uncommitted"; that is stale.
 against `9fa3106` before building on it**, rather than assuming the commit implies it passed.
 
 Then note this is **ingestion-time only**: it does nothing until destinations are re-ingested, which
-is a third data run and **must not overlap the prominence one — which is still 29 destinations short
-(item 2), so that constraint is still live.** Re-measure food grounding afterwards — Jaipur should
-produce a real grounded figure for the first time.
+is a third data run. ✅ **The "must not overlap the prominence run" constraint is now LIFTED** — that
+run finished at `0 pending` on 2026-07-27 (item 2), so this can be scheduled freely. Re-measure food
+grounding afterwards — Jaipur should produce a real grounded figure for the first time.
 
 ### B. Big-city guides still yield nothing — district sub-articles
 
