@@ -4,11 +4,12 @@
 
 ## ✅ DO THIS NEXT — open items as of 2026-07-27 (v10.40.7)
 
-Ordered by value. **Items 1, 2 (code + data), 5 and 7 are done.** Item 2's re-ingestion data run
+Ordered by value. **Items 1, 2 (code + data), 3, 5 and 7 are done.** Item 2's re-ingestion data run
 finished 2026-07-27 with `0 pending` on the real Qdrant Cloud cluster — see the session block below
 for the last-mile bug it uncovered. The Resend email pipeline is now also confirmed working
-end-to-end (a real password-reset was triggered against prod and completed). 3 is blocked on the
-user; 4 and 6 are hygiene. Narrative and evidence for each is in the session blocks below.
+end-to-end (a real password-reset was triggered against prod and completed). Item 3's
+`PEXELS_API_KEY` is now set locally and on Railway, with a redeploy confirmed live. 4 and 6 remain
+— both are hygiene/blocked-on-user. Narrative and evidence for each is in the session blocks below.
 
 **1. ✅ DONE 2026-07-26 (v10.40.2) — the YouTube comment corpus is complete: 170/170 destinations.**
 The final 90 went through on a fresh Pacific quota day: 90 ingested, **13,477 comments**. Verified
@@ -210,11 +211,11 @@ API and its own change. **Don't re-try the two ideas already measured and reject
 above nodes made Delhi *worse* (10/14 → 9/14, losing Chandni Chowk), and relaxing the category cap
 to 0.35 gained nothing across three cities.
 
-**3. ⛔ Blocked on the user — `PEXELS_API_KEY`.**
-Unset on Railway *and* absent from `apps/api/.env`, `.env.example` and `apps/web/.env.local`, so
-there is nothing to copy from. Defaults to `""` in `core/config.py`, so day photos silently never
-load in production rather than erroring. Once supplied, set it the same way as the others (see the
-Railway notes below) and re-verify with a masked `variable list`.
+**3. ✅ DONE 2026-07-27 — `PEXELS_API_KEY` supplied and live.**
+Set in `apps/api/.env` for local dev and on Railway production via `railway variables --set`
+(verified present with a masked `variable list`). Railway service redeployed (`railway redeploy`)
+to pick up the new variable — confirmed `● Online` and `/health` returning 200 post-deploy. Day
+photos should no longer silently fail to load in production.
 
 ~~`RESEND_API_KEY`~~ — **✅ done 2026-07-25 (v10.38.3).** `wanderplanner.org` bought at Spaceship
 and verified with Resend (DKIM + return-path MX/SPF + DMARC live at the registrar);
