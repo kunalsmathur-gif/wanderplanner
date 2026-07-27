@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.41.0 (YouTube **narration** — transcripts + video descriptions — is a new price-grounding source, discovered for free from video IDs the comment backfill already stored, so it spends nothing against the 100/day `search.list` cap. Live-measured on Jaipur: comments carry **0** money-shaped chunks, narration carries **24**. Two real bugs fell out: transcripts were requested English-only, discarding the Hindi-only track most Indian vlogs actually have; and `\b` **silently fails on Devanagari** words ending in a matra, so `खाना`/`थाली` never matched while `होटल` did — 0 of 24 price-bearing Hindi chunks matched any food or stay keyword. Previous: 10.40.6 — the bare-substring keyword bug was in FIVE modules, not one — `"pub"` inside **"Public Garden"** was deleting kid-friendly places from family itineraries, and `"uk"` inside **"Sukhothai"** was pricing a moderate destination as premium; all three now share `core/keyword_match.py`. Previous: 10.40.4 — price grounding now matches the amount, not the blob — per-amount context scoping, plus a pre-existing bare-substring bug where FOOD's "eat" matched "great"; stay grounding accepts a single mention. Measured finding: a complete corpus is not a dense one — food grounding is corpus-limited, so the `_FOOD_MEALS_PER_DAY` calibration stays deferred, now with evidence. Previous: 10.40.3 — YouTube quota discipline: a 429/403 is now terminal rather than retried 3x against a 100/day cap, and all 12 standalone scripts use the app's `RedactionFilter` instead of bare `basicConfig` — which also closed a path where the API key could reach a JSONL state *file*, where no logging filter runs. Corrects a v10.40.1 claim: the cold-start gate does not over-subscribe the cap on its own. Previous: 10.40.2 — YouTube comment corpus complete at 170/170 destinations — 25,347 points verified on the cluster; and `mypy .` runs for the first time, going from an abort-before-checking to `Success: no issues found in 166 source files`, which surfaced three real bugs: a cancelled ingestion reading as a success, and two in the comparison path)
+**Version:** 10.41.1 (The prominence re-ingestion data run (v10.40.0's code) is now complete: **0 of 169 destinations pending**, verified on the real Qdrant Cloud cluster. Closing the last 9 surfaced a real bug: `ingest_osm_pois` returned `0` — instead of falling back to the existing stored count, like the guards immediately below it already do — when *every* Overpass mirror failed on *both* passes and the fetch came back fully empty, not just non-prominent. `scripts/reingest_prominence_ranking.py`'s state loader requires a truthy `osm_count` before its accept-after-3-attempts rule can fire, so a destination stuck on this path would retry forever; Medellin hit it three runs in a row before the fix. Also dropped the dead `overpass.openstreetmap.fr` mirror (403s on every request, a guaranteed-wasted rotation slot) and confirmed the Resend email pipeline end-to-end with a real password-reset request against production. Previous: 10.41.0 — YouTube **narration** — transcripts + video descriptions — is a new price-grounding source, discovered for free from video IDs the comment backfill already stored, so it spends nothing against the 100/day `search.list` cap. Live-measured on Jaipur: comments carry **0** money-shaped chunks, narration carries **24**. Two real bugs fell out: transcripts were requested English-only, discarding the Hindi-only track most Indian vlogs actually have; and `\b` **silently fails on Devanagari** words ending in a matra, so `खाना`/`थाली` never matched while `होटल` did — 0 of 24 price-bearing Hindi chunks matched any food or stay keyword. Previous: 10.40.6 — the bare-substring keyword bug was in FIVE modules, not one — `"pub"` inside **"Public Garden"** was deleting kid-friendly places from family itineraries, and `"uk"` inside **"Sukhothai"** was pricing a moderate destination as premium; all three now share `core/keyword_match.py`. Previous: 10.40.4 — price grounding now matches the amount, not the blob — per-amount context scoping, plus a pre-existing bare-substring bug where FOOD's "eat" matched "great"; stay grounding accepts a single mention. Measured finding: a complete corpus is not a dense one — food grounding is corpus-limited, so the `_FOOD_MEALS_PER_DAY` calibration stays deferred, now with evidence. Previous: 10.40.3 — YouTube quota discipline: a 429/403 is now terminal rather than retried 3x against a 100/day cap, and all 12 standalone scripts use the app's `RedactionFilter` instead of bare `basicConfig` — which also closed a path where the API key could reach a JSONL state *file*, where no logging filter runs. Corrects a v10.40.1 claim: the cold-start gate does not over-subscribe the cap on its own. Previous: 10.40.2 — YouTube comment corpus complete at 170/170 destinations — 25,347 points verified on the cluster; and `mypy .` runs for the first time, going from an abort-before-checking to `Success: no issues found in 166 source files`, which surfaced three real bugs: a cancelled ingestion reading as a success, and two in the comparison path)
 **Last Updated:** July 27, 2026  
 **Status:** Production-ready MVP
 
@@ -1510,6 +1510,42 @@ curl http://localhost:8000/health
 ---
 
 ## 14. Recent Changes (v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.41.1 Changes (July 2026) — Prominence re-ingestion complete; a last-mile data-loss-guard gap fixed
+
+**The re-ingestion data run started in v10.40.0 is finished: `0 of 169` destinations pending**,
+verified by reading the real Qdrant Cloud cluster back (`scripts/reingest_prominence_ranking.py`),
+not by trusting the run log. 160 destinations already carried a real prominence signal from prior
+runs; the remaining 9 — Amalfi, Jaisalmer, Lyon, Medellin, Montreal, Nice, Oslo, Pondicherry, Siem
+Reap — were re-run. Jaisalmer, Lyon, Montreal, Nice, Oslo, Pondicherry and Siem Reap all landed real
+prominence data (Lyon/Montreal/Nice/Oslo at 60/60). Amalfi and Medellin exhausted their 3-attempt
+budget against a persistently degraded Overpass response and were accepted on their existing stored
+data, per the script's own retry rule.
+
+**Dropped the dead `overpass.openstreetmap.fr` mirror** from `osm_overpass_fallback_mirrors`
+(`core/config.py`) — it answered 403 ("white-listed usages only") to every request, so it was a
+guaranteed-wasted slot in the mirror rotation during retries, worth removing before spending any
+destination's final attempt on it.
+
+**🔴 Real bug found and fixed while closing out the run: `ingest_osm_pois` (`scrapers/osm.py`)
+returned `0`, not the existing stored count, when Overpass failed completely.** The function already
+has two "don't overwrite good data with worse data" guards — one for a failed prominence pass with a
+healthy-looking-but-unranked broad-pass result, one for a thin/dominated fetch — but the very first
+check, `if not pois: return 0`, sat *before* both of them and short-circuited past them whenever
+*every* mirror failed on *both* passes (a fully empty fetch, not merely a non-prominent one).
+`scripts/reingest_prominence_ranking.py`'s state loader requires `record.get("osm_count")` to be
+truthy before its accept-after-3-attempts rule can fire (`osm_count and (prominent or attempts >= 3)`),
+so a destination hitting this path would retry **forever** rather than ever graduating — Medellin did,
+three consecutive runs, all recording `osm_count=0`. Fixed by extending the existing "keep existing
+data" guard to cover the fully-empty case too, returning `existing_count` instead of `0` when there is
+something to preserve, consistent with the guards already just below it in the same function. No
+Qdrant data was ever at risk (nothing is written on this path either way) — this was purely a
+retry-bookkeeping gap.
+
+**Resend email pipeline smoke-tested end-to-end against production for the first time.**
+`POST /api/auth/password/forgot` was triggered against `https://api-production-3e3e.up.railway.app`
+for a real account; Railway logs confirmed `POST https://api.resend.com/emails "HTTP/1.1 200 OK"`,
+and the recipient confirmed the email arrived and the reset link completed a real password change.
 
 ### v10.41.0 Changes (July 2026) — YouTube narration: the right medium for prices, and two bugs that were hiding it
 
