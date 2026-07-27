@@ -10,6 +10,23 @@ problem from v10.39.0 is fixed, the bottleneck had moved to the sentiment floor,
 returning a gem went **44% → 54%** (total gems 127 → 172) while total matched POIs *fell* 541 → 530
 as double-counts were removed. **Two items below came out of it.**
 
+> **📦 The audit tooling is committed — don't rebuild it.** This is the fourth gem audit, so it is
+> now a permanent entry point rather than a throwaway script:
+> - **`apps/api/scripts/audit_gems.py`** — full 168-destination read-only audit. Resumable, no
+>   flags, ~15 min against the live cluster. Prints zero-gem attribution buckets, so it answers
+>   *why* a destination returns nothing, not just that it does. ⚠️ It carries a replica of
+>   `gems.py`'s scoring loop and asserts `replica_matches_real` per destination — **if that flag
+>   ever goes False the shipped loop has changed and the script needs re-syncing before its
+>   diagnostics mean anything** (that check caught exactly this drift during v10.42.0).
+> - **`apps/api/scripts/calibrate_gem_lexicon.py`** — **run this before adding ANY word to the
+>   sentiment lexicon.** Scores each candidate's enrichment for creator context and prints an
+>   accept/reject verdict, which is what stops someone re-adding `great`/`nice`/`awesome` on
+>   intuition. Runs offline against the committed baseline in seconds.
+> - **`apps/api/scripts/baselines/`** (tracked, deliberately *not* under the gitignored
+>   `scripts/out/`): `gems_audit_20260727_pre_v10.42.0.jsonl` is the **pre-fix baseline and cannot
+>   be regenerated** — the scoring code has changed since. The post-fix run and the 1,274-window
+>   `gem_mention_windows_20260727.json` calibration corpus sit alongside it.
+
 **2. ⏭️ NEXT — input validation / "monkey testing" hardening.** Probed 2026-07-27; nothing is
 validated. `models/trip.py`'s `DestinationInput.city` is a bare `str` with no `min_length`,
 `max_length` or charset constraint, and **every one of these is accepted today**: emoji-only
