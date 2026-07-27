@@ -163,4 +163,89 @@ Full detail in `docs/GTM_STRATEGY.md` and `docs/MARKET_RESEARCH.md`.
 
 ---
 
+## Part 6 — "What actually broke, and how did you catch it?" (Top 10 Gotchas)
+
+**Why this section exists:** an honest build has bugs. What separates a serious product from a demo is whether they're found *before* users notice and whether the fix generalizes. All ten below shipped, were caught, root-caused, and fixed — with tests or a live re-verification behind each one. This spans the project's full history, not just one session. Full detail and exact version numbers are in `TECHNICAL_DOCUMENTATION.md` §14 if asked to go deeper on any single one.
+
+### Q17. What's the single biggest thing that was quietly broken, and how was it found?
+
+**RAG grounding returned nothing, in production, for weeks — with zero visible errors (v10.24.0).**
+- **In plain terms:** every itinerary is supposed to be grounded in real scraped travel content (Wikivoyage guides, traveller comments, map data) before the AI writes anything. After we moved our vector database to its production cloud host, every single one of those lookups was silently rejected — the AI fell back to writing itineraries purely from its own general training knowledge, exactly the hallucination risk RAG exists to prevent, and nobody could tell from using the product because the fallback chain catches errors gracefully and just returns *a* plan.
+- **Root cause:** the cloud version of our vector database refuses a filtered search (e.g. "only show me results for Rome") unless a special index exists on that field first. Our local testing environment doesn't enforce this rule, so it worked in every test we ran and broke only in the one place we weren't testing against — real production data.
+- **The fix:** the app now creates that index automatically on every startup, and the existing 3-tier fallback (cached itinerary → real-data skeleton → templated) means a similar future outage degrades gracefully instead of silently.
+- **How we found it:** while implementing an unrelated feature (on-demand ingestion), we ran a raw test query against the real production database for the first time and got an error where local testing had always returned success. In other words: this was found because we finally tested against the same system real users hit, not because anything alerted us.
+
+### Q18. Was the AI ever recommending places that don't actually exist?
+
+**Not hallucinated outright, but the safety net meant to prevent it was quietly broken for every single destination (v10.27.0).**
+- **In plain terms:** we verify every AI-suggested landmark against real map data and travel-guide text before showing it to a user (the "Harry Potter test": ask for wizard-themed stops in London, and the system should only ever show real, verifiable places). We tested this live and found it had never actually worked — two separate bugs meant almost no verification signal existed for any destination.
+- **Root cause 1:** our map-data scraper had a single result limit shared across all place categories, and in any city center, restaurants and cafes vastly outnumber landmarks — so the limit filled up entirely with food spots before a single museum or monument was ever fetched. London's already-collected map data was **100% restaurants and cafes, 0% landmarks.**
+- **Root cause 2:** independently, our travel-guide scraper had silently returned **zero usable text for every destination, for every user, since it was built** — the travel-guide website had quietly changed its page layout months earlier in a way that made our scraper walk past all the real content without erroring.
+- **The fix:** the map-data fetcher now pulls a much larger sample and round-robins fairly across categories instead of filling first-come-first-served; the guide scraper was patched to handle the new page layout with a fallback for the old one.
+- **How we found it:** by literally trying the advertised feature end-to-end against live data instead of trusting that "it was built, so it works" — the same discipline this whole list is built on.
+
+### Q19. Why would famous landmarks sometimes be missing from a city's recommendations entirely?
+
+**They were structurally impossible to fetch, not just outranked (v10.40.0).**
+- **In plain terms:** ask for a Kyoto itinerary and the AI might never mention Kiyomizu-dera or Kinkaku-ji — two of the most famous temples in Japan — no matter how good the ranking logic is, because they were never even in the pool of candidates to begin with.
+- **Root cause:** our map-data query only asked for one specific data *shape* (a single point on the map). But truly famous sites — temple complexes, the Red Fort in Delhi, Jama Masjid — are mapped as *areas* (multiple connected points), not single points. It's like searching a phonebook for "restaurants" but only reading listings that start with the letter A — anything filed differently is invisible to the search, not merely low-ranked.
+- **The fix:** added a second query that also asks for those area-shaped map features, restricted to ones carrying a "notability" tag (so it stays fast), and ranks by that notability so famous sites always win a slot over an ordinary café.
+- **How we found it:** a live spot-check comparing what should obviously be in a city's pool (Google "top Kyoto temples") against what we'd actually fetched — the gap was too glaring to be a ranking issue.
+
+### Q20. Have place names ever shown up in the wrong language, or "hidden gems" turned out to be something silly like a train station?
+
+**Both happened, from two separate bugs (v10.39.0).**
+- **In plain terms:** Tokyo's itinerary once showed 58 of 60 places by their Japanese-script name only (清水寺 instead of "Kiyomizu-dera") — unreadable to the traveller it was meant for. Separately, our "hidden gems" feature — which finds under-the-radar spots real travellers rave about online — was recommending things like Kadıköy metro station in Istanbul as a top find.
+- **Root cause 1:** our map data pulls a place's name in whatever language the local map contributors used, with no fallback to an English name even when one exists in the same dataset.
+- **Root cause 2:** the gem-scoring logic doesn't exclude transit infrastructure, so a train station mentioned constantly (because everyone passes through it) reads exactly like an enthusiastically-praised hidden find.
+- **The fix:** name lookup now prefers the English name field, falls back to a Latin-script fragment inside the local name if that's all there is, and keeps the original name as a secondary field; gem scoring now explicitly excludes train stations, airports, and any place literally named after the destination itself.
+- **How we found it:** an audit of every already-ingested destination for non-Latin-script names (17 of 170 were affected), and manually reading Istanbul's actual "hidden gems" output and noticing it was just transit stops.
+
+### Q21. Has a simple wording bug ever caused something more serious, like removing family-friendly places or mispricing a destination?
+
+**Five separate times, all the same root cause: matching a keyword as a raw substring instead of a whole word (v10.40.4–v10.40.6).**
+- **In plain terms:** our kid-safety filter is supposed to strip adult-oriented venues (bars, pubs) from family itineraries. Because it checked whether the word "pub" appeared *anywhere* inside a place's name, it also matched and deleted **"Public Garden"** and **"Public Library"** — genuinely kid-friendly places, silently removed with no error shown. The same style of bug separately made "Sukhothai" (a moderate-budget Thai destination) get priced as a premium destination, because the budget-tier code matched the two-letter code "uk" anywhere inside the name.
+- **Root cause:** several independent modules each used a plain "is this text contained in that text" check instead of "does this exact word appear," which quietly misfires on longer words that happen to contain a shorter flagged word.
+- **The fix:** all keyword matching in the codebase now goes through one shared, word-boundary-aware matching function, so the fix applies everywhere at once, not module-by-module.
+- **How we found it:** the first instance (food-related pricing) was found while investigating something unrelated; that success prompted a deliberate sweep of every similar keyword-matching call site in the codebase, which turned up four more.
+
+### Q22. Since WanderPlanner is India-first, has content in Hindi ever been accidentally ignored?
+
+**Yes, two compounding bugs meant Hindi-language travel-vlog content was functionally invisible for cost estimates (v10.41.0).**
+- **In plain terms:** we pull real cost information from what travel vloggers say out loud in their videos. For Indian destinations, most vloggers speak Hindi — but the system was only requesting English captions, so it silently discarded the Hindi track entirely, even when it was the only one available.
+- **Root cause 1:** the caption-fetching code only ever asked for the English-language track.
+- **Root cause 2:** even after fixing that, a lower-level text-matching rule (checking for a "whole word," not a substring — see Q21) is defined in a way that simply doesn't work correctly for Hindi script: a rule meant to say "match the whole word, not part of one" happens to fail specifically on Hindi words that end in certain vowel marks, so **zero of 24 genuinely price-bearing Hindi sentences** were recognized as being about food or lodging at all, even once fetched.
+- **The fix:** caption fetching now requests English **and** Hindi; the word-matching rule was rewritten to correctly recognize Hindi script characters as "part of a word," not just Latin letters.
+- **How we found it:** live-testing a Jaipur destination and noticing the fetched caption text mentioned costs but the system still reported "no price data found" — the number of matched chunks should have gone up, and it hadn't.
+
+### Q23. Has the system ever built an itinerary for entirely the wrong city?
+
+**Yes — three same-named cities were silently swapped for the wrong one, and it wasn't caught by our main quality check (v10.37.0).**
+- **In plain terms:** asking for "Austin" returned data for a ~150-person former mining town in Nevada, not Austin, Texas. "La Paz" returned Mexico's La Paz, not Bolivia's capital. "Valencia" returned a city in Venezuela instead of Spain. All three looked completely fine to our automatic data-quality check, which only counts *how much* data a destination has, never *whether it's the right city*.
+- **Root cause:** our free geocoding service picks a "best guess" match for an ambiguous place name, and for these three, its best guess was a different, real place that happens to share the exact name.
+- **The fix:** added a manual override list forcing these specific, known-ambiguous names to the correct city, plus new tests locking that behavior in; also wiped and re-fetched the wrong-city data so it couldn't silently persist.
+- **How we found it:** manually spot-checking destinations that had *passed* our automatic quality check, cross-referencing the country each one geocoded to against where we expected it to be — a check specifically designed to catch what the automatic count-only gate structurally cannot.
+
+### Q24. Has a "successful-looking" retry ever actually been quietly failing forever?
+
+**Yes — a retry-tracking bug meant one destination would have retried an unfixable failure indefinitely, never marked done (v10.41.1).**
+- **In plain terms:** our re-ranking pipeline is supposed to give up gracefully — and keep whatever good data it already had — after 3 failed attempts, so a single stubborn destination can't stall a batch job forever. One specific failure mode (the external map-data service refusing every request, on every attempt) skipped that safety net entirely and would have retried the same destination on every future run, forever, never reporting success even though nothing was actually going wrong with its stored data.
+- **Root cause:** the "give up after 3 tries" logic only fires if the attempt reports *some* data was fetched. But when the external service fails completely (rather than returning thin or low-quality data), the code returned "0 fetched" instead of "kept what was already there" — which looks identical to a real failure to the bookkeeping logic, so the 3-strikes rule never got to fire.
+- **The fix:** that code path now reports the existing preserved data instead of zero, matching how two very similar, already-existing safety checks in the same function behave.
+- **How we found it:** while finishing a routine data-refresh job, one specific destination (Medellin) kept coming back as "still pending" run after run with an identical error — a pattern real bugs make and random bad luck doesn't.
+
+### Q25. Has a security-relevant setting ever been silently inactive in production without anyone noticing?
+
+**Yes — two production safety checks (a strict cookie-security rule and a secret-key strength check) were silently never running at all, for the app's entire time in production (v10.38.2).**
+- **In plain terms:** the checks were written correctly and passed every local test — but they only activate by reading one specific "are we in production?" signal, and our production hosting platform never actually sets that exact signal; it sets two related ones instead. The checks always concluded "we must not be in production" and skipped themselves.
+- **Root cause:** the code checked for one environment variable name; the hosting platform uses different ones.
+- **The fix:** the "are we in production?" check now recognizes all three variable names hosting platforms commonly use.
+- **How we found it:** a deliberate audit of every environment-dependent guard in the codebase against what the actual hosting platform sets — not triggered by an incident, a precaution that happened to catch a real gap before it caused one.
+
+### Q26. Bottom line — what's the pattern across all ten?
+
+Every single one of these was **invisible to the user in the moment** — no error message, no crash, just quietly worse or wrong output — and every single one was caught by the same discipline: **testing against real production data/services instead of trusting that local tests passing means it works, and periodically auditing "does the passing case actually look right", not just "did the check pass."** That's also why an eval harness and this kind of retrospective sweep are treated as core engineering work here, not overhead.
+
+---
+
 *Maintainer: Founder/PM · Last updated: 2026-07-27 · Companion to `docs/system-design.md`, `docs/rag-strategy.md`, `docs/scaling-tech-challenges.md`, `docs/GTM_STRATEGY.md`, `docs/MARKET_RESEARCH.md`.*
