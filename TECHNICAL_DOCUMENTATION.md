@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.43.0 (Input validation — the "monkey testing" pass. Nothing a user typed was bounded: `DestinationInput.city` was a bare `str`, so an empty string, `🎉🎉🎉`, `A` × 10,000, NUL bytes, zero-width spaces and an RTL override were all accepted and forwarded to the Gemini prompt, Nominatim and Overpass. New `core/validation.py` gives every user-typed field a constrained type that **rejects rather than truncates** — a silently trimmed value produces a plausible-but-wrong itinerary, the same failure shape as v10.40.0's complete-but-wrong POI pool. Four real defects surfaced that the probe had not listed: `TripConfig.dates` was unbounded and `_mock_itinerary` builds one dict per day, so `end: "2999-01-01"` was ~355,000 iterations from a single request body; unparseable dates were swallowed by a bare `except` and replaced with a hard-coded default, silently planning a different month than the user asked for; `hops` had claimed "max 5" in a comment for months without enforcing it, and each hop is its own cold-start Overpass + Wikivoyage + embedding run; and `_tips_cache` is a process-lifetime dict keyed on the raw destination string. ZWJ/ZWNJ are deliberately preserved through normalisation while every other format character is stripped — they are load-bearing in Devanagari conjuncts, and this is the **fourth** bug in this codebase's character-rule family. Deliberately *not* prompt-injection work: `core/prompt_guard.py` already covers that and was not touched. 84 new tests; suite **806 passed / 6 skipped**. Previous: 10.42.0 — First full-corpus hidden-gem audit — all **168 destinations**, measured against the live cluster with a diagnostic replica cross-checked against the shipped function on every one. v10.39.0's pool problem is fixed (Delhi now matches Chandni Chowk, Red Fort, Jama Masjid, India Gate), and the bottleneck had moved to the **sentiment floor** — which was rejecting *neutral*, not negative: Laplace smoothing puts a mention with no lexicon word in range at exactly 0.5, just under the 0.55 floor, and **75% of rejections scored exactly that**. The lexicon fired on only 29% of 1,274 real mention windows. Expanded by measuring each candidate word against the corpus — and the result inverts intuition, because YouTube enthusiasm is mostly aimed at the *video*: `great`, `nice`, `awesome`, `helpful` and `wonderful` are all creator-directed (1.7-4.6x enrichment) and are **deliberately excluded**, while `clean`, `delicious`, `historic`, `must` and `friendly` are place-directed. Also fixed cross-POI mention mis-attribution (Cairo's *Grand* Egyptian Museum was crediting the Egyptian Museum, and Seoul's Lotte World Tower the reverse) and collapsed 24 identically-named duplicate POIs. Destinations returning a gem **44% → 54%**, total gems **127 → 172**, while total matched POIs *fell* 541 → 530 as double-counts were removed. Previous: 10.41.1 — The prominence re-ingestion data run (v10.40.0's code) is now complete: **0 of 169 destinations pending**, verified on the real Qdrant Cloud cluster. Closing the last 9 surfaced a real bug: `ingest_osm_pois` returned `0` — instead of falling back to the existing stored count, like the guards immediately below it already do — when *every* Overpass mirror failed on *both* passes and the fetch came back fully empty, not just non-prominent. `scripts/reingest_prominence_ranking.py`'s state loader requires a truthy `osm_count` before its accept-after-3-attempts rule can fire, so a destination stuck on this path would retry forever; Medellin hit it three runs in a row before the fix. Also dropped the dead `overpass.openstreetmap.fr` mirror (403s on every request, a guaranteed-wasted rotation slot) and confirmed the Resend email pipeline end-to-end with a real password-reset request against production. Previous: 10.41.0 — YouTube **narration** — transcripts + video descriptions — is a new price-grounding source, discovered for free from video IDs the comment backfill already stored, so it spends nothing against the 100/day `search.list` cap. Live-measured on Jaipur: comments carry **0** money-shaped chunks, narration carries **24**. Two real bugs fell out: transcripts were requested English-only, discarding the Hindi-only track most Indian vlogs actually have; and `\b` **silently fails on Devanagari** words ending in a matra, so `खाना`/`थाली` never matched while `होटल` did — 0 of 24 price-bearing Hindi chunks matched any food or stay keyword. Previous: 10.40.6 — the bare-substring keyword bug was in FIVE modules, not one — `"pub"` inside **"Public Garden"** was deleting kid-friendly places from family itineraries, and `"uk"` inside **"Sukhothai"** was pricing a moderate destination as premium; all three now share `core/keyword_match.py`. Previous: 10.40.4 — price grounding now matches the amount, not the blob — per-amount context scoping, plus a pre-existing bare-substring bug where FOOD's "eat" matched "great"; stay grounding accepts a single mention. Measured finding: a complete corpus is not a dense one — food grounding is corpus-limited, so the `_FOOD_MEALS_PER_DAY` calibration stays deferred, now with evidence. Previous: 10.40.3 — YouTube quota discipline: a 429/403 is now terminal rather than retried 3x against a 100/day cap, and all 12 standalone scripts use the app's `RedactionFilter` instead of bare `basicConfig` — which also closed a path where the API key could reach a JSONL state *file*, where no logging filter runs. Corrects a v10.40.1 claim: the cold-start gate does not over-subscribe the cap on its own. Previous: 10.40.2 — YouTube comment corpus complete at 170/170 destinations — 25,347 points verified on the cluster; and `mypy .` runs for the first time, going from an abort-before-checking to `Success: no issues found in 166 source files`, which surfaced three real bugs: a cancelled ingestion reading as a success, and two in the comparison path)
+**Version:** 10.44.0 (Derived name cores are now tested for being ordinary words instead of merely long — and the bug was an order of magnitude bigger than reported. It was filed as a demonym issue: `name_variants("Egyptian Museum")` peels the structural word and emits the bare token `egyptian`, which matched "egyptian food", giving Cairo's Egyptian Museum 30 mentions of which 29 were wrong. The same peel does it to **any** POI whose name starts with a common word or with its own city — measured on the live corpus, **Singapore Zoo had 100 mentions and now has 2, Edinburgh Castle 84 → 2, and Melbourne Museum / Melbourne Park / Melbourne City Synagogue were each absorbing the whole of Melbourne's comment volume at 59-61**. The threshold could not be raised out of it: `egyptian` is exactly 8 characters and so is `immanuel`, the genuine recovery it would cost. Length was standing in for the real question — *is this token an ordinary English word or is it specific to this place?* — which is now asked directly against a word list generated from the embedding model's own WordPiece vocabulary, committed as data so the runtime path never loads a model. A second guard in `services/gems.py` drops a variant equal to the destination's own name, which the word list cannot catch for destinations absent from it (Queenstown, Hoi An, Abu Dhabi). Across all 168 destinations: matched POIs **530 → 472**, crowd favourites **87 → 50**, gems 172 → 166, destinations returning a gem 90 → 88. Every one of those falls is a mis-attribution removed, verified POI by POI. Also corrects the TODO's framing: `poi_pinning.py` imports only `normalize_name`, so this guard has exactly one production consumer, and the "needs calibration across both consumers" caution did not apply. Previous: 10.43.0 — Input validation — the "monkey testing" pass. Nothing a user typed was bounded: `DestinationInput.city` was a bare `str`, so an empty string, `🎉🎉🎉`, `A` × 10,000, NUL bytes, zero-width spaces and an RTL override were all accepted and forwarded to the Gemini prompt, Nominatim and Overpass. New `core/validation.py` gives every user-typed field a constrained type that **rejects rather than truncates** — a silently trimmed value produces a plausible-but-wrong itinerary, the same failure shape as v10.40.0's complete-but-wrong POI pool. Four real defects surfaced that the probe had not listed: `TripConfig.dates` was unbounded and `_mock_itinerary` builds one dict per day, so `end: "2999-01-01"` was ~355,000 iterations from a single request body; unparseable dates were swallowed by a bare `except` and replaced with a hard-coded default, silently planning a different month than the user asked for; `hops` had claimed "max 5" in a comment for months without enforcing it, and each hop is its own cold-start Overpass + Wikivoyage + embedding run; and `_tips_cache` is a process-lifetime dict keyed on the raw destination string. ZWJ/ZWNJ are deliberately preserved through normalisation while every other format character is stripped — they are load-bearing in Devanagari conjuncts, and this is the **fourth** bug in this codebase's character-rule family. Deliberately *not* prompt-injection work: `core/prompt_guard.py` already covers that and was not touched. 84 new tests; suite **806 passed / 6 skipped**. Previous: 10.42.0 — First full-corpus hidden-gem audit — all **168 destinations**, measured against the live cluster with a diagnostic replica cross-checked against the shipped function on every one. v10.39.0's pool problem is fixed (Delhi now matches Chandni Chowk, Red Fort, Jama Masjid, India Gate), and the bottleneck had moved to the **sentiment floor** — which was rejecting *neutral*, not negative: Laplace smoothing puts a mention with no lexicon word in range at exactly 0.5, just under the 0.55 floor, and **75% of rejections scored exactly that**. The lexicon fired on only 29% of 1,274 real mention windows. Expanded by measuring each candidate word against the corpus — and the result inverts intuition, because YouTube enthusiasm is mostly aimed at the *video*: `great`, `nice`, `awesome`, `helpful` and `wonderful` are all creator-directed (1.7-4.6x enrichment) and are **deliberately excluded**, while `clean`, `delicious`, `historic`, `must` and `friendly` are place-directed. Also fixed cross-POI mention mis-attribution (Cairo's *Grand* Egyptian Museum was crediting the Egyptian Museum, and Seoul's Lotte World Tower the reverse) and collapsed 24 identically-named duplicate POIs. Destinations returning a gem **44% → 54%**, total gems **127 → 172**, while total matched POIs *fell* 541 → 530 as double-counts were removed. Previous: 10.41.1 — The prominence re-ingestion data run (v10.40.0's code) is now complete: **0 of 169 destinations pending**, verified on the real Qdrant Cloud cluster. Closing the last 9 surfaced a real bug: `ingest_osm_pois` returned `0` — instead of falling back to the existing stored count, like the guards immediately below it already do — when *every* Overpass mirror failed on *both* passes and the fetch came back fully empty, not just non-prominent. `scripts/reingest_prominence_ranking.py`'s state loader requires a truthy `osm_count` before its accept-after-3-attempts rule can fire, so a destination stuck on this path would retry forever; Medellin hit it three runs in a row before the fix. Also dropped the dead `overpass.openstreetmap.fr` mirror (403s on every request, a guaranteed-wasted rotation slot) and confirmed the Resend email pipeline end-to-end with a real password-reset request against production. Previous: 10.41.0 — YouTube **narration** — transcripts + video descriptions — is a new price-grounding source, discovered for free from video IDs the comment backfill already stored, so it spends nothing against the 100/day `search.list` cap. Live-measured on Jaipur: comments carry **0** money-shaped chunks, narration carries **24**. Two real bugs fell out: transcripts were requested English-only, discarding the Hindi-only track most Indian vlogs actually have; and `\b` **silently fails on Devanagari** words ending in a matra, so `खाना`/`थाली` never matched while `होटल` did — 0 of 24 price-bearing Hindi chunks matched any food or stay keyword. Previous: 10.40.6 — the bare-substring keyword bug was in FIVE modules, not one — `"pub"` inside **"Public Garden"** was deleting kid-friendly places from family itineraries, and `"uk"` inside **"Sukhothai"** was pricing a moderate destination as premium; all three now share `core/keyword_match.py`. Previous: 10.40.4 — price grounding now matches the amount, not the blob — per-amount context scoping, plus a pre-existing bare-substring bug where FOOD's "eat" matched "great"; stay grounding accepts a single mention. Measured finding: a complete corpus is not a dense one — food grounding is corpus-limited, so the `_FOOD_MEALS_PER_DAY` calibration stays deferred, now with evidence. Previous: 10.40.3 — YouTube quota discipline: a 429/403 is now terminal rather than retried 3x against a 100/day cap, and all 12 standalone scripts use the app's `RedactionFilter` instead of bare `basicConfig` — which also closed a path where the API key could reach a JSONL state *file*, where no logging filter runs. Corrects a v10.40.1 claim: the cold-start gate does not over-subscribe the cap on its own. Previous: 10.40.2 — YouTube comment corpus complete at 170/170 destinations — 25,347 points verified on the cluster; and `mypy .` runs for the first time, going from an abort-before-checking to `Success: no issues found in 166 source files`, which surfaced three real bugs: a cancelled ingestion reading as a success, and two in the comparison path)
 **Last Updated:** July 28, 2026  
 **Status:** Production-ready MVP
 
@@ -1509,7 +1509,122 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.44.0 Changes (July 2026) — A derived name core has to be a name, not a word
+
+`services/name_matching.py` builds the surface forms of a POI name that a
+traveller might type. Peeling the structural word off "Egyptian Museum" leaves
+the bare token `egyptian`, and the guard meant to catch that was a length
+threshold: a derived single token had to be 8+ characters. `egyptian` is 8.
+
+**The threshold cannot be raised out of the problem, which is what made this
+worth doing properly.** `immanuel` — the genuine recovery from "Fort Immanuel",
+recorded in the module's own docstring — is also exactly 8. Length was never
+the real question; it was a proxy for *is this token an ordinary English word
+or is it specific to this place?* The fix asks that question directly.
+
+**🔴 The reported scope was a tenth of the real one.** The item was filed from
+one observation: Cairo's Egyptian Museum showing 30 mentions, 29 of them from
+the bare token. Measuring the whole corpus first (9,892 POIs, all 168
+destinations) showed `egyptian` is a mid-sized instance of a much larger class
+— **every POI whose name begins with its own city**, in that city's own
+corpus, where the city name is by construction the most frequent token there:
+
+| POI | mentions before | after |
+|---|---|---|
+| Singapore City Gallery | 100 | 1 |
+| Singapore Zoo | 100 | 2 |
+| Edinburgh Castle | 84 | 2 |
+| Melbourne City Synagogue | 61 | 2 |
+| Melbourne Museum | 59 | 0 |
+| Melbourne Park | 59 | 0 |
+| Museum of Copenhagen | 62 | 5 |
+| Amsterdam Museum | 49 | 0 |
+| Valencia Cathedral | 47 | 0 |
+| Egyptian Museum | 30 | 1 |
+| Grand Egyptian Museum | 29 | 0 |
+
+(100 is the mention ceiling, so the two Singapore entries were saturated.)
+Melbourne is the clearest illustration: three different POIs were each
+independently credited with the destination's entire comment volume.
+
+**The word list.** A token that survives in a 30,522-entry WordPiece
+vocabulary *as a whole word*, rather than being split into fragments, is by
+construction a frequent English word — that vocabulary is built by frequency
+over Wikipedia and BooksCorpus. `core/embeddings.py` already loads the model
+that carries it, so `scripts/generate_common_words.py` extracts the 8,366
+whole words of 8+ characters into `services/data/common_english_words.txt`,
+which is committed. **The runtime path reads a text file and never loads a
+model** — `name_matching.py` stays pure-CPU, as its docstring has always
+claimed. The length guard is kept as a cheap first gate, so both rules apply.
+
+Of 521 distinct derived single-token cores in the corpus, **144 are common
+words** and are now rejected. They fall into two groups, both matching things
+that are not the POI: ordinary words (`national` — 20 POIs — `botanical`,
+`government`, `parliament`, `auditorium`, `military`) and place names at the
+wrong scale (`egyptian`, `japanese`, `melbourne`, `singapore`, `edinburgh`,
+`kensington`).
+
+**A second guard, in `services/gems.py`, because the word list cannot close
+the class.** A destination absent from the vocabulary — Queenstown, Hoi An,
+Abu Dhabi, Chiang Mai, Rio de Janeiro, Kuala Lumpur, Marrakech — still had its
+POIs peeling down to the bare town name. Only `compute_gem_intel_sync` knows
+which destination it is looking at, so that is where a variant equal to the
+destination is dropped. It sits directly beside the existing rule that
+excludes a POI *named* the destination: same mis-attribution, one word wider.
+It accounted for 14 of the 58 matched-POI removals on its own.
+
+**Measured across all 168 destinations** (the committed
+`scripts/audit_gems.py`, against the committed post-v10.42.0 baseline; the
+corpus was not re-ingested in between, and `n_candidates` is identical at
+9,556 in both runs, which is the control that says only matching changed):
+
+| | baseline | word list | + destination guard |
+|---|---|---|---|
+| total matched POIs | 530 | 486 | **472** |
+| crowd favourites | 87 | 64 | **50** |
+| total gems | 172 | 166 | **166** |
+| destinations returning ≥1 gem | 90 | 88 | **88** |
+| replica/real mismatches | 0 | 0 | **0** |
+
+**Every number moves down, and that is the result.** A POI with 100 fabricated
+mentions ranks as a *crowd favourite* by definition, which is why that column
+falls hardest — 37 of the 87 were artefacts. Three destinations lost their
+only gem, and all three were gems solely by way of a common-word core:
+Colombo's "Independence Square", Ooty's "Government Museum", Prague's
+"National Theatre". One destination gained: Melbourne's City Synagogue, whose
+mention count fell from 61 to 2 and moved it out of the crowd band into the
+gem band — the honest classification it should always have had.
+
+⚠️ **Known cost, stated rather than buried: fame and vocabulary membership
+correlate.** `guggenheim`, `griffith` and `hollywood` are real identities
+travellers use bare, and they are in the vocabulary *because* they are famous,
+so they are rejected too. For a hidden-**gem** feature that is close to
+harmless — a POI famous enough to be a BERT token is not a hidden gem — but it
+is a genuine recall loss, and the right response if it ever matters is a
+curated exception list, not a lower threshold. The asymmetry that justifies
+being conservative: a wrong variant *corrupts* the output, while a missing one
+falls back to matching the full name.
+
+⚠️ **Measurement caveat, recorded because it nearly became a wrong claim:**
+the audit's `top_matches` holds only the top 5 POIs per destination, so a POI
+disappearing from that list is not the same as its mentions going to zero. Of
+42 POIs that dropped by 3+, **35 are directly measured and 7 are unknown**
+(San Francisco Zoo and São Paulo Cathedral among them) — those are not quoted
+as zeroes above.
+
+**Corrects the TODO's own framing.** It cautioned that "the module is shared
+with `services/poi_pinning.py`, so any change needs its own calibration pass
+across both consumers". `poi_pinning.py` imports only `normalize_name`, which
+is untouched here; `name_variants` and the peel guard have exactly one
+production consumer, `services/gems.py`. The shared-module caution was real
+about the module and wrong about the function.
+
+24 new tests (both directions: the rejections *and* Devanagari-adjacent
+transliterations like `koutoubia`, `dolmabahce`, `matangeshwar` that a
+suffix-based rule would have taken with it). Suite **830 passed / 6 skipped /
+0 failed**; ruff and mypy clean.
 
 ### v10.43.0 Changes (July 2026) — Input validation: nothing a user typed was bounded
 

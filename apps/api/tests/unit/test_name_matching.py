@@ -9,7 +9,11 @@ roughly as many wrong matches as right ones.
 """
 from __future__ import annotations
 
+import pytest
+
 from services.name_matching import (
+    COMMON_WORDS_PATH,
+    MIN_COMMON_WORD_LEN,
     build_mention_pattern,
     name_variants,
     normalize_name,
@@ -110,6 +114,93 @@ class TestDistinctivenessGuard:
         """'Hawa Mahal' must match as a whole; 'hawa' alone would match
         'hawa hawai' and any other passing use."""
         assert "hawa" not in name_variants("Hawa Mahal")
+
+
+class TestCommonWordGuard:
+    """A derived single-token core must not be an ordinary English word.
+
+    Length alone could not express this: the failing case (`egyptian`) and the
+    genuine recovery it must not cost us (`immanuel`) are both exactly 8
+    characters, so no threshold separates them. See the module docstring.
+    """
+
+    def test_demonym_core_is_rejected(self):
+        """Live-measured 2026-07-27: Cairo's Egyptian Museum showed 30
+        mentions, 29 of them from the bare token — 'egyptian food', 'as an
+        egyptian'. The real name appeared in one chunk."""
+        assert "egyptian" not in name_variants("Egyptian Museum")
+        assert not _matches("Egyptian Museum", "the egyptian food here is unreal")
+
+    def test_the_full_name_still_matches(self):
+        """Rejecting the derived core must not cost the real mention — this is
+        the one chunk that was genuinely about the museum."""
+        assert _matches("Egyptian Museum", "we spent a morning in the Egyptian Museum")
+
+    @pytest.mark.parametrize(
+        "name,common_core",
+        [
+            ("National Museum", "national"),      # 20 POIs across the corpus
+            ("Botanical Gardens", "botanical"),
+            ("Japanese Garden", "japanese"),
+            ("Himalayan Cafe", "himalayan"),
+            ("Military Museum", "military"),
+            ("University Stadium", "university"),
+        ],
+    )
+    def test_ordinary_words_are_rejected(self, name: str, common_core: str):
+        assert common_core not in name_variants(name)
+
+    @pytest.mark.parametrize(
+        "name,common_core",
+        [
+            ("Melbourne Museum", "melbourne"),
+            ("Singapore Zoo", "singapore"),
+            ("Edinburgh Castle", "edinburgh"),
+            ("Kensington Gardens", "kensington"),
+        ],
+    )
+    def test_place_names_at_the_wrong_scale_are_rejected(self, name: str, common_core: str):
+        """Every mention of 'Edinburgh' is about the city, not the castle.
+        Matching the bare core credits the city's whole comment volume to one
+        POI — the same mis-attribution as the demonym case, one level up."""
+        assert common_core not in name_variants(name)
+
+    @pytest.mark.parametrize(
+        "name,core",
+        [
+            ("Fort Immanuel", "immanuel"),        # 8 chars, same as 'egyptian'
+            ("Matangeshwar Temple", "matangeshwar"),
+            ("Sitaramji Temple", "sitaramji"),
+            ("Brindavan Gardens", "brindavan"),   # -an ending, not a demonym
+            ("Koutoubia Mosque", "koutoubia"),
+            ("Dolmabahce Palace", "dolmabahce"),
+        ],
+    )
+    def test_place_specific_cores_are_kept(self, name: str, core: str):
+        """The other half of the guard. A charset- or suffix-based rule would
+        have taken most of these with it."""
+        assert core in name_variants(name)
+
+    def test_multi_token_cores_are_exempt(self):
+        """Two words together are distinctive even when one is common —
+        'marine drive' survives although 'marine' would not."""
+        assert "marine drive" in name_variants("Marine Drive, Kochi")
+
+    def test_a_name_a_mapper_gave_is_never_second_guessed(self):
+        """The guard applies only to forms *we* derive. If OSM says a place is
+        called 'National', that is its name, and the generic-name list is the
+        rule that governs it — not this one."""
+        assert name_variants("National") == ["national"]
+
+    def test_word_list_is_present_and_sane(self):
+        """A missing or truncated list would silently restore every demonym as
+        a search term, which reads as a working feature returning inflated
+        counts. It ships with the package (Dockerfile `COPY . .`)."""
+        words = COMMON_WORDS_PATH.read_text(encoding="utf-8").split()
+        assert len(words) > 5_000
+        assert all(w.isalpha() and w.islower() for w in words)
+        assert all(len(w) >= MIN_COMMON_WORD_LEN for w in words)
+        assert "egyptian" in words and "immanuel" not in words
 
 
 class TestMentionPattern:

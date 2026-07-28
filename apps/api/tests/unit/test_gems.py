@@ -421,6 +421,35 @@ class TestNameMatching:
         intel = self._run(pois, chunks, "Khajuraho")
         assert intel["gems"] == []
 
+    def test_demonym_core_does_not_absorb_the_corpus(self):
+        """Cairo live (2026-07-27): 'Egyptian Museum' showed 30 mentions, 29
+        of them from the bare token peeled off its own name."""
+        pois = [_poi("Egyptian Museum")]
+        chunks = [_chunk("the egyptian food is amazing and the people are lovely")]
+        intel = self._run(pois, chunks, "Cairo")
+        assert intel["gems"] == []
+        assert intel["crowd_favourites"] == []
+
+    def test_poi_starting_with_the_destination_name_is_not_the_destination(self):
+        """The other half of the same mis-attribution, and the reason the word
+        list alone is not enough: 'Queenstown Gardens' peels to the bare town
+        name, which every comment says. Live-measured on destinations the word
+        list *does* cover: Singapore Zoo 100 mentions -> 2, Edinburgh Castle
+        84 -> 2, Melbourne Museum 59 -> 0."""
+        pois = [_poi("Queenstown Gardens")]
+        chunks = [_chunk("queenstown is a lovely quiet place to spend a week")]
+        intel = self._run(pois, chunks, "Queenstown")
+        assert intel["gems"] == []
+        assert intel["crowd_favourites"] == []
+
+    def test_the_full_name_still_matches_in_its_own_destination(self):
+        """Dropping the bare-destination variant must not cost the real
+        mention — the POI is still findable by the name it actually has."""
+        pois = [_poi("Queenstown Gardens")]
+        chunks = [_chunk("queenstown gardens is a lovely quiet find, so beautiful")]
+        intel = self._run(pois, chunks, "Queenstown")
+        assert [g["name"] for g in intel["gems"]] == ["Queenstown Gardens"]
+
 
 class TestNonGemPoiTypes:
     def _run(self, pois, chunks, destination="Phuket"):

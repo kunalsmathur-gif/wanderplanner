@@ -368,6 +368,19 @@ def compute_gem_intel_sync(destination: str) -> dict:
         # the honest outcome: this matcher works in one alphabet.
         variants = name_variants(name)
         variants += [v for v in name_variants(poi.get("name_local") or "") if v not in variants]
+
+        # The other half of the destination-identity rule above. Peeling a
+        # structural word off "Queenstown Gardens" leaves the bare token
+        # "queenstown", which matches every comment that names the town — so a
+        # POI merely *starting* with the destination absorbed the whole
+        # corpus, exactly as a POI *called* the destination did. Measured
+        # 2026-07-28: name_matching's common-word guard catches this wherever
+        # the destination is an ordinary English word or a well-known city
+        # (Singapore Zoo 100 mentions -> 2, Edinburgh Castle 84 -> 2), but it
+        # cannot catch destinations absent from that list, and only this
+        # function knows which destination it is looking at.
+        variants = [v for v in variants if v != destination_norm]
+
         pattern = build_mention_pattern(variants)
         if pattern is None:
             continue

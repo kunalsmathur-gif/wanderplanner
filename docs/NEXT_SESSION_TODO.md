@@ -94,6 +94,47 @@ documented as calibrated against the 2026-07-25 audit, `egyptian` is exactly 8 c
 the genuine recovery `immanuel` — raising it to 9 loses the latter. The module is shared with
 `services/poi_pinning.py`, so any change needs its own calibration pass across both consumers.
 
+✅ **DONE 2026-07-28 — shipped as v10.44.0.** Full write-up in `TECHNICAL_DOCUMENTATION.md` §14
+v10.44.0 and `docs/system-design.md` §16. The guard now tests whether a derived single-token core is
+an *ordinary English word* rather than only whether it is long enough, against a committed word list
+generated from the embedding model's WordPiece vocabulary (`scripts/generate_common_words.py` →
+`services/data/common_english_words.txt`; read from disk, no model at runtime). Suite **830 passed /
+6 skipped**, ruff + mypy clean.
+
+**Two corrections to the framing above, both worth internalising:**
+
+- 🔴 **The scope was a tenth of the real bug.** It was filed from one observation (Cairo, 29 wrong
+  mentions). Measuring the class *before* sizing the fix — 9,892 POIs, all 168 destinations —
+  showed `egyptian` is a mid-sized instance of a much larger one: **any POI whose name begins with
+  its own city**, in that city's corpus, where the city name is the most frequent token by
+  construction. **Singapore Zoo 100 mentions → 2, Edinburgh Castle 84 → 2**, and Melbourne Museum /
+  Melbourne Park / Melbourne City Synagogue each independently absorbing Melbourne's entire comment
+  volume at 59-61.
+- **"The module is shared with `poi_pinning.py`" was true of the module and wrong about the
+  function.** `poi_pinning.py` imports only `normalize_name`, which is untouched; `name_variants`
+  and its guard have exactly one production consumer. That caution added work that did not exist.
+
+**Results across all 168 destinations** (committed `audit_gems.py` vs the committed post-v10.42.0
+baseline; `n_candidates` identical at 9,556 — the control saying only matching changed): matched
+POIs 530 → **472**, crowd favourites 87 → **50**, gems 172 → 166, destinations returning a gem
+90 → 88, replica mismatches 0. Crowd favourites fall hardest because a POI with 100 fabricated
+mentions ranks as one *by definition*. Three destinations lost their only gem and all three were
+gems solely via a common-word core (Colombo "Independence Square", Ooty "Government Museum",
+Prague "National Theatre"); Melbourne gained one.
+
+**Carry forward:**
+
+- ⚠️ **Fame and vocabulary membership correlate** — `guggenheim`, `griffith` and `hollywood` are
+  rejected along with the demonyms, because they are in the vocabulary *because* they are famous.
+  Acceptable for a hidden-*gem* feature; if it ever matters the fix is a curated exception list,
+  **not** a lower threshold. A wrong variant corrupts the output while a missing one falls back to
+  the full name — that asymmetry is why the guard is deliberately conservative.
+- ⚠️ **`audit_gems.py`'s `top_matches` holds only the top 5 per destination**, so a POI vanishing
+  from it is not the same as its mentions reaching zero. Of 42 POIs that dropped by 3+, 35 are
+  directly measured and 7 are unknown. Do not read absence from that list as a zero.
+- `services/data/common_english_words.txt` is **generated, not hand-edited** — re-run
+  `scripts/generate_common_words.py` if the embedding model ever changes.
+
 **5. ⏭️ NEW (2026-07-28) — no observability into `generate_itinerary()` latency, and it keeps
 growing more steps.** Asked to check latency metrics this session and found there's nothing to
 check: zero timing instrumentation anywhere in the request path (`grep` for

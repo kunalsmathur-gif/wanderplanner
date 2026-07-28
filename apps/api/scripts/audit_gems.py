@@ -110,6 +110,7 @@ def audit_destination(destination: str) -> dict[str, Any]:
             continue
         variants = name_variants(name)
         variants += [v for v in name_variants(poi.get("name_local") or "") if v not in variants]
+        variants = [v for v in variants if v != destination_norm]
         pattern = build_mention_pattern(variants)
         if pattern is None:
             n_no_pattern += 1

@@ -27,18 +27,62 @@ as real ones.
   "Fort Immanuel"       -> immanuel      "The village"   -> village
   "Marine Drive, Kochi" -> marine drive
 
-The distinctiveness guard below is the line those observations actually draw:
-the true positives are single tokens of 8+ characters (or several tokens),
-the false positives are shorter single tokens that double as ordinary English
-words. It is a calibration against observed data, not a tuning knob to turn.
+The distinctiveness guard: length was the wrong question
+--------------------------------------------------------
+The first version of that guard was a length threshold — a derived single
+token had to be 8+ characters, which is where the recoveries above separate
+from the false ones. It was calibrated, but on the wrong variable, and
+`name_variants("Egyptian Museum")` is the counter-example that shows it:
+peeling "museum" leaves the bare token **egyptian**, which is 8 characters and
+sails through. Live-measured 2026-07-27, Cairo's Egyptian Museum carried **30
+mentions, 29 of them from that token** — "egyptian food", "as an egyptian".
+The real name appeared in one chunk.
 
-Cost: pure CPU, no LLM, no I/O.
+The threshold cannot be raised out of the problem: `egyptian` is exactly 8
+characters and so is `immanuel`, the genuine recovery above. Length was
+standing in for the question that actually matters — **is this token an
+ordinary English word, or is it specific to this place?** — so the guard now
+asks that directly, against a word list generated from the embedding model's
+own WordPiece vocabulary (see `scripts/generate_common_words.py`; a token that
+survives in a 30k frequency-built vocabulary *as a whole word* is by
+construction a common word). Length is kept as a cheap first gate, so both
+rules apply.
+
+Measured across the full corpus (9,892 POIs, all 168 destinations, 2026-07-28):
+of 521 distinct derived single-token cores, **144 are common words** and are
+now rejected. They fall into exactly two groups, both of which were matching
+things that are not the POI:
+
+  * ordinary words — `national` (20 POIs), `botanical`, `government`,
+    `parliament`, `auditorium`, `traditional`, `military`, `university`
+  * demonyms and place names at the *wrong scale* — `egyptian`, `japanese`,
+    `himalayan`, and city/district names like `melbourne`, `singapore`,
+    `edinburgh`, `kensington`, whose every mention is about the city, not
+    about "Melbourne Museum"
+
+⚠️ **The known cost, stated rather than hidden: fame and vocabulary membership
+correlate.** `guggenheim`, `griffith` and `hollywood` are real identities that
+travellers do use bare, and they are in the vocabulary *because* they are
+famous, so they are rejected too. For the gems consumer that is close to
+harmless — a POI famous enough to be a BERT token is not a hidden gem — but it
+is a genuine recall loss and the reason to reach for a curated exception list
+here, if one is ever needed, rather than for a lower threshold.
+
+The asymmetry that justifies being conservative: a wrong variant **corrupts**
+the output (mentions attributed to a place nobody named), while a missing
+variant merely falls back to matching the full name, which is what happened
+before peeling existed at all.
+
+Cost: pure CPU, no LLM, no network. The word list is read from disk once and
+cached; the runtime path never loads the embedding model.
 """
 from __future__ import annotations
 
 import re
 import unicodedata
 from collections.abc import Iterable
+from functools import lru_cache
+from pathlib import Path
 
 # A name has to be at least this long to be worth searching for at all —
 # below it, coincidental matches dominate.
@@ -48,7 +92,15 @@ _MIN_VARIANT_LEN = 4
 # docstring: 8 is where the audit's real recoveries (immanuel, sitaramji,
 # matangeshwar) separate from its false ones (central, village, moti).
 # Multi-token variants are exempt — two words together are distinctive enough.
+# This is now the cheap *first* gate; `_is_common_word` is the one that
+# actually answers "is this a name or a word".
 _MIN_CORE_TOKEN_LEN = 8
+
+# Generated, not hand-written — `scripts/generate_common_words.py` regenerates
+# it from the embedding model's vocabulary. Exported so that script and the
+# tests read the same two values rather than re-deciding them.
+COMMON_WORDS_PATH = Path(__file__).resolve().parent / "data" / "common_english_words.txt"
+MIN_COMMON_WORD_LEN = _MIN_CORE_TOKEN_LEN
 
 # Words that describe *what kind of place* something is rather than which
 # place it is. Peeled off the ends of a name to find the identifying core:
@@ -134,6 +186,25 @@ def normalize_name(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+@lru_cache(maxsize=1)
+def _common_words() -> frozenset[str]:
+    """The generated word list, read once per process.
+
+    A missing file is deliberately fatal rather than silently permissive: the
+    quiet failure mode would be every demonym becoming a search term again,
+    which reads as a working feature returning inflated mention counts — the
+    exact bug this guard exists to prevent.
+    """
+    return frozenset(COMMON_WORDS_PATH.read_text(encoding="utf-8").split())
+
+
+def _is_common_word(token: str) -> bool:
+    """Whether `token` is an ordinary English word rather than a place-specific
+    name. See the module docstring for what "ordinary" means here and how the
+    list is built."""
+    return token in _common_words()
+
+
 def _is_usable(variant: str) -> bool:
     return len(variant) >= _MIN_VARIANT_LEN and variant not in GENERIC_NAMES
 
@@ -147,6 +218,10 @@ def _peel(base: str) -> list[str]:
     "tilak market" (useful) and then to "tilak" (five letters, matches
     anything). Emitting both and letting the guard reject the second keeps
     the useful one.
+
+    Both single-token guards apply here and nowhere else — a name a mapper
+    actually gave a place is used as-is, however generic it reads; only a form
+    *we* derived has to earn its place.
     """
     out: list[str] = []
     tokens = base.split()
@@ -160,8 +235,11 @@ def _peel(base: str) -> list[str]:
         if not tokens:
             break
         candidate = " ".join(tokens)
-        if len(tokens) == 1 and len(candidate) < _MIN_CORE_TOKEN_LEN:
-            continue  # too short to be anything but a common word
+        if len(tokens) == 1:
+            if len(candidate) < _MIN_CORE_TOKEN_LEN:
+                continue  # too short to be anything but a common word
+            if _is_common_word(candidate):
+                continue  # "Egyptian Museum" -> "egyptian" matches egyptian food
         out.append(candidate)
     return out
 
