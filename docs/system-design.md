@@ -116,7 +116,7 @@
         │               │                  │
 ┌───────▼─────┐  ┌──────▼──────┐  ┌───────▼──────────────────────────────┐
 │   Qdrant    │  │   Gemini    │  │  External APIs                        │
-│ (in-memory) │  │  2.5 Flash  │  │                                        │
+│   (Cloud)   │  │  2.5 Flash  │  │                                        │
 │             │  │  (primary)  │  │  • Nominatim/OSM  — geocoding         │
 │ Collections │  │  lite / 1.5 │  │  • Open-Meteo    — weather            │
 │  - wiki     │  │  fallbacks  │  │  • Wikivoyage    — destination guides │
@@ -132,6 +132,13 @@
                                    └───────────────────────────────────────┘
 
 Embedding Model: sentence-transformers/all-MiniLM-L6-v2 (local, 384 dims)
+
+Vector store: managed Qdrant Cloud since 2026-07-15 — persistent, and shared by the API
+process, the ingestion scripts and the eval harness (one store, not per-process copies).
+`QDRANT_URL=:memory:` remains a documented local-only fallback (§9) and is NOT what
+production runs. Full collection set (the box lists only the largest):
+wiki · osm_pois · youtube_comments · youtube_narration · itinerary_corpus ·
+itinerary_cache · reddit (frozen 2026-07-26 — still read, never written).
 ```
 
 ---
@@ -1703,6 +1710,16 @@ instead of the agent) that govern how these tools are meant to be used.
 ---
 
 ## 16. Change Log
+
+### v10.46 (July 2026) — The four deferred enum fields are closed sets, and a doc-accuracy sweep
+
+- **`pace` / `scope` / `crowd_preference` / `destination_mode` are now `Literal`s**, closing the follow-up v10.43.0 filed when it deliberately left them as free `ShortLabel`s. The constraint was never the hard part — it was that these fields are populated from the wizard LLM's `config_patch`, so a bare `Literal` turns a casing mismatch (`"Moderate"`) into a **hard 422 mid-conversation**. The order the TODO specified is what makes it safe: normalise first, then constrain. `core/validation.py` holds a per-field vocabulary and alias map behind an `Annotated[Literal[...], BeforeValidator(...)]`, so the literal is satisfied by construction — the validator runs pre-validation and can only emit a member of the set. It absorbs casing, decoration (`"off-beat"`, `"off_the_beaten_path"`) and synonyms (`"slow"`, `"abroad"`, `"undecided"`).
+- ⚠️ **Unrecognised values fall back to the field default and log a WARNING rather than raising — a deliberate exception to `core/validation.py`'s "reject, never coerce" rule.** The rule is about *user* input, which should fail visibly; here the producer is our own prompt, and a 422 charges the user for our drift. The WARNING is what keeps the exception from being silent: a missing alias appears in logs rather than in a quietly reshaped trip.
+- ⚠️ **Alias maps are per-field and must not be merged.** `"moderate"` is a canonical `pace` *and* an alias for `crowd_preference: "balanced"` — one shared map would silently make one of them wrong. Pinned by test.
+- 🔴 **Fixing this only at the model layer would have fixed almost nothing.** `config_patch` is merged as a **plain dict** into the running `partial_config` and returned to the frontend store; it never passes through `TripConfig` during the conversation. `wizard_chat_chain.py` then branches on exact values (`mode == "fixed"`, `!= "exploring"`) for every remaining turn, and `apps/web/types/index.ts` declares all four as TypeScript unions, which are **erased at runtime**. So normalisation is applied at the patch-merge point in `wizard_chat_chain.py` and in `chat_refine_chain.py`, whose patch feeds `ChatPanel.tsx::updateConfig` directly.
+- **Doc-accuracy sweep: two known stale claims, five real ones.** Enumerating instead of fixing the two that were named found three more. The worst was `docs/scaling-tech-challenges.md`, which still described `:memory:` Qdrant as the *live* architecture and carried three open risk rows demanding a migration completed on 2026-07-15 — a risk assessment misreporting resolved risk as outstanding. Also corrected: a claim in `docs/rag-strategy.md` that v10.40.3 had **retracted** in three other docs and missed here (the cold-start gate does *not* over-subscribe the `search.list` cap on its own), and `docs/PRD.md` §6.1 still calling the YouTube Data API path "planned (not yet built)" when it shipped in v10.30.0. The architecture diagram above now reads `(Cloud)`, with the full collection set spelled out beneath it.
+- ⚠️ **Filed, not fixed:** the Qdrant Cloud **free tier is 1GB and nothing monitors headroom**. `youtube_comments` alone is ~25k points across 172 destinations. First symptom of the ceiling would be write failures mid-ingestion.
+- Backend **861 passed / 6 skipped** (+51, `tests/unit/test_choice_normalisation.py`); ruff + mypy clean (178 files). See `TECHNICAL_DOCUMENTATION.md` §14 v10.46.0.
 
 ### v10.45 (July 2026) — Voice mode had never spoken, and Anya now speaks Hindi
 

@@ -48,12 +48,15 @@ Three decisions here are deliberate and worth reading before editing:
 """
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from datetime import date
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BeforeValidator, Field
+
+logger = logging.getLogger(__name__)
 
 # --- Length caps -----------------------------------------------------------
 # Sized against the longest real values, with headroom: the longest official
@@ -363,3 +366,208 @@ ChatMessageText = Annotated[
 
 Latitude = Annotated[float, Field(ge=-90.0, le=90.0)]
 Longitude = Annotated[float, Field(ge=-180.0, le=180.0)]
+
+
+# --- Closed-set (enum-ish) fields -----------------------------------------
+# `pace`, `scope`, `crowd_preference` and `destination_mode` were the four
+# fields v10.43.0 deliberately left as free `ShortLabel`s. They are closed sets
+# in every comment, in `apps/web/types/index.ts` (as TypeScript unions) and in
+# the wizard's system prompt — but they are *populated from LLM output* via the
+# wizard's `config_patch`, so making them a bare `Literal` would turn a
+# cosmetic mismatch ("Moderate" for "moderate") into a hard 422 in the middle
+# of a conversation. Normalising first is what makes the `Literal` safe.
+#
+# **Unrecognised values fall back to the default and log a WARNING — they are
+# not rejected.** This is the one deliberate exception to this module's
+# "reject, never coerce" rule, and the reason is that the producer is different:
+# everywhere else the producer is a user, whose input should fail visibly, but
+# here it is our own model, and failing the request punishes the user for our
+# prompt drifting. The WARNING is what keeps it from being silent — an alias
+# this map is missing shows up in the logs rather than in a wrong itinerary.
+#
+# ⚠️ Alias maps are **per field on purpose, not merged.** `"moderate"` is a
+# canonical `pace` *and* an alias for `crowd_preference: "balanced"`; a single
+# shared map would make one of those wrong. Add aliases to the specific field.
+
+PACE_VALUES = ("relaxed", "moderate", "packed")
+SCOPE_VALUES = ("local", "domestic", "international")
+CROWD_PREFERENCE_VALUES = ("touristy", "balanced", "offbeat")
+DESTINATION_MODE_VALUES = ("fixed", "exploring", "country")
+
+_PACE_ALIASES = {
+    "slow": "relaxed", "easy": "relaxed", "easygoing": "relaxed", "chill": "relaxed",
+    "leisurely": "relaxed", "laid back": "relaxed", "light": "relaxed", "slow paced": "relaxed",
+    "normal": "moderate", "medium": "moderate", "standard": "moderate", "balanced": "moderate",
+    "regular": "moderate", "average": "moderate",
+    "fast": "packed", "busy": "packed", "intense": "packed", "action packed": "packed",
+    "full": "packed", "hectic": "packed", "fast paced": "packed", "packed full": "packed",
+}
+
+_SCOPE_ALIASES = {
+    "nearby": "local", "in city": "local", "within city": "local", "city": "local",
+    "staycation": "local", "day trip": "local",
+    "national": "domestic", "in country": "domestic", "within country": "domestic",
+    "inland": "domestic", "home country": "domestic",
+    "abroad": "international", "overseas": "international", "foreign": "international",
+    "global": "international", "outside country": "international", "worldwide": "international",
+}
+
+_CROWD_PREFERENCE_ALIASES = {
+    "popular": "touristy", "iconic": "touristy", "mainstream": "touristy",
+    "must see": "touristy", "must sees": "touristy", "tourist": "touristy",
+    "tourasty": "touristy", "famous": "touristy", "classic": "touristy",
+    "mixed": "balanced", "mix": "balanced", "moderate": "balanced", "both": "balanced",
+    "a bit of both": "balanced", "medium": "balanced",
+    "hidden": "offbeat", "hidden gems": "offbeat", "hidden gem": "offbeat",
+    "off beat": "offbeat", "off the beaten path": "offbeat", "off the beaten track": "offbeat",
+    "non touristy": "offbeat", "nontouristy": "offbeat", "unusual": "offbeat",
+    "authentic": "offbeat", "quiet": "offbeat",
+}
+
+_DESTINATION_MODE_ALIASES = {
+    "specific": "fixed", "decided": "fixed", "known": "fixed", "chosen": "fixed",
+    "set": "fixed", "confirmed": "fixed", "single": "fixed",
+    "undecided": "exploring", "unsure": "exploring", "not sure": "exploring",
+    "open": "exploring", "anywhere": "exploring", "explore": "exploring",
+    "exploration": "exploring", "browsing": "exploring", "suggest": "exploring",
+    "region": "country", "countrywide": "country", "country wide": "country",
+    "nationwide": "country", "multi city": "country", "within a country": "country",
+}
+
+# Non-alphanumeric run → single space, so "off-beat", "off_beat", "Off Beat!"
+# and "off  beat" all reach the alias map in the same shape. Deliberately not
+# `\W`, whose meaning depends on the `re.UNICODE` word definition — the same
+# character-class trap `core/keyword_match.py` documents.
+_SEPARATOR_RUN_RE = re.compile(r"[^0-9a-z]+")
+
+
+def normalise_choice(
+    value: Any,
+    *,
+    allowed: tuple[str, ...],
+    aliases: dict[str, str],
+    default: str,
+    field: str,
+) -> str:
+    """Map a loosely-worded value onto one of `allowed`, or fall back.
+
+    Handles the three ways an LLM realistically deviates from a closed set:
+    casing (`"Moderate"`), decoration (`"off-beat"`, `"Off Beat!"`) and
+    synonyms (`"slow"`, `"abroad"`, `"undecided"`). Anything still unmatched
+    returns `default` and logs a WARNING naming the value, so a missing alias
+    is discoverable instead of silently reshaping someone's trip.
+    """
+    if isinstance(value, str):
+        cleaned = _SEPARATOR_RUN_RE.sub(" ", clean_user_text(value).casefold()).strip()
+        if cleaned in allowed:
+            return cleaned
+        if cleaned in aliases:
+            return aliases[cleaned]
+    elif value is None:
+        return default
+
+    logger.warning(
+        "%s: unrecognised value %r, falling back to %r. If this recurs, add an "
+        "alias in core/validation.py rather than widening the field.",
+        field, str(value)[:60], default,
+    )
+    return default
+
+
+def choice_validator(*, allowed: tuple[str, ...], aliases: dict[str, str], default: str, field: str):
+    """Build the `BeforeValidator` for one closed-set field."""
+
+    def _validate(value: Any) -> str:
+        return normalise_choice(
+            value, allowed=allowed, aliases=aliases, default=default, field=field
+        )
+
+    return _validate
+
+
+# The `Literal` is safe *because* the `BeforeValidator` runs first and can only
+# emit a member of it. Ordering matters: `BeforeValidator` is pre-validation, so
+# the literal check never sees the raw value.
+Pace = Annotated[
+    Literal["relaxed", "moderate", "packed"],
+    BeforeValidator(
+        choice_validator(
+            allowed=PACE_VALUES, aliases=_PACE_ALIASES, default="moderate", field="pace"
+        )
+    ),
+]
+
+TripScope = Annotated[
+    Literal["local", "domestic", "international"],
+    BeforeValidator(
+        choice_validator(
+            allowed=SCOPE_VALUES, aliases=_SCOPE_ALIASES, default="international", field="scope"
+        )
+    ),
+]
+
+CrowdPreference = Annotated[
+    Literal["touristy", "balanced", "offbeat"],
+    BeforeValidator(
+        choice_validator(
+            allowed=CROWD_PREFERENCE_VALUES,
+            aliases=_CROWD_PREFERENCE_ALIASES,
+            default="balanced",
+            field="crowd_preference",
+        )
+    ),
+]
+
+DestinationMode = Annotated[
+    Literal["fixed", "exploring", "country"],
+    BeforeValidator(
+        choice_validator(
+            allowed=DESTINATION_MODE_VALUES,
+            aliases=_DESTINATION_MODE_ALIASES,
+            default="fixed",
+            field="destination_mode",
+        )
+    ),
+]
+
+# Which config key gets which rules — used by the wizard/refine chains to
+# normalise a `config_patch` *before* it is merged into the partial config and
+# sent back to the frontend. Without this the model-level types above would
+# only fire on the final generate call, leaving the whole conversation (and the
+# frontend store, whose TypeScript unions are erased at runtime) holding values
+# like "Moderate".
+CHOICE_FIELDS: dict[str, dict[str, Any]] = {
+    "pace": {"allowed": PACE_VALUES, "aliases": _PACE_ALIASES, "default": "moderate"},
+    "scope": {"allowed": SCOPE_VALUES, "aliases": _SCOPE_ALIASES, "default": "international"},
+    "crowd_preference": {
+        "allowed": CROWD_PREFERENCE_VALUES,
+        "aliases": _CROWD_PREFERENCE_ALIASES,
+        "default": "balanced",
+    },
+    "destination_mode": {
+        "allowed": DESTINATION_MODE_VALUES,
+        "aliases": _DESTINATION_MODE_ALIASES,
+        "default": "fixed",
+    },
+}
+
+
+def normalise_choice_fields(patch: dict[str, Any]) -> dict[str, Any]:
+    """Return `patch` with any closed-set field normalised to its canonical value.
+
+    Keys absent from the patch are left absent — this normalises what the model
+    sent, it does not fill in defaults for fields the user hasn't reached yet.
+    """
+    if not patch:
+        return patch
+    result = dict(patch)
+    for key, rules in CHOICE_FIELDS.items():
+        if key in result:
+            result[key] = normalise_choice(
+                result[key],
+                allowed=rules["allowed"],
+                aliases=rules["aliases"],
+                default=rules["default"],
+                field=key,
+            )
+    return result

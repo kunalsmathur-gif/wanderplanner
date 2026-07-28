@@ -51,11 +51,27 @@ covers it (84 tests). Suite **806 passed / 6 skipped**, ruff + mypy clean.
 
 - The 422 body echoes the rejected value back by default, so an input cap without a response cap is
   paid for twice. `main.py` now truncates the echo. Check this on any future validation work.
-- ⚠️ **Deliberately NOT converted to `Literal`: `pace`, `scope`, `crowd_preference`,
-  `destination_mode`.** They are closed sets in their comments, but they are populated from LLM
-  output via the wizard's `config_patch` — a model emitting `"Moderate"` would turn a cosmetic
-  mismatch into a hard 422 mid-flow. Tightening them requires normalising in the wizard path first.
-  That is the natural follow-up here, not a bug.
+- ~~⚠️ **Deliberately NOT converted to `Literal`: `pace`, `scope`, `crowd_preference`,
+  `destination_mode`.**~~ — ✅ **DONE 2026-07-28 (v10.46.0).** Normalise-then-constrain, in that
+  order: `core/validation.py` holds a per-field vocabulary + alias map behind an
+  `Annotated[Literal[...], BeforeValidator(...)]`, so the literal is satisfied by construction. It
+  absorbs casing (`"Moderate"`), decoration (`"off-beat"`, `"off_the_beaten_path"`) and synonyms
+  (`"slow"`, `"abroad"`, `"undecided"`). 51 tests in `tests/unit/test_choice_normalisation.py`.
+
+  🔴 **The one thing worth carrying: doing this at the model layer alone would have fixed almost
+  nothing.** `config_patch` is merged as a **plain dict** into `partial_config` and handed back to
+  the frontend — it never passes through `TripConfig` during the conversation, `wizard_chat_chain.py`
+  branches on exact values (`mode == "fixed"`) for every remaining turn, and the frontend's
+  TypeScript unions are erased at runtime so it would simply have believed the bad value.
+  Normalisation therefore runs at the patch-merge point in `wizard_chat_chain.py` **and**
+  `chat_refine_chain.py`. **Generalises: when a value is validated at a boundary the request only
+  reaches at the end, find every earlier consumer first.**
+
+  ⚠️ **Two rules recorded in `core/validation.py` so a future edit doesn't undo them:** (1)
+  unrecognised values **fall back + log a WARNING rather than raising** — the deliberate exception to
+  that module's "reject, never coerce" rule, because here the producer is our own prompt, not a user;
+  (2) **alias maps are per-field and must not be merged** — `"moderate"` is a canonical `pace` *and*
+  an alias for `crowd_preference: "balanced"`.
 - The frontend caps mirror the backend **exactly, on purpose** (`apps/web/lib/limits.ts` says so).
   A tighter frontend cap silently truncates what the API would accept; a looser one lets the user
   type what can only fail at submit. Change them together.
@@ -613,16 +629,21 @@ replacement.
   Calibrating the multiplier from this would be picking a number again, which is what the deferral
   exists to prevent. The unblocker is denser price-bearing text (Reddit OAuth would help most), not
   more tuning.
-- ~~Open user decision on the 5 residual `MAX_CATEGORY_SHARE` failures~~ — **✅ mechanism settled in
-  v10.40.0** by taking the third option, the per-category hard cap in `osm.py`: a category is capped
-  at 25% of the pool during selection, half the gate's 0.5 threshold. **But it does not resolve the
-  genuine-skew cases, and the first data confirms that:** the cap *defers* over-cap POIs rather than
-  discarding them (so thin destinations still fill their 60), which means a destination without
-  enough other categories still ends up dominated. Alleppey re-ingested at **0.63 top-category share
-  — 38 of 60 places of worship** — because that is what is actually mapped there. So the remaining
-  question is unchanged and still a product call: **accept temple/backwater towns as real-world
-  skew, or relax the gate for them.** What v10.40.0 removed is the *artificial* skew (Paris metro,
-  Bangkok/Delhi train stations); what's left is real.
+- ~~Open user decision on the residual `MAX_CATEGORY_SHARE` failures~~ — **✅ CLOSED 2026-07-28.
+  🔒 USER DECISION: accept the remaining three as real-world skew. Do not relax the gate, do not
+  build anything further in `osm.py` for them, and do not re-open this.** Boston (0.65), Alleppey
+  (0.633) and Sri Lanka (0.60) are places of worship because that is what is actually mapped there;
+  a gate exception for "pilgrimage towns" would be a threshold fitted to three data points, and
+  pulling in irrelevant POIs to dilute the share would make the pool worse, not better. **A gate
+  failure on these three is expected output, not a regression** — if a future audit flags them,
+  that is the gate working.
+
+  **Mechanism, for context (settled in v10.40.0):** the third option was taken — a per-category hard
+  cap in `osm.py` at 25% of the pool during selection, half the gate's 0.5 threshold. It removed the
+  *artificial* skew (Paris metro, Bangkok/Delhi train stations) but deliberately **defers** over-cap
+  POIs rather than discarding them, so a thin destination still fills its 60 from whatever it has.
+  That is why real skew survives it, and that is the behaviour being accepted here rather than
+  worked around.
 
   **✅ The four named for re-check have now been measured (2026-07-26, full run):** three of them
   **pass** the 0.5 gate and are off the list — Dharamshala 0.483, Khajuraho 0.471 (restaurant, down
@@ -636,14 +657,17 @@ replacement.
   | Sri Lanka | 0.60 | place of worship | yes (5/60) |
   | **Paris** | **0.583** | **train station** | **none — `prominent=0`** |
 
-  🔴 **Paris is not a genuine-skew case and must not be read as one.** It is one of the 29
-  destinations whose prominence pass returned nothing (see item 2), so its pool was selected without
-  any prominence signal at all — the 0.583 train-station share is the *old* pre-v10.40.0 behaviour
-  surviving, not the new cap failing on real data. **Paris's number is meaningless until it
-  re-ingests successfully**, and it is the one to re-measure first afterwards, since metro/rail
-  density is exactly the artificial skew the cap was built for. The other three carry a real
-  prominence signal, so those genuinely are the product call described above — and it is now a
-  three-destination decision, not five.
+  🔴 **Paris is not a genuine-skew case and must not be read as one, so the decision above does not
+  cover it.** It was one of the 29 destinations whose prominence pass returned nothing at the time of
+  that measurement, so its pool was selected without any prominence signal — the 0.583 train-station
+  share is the *old* pre-v10.40.0 behaviour surviving, not the new cap failing on real data.
+
+  ⏳ **The one thing still outstanding here is a measurement, not a decision.** Item 2's re-ingestion
+  reached `0 pending` on 2026-07-27, so Paris now has prominence data, but **its share has not been
+  re-measured since** — the 0.583 in the table above is stale. Re-run the completeness gate for Paris
+  and record the new number; metro/rail density is exactly the artificial skew the cap was built for,
+  so this is the case that says whether the cap works. If it still exceeds 0.5 *with* a prominence
+  signal, that is a new finding and not covered by the accept-as-skew decision.
 - Reddit ingestion still 403s in prod on every boot — ask whether the OAuth app review came
   through, then rewire `scrapers/reddit.py` to the authenticated API.
 - Non-blocking timing note: the YouTube scheduler job uses `IntervalTrigger` with no `start_date`,
@@ -796,14 +820,36 @@ market research *wrong*, not cleaner. It carries an inline annotation saying so;
 ⚠️ **Still true and still deliberate: no code was touched.** The read paths degrade to empty rather
 than erroring, so leaving them costs nothing. Removing them is a separate change.
 
-**Two things worth knowing for the next doc pass**, both found while sweeping and both left alone as
-out of scope:
-- `README.md` described Qdrant as **"(in-memory)"** in two places — stale since the 2026-07-15 Cloud
-  migration. Fixed in passing where it sat on a line being edited anyway; **`docs/system-design.md`'s
-  architecture diagram still says `Qdrant (in-memory)`.**
-- Several docs still describe the YouTube quota as "10,000 units/day," the meter that never binds.
-  The real constraint is 100 `search.list` calls/project/day (v10.40.1). Corrected in the files
-  touched here; not swept globally.
+**Two things worth knowing for the next doc pass** — ✅ **both swept 2026-07-28.** They were left as
+out of scope at the time; the sweep enumerated rather than triaging, and both were larger than filed:
+- ~~Qdrant described as "(in-memory)"~~ — **done.** `docs/system-design.md`'s architecture diagram
+  now says `(Cloud)`, with the full collection set and the `:memory:`-is-local-only caveat spelled
+  out below it; `TECHNICAL_DOCUMENTATION.md`'s tech-stack table and `README.md`'s `QDRANT_URL` row
+  (which now documents `QDRANT_API_KEY` too) are corrected. 🔴 **The real find was
+  `docs/scaling-tech-challenges.md`**, which the filed item didn't mention: it still described
+  `:memory:` as the *current* architecture in its one-line summary and carried three open risk rows
+  saying it "must be fixed before any multi-instance deployment" — a risk doc claiming an existing
+  fix was outstanding. Marked resolved with a dated banner, keeping the findings in place because
+  the reasoning still applies to the genuinely-unresolved in-process state.
+- ~~"10,000 units/day" YouTube quota~~ — **done.** Corrected in `README.md` (whose
+  `YOUTUBE_DAILY_SEARCH_BUDGET` row also still said the default was 80 — it has been 100 since
+  v10.40.1), `DEMO_DAY_FAQ_CHEATSHEET.md`, `scaling-tech-challenges.md`, `core/config.py`'s
+  docstring and `scrapers/youtube_comments.py`'s module docstring.
+
+**Three further stale claims fell out of the same sweep, all fixed:**
+- 🔴 `docs/rag-strategy.md` still carried the **retracted** "cold-start gate over-subscribes the cap
+  on its own" claim. v10.40.3 corrected that in three docs and **missed this one** — every cold start
+  routes through `search_travel_videos()`, which checks the budget before spending. Annotated as a
+  second correction rather than silently rewritten, since it is a correction of a correction.
+- 🔴 `docs/PRD.md` §6.1 still described Reddit as an active scheduled source and the YouTube Data API
+  path as "**planned (not yet built)**" — it shipped in v10.30.0 and covers all 170 destinations.
+- `scrapers/youtube_comments.py`'s docstring still said YouTube was a stand-in "while Reddit stays
+  blocked on approval". Reddit was dropped outright on 2026-07-26.
+
+⚠️ **New item this raised, not fixed:** the Qdrant Cloud **free tier is 1GB and nothing monitors
+headroom** against it. `youtube_comments` alone is ~25k points / 172 destinations and
+`youtube_narration` is growing beside it. The first symptom of hitting the ceiling would be write
+failures mid-ingestion. Filed in `scaling-tech-challenges.md` §4.
 
 ⚠️ **Docs only — do not rip Reddit out of the code in the same pass.** `scrapers/reddit.py`,
 `services/gems.py`'s multi-source blend, and `core/cost_grounding.py::_price_collections()` all
@@ -926,6 +972,8 @@ destination that lacks other categories still ends up dominated. Alleppey came b
 top-category share (38/60 places of worship)** — that is genuinely what is mapped there. The
 artificial skew (Paris metro, Bangkok/Delhi train stations) is gone; the real skew is not, and
 whether to accept it or relax the gate for pilgrimage/backwater towns is still a product call.
+*(🔒 Resolved 2026-07-28 — the user accepted the real skew as-is. See the open-items list above; the
+gate is not being relaxed and nothing further is being built in `osm.py` for it.)*
 
 Suite **612 passed / 6 skipped / 0 failed** (+27). Ruff clean.
 
@@ -1241,7 +1289,7 @@ All 3 fixed via `services/geocode.py::GEOCODE_QUERY_OVERRIDES` — these are sam
 
 New script `apps/api/scripts/reingest_geocode_fixes_and_stragglers.py` re-ingested all 12 (10 failures + La Paz + Valencia). After one spaced-out retry pass for Overpass rate-limit noise (the batch hit sustained 504/429/403 across all mirrors), **7/12 now pass**: Austin (60, Texas ✓), La Paz (60 ✓), Valencia (60 ✓), Sri Lanka (62%→27%), Pushkar (63%→32%), Varkala (62%→28%), Lonavala (thin→20).
 
-**5 residual failures are genuine real-world category skew, NOT bugs** — the same class prior sessions labelled "🟡 real-world skew": **Paris** (train-station 58% — Paris's metro density; the documented "no per-category cap" limitation / Bug 1b remnant), **Dharamshala** (place-of-worship 53%), **Alleppey** (78%), **Mahabaleshwar** (53%), **Khajuraho** (restaurant 71% — tiny temple town whose OSM is genuinely mostly eateries). Re-ingestion (geocode + adaptive radius expansion + round-robin) legitimately can't clear these without pulling in *irrelevant* POIs just to satisfy a count. **The real structural fix is the per-category hard cap in `scrapers/osm.py`** ("Still incomplete" list below), deliberately deferred there pending eval data on whether it hurts itinerary quality — this is the concrete case that would justify prototyping it. **Decision for user: accept these 5 as real-world skew, or relax `MAX_CATEGORY_SHARE` for genuinely single-category pilgrimage towns, or build the per-category cap?**
+**5 residual failures are genuine real-world category skew, NOT bugs** — the same class prior sessions labelled "🟡 real-world skew": **Paris** (train-station 58% — Paris's metro density; the documented "no per-category cap" limitation / Bug 1b remnant), **Dharamshala** (place-of-worship 53%), **Alleppey** (78%), **Mahabaleshwar** (53%), **Khajuraho** (restaurant 71% — tiny temple town whose OSM is genuinely mostly eateries). Re-ingestion (geocode + adaptive radius expansion + round-robin) legitimately can't clear these without pulling in *irrelevant* POIs just to satisfy a count. **The real structural fix is the per-category hard cap in `scrapers/osm.py`** ("Still incomplete" list below), deliberately deferred there pending eval data on whether it hurts itinerary quality — this is the concrete case that would justify prototyping it. **Decision for user: accept these 5 as real-world skew, or relax `MAX_CATEGORY_SHARE` for genuinely single-category pilgrimage towns, or build the per-category cap?** *(🔒 Answered: the per-category cap was built in v10.40.0, which re-measured this list down to 3 genuine cases, and on 2026-07-28 the user accepted those 3 as real-world skew. Closed — see the open-items list near the top of this file.)*
 
 Net across all 168: 10 gate-failures → 5 (all genuine skew), plus 2 count-invisible wrong-city bugs fixed (La Paz, Valencia). Changes uncommitted pending user review.
 

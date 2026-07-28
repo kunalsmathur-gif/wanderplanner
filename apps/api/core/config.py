@@ -149,9 +149,10 @@ class Settings(BaseSettings):
 
     # YouTube Data API v3 (docs/NEXT_SESSION_TODO.md item 3 — hidden-gems
     # alternative source while Reddit ingestion is blocked on approval).
-    # Self-serve key from Google Cloud Console, no review process — free
-    # 10,000-units/day quota; search.list costs 100 units/query,
-    # commentThreads.list costs 1 unit/call. Blank by default: every function
+    # Self-serve key from Google Cloud Console, no review process. Costs are
+    # 100 units/query for search.list and 1 unit/call for commentThreads.list
+    # against a free 10,000-units/day allowance — but see the budget below:
+    # that unit allowance is NOT the quota that binds. Blank by default: every function
     # in scrapers/youtube_comments.py is a documented no-op without a key,
     # same pattern as pexels_api_key.
     youtube_api_key: str = ""

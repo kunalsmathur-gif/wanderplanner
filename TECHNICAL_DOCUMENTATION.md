@@ -80,7 +80,7 @@ WanderPlanner is an AI-powered travel planning platform. Users interact with **A
 | **itsdangerous** | Latest | Signed stateless Google OAuth `state` parameter |
 | **Resend** | Latest | Transactional email for password reset |
 | **Google Generative AI** | Latest | Gemini API client |
-| **Qdrant** | 1.x | Vector DB (in-memory mode) |
+| **Qdrant** | 1.x | Vector DB — managed **Qdrant Cloud** since 2026-07-15 (persistent, shared across processes). `:memory:` is a local-dev-only fallback, not production |
 | **sentence-transformers** | - | Embeddings (all-MiniLM-L6-v2, 384 dims) |
 | **httpx** | - | Async HTTP (URL fetch for Start Anywhere) |
 | **BeautifulSoup4** | - | HTML parsing |
@@ -1509,7 +1509,90 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.46.0 Changes (July 2026) — The four deferred enum fields are closed sets at last, plus a doc-accuracy sweep
+
+Two carried items, both filed as small and both a little larger than filed.
+
+**1. `pace` / `scope` / `crowd_preference` / `destination_mode` are now
+`Literal`s.** v10.43.0 bounded every user-supplied string but deliberately left
+these four as free `ShortLabel`s, because they are populated from the wizard
+LLM's `config_patch` — a bare `Literal` would have turned a casing mismatch
+(`"Moderate"`) into a hard 422 in the middle of a conversation. The fix is the
+order the TODO specified: **normalise first, then constrain.**
+
+`core/validation.py` gained a per-field vocabulary (canonical values + alias
+map), `normalise_choice()`, and `Annotated[Literal[...], BeforeValidator(...)]`
+types. Because the `BeforeValidator` runs pre-validation and can only emit a
+member of the set, the `Literal` is satisfied by construction rather than by
+hope. It absorbs the three ways a model realistically deviates: **casing**
+(`"Moderate"`), **decoration** (`"off-beat"`, `"Off Beat!"`, `"off_the_beaten_path"`)
+and **synonyms** (`"slow"`, `"abroad"`, `"undecided"`, `"multi-city"`).
+
+> ⚠️ **Unrecognised values fall back to the field default and log a WARNING —
+> they are not rejected. This is a deliberate exception to `core/validation.py`'s
+> "reject, never coerce" rule**, and the justification is that the *producer* is
+> different: everywhere else in that module the producer is a user, whose bad
+> input should fail visibly, but here it is our own prompt, and a 422 would
+> charge the user for our drift. The WARNING is what stops it being silent — a
+> missing alias surfaces in logs instead of in a quietly reshaped trip.
+
+> ⚠️ **The alias maps are per-field on purpose and must not be merged.**
+> `"moderate"` is a canonical `pace` *and* an alias for `crowd_preference:
+> "balanced"`. One shared map would silently make one of those wrong. A test
+> pins both readings.
+
+**The part that wasn't in the filed scope:** doing this only at the model layer
+would have fixed almost nothing in practice. `config_patch` is merged into the
+running `partial_config` as a **plain dict** and handed back to the frontend
+store — it never passes through `TripConfig` during the conversation. Worse,
+`wizard_chat_chain.py` branches on exact values throughout
+(`mode == "fixed"`, `!= "exploring"`), so a stray `"Moderate"` or `"undecided"`
+would have steered every remaining turn before the generate call ever validated
+it. And `apps/web/types/index.ts` declares all four as TypeScript unions, which
+are **erased at runtime** — the frontend would have believed it. So
+`normalise_choice_fields()` is applied at the patch-merge point in
+`wizard_chat_chain.py` *and* in `chat_refine_chain.py`, whose patch goes
+straight into `ChatPanel.tsx::updateConfig`.
+
+`tests/unit/test_choice_normalisation.py` — 51 tests, including guards that no
+alias targets a non-canonical value, no alias shadows a canonical one, and no
+alias key is written in a form the normaliser could never produce (dead entry).
+Suite **861 passed / 6 skipped**, ruff + mypy clean (178 files).
+
+**2. Doc-accuracy sweep — two known items, five real ones.** The TODO carried
+two stale claims. Enumerating instead of fixing the two named turned up three
+more, all of the same "current-state claim that stopped being true" kind:
+
+- 🔴 **`docs/scaling-tech-challenges.md` still described `:memory:` Qdrant as the
+  live architecture** and carried three open risk rows saying it "must be fixed
+  before any multi-instance deployment" — a *risk assessment* telling the reader
+  an already-completed migration was outstanding. Marked resolved with a dated
+  banner; findings kept in place because the reasoning still applies to the
+  genuinely-unresolved in-process state (share store, caches, per-process quota
+  window).
+- 🔴 **`docs/rag-strategy.md` still carried a claim v10.40.3 retracted** — that
+  the cold-start gate over-subscribes the `search.list` cap on its own. It does
+  not; every cold start consults the budget before spending. Three docs were
+  corrected at the time and this one was missed. Annotated as a second
+  correction rather than rewritten, since it corrects a correction.
+- 🔴 **`docs/PRD.md` §6.1 still called the YouTube Data API path "planned (not
+  yet built)"** and described Reddit as an active scheduled source. That path
+  shipped in v10.30.0 and covers all 170 destinations.
+- The architecture diagram in `docs/system-design.md`, the tech-stack table in
+  this file, and `README.md`'s `QDRANT_URL` row (which now documents
+  `QDRANT_API_KEY` too) all said in-memory.
+- `README.md` also still documented `YOUTUBE_DAILY_SEARCH_BUDGET`'s default as
+  80; it has been 100 since v10.40.1. The "10,000 units/day" non-binding quota
+  was corrected there and in `DEMO_DAY_FAQ_CHEATSHEET.md`,
+  `scaling-tech-challenges.md`, `core/config.py` and
+  `scrapers/youtube_comments.py`.
+
+⚠️ **New item this raised, filed not fixed:** the Qdrant Cloud **free tier is
+1GB and nothing monitors headroom against it**. `youtube_comments` alone is
+~25k points across 172 destinations, with `youtube_narration` growing beside it.
+The first symptom of hitting the ceiling is write failures mid-ingestion.
 
 ### v10.45.0 Changes (July 2026) — Voice mode had never spoken, and Anya now speaks Hindi
 

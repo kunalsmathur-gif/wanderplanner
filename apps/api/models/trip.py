@@ -16,14 +16,18 @@ from core.validation import (
     MAX_THEMES,
     CityName,
     CountryName,
+    CrowdPreference,
     CurrencyCode,
+    DestinationMode,
     IataCode,
     Latitude,
     Longitude,
     OptionalCityName,
+    Pace,
     PoiName,
     PurposeText,
     ShortLabel,
+    TripScope,
     clean_trip_dates,
 )
 
@@ -124,10 +128,14 @@ class TripConfig(BaseModel):
     # dozen call sites read this with `.get()`. Kept a dict on purpose; see
     # that function's docstring.
     dates: dict = Field(default_factory=lambda: {"start": None, "end": None, "flexible": False})  # {"start": "YYYY-MM-DD" | null, "end": "YYYY-MM-DD" | null, "flexible": bool}
-    scope: ShortLabel = "international"   # "local" | "domestic" | "international"
+    # The four closed-set fields below normalise before validating (see
+    # core/validation.py's "Closed-set (enum-ish) fields" block): "Moderate",
+    # "off-beat" and "undecided" are accepted and canonicalised rather than
+    # 422'd, because the producer is the wizard LLM, not a user typing.
+    scope: TripScope = "international"
     origin: OriginInput = Field(default_factory=lambda: OriginInput(city="", lat=0, lon=0))
     destination: DestinationInput | None = None
-    destination_mode: ShortLabel = "fixed"  # "fixed" | "exploring" | "country"
+    destination_mode: DestinationMode = "fixed"
     destination_country: CountryName | None = None  # used when mode = "country"
     # `max_length` enforces what the comment has always claimed and what the
     # frontend store already does (tripConfigStore.ts caps at 5). Each hop is
@@ -138,11 +146,11 @@ class TripConfig(BaseModel):
     personas: list[ShortLabel] = Field(default_factory=list, max_length=MAX_PERSONAS)
     group: GroupComposition = Field(default_factory=GroupComposition)
     accommodation: AccommodationPrefs = Field(default_factory=AccommodationPrefs)
-    pace: ShortLabel = "moderate"  # "relaxed" | "moderate" | "packed"
+    pace: Pace = "moderate"
     # Crowd dial (⭐ NEW — hidden-gem curation, docs/GTM_STRATEGY.md §2):
     # "touristy" = iconic must-sees | "balanced" = mix | "offbeat" = prefer
     # community-verified hidden gems, de-prioritise crowd-heavy spots.
-    crowd_preference: ShortLabel = "balanced"  # "touristy" | "balanced" | "offbeat"
+    crowd_preference: CrowdPreference = "balanced"
     budget: Budget = Field(default_factory=lambda: Budget(amount=0, currency="USD"))
     # Optional per-category budget steering (⭐ NEW — budget curation).
     # Values from: "accommodation" | "food" | "activities" | "shopping" | "local_transport"

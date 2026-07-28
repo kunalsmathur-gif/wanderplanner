@@ -1,7 +1,9 @@
 """YouTube video discovery + comment ingester (docs/NEXT_SESSION_TODO.md item 3).
 
-Hidden-gems alternative sentiment source while Reddit ingestion stays
-blocked on API approval (see services/gems.py, scrapers/reddit.py).
+Hidden-gems sentiment source. This replaced Reddit rather than standing in
+for it: Reddit was dropped as a planned source on 2026-07-26 after its OAuth
+app review never issued credentials (see services/gems.py, scrapers/reddit.py
+— that collection is frozen, still read, never written).
 YouTube travel-vlog comments are structurally identical to Reddit posts for
 this purpose — a place mention plus surrounding sentiment, at real volume —
 so this reuses services/gems.py's existing lexicon/mention-counting logic
@@ -15,10 +17,15 @@ core/config.py's `pexels_api_key`.
 
 Two API calls, both free-tier:
   - `search.list` (100 units/query) — discovers relevant travel videos for a
-    destination. 10,000 units/day quota ceiling means ~100 destination
-    searches/day if nothing else uses quota that day.
+    destination. ⚠️ The 10,000-units/day allowance is NOT the ceiling that
+    binds here: `search.list` has its own dedicated cap of 100 calls per
+    project per day (`defaultSearchListPerDayPerProject`), a separate meter,
+    resetting at midnight Pacific. Measured off a live 429 body 2026-07-26;
+    see TECHNICAL_DOCUMENTATION §14 v10.40.1. `_search_budget_available()`
+    below meters against that cap, not against units.
   - `commentThreads.list` (1 unit/call) — top-level comments for a
-    discovered video, cheap enough to not meaningfully compete for quota.
+    discovered video. It draws on the unit allowance only, so it never
+    competes with discovery for the cap above.
 """
 from __future__ import annotations
 

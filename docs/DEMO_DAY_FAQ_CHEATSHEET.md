@@ -60,7 +60,7 @@ All chains run on **Google Gemini** (`gemini-2.5-flash` default). Itinerary gene
 | OSM Overpass API | POI ingestion | Free (public) |
 | Nominatim (OpenStreetMap) | Geocoding | Free (public, ToS rate-limited) |
 | ~~Reddit~~ | ~~Trip-report/hidden-gem corpus~~ | **Retired 2026-07-26 — no longer a source.** Reddit blocked unauthenticated reads, and its API now requires a written app review that never issued credentials. Rather than wait on an external approval with no ETA, that signal was moved to Wikivoyage + YouTube. See Q13. |
-| YouTube Data API v3 | Hidden-gem sentiment (video comments) + itinerary-video discovery | Free (10k units/day). The one *metered* source, so both automatic callers sit behind a rolling-24h search budget |
+| YouTube Data API v3 | Hidden-gem sentiment (video comments) + itinerary-video discovery + narration/transcripts for price grounding | Free, and the one *metered* source. The cap that actually binds is **100 `search.list` calls per project per day** (its own meter — not the widely-quoted 10k units/day), resetting midnight Pacific, so both automatic callers sit behind a rolling-24h search budget |
 | Wikivoyage | Destination guide text | Free (scraper) |
 | Pexels | Hero/day photos | Free tier |
 | BestTime.app / Google Popular Times (planned) | Live crowd forecasts | Not yet wired |

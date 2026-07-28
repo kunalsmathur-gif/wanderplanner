@@ -259,10 +259,11 @@ Open `http://localhost:3000`.
 | `RESEND_API_KEY` | Resend API key for password-reset email | ✅ for password reset |
 | `EMAIL_FROM_ADDRESS` | From-address used by Resend | ✅ for password reset |
 | `PASSWORD_RESET_TOKEN_TTL_MINUTES` | Reset-link TTL (default: 30) | ❌ |
-| `QDRANT_URL` | Qdrant instance URL (default: `:memory:`) | ❌ |
+| `QDRANT_URL` | Qdrant instance URL. Defaults to `:memory:`, which is a **local-dev-only fallback** — ephemeral and per-process. Production runs a managed Qdrant Cloud cluster (see `docs/system-design.md` §9) | ❌ locally / ✅ in production |
+| `QDRANT_API_KEY` | API key for the Qdrant Cloud cluster; unused in `:memory:` mode | ✅ in production |
 | `PEXELS_API_KEY` | Optional Pexels API key for itinerary day photos in exported PDFs | ❌ |
 | `YOUTUBE_API_KEY` | YouTube Data API v3 key — powers hidden-gem sentiment (video comments) and itinerary-video discovery. Every code path is a documented no-op without it | ❌ |
-| `YOUTUBE_DAILY_SEARCH_BUDGET` | Max `search.list` calls per rolling 24h (default: 80). The free quota is 10,000 units/day and each search costs 100, so this keeps automatic ingestion from starving manual/eval runs | ❌ |
+| `YOUTUBE_DAILY_SEARCH_BUDGET` | Max `search.list` calls per rolling 24h (default: 100). ⚠️ The binding quota is **not** the well-known 10,000 units/day — `search.list` carries its own dedicated cap of **100 calls per project per day** (`defaultSearchListPerDayPerProject`), on a separate meter, resetting at **midnight Pacific**. This budget is set to that cap. It is per-process, so it bounds one process, not the project total across prod + scripts + evals | ❌ |
 | `YOUTUBE_INGEST_ON_COLD_START` | Ingest YouTube comments on a destination's first request (default: `true`). Set `false` to keep YouTube ingestion scheduler-only | ❌ |
 | `YOUTUBE_REFRESH_DAYS` | Scheduler cadence for refreshing YouTube comment data (default: 14) | ❌ |
 | `ALLOWED_ORIGINS` | CORS origins (e.g. `http://localhost:3000`) | ✅ |

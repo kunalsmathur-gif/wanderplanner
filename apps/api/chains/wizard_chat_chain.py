@@ -19,6 +19,7 @@ from core.validation import (
     MAX_CHAT_HISTORY,
     MAX_CITY_LEN,
     MAX_TRIP_CONTEXT_CHARS,
+    normalise_choice_fields,
     text_validator,
 )
 from models.chat import ChatMessage
@@ -1371,6 +1372,14 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         patch = data.get("config_patch", {})
         # Filter out internal tracking keys before storing
         patch = {k: v for k, v in patch.items() if not k.startswith("_")}
+        # Canonicalise the closed-set fields (pace / scope / crowd_preference /
+        # destination_mode) here rather than only at TripConfig validation.
+        # This dict is both merged into the running config *and* returned to the
+        # frontend store, and the rest of this module branches on exact values
+        # (`mode == "fixed"`, `!= "exploring"`), so a stray "Moderate" or
+        # "undecided" would otherwise steer the conversation for every remaining
+        # turn before the generate call ever sees it.
+        patch = normalise_choice_fields(patch)
         for k, v in patch.items():
             if isinstance(v, dict) and isinstance(merged.get(k), dict):
                 merged[k] = {**merged[k], **v}

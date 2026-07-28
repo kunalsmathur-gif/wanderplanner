@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from core.config import settings
 from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize
+from core.validation import normalise_choice_fields
 from models.chat import ChatMessage
 from models.trip import PinnedPOI, TripConfig
 
@@ -240,6 +241,10 @@ async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
             # Pins may only ever come from OSM/wiki verification — an
             # LLM-authored pinned_pois would bypass the whole point.
             patch.pop("pinned_pois", None)
+            # Same canonicalisation the wizard applies: this patch goes straight
+            # into the frontend's config store (ChatPanel.tsx::updateConfig),
+            # which never re-validates through TripConfig.
+            patch = normalise_choice_fields(patch)
         resp = ChatRefineResponse(
             reply=data.get("reply", raw),
             action_type=data.get("action_type", "none"),
