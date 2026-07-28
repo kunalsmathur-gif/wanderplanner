@@ -1509,7 +1509,93 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.47.0 Changes (July 2026) — `generate_itinerary()` is measured for the first time
+
+`docs/scaling-tech-challenges.md` had carried "No observability stack" as an
+open finding for months. The specific gap, confirmed by grep: **zero
+`time.time()` or `perf_counter` calls anywhere in `chains/` or `routers/`.**
+Every latency claim in these docs — the cold-start ingestion cost, the retry
+cascade, the Pexels fetch, the "each refinement stacks onto the critical path"
+worry — was static reasoning about code, never a measurement.
+
+New `core/timing.py` records per-stage wall-clock against a `ContextVar`, so
+`chains/itinerary_chain.py` did not need six function signatures changed to
+thread a timer through. One structured record per generation, at INFO, or at
+**WARNING past `slow_itinerary_threshold_seconds`** — the cheapest useful
+alerting available without an APM, since the level is the signal and the
+per-stage breakdown rides along to say which stage caused it.
+
+**A prerequisite bug, found while building it: `JsonFormatter` silently dropped
+`extra=`.** It emitted only timestamp/level/logger/message, so structured fields
+logged that way reached no sink at all — the instrumentation would have produced
+nothing. `RedactionFilter` had the matching hole: it redacts `getMessage()`, and
+structured values ride *beside* the message, so they went out unredacted. Same
+blind spot as the v10.40.3 state-file leak, where the log line was covered and
+the value written next to it was not.
+
+#### The measurements, and what they refute
+
+Two live end-to-end generations, real Gemini + real Qdrant Cloud:
+
+| stage | Jaipur | Paris |
+|---|---|---|
+| **total** | **62.6s** | **48.0s** |
+| `llm_api` | 35.6s (57%) | 41.7s (87%) |
+| `rag_retrieval` | 20.9s | 2.8s |
+| `unaccounted` | 3.9s | 1.6s |
+| `guidance_blocks` | 1.4s | 1.1s |
+| `cache_store` | 0.7s | 0.8s |
+| `ingestion` | 0.03s | 0.03s |
+| `post_processing` | 0.0013s | 0.0010s |
+| `photos` | 0.0003s | 0.0002s |
+
+- ✅ **The "every new refinement stacks onto the same critical path" concern is
+  measurably dead.** Scoring, persona injection, pin enforcement and
+  `generation_tier` together cost **1.3 milliseconds**. That worry had been
+  filed against real growth in that block, and it was wrong.
+- 🔴 **Jaipur's 20.9s retrieval is not a slow destination — it is one-time model
+  load, and I checked rather than assuming.** Isolating retrieval with no LLM
+  call: cold process 20.0s → warm 1.4s → Paris 2.2s → Jaipur again 1.45s. Real
+  per-call cost is 1.4–2.2s. But the ~18.6s is genuinely paid by **the first
+  request after every deploy**, and Railway redeploys on every push — a real
+  production effect that had never been named. It is distinct from *destination*
+  cold-start ingestion, which is the one the docs did name.
+- ⚠️ **The `photos` number is worthless and is not evidence.** `PEXELS_API_KEY`
+  is absent from local `.env`, so `get_day_photo()` returns at its
+  `if not settings.pexels_api_key` guard — 0.3ms is the no-key short-circuit,
+  not a fetch. The key *is* set on Railway, so in production that 6-second
+  awaited timeout genuinely fires and **remains unmeasured**. Deploying this
+  instrumentation is what will answer it. (The TODO's claim that the key is "set
+  locally and on Railway" is wrong about local; corrected there.)
+
+#### 🔴 The retry cascade cannot fit inside the request timeout
+
+Not a timing measurement — an arithmetic one, and it holds regardless of load.
+`_gemini_itinerary`'s backoff is `min(5 * 2**attempt, 60)` applied after every
+attempt but the last: **5+10+20+40 = 75 seconds of sleeping per model**, before
+the first model gives up. `routers/itinerary.py` wraps the entire call in
+`asyncio.wait_for(..., settings.llm_timeout_seconds)`.
+
+That timeout is **30s by code default, and 120s in both local `.env` and Railway
+production** — checked, not assumed, because a Railway variable overrides a code
+default and this project has been bitten by exactly that before
+(`NOMINATIM_USER_AGENT`, v10.38.x). Even at 120s, one model's backoff eats 62%
+of the budget and the full three-model cascade needs 225s.
+
+**The consequence is worse than slow requests:** `_fallback_itinerary()` — the
+cache → RAG-skeleton → mock ladder that exists precisely for a failing provider —
+is only reached once *every* model is exhausted. Under sustained transient
+errors the request is cancelled mid-cascade and the user gets `LLM_TIMEOUT`
+instead of the degraded-but-real itinerary. **Deliberately not "fixed" here:**
+the options (shorter schedule, a deadline threaded into the cascade, fewer
+attempts) are a product call, and making it before the instrumentation reports
+how often transient errors actually occur would be another guess. The arithmetic
+is pinned by test and documented at the `max_attempts` definition.
+
+`tests/unit/test_itinerary_timing.py` — 22 tests. Suite **883 passed / 6
+skipped**, ruff + mypy clean (180 files).
 
 ### v10.46.0 Changes (July 2026) — The four deferred enum fields are closed sets at last, plus a doc-accuracy sweep
 

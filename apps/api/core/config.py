@@ -44,7 +44,19 @@ class Settings(BaseSettings):
     moonshot_api_key: str = ""
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
+    # ⚠️ This bounds the WHOLE of generate_itinerary() — routers/itinerary.py
+    # wraps the call in asyncio.wait_for(). Both local .env and Railway set 120;
+    # this 30 is the never-used code default, so read the env before reasoning
+    # about worst-case latency. Note the Gemini retry cascade's own backoff
+    # (5+10+20+40 = 75s per model) does not fit inside either value — see the
+    # comment above `max_attempts` in chains/itinerary_chain.py.
     llm_timeout_seconds: int = 30
+    # A generation slower than this logs its per-stage timing breakdown at
+    # WARNING instead of INFO (core/timing.py). Cheapest useful alerting
+    # available without an APM: grep the level, get the breakdown attached.
+    # Set against the PRD's stated budget rather than measured p95 — revisit
+    # once there is real traffic data to set it from.
+    slow_itinerary_threshold_seconds: float = 20.0
 
     # Qdrant
     qdrant_url: str = "http://localhost:6333"

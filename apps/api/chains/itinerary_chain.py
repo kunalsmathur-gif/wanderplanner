@@ -8,6 +8,7 @@ from typing import Any
 
 from chains.safety import apply_kid_safety_filter, inject_persona_modules
 from chains.scoring import calculate_alignment_score
+from core import timing
 from core.budget_tiers import budget_tier_prompt_hint
 from core.config import settings
 from core.cost_grounding import accommodation_cost_grounding_hint, flight_cost_grounding_hint
@@ -492,7 +493,12 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
     # Reranking enabled here: this context directly grounds the final LLM-
     # generated itinerary, so the extra cross-encoder precision is worth
     # the added latency (unlike lighter-weight interactive search calls).
-    context_docs = await retrieve_context(trip_config, enable_reranking=True)
+    # Reranking runs a cross-encoder over the candidates, so this is the one
+    # retrieval call in the product that is deliberately traded latency-for-
+    # precision — worth its own stage rather than being folded into "the LLM
+    # step", which is where an unmeasured cost would hide.
+    with timing.stage("rag_retrieval"):
+        context_docs = await retrieve_context(trip_config, enable_reranking=True)
     if context_docs:
         context_text = wrap_untrusted(
             summarise_context(context_docs, max_chars=2400),
@@ -503,11 +509,12 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
 
     # The three guidance blocks are independent lookups — fetch them
     # concurrently so prompt assembly adds one round-trip, not three.
-    itinerary_examples, gem_guidance, budget_guidance = await asyncio.gather(
-        _itinerary_examples_block(trip_config),
-        _gem_guidance_block(trip_config),
-        _budget_guidance_block(trip_config),
-    )
+    with timing.stage("guidance_blocks"):
+        itinerary_examples, gem_guidance, budget_guidance = await asyncio.gather(
+            _itinerary_examples_block(trip_config),
+            _gem_guidance_block(trip_config),
+            _budget_guidance_block(trip_config),
+        )
     prompt = SYSTEM_PROMPT.format(
         context=context_text,
         itinerary_examples=itinerary_examples,
@@ -529,6 +536,20 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
     models_to_try = list(dict.fromkeys(
         [settings.gemini_model, "gemini-2.5-flash", "gemini-2.0-flash"]
     ))
+    # ⚠️ This cascade cannot run to completion in a request. `routers/
+    # itinerary.py` wraps the whole call in `asyncio.wait_for(...,
+    # settings.llm_timeout_seconds)`, and the backoff schedule alone spends
+    # 5+10+20+40 = 75s of *sleeping* before the first model gives up — already
+    # past the 30s code default, and 62% of the 120s both local and Railway
+    # actually set. So under sustained transient errors the request is
+    # cancelled mid-cascade and the user gets LLM_TIMEOUT, rather than the
+    # graceful `_fallback_itinerary()` (cache → RAG skeleton → mock) that
+    # exists precisely for this case and is only reached once every model has
+    # been exhausted. `tests/unit/test_itinerary_timing.py` measures the
+    # schedule rather than restating it. Changing it is a product call — a
+    # shorter schedule, a deadline passed into the cascade, or a smaller
+    # `max_attempts` — deliberately left for the data this instrumentation
+    # now produces.
     max_attempts = 5
 
     last_error: Exception | None = None
@@ -545,7 +566,13 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
                         ),
                     )
 
-                response = await loop.run_in_executor(None, _call_sync)
+                # Counted before the await, so an attempt that dies still
+                # shows up — a cascade that burned four calls and timed out
+                # must not read as "one attempt".
+                timing.increment("llm_attempts")
+                with timing.stage("llm_api"):
+                    response = await loop.run_in_executor(None, _call_sync)
+                timing.label("llm_model", model_name)
                 track_gemini_usage(response, model=model_name, purpose="itinerary_generation")
                 text = response.text
 
@@ -565,7 +592,15 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
                 if kind == "transient" and attempt < max_attempts - 1:
                     wait_time = min(5 * (2 ** attempt), 60)  # 5s, 10s, 20s, 40s, 60s cap
                     logger.warning("Gemini transient error on %s (attempt %d/%d). Retrying in %ds…", model_name, attempt + 1, max_attempts, wait_time)
-                    await asyncio.sleep(wait_time)
+                    # Backoff is tracked apart from `llm_api` on purpose: "the
+                    # provider was slow" and "we chose to wait" need different
+                    # fixes, and this schedule (5/10/20/40s) can dominate a
+                    # request without a single slow call. See the note above
+                    # `max_attempts` on how it interacts with the router's
+                    # wall-clock timeout.
+                    with timing.stage("llm_retry_sleep"):
+                        await asyncio.sleep(wait_time)
+                    timing.increment("llm_retries")
                     last_error = e
                     continue
                 elif kind == "transient":
@@ -593,7 +628,8 @@ async def _langchain_itinerary(trip_config: TripConfig) -> dict:
     RAG context used by the Gemini path."""
     # Reranking enabled: this feeds directly into the final generated
     # itinerary, same as the Gemini path above.
-    context_docs = await retrieve_context(trip_config, enable_reranking=True)
+    with timing.stage("rag_retrieval"):
+        context_docs = await retrieve_context(trip_config, enable_reranking=True)
     # Use the same time-decay + dedup + budget-capped summarisation as the
     # Gemini path (previously this just joined all 20 raw chunks, which
     # skipped stale-content penalisation and duplicate filtering, and
@@ -618,19 +654,23 @@ async def _langchain_itinerary(trip_config: TripConfig) -> dict:
     parser = JsonOutputParser()
     chain = prompt | llm | parser
     # Same concurrent fetch as the Gemini path — one round-trip, not three.
-    itinerary_examples, gem_guidance, budget_guidance = await asyncio.gather(
-        _itinerary_examples_block(trip_config),
-        _gem_guidance_block(trip_config),
-        _budget_guidance_block(trip_config),
-    )
-    return await chain.ainvoke({
-        "context": context_text,
-        "itinerary_examples": itinerary_examples,
-        "gem_guidance": gem_guidance,
-        "pinned_guidance": _pinned_guidance_block(trip_config),
-        "budget_guidance": neutralize(budget_guidance, context="budget tier + cost grounding guidance"),
-        "trip_config": trip_json,
-    })
+    with timing.stage("guidance_blocks"):
+        itinerary_examples, gem_guidance, budget_guidance = await asyncio.gather(
+            _itinerary_examples_block(trip_config),
+            _gem_guidance_block(trip_config),
+            _budget_guidance_block(trip_config),
+        )
+    timing.increment("llm_attempts")
+    timing.label("llm_model", settings.llm_provider)
+    with timing.stage("llm_api"):
+        return await chain.ainvoke({
+            "context": context_text,
+            "itinerary_examples": itinerary_examples,
+            "gem_guidance": gem_guidance,
+            "pinned_guidance": _pinned_guidance_block(trip_config),
+            "budget_guidance": neutralize(budget_guidance, context="budget tier + cost grounding guidance"),
+            "trip_config": trip_json,
+        })
 
 
 async def _fallback_itinerary(trip_config: TripConfig, error: Exception) -> dict:
@@ -666,6 +706,26 @@ async def _fallback_itinerary(trip_config: TripConfig, error: Exception) -> dict
 
 
 async def generate_itinerary(trip_config: TripConfig) -> ItineraryResponse:
+    # The whole body sits inside `track()` so the timing record is emitted from
+    # the `finally` below on *every* exit path — including the one that matters
+    # most. The router wraps this call in `asyncio.wait_for(...,
+    # llm_timeout_seconds)`, so a slow generation ends as a CancelledError here,
+    # and instrumenting only the success path would have measured everything
+    # except the requests that ran out of time.
+    with timing.track("generate_itinerary") as timings:
+        try:
+            return await _generate_itinerary_inner(trip_config, timings)
+        finally:
+            timing.log_timings(
+                logger, timings,
+                slow_threshold_seconds=settings.slow_itinerary_threshold_seconds,
+            )
+
+
+async def _generate_itinerary_inner(
+    trip_config: TripConfig, timings: timing.RequestTimings
+) -> ItineraryResponse:
+    timings.label("provider", settings.llm_provider)
     if settings.llm_provider == "mock":
         raw = _mock_itinerary(trip_config)
         raw.setdefault("_from_fallback", "mock")
@@ -674,7 +734,12 @@ async def generate_itinerary(trip_config: TripConfig) -> ItineraryResponse:
         if dest:
             try:
                 from services.destination_ingestion import ensure_destination_ingested
-                await ensure_destination_ingested(dest)
+                # First-ever request for a destination runs Overpass +
+                # Wikivoyage + embeddings inline, blocking this user's response
+                # for everyone who arrives first. This stage is what says how
+                # often that happens and what it costs.
+                with timing.stage("ingestion"):
+                    await ensure_destination_ingested(dest)
             except Exception:
                 logger.warning("destination ingestion gatekeeper failed for %r", dest, exc_info=True)
         try:
@@ -683,26 +748,31 @@ async def generate_itinerary(trip_config: TripConfig) -> ItineraryResponse:
             else:
                 raw = await _langchain_itinerary(trip_config)
         except Exception as llm_error:
-            raw = await _fallback_itinerary(trip_config, llm_error)
+            with timing.stage("fallback"):
+                raw = await _fallback_itinerary(trip_config, llm_error)
         else:
             # Cache successful LLM-generated itineraries for future
             # fallback use (best-effort — never blocks/fails the response).
-            await store_itinerary(trip_config, raw)
+            with timing.stage("cache_store"):
+                await store_itinerary(trip_config, raw)
 
-    days = _parse_days(raw.get("days", []))
-    days = apply_kid_safety_filter(days, trip_config)
-    days = inject_persona_modules(days, trip_config)
-    # After the filters so an enforced pin can't be re-dropped downstream.
-    days = _enforce_pins(days, trip_config)
+    with timing.stage("post_processing"):
+        days = _parse_days(raw.get("days", []))
+        days = apply_kid_safety_filter(days, trip_config)
+        days = inject_persona_modules(days, trip_config)
+        # After the filters so an enforced pin can't be re-dropped downstream.
+        days = _enforce_pins(days, trip_config)
 
-    scored_days = []
-    for day in days:
-        scored_items = [
-            item.model_copy(update={"alignment_score": calculate_alignment_score(item, trip_config)})
-            for item in day.items
-        ]
-        day.items = scored_items
-        scored_days.append(day)
+        scored_days = []
+        for day in days:
+            scored_items = [
+                item.model_copy(
+                    update={"alignment_score": calculate_alignment_score(item, trip_config)}
+                )
+                for item in day.items
+            ]
+            day.items = scored_items
+            scored_days.append(day)
 
     # Best-effort: attach one relevant hero photo per day (destination + theme).
     # Never blocks/fails itinerary generation if Pexels is unavailable.
@@ -710,24 +780,31 @@ async def generate_itinerary(trip_config: TripConfig) -> ItineraryResponse:
         trip_config.destination.city if trip_config.destination and trip_config.destination.city
         else (trip_config.destination_country or "travel")
     )
-    try:
-        photos = await asyncio.wait_for(
-            get_day_photos([f"{dest_label} {d.theme}" for d in scored_days]),
-            timeout=6.0,
-        )
-        for day, photo in zip(scored_days, photos):
-            if photo:
-                day.image_url = photo["url"]
-                day.image_photographer = photo["photographer"]
-                day.image_photographer_url = photo["photographer_url"]
-    except Exception as exc:
-        logging.getLogger(__name__).warning("Day-photo fetch skipped: %s", exc)
+    # Timed because it is the clearest candidate for moving off the critical
+    # path: a purely cosmetic enhancement with a 6s timeout, awaited on every
+    # response. Whether that is worth doing is a question about its real p95,
+    # which nothing could answer before this.
+    with timing.stage("photos"):
+        try:
+            photos = await asyncio.wait_for(
+                get_day_photos([f"{dest_label} {d.theme}" for d in scored_days]),
+                timeout=6.0,
+            )
+            for day, photo in zip(scored_days, photos):
+                if photo:
+                    day.image_url = photo["url"]
+                    day.image_photographer = photo["photographer"]
+                    day.image_photographer_url = photo["photographer_url"]
+        except Exception as exc:
+            logging.getLogger(__name__).warning("Day-photo fetch skipped: %s", exc)
 
     overall_score = (
         sum(i.alignment_score for d in scored_days for i in d.items)
         / max(sum(len(d.items) for d in scored_days), 1)
     )
 
+    timings.label("generation_tier", str(raw.get("_from_fallback", "live")))
+    timings.increment("days", len(scored_days))
     return ItineraryResponse(
         days=scored_days,
         alignment_score=round(overall_score, 2),

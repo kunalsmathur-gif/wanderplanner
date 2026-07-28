@@ -62,6 +62,18 @@ class RedactionFilter(logging.Filter):
             record.args = ()
         except Exception:
             pass
+        # Structured `extra={"fields": ...}` never passes through `getMessage()`,
+        # so it would otherwise reach the sink unredacted — the same blind spot
+        # as the v10.40.3 state-file leak, where a filter covered the log line
+        # and missed the value written beside it.
+        fields = getattr(record, "fields", None)
+        if isinstance(fields, dict):
+            try:
+                record.fields = {  # type: ignore[attr-defined]
+                    k: (_redact(v) if isinstance(v, str) else v) for k, v in fields.items()
+                }
+            except Exception:
+                pass
         return True
 
 
@@ -96,12 +108,18 @@ class JsonFormatter(logging.Formatter):
     log aggregator (Datadog, CloudWatch, Loki, etc.) without extra deps."""
 
     def format(self, record: logging.LogRecord) -> str:
-        payload = {
+        payload: dict[str, object] = {
             "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
         }
+        # Structured payload from `logger.info(..., extra={"fields": {...}})`.
+        # Nested under one key rather than merged at the top level so a field
+        # named "level" or "message" can never shadow the record's own.
+        fields = getattr(record, "fields", None)
+        if isinstance(fields, dict) and fields:
+            payload["fields"] = fields
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
         return json.dumps(payload, default=str)

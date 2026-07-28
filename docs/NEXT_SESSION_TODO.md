@@ -207,25 +207,48 @@ Prague "National Theatre"); Melbourne gained one.
 - `services/data/common_english_words.txt` is **generated, not hand-edited** — re-run
   `scripts/generate_common_words.py` if the embedding model ever changes.
 
-**5. ⏭️ NEXT (filed 2026-07-28) — no observability into `generate_itinerary()` latency, and it keeps
-growing more steps.** Asked to check latency metrics this session and found there's nothing to
-check: zero timing instrumentation anywhere in the request path (`grep` for
-`time.time()`/`perf_counter` across `chains/`/`routers/` returns nothing), confirming
-`scaling-tech-challenges.md`'s "No observability stack" finding still stands. Static review of
-`chains/itinerary_chain.py::generate_itinerary()` turned up concrete, unmeasured latency risk that
-each new refinement (scoring, persona injection, pin enforcement, now `generation_tier`) stacks onto
-the same critical path, against a PRD budget the docs already call "tight with a single model call
-chain":
-- **Destination cold-start ingestion** (`ensure_destination_ingested`) runs Overpass + Wikivoyage +
-  embeddings inline on a place's first-ever request, blocking that user's response.
-- **Retry cascade** — up to 3 models × 5 attempts = 15 sequential LLM calls before falling back
-  (already flagged in `scaling-tech-challenges.md` §4, but still no cap on worst-case wall-clock).
-- **Pexels day-photo fetch** — a synchronous `await` with a 6-second timeout added to *every*
-  response for a purely cosmetic, best-effort enhancement.
-- Suggested shape: add lightweight per-stage timing (LLM call, ingestion, photo fetch, total) logged
-  structurally, before adding further generation-path refinements — you need real numbers to know if
-  this is already a problem, not another guess. Also consider moving the photo fetch off the
-  critical path (client-fetched after render) since it's explicitly non-blocking in intent already.
+**5. ✅ DONE 2026-07-29 — `generate_itinerary()` is instrumented and measured (shipped as v10.47.0).**
+Full write-up in `TECHNICAL_DOCUMENTATION.md` §14 v10.47.0 and `docs/system-design.md` §16. New
+`core/timing.py` accumulates per-stage wall-clock against a `ContextVar` (so no signature churn
+across six call sites) and emits one structured record per generation, escalating to WARNING past
+`slow_itinerary_threshold_seconds`. 22 tests; suite **883 passed / 6 skipped**, ruff + mypy clean.
+
+> 🔴 **A prerequisite bug: `JsonFormatter` silently dropped `extra=`.** It emitted only
+> timestamp/level/logger/message, so the timings would have reached no sink at all. `RedactionFilter`
+> had the matching hole — it covers `getMessage()`, and structured values ride *beside* the message,
+> so they went out unredacted. Same blind spot as v10.40.3's state-file leak.
+
+**Measured live (Gemini + real Qdrant Cloud): total 62.6s Jaipur / 48.0s Paris, `llm_api` 57–87%.**
+Three of the four bullets originally filed here turned out to be wrong, and the numbers are why:
+
+- ✅ **"Each new refinement stacks onto the critical path" — refuted.** Scoring + persona injection +
+  pin enforcement + `generation_tier` cost **1.3 milliseconds** combined.
+- 🔴 **"Destination cold-start ingestion blocks the response" — true in principle, but the gate cost
+  0.03s and the *real* cold start is elsewhere.** Jaipur's 20.9s retrieval was **one-time model
+  load**, isolated by measuring retrieval alone: cold process 20.0s → warm 1.4s → Paris 2.2s →
+  Jaipur again 1.45s. So **the first request after every deploy pays ~18.6s**, and Railway redeploys
+  on every push. Nobody had named that.
+- ⚠️ **The Pexels bullet is still unanswered, and the 0.3ms measurement is not evidence.**
+  `PEXELS_API_KEY` is **absent from local `.env`** — so `get_day_photo()` returns at its no-key
+  guard. **Correct the claim in item 3 below: the key is set on Railway but NOT locally.** In
+  production the 6s awaited timeout really does fire. Deploying this instrumentation answers it; do
+  not move the fetch off the critical path until it has.
+- 🔴 **The retry-cascade bullet understated it — this is the real finding.** It said "no cap on
+  worst-case wall-clock"; there *is* a cap, and that is the problem. The backoff is 5+10+20+40 =
+  **75s of sleeping per model** (225s for all three), while `routers/itinerary.py` caps the whole
+  call at `llm_timeout_seconds` — 30s by code default, **120s in both local `.env` and Railway**
+  (checked, since a Railway variable overrides a code default — the `NOMINATIM_USER_AGENT` lesson).
+  So `_fallback_itinerary()`'s cache → RAG-skeleton → mock ladder, which only runs after *every*
+  model is exhausted, **is unreachable under sustained transient errors** — the user gets
+  `LLM_TIMEOUT` instead of the degraded-but-real itinerary built for that exact case.
+  **Deliberately NOT fixed:** shorter schedule vs. a deadline threaded into the cascade vs. fewer
+  attempts is a product call, and choosing before the instrumentation reports the real
+  transient-error rate would be another guess. Arithmetic pinned by test, documented at
+  `max_attempts`, and filed as its own row in `scaling-tech-challenges.md` §4.
+
+**Follow-on, not done:** only this one endpoint is instrumented. `core/timing.py`'s `track()` is
+endpoint-agnostic and no-ops when untracked, so extending it to the other LLM-backed endpoints is
+cheap. Still no APM, no dashboards, no percentile aggregation.
 
 **6. 📱 NEW (2026-07-28) — verify voice on real iOS and Android, then extend the voice lists from
 that data.** Shipped v10.45.0 without this: Android and iOS are the bulk of the users and **neither
@@ -490,8 +513,14 @@ API and its own change. **Don't re-try the two ideas already measured and reject
 above nodes made Delhi *worse* (10/14 → 9/14, losing Chandni Chowk), and relaxing the category cap
 to 0.35 gained nothing across three cities.
 
-**3. ✅ DONE 2026-07-27 — `PEXELS_API_KEY` supplied and live.**
-Set in `apps/api/.env` for local dev and on Railway production via `railway variables --set`
+**3. ✅ DONE 2026-07-27 — `PEXELS_API_KEY` supplied and live in production.**
+⚠️ **Corrected 2026-07-29: it is set on Railway but is NOT in local `apps/api/.env`** (verified —
+no `PEXELS` entry of any kind). That matters more than it looks: `get_day_photo()` returns at its
+no-key guard locally, so **any local measurement of the day-photo fetch measures nothing**, which is
+exactly what happened while instrumenting item 5. The paragraph below is kept as written for the
+Railway half, which is accurate.
+
+Set on Railway production via `railway variables --set`
 (verified present with a masked `variable list`). Railway service redeployed (`railway redeploy`)
 to pick up the new variable — confirmed `● Online` and `/health` returning 200 post-deploy. Day
 photos should no longer silently fail to load in production.
