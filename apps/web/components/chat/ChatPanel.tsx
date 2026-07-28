@@ -1,11 +1,14 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { X, Send, RefreshCw } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useItineraryStore } from '@/store/itineraryStore'
+import { useAppStore } from '@/store/appStore'
 import { chatRefine, streamItinerary } from '@/lib/api'
+import { savePendingGeneration } from '@/lib/pendingGeneration'
 import { diffItineraries, isEmptyDiff } from '@/lib/itineraryDiff'
 import { ChatMessage } from './ChatMessage'
 import { ThemeToggle } from '@/components/common/ThemeToggle'
@@ -15,6 +18,7 @@ const WELCOME =
   "Hi! I'm Anya ✈️\n\nAsk me anything about your trip, or tell me to change your destination, dates, budget, or preferences and I'll update your plan!"
 
 export function ChatPanel() {
+  const router = useRouter()
   const { isOpen, close, messages, status, errorMsg, addMessage, setStatus } = useChatStore()
   const tripConfig = useTripConfigStore((s) => s.config)
   const updateConfig = useTripConfigStore((s) => s.updateConfig)
@@ -62,8 +66,27 @@ export function ChatPanel() {
             : { role: 'assistant', content: "✅ Done! Here's what changed in your itinerary:", diff },
         )
       },
-      (_code, message) => {
+      (code, message) => {
         setRegenNote(null)
+        // Bug fix: this used to ignore `code` entirely and always show a
+        // generic "couldn't update" error — including on AUTH_REQUIRED
+        // (session expired/never established mid-refine). That silently
+        // dead-ended the user with no way back to sign-in, unlike the
+        // initial-generation path in LLMWizard.tsx which saves the pending
+        // config and redirects to /signup. Mirror that same recovery here:
+        // save the config, open the wizard so LLMWizard's existing
+        // resume-after-auth effect can pick it up and regenerate
+        // automatically, then send the user to sign in.
+        if (code === 'AUTH_REQUIRED') {
+          savePendingGeneration(config)
+          addMessage({
+            role: 'assistant',
+            content: "You'll need to sign in again to save this change — taking you there now, then I'll pick up right where we left off.",
+          })
+          useAppStore.getState().openWizard()
+          router.push(`/signup?returnTo=${encodeURIComponent('/')}`)
+          return
+        }
         addMessage({
           role: 'assistant',
           content: `⚠️ I couldn't update the itinerary (${message}). Your current plan is untouched — try again in a moment.`,
