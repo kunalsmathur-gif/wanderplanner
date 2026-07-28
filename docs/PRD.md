@@ -3,7 +3,7 @@
 ## **1\. Document Control**
 
 * **Author:** Product Manager  
-* **Status:** Rev 13 — Updated ✅ (Named-interest detection broadened beyond fandoms + deterministic themes-patch backstop; pin inclusion now enforced structurally post-generation — the exactly-once contract holds by construction. Driven by the first live kill-criterion run's failure analysis)
+* **Status:** Rev 14 — Updated ✅ (Input validation across every user-typed field. The API now rejects empty, emoji-only, oversized and control-character input instead of forwarding it to the LLM and two external APIs, and a trip's date range and multi-stop hop count are bounded. Product-visible consequence: a nonsense destination returns a clear error rather than a plausible-looking fallback itinerary — the failure mode that made bad input hard to notice. Previous Rev 13 — Named-interest detection broadened beyond fandoms + deterministic themes-patch backstop; pin inclusion now enforced structurally post-generation — the exactly-once contract holds by construction. Driven by the first live kill-criterion run's failure analysis)
 * **Strategy companions:** [GTM_STRATEGY.md](GTM_STRATEGY.md) (go-to-market plan, product bets, phased roadmap with kill/go criteria) and [STARTUP_EVALUATION.md](STARTUP_EVALUATION.md) (+ 2026-07-11 re-evaluation addendum) — forward-looking positioning/monetization decisions live there, not in this PRD
 * **Target Release:** Q4 2026  
 * **Platform:** Web Application — Desktop-first (1440x900, 1920x1080) with mobile-responsive support (v5.0+). Bottom tab navigation on mobile (`< lg` breakpoint). No standalone mobile PWA or native app scope.

@@ -8,23 +8,53 @@ import logging
 import re
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from core.budget_estimator import budget_estimate_prompt_hint
 from core.config import settings
 from core.currency_convert import TOP_10_CURRENCIES, currency_conversion_prompt_hint
 from core.keyword_match import has_keyword
 from core.llm_client import track_gemini_usage
+from core.validation import (
+    MAX_CHAT_HISTORY,
+    MAX_CITY_LEN,
+    MAX_TRIP_CONTEXT_CHARS,
+    text_validator,
+)
 from models.chat import ChatMessage
 from services.geocode import geocode_city
 
 logger = logging.getLogger(__name__)
 
+_validate_preloaded_destination = text_validator(
+    max_length=MAX_CITY_LEN, field="preloaded_destination", require_alphanumeric=True
+)
+
 
 class WizardChatRequest(BaseModel):
-    messages: list[ChatMessage]
+    messages: list[ChatMessage] = Field(default_factory=list, max_length=MAX_CHAT_HISTORY)
     partial_config: dict[str, Any] = {}
     preloaded_destination: str | None = None  # e.g. "Bali, Indonesia"
+
+    @field_validator('preloaded_destination', mode='before')
+    @classmethod
+    def clean_preloaded_destination(cls, v: Any) -> Any:
+        return None if v is None else _validate_preloaded_destination(v)
+
+    @field_validator('partial_config')
+    @classmethod
+    def bound_partial_config(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """The whole partial config is serialised into the wizard prompt, so
+        it is bounded by serialised size like `ChatRequest.trip_context` — it
+        arrives as a loose dict (a partially-filled TripConfig), so per-field
+        types can't be applied to it here."""
+        serialised = json.dumps(v, default=str)
+        if len(serialised) > MAX_TRIP_CONTEXT_CHARS:
+            raise ValueError(
+                f"partial_config must serialise to at most {MAX_TRIP_CONTEXT_CHARS} characters "
+                f"(received {len(serialised)})"
+            )
+        return v
 
 
 class WizardChatResponse(BaseModel):

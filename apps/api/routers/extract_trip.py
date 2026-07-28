@@ -9,6 +9,7 @@ from core.analytics import flush_llm_usage
 from core.auth_dependency import get_optional_user
 from core.llm_usage import reset_usage
 from core.rate_limit import LLM_RATE_LIMIT, limiter
+from core.validation import FreeFormTripText
 from db import get_db
 from db_models import User
 
@@ -16,7 +17,9 @@ router = APIRouter()
 
 
 class ExtractTripRequest(BaseModel):
-    input: str  # URL or raw text
+    # Newlines are kept — this field is where a user pastes a blog post or
+    # their own notes, and paragraph structure is signal for the extractor.
+    input: FreeFormTripText  # URL or raw text
 
 
 @router.post("/extract-trip", response_model=ExtractedTrip)

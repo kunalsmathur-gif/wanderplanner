@@ -8,6 +8,7 @@ import { AuthLayout } from '@/components/common/AuthLayout'
 import { GoogleSsoSection } from '@/components/common/GoogleSsoSection'
 import { useAuthStore } from '@/store/authStore'
 import { authErrorMessage } from '@/lib/authApi'
+import { MAX_DISPLAY_NAME_LEN, MAX_EMAIL_LEN, MAX_PASSWORD_LEN } from '@/lib/limits'
 
 export default function SignupPage() {
   return (
@@ -81,6 +82,7 @@ function SignupForm() {
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             placeholder="Your name"
+            maxLength={MAX_DISPLAY_NAME_LEN}
             className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 px-3.5 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
           />
         </div>
@@ -96,6 +98,7 @@ function SignupForm() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
+            maxLength={MAX_EMAIL_LEN}
             className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 px-3.5 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
           />
         </div>
@@ -110,6 +113,7 @@ function SignupForm() {
               type={showPassword ? 'text' : 'password'}
               required
               minLength={8}
+              maxLength={MAX_PASSWORD_LEN}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="At least 8 characters"

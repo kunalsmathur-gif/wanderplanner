@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { geocode } from '@/lib/api'
+import { MAX_CITY_LEN } from '@/lib/limits'
 import type { DestinationInput } from '@/types'
 
 interface Props {
@@ -60,6 +61,7 @@ export function DestinationSearchInput({ label, value, onChange }: Props) {
           onFocus={() => suggestions.length > 0 && setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           placeholder="City, country…"
+          maxLength={MAX_CITY_LEN}
           className="input"
         />
         {loading && (

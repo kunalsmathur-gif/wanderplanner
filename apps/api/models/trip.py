@@ -1,10 +1,40 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field, field_validator
+
+from core.validation import (
+    MAX_BUDGET_AMOUNT,
+    MAX_BUDGET_CATEGORIES,
+    MAX_HOPS,
+    MAX_KIDS,
+    MAX_PER_GROUP_FIELD,
+    MAX_PERSONAS,
+    MAX_PREBOOKED_INR,
+    MAX_STYLE_OPTIONS,
+    MAX_THEMES,
+    CityName,
+    CountryName,
+    CurrencyCode,
+    IataCode,
+    Latitude,
+    Longitude,
+    OptionalCityName,
+    PoiName,
+    PurposeText,
+    ShortLabel,
+    clean_trip_dates,
+)
 
 # Cap on verified must-include places carried on a trip config — keeps the
 # PINNED prompt block bounded and leaves the LLM room to plan around them.
 MAX_PINNED_POIS = 8
+
+# Free-text and collection bounds live in core/validation.py — every field
+# below that a user can type into is one of its constrained types, because
+# each of them reaches the Gemini prompt and (for destinations) Nominatim and
+# Overpass. See that module's docstring for what was accepted before.
 
 
 class KidAge(BaseModel):
@@ -12,8 +42,8 @@ class KidAge(BaseModel):
 
 
 class GroupComposition(BaseModel):
-    infants: int = Field(default=0, ge=0)       # 0-2 years
-    kids: list[KidAge] = Field(default_factory=list)  # 2-17 years
+    infants: int = Field(default=0, ge=0, le=MAX_PER_GROUP_FIELD)       # 0-2 years
+    kids: list[KidAge] = Field(default_factory=list, max_length=MAX_KIDS)  # 2-17 years
 
     @field_validator('kids', mode='before')
     @classmethod
@@ -22,9 +52,9 @@ class GroupComposition(BaseModel):
         if isinstance(v, list):
             return [{'age': k} if isinstance(k, int) else k for k in v]
         return v
-    adults: int = Field(default=1, ge=0)        # 8+ years
-    seniors: int = Field(default=0, ge=0)       # 60+ years
-    pets: int = Field(default=0, ge=0)
+    adults: int = Field(default=1, ge=0, le=MAX_PER_GROUP_FIELD)        # 8+ years
+    seniors: int = Field(default=0, ge=0, le=MAX_PER_GROUP_FIELD)       # 60+ years
+    pets: int = Field(default=0, ge=0, le=MAX_PER_GROUP_FIELD)
 
     @property
     def has_kids(self) -> bool:
@@ -41,9 +71,9 @@ class GroupComposition(BaseModel):
 
 
 class AccommodationPrefs(BaseModel):
-    style: list[str] = Field(default_factory=list)
-    min_bedrooms: int = 1
-    bathrooms: int = 1
+    style: list[ShortLabel] = Field(default_factory=list, max_length=MAX_STYLE_OPTIONS)
+    min_bedrooms: int = Field(default=1, ge=0, le=20)
+    bathrooms: int = Field(default=1, ge=0, le=20)
     private_pool: bool = False
     kitchen: bool = False
     wheelchair_accessible: bool = False
@@ -51,22 +81,25 @@ class AccommodationPrefs(BaseModel):
 
 
 class Budget(BaseModel):
-    amount: float
-    currency: str = "USD"
+    amount: float = Field(ge=0, le=MAX_BUDGET_AMOUNT)
+    currency: CurrencyCode = "USD"
 
 
 class DestinationInput(BaseModel):
-    city: str
-    country: str = ""
-    lat: float = 0.0
-    lon: float = 0.0
+    city: CityName
+    country: CountryName = ""
+    lat: Latitude = 0.0
+    lon: Longitude = 0.0
 
 
 class OriginInput(BaseModel):
-    city: str
-    iata: str = ""
-    lat: float = 0.0
-    lon: float = 0.0
+    # Origin is optional in a way destination isn't: TripConfig's default is a
+    # blank origin, and the wizard fills it in later (core/budget_estimator.py
+    # gates flight costing on it being present).
+    city: OptionalCityName = ""
+    iata: IataCode = ""
+    lat: Latitude = 0.0
+    lon: Longitude = 0.0
 
 
 class PinnedPOI(BaseModel):
@@ -77,42 +110,49 @@ class PinnedPOI(BaseModel):
     confirmed against ingested OSM POIs (coords attached) or Wikivoyage text
     (existence only) — an unverified name can never become a pin.
     """
-    name: str
-    lat: float = 0.0
-    lon: float = 0.0
-    poi_type: str = ""
-    source_interest: str = ""   # the named interest that produced it, e.g. "Harry Potter"
-    verified_by: str = "osm"    # "osm" (coords are real) | "wiki" (existence confirmed, coords unknown)
+    name: PoiName
+    lat: Latitude = 0.0
+    lon: Longitude = 0.0
+    poi_type: ShortLabel = ""
+    source_interest: ShortLabel = ""   # the named interest that produced it, e.g. "Harry Potter"
+    verified_by: ShortLabel = "osm"    # "osm" (coords are real) | "wiki" (existence confirmed, coords unknown)
 
 
 class TripConfig(BaseModel):
-    purpose: str = ""
+    purpose: PurposeText = ""
+    # Shape-validated by core.validation.clean_trip_dates, not modelled — a
+    # dozen call sites read this with `.get()`. Kept a dict on purpose; see
+    # that function's docstring.
     dates: dict = Field(default_factory=lambda: {"start": None, "end": None, "flexible": False})  # {"start": "YYYY-MM-DD" | null, "end": "YYYY-MM-DD" | null, "flexible": bool}
-    scope: str = "international"   # "local" | "domestic" | "international"
+    scope: ShortLabel = "international"   # "local" | "domestic" | "international"
     origin: OriginInput = Field(default_factory=lambda: OriginInput(city="", lat=0, lon=0))
     destination: DestinationInput | None = None
-    destination_mode: str = "fixed"  # "fixed" | "exploring" | "country"
-    destination_country: str | None = None  # used when mode = "country"
-    hops: list[DestinationInput] = Field(default_factory=list)  # multi-stop, max 5
-    themes: list[str] = Field(default_factory=list)
-    personas: list[str] = Field(default_factory=list)
+    destination_mode: ShortLabel = "fixed"  # "fixed" | "exploring" | "country"
+    destination_country: CountryName | None = None  # used when mode = "country"
+    # `max_length` enforces what the comment has always claimed and what the
+    # frontend store already does (tripConfigStore.ts caps at 5). Each hop is
+    # its own cold-start ingestion — Overpass, Wikivoyage and embeddings — so
+    # an uncapped list is a per-request multiplier on the slowest path there is.
+    hops: list[DestinationInput] = Field(default_factory=list, max_length=MAX_HOPS)  # multi-stop, max 5
+    themes: list[ShortLabel] = Field(default_factory=list, max_length=MAX_THEMES)
+    personas: list[ShortLabel] = Field(default_factory=list, max_length=MAX_PERSONAS)
     group: GroupComposition = Field(default_factory=GroupComposition)
     accommodation: AccommodationPrefs = Field(default_factory=AccommodationPrefs)
-    pace: str = "moderate"  # "relaxed" | "moderate" | "packed"
+    pace: ShortLabel = "moderate"  # "relaxed" | "moderate" | "packed"
     # Crowd dial (⭐ NEW — hidden-gem curation, docs/GTM_STRATEGY.md §2):
     # "touristy" = iconic must-sees | "balanced" = mix | "offbeat" = prefer
     # community-verified hidden gems, de-prioritise crowd-heavy spots.
-    crowd_preference: str = "balanced"  # "touristy" | "balanced" | "offbeat"
+    crowd_preference: ShortLabel = "balanced"  # "touristy" | "balanced" | "offbeat"
     budget: Budget = Field(default_factory=lambda: Budget(amount=0, currency="USD"))
     # Optional per-category budget steering (⭐ NEW — budget curation).
     # Values from: "accommodation" | "food" | "activities" | "shopping" | "local_transport"
-    splurge_categories: list[str] = Field(default_factory=list)
-    save_categories: list[str] = Field(default_factory=list)
+    splurge_categories: list[ShortLabel] = Field(default_factory=list, max_length=MAX_BUDGET_CATEGORIES)
+    save_categories: list[ShortLabel] = Field(default_factory=list, max_length=MAX_BUDGET_CATEGORIES)
     # Already-paid flight/accommodation costs (⭐ NEW — user explicitly states
     # they've already booked these; the real amount replaces our heuristic
     # estimate for that cost component in budget recommendations/feasibility).
-    prebooked_flights_inr: int | None = None
-    prebooked_accommodation_inr: int | None = None
+    prebooked_flights_inr: int | None = Field(default=None, ge=0, le=MAX_PREBOOKED_INR)
+    prebooked_accommodation_inr: int | None = Field(default=None, ge=0, le=MAX_PREBOOKED_INR)
     # Verified must-include places from named-interest refinements (⭐ NEW —
     # "Harry Potter test"). Hard constraints in the generation prompt, not
     # suffix nudges. Capped to keep the prompt block and the itinerary sane.
@@ -122,6 +162,11 @@ class TripConfig(BaseModel):
     @classmethod
     def cap_pinned_pois(cls, v: list[PinnedPOI]) -> list[PinnedPOI]:
         return v[:MAX_PINNED_POIS]
+
+    @field_validator('dates', mode='before')
+    @classmethod
+    def validate_dates(cls, v: Any) -> dict[str, Any]:
+        return clean_trip_dates(v)
 
     def effective_pace(self) -> str:
         """Auto-apply Relaxed if any kid is under 5."""

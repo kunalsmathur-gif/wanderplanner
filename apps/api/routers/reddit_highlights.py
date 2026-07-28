@@ -10,6 +10,7 @@ from core.config import settings
 from core.embeddings import embed
 from core.qdrant import get_qdrant
 from core.rate_limit import DEFAULT_RATE_LIMIT, limiter
+from core.validation import MAX_CITY_LEN, validate_query_param
 
 router = APIRouter()
 
@@ -31,9 +32,15 @@ class RedditHighlightsResponse(BaseModel):
 @limiter.limit(DEFAULT_RATE_LIMIT)
 async def reddit_highlights(
     request: Request,
-    destination: str = Query(..., description="Destination city name"),
+    destination: str = Query(..., description="Destination city name", max_length=MAX_CITY_LEN),
     limit: int = Query(5, ge=1, le=20),
 ) -> RedditHighlightsResponse:
+    # Outside the try/except below on purpose: that block degrades gracefully
+    # to an empty result, which would turn a rejected input into a silent
+    # "no highlights found" instead of telling the caller what was wrong.
+    destination = validate_query_param(
+        destination, field="destination", max_length=MAX_CITY_LEN, require_alphanumeric=True
+    )
     try:
         client = get_qdrant()
         query = f"{destination} travel tips guide best places"

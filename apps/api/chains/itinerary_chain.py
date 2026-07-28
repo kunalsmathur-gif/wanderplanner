@@ -13,6 +13,7 @@ from core.config import settings
 from core.cost_grounding import accommodation_cost_grounding_hint, flight_cost_grounding_hint
 from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize, wrap_untrusted
+from core.validation import MAX_TRIP_DAYS
 from models.itinerary import (
     ExpenseBreakdown,
     ItineraryDay,
@@ -311,7 +312,13 @@ def _mock_itinerary(trip_config: TripConfig, tip_texts: list[str] | None = None)
     end_raw = dates.get("end_date") or dates.get("end")
     if start and end_raw:
         try:
-            num_days = max(1, (date.fromisoformat(end_raw) - base).days)
+            # Clamped: this loop builds one dict per day with three items each,
+            # so an unbounded span is a memory-exhaustion vector reachable from
+            # a single request body. TripConfig now caps the start/end window
+            # (core/validation.py), but this path also runs on dicts that never
+            # went through that validator — eval harnesses, cached configs, and
+            # the `isinstance(..., dict)` fallback just above.
+            num_days = max(1, min(MAX_TRIP_DAYS, (date.fromisoformat(end_raw) - base).days))
         except Exception:
             pass
 

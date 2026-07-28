@@ -1,8 +1,11 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -60,6 +63,28 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 app.add_middleware(SlowAPIMiddleware)
+
+# FastAPI's default 422 body echoes the rejected value back under "input", so
+# rejecting an oversized payload produced an equally oversized response — the
+# input caps in core/validation.py would otherwise be paid for twice. The
+# offending value is still shown, just bounded, because a truncated echo is
+# what makes a validation error debuggable.
+_MAX_ECHOED_INPUT_CHARS = 200
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    errors = []
+    for error in exc.errors():
+        bounded = dict(error)
+        value = bounded.get("input")
+        if isinstance(value, str) and len(value) > _MAX_ECHOED_INPUT_CHARS:
+            bounded["input"] = value[:_MAX_ECHOED_INPUT_CHARS] + "… [truncated]"
+        elif isinstance(value, list | dict) and len(value) > 20:
+            bounded["input"] = f"<{type(value).__name__} of {len(value)} entries>"
+        errors.append(bounded)
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
 
 app.add_middleware(
     CORSMiddleware,

@@ -167,6 +167,7 @@ export default function AccountPage() {
                   value={confirmText}
                   onChange={(e) => setConfirmText(e.target.value)}
                   placeholder="DELETE"
+                  maxLength={20}
                   className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 px-3.5 text-sm text-[var(--_fg)] focus:border-[var(--_primary)] focus:outline-none"
                 />
                 {error && <p className="text-sm text-[var(--_destructive)]">{error}</p>}

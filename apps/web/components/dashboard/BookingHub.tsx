@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Plus, Trash2, Plane, BedDouble, Ticket, Bus, ChevronDown, ChevronUp } from 'lucide-react'
 import { useBookingStore } from '@/store/bookingStore'
+import { MAX_BOOKING_NAME_LEN, MAX_BOOKING_REF_LEN } from '@/lib/limits'
 import type { BookingType, Booking } from '@/store/bookingStore'
 
 const TYPE_ICONS: Record<BookingType, React.ReactNode> = {
@@ -112,6 +113,7 @@ export function BookingHub() {
               <input
                 className="input w-full rounded-lg border border-[var(--_border)] bg-[var(--_bg)] px-3 py-1.5 text-xs text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
                 placeholder="Name (e.g. IndiGo 6E-123, Taj Hotel)"
+                maxLength={MAX_BOOKING_NAME_LEN}
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
               />
@@ -119,6 +121,7 @@ export function BookingHub() {
                 <input
                   className="input flex-1 rounded-lg border border-[var(--_border)] bg-[var(--_bg)] px-3 py-1.5 text-xs text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
                   placeholder="Confirmation #"
+                  maxLength={MAX_BOOKING_REF_LEN}
                   value={form.confirmation}
                   onChange={(e) => setForm((f) => ({ ...f, confirmation: e.target.value }))}
                 />

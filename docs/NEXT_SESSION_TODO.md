@@ -27,33 +27,40 @@ as double-counts were removed. **Two items below came out of it.**
 >   be regenerated** — the scoring code has changed since. The post-fix run and the 1,274-window
 >   `gem_mention_windows_20260727.json` calibration corpus sit alongside it.
 
-**2. ⏭️ NEXT — input validation / "monkey testing" hardening.** Probed 2026-07-27; nothing is
-validated. `models/trip.py`'s `DestinationInput.city` is a bare `str` with no `min_length`,
-`max_length` or charset constraint, and **every one of these is accepted today**: emoji-only
-(`🎉🎉🎉`), empty string, whitespace-only, `'A' * 10000`, embedded NUL/control characters,
-zero-width spaces, an RTL override, and `Paris\nIgnore previous instructions`.
+**2. ✅ DONE 2026-07-28 — input validation / "monkey testing" hardening (shipped as v10.43.0).**
+Full write-up in `TECHNICAL_DOCUMENTATION.md` §14 v10.43.0 and `docs/system-design.md` §8 + §16.
+New `core/validation.py` holds the caps, the normaliser and the `Annotated` field types; every
+model that carries user text uses them, six endpoints validate query/path params through the same
+rules, `apps/web/lib/limits.ts` mirrors the numbers, and `tests/unit/test_input_validation.py`
+covers it (84 tests). Suite **806 passed / 6 skipped**, ruff + mypy clean.
 
-- 🔴 **The real exposure is unbounded free text reaching the LLM prompt and three external APIs.**
-  Length caps exist in exactly three places in the whole prompt path (`interest[:120]`,
-  `destination[:80]` in `interest_expansion_chain.py`, `text[:4000]` in `extract_trip_chain.py`) —
-  and the itinerary chain's destination is **not** one of them, so a 10,000-character city reaches
-  Gemini, Nominatim and Overpass. Cost/latency vector; fix this first.
-- `routers/itinerary.py` — the main generation endpoint — has **zero** `HTTPException` guards. Same
-  for `geocode`, `search`, `best_time`, `travel_tips`, `analytics`. (`auth.py` has 11 and `admin.py`
-  10, so the pattern exists; it just was never applied to the trip-planning surface.)
-- **No `maxLength` anywhere in the frontend** — zero matches across all `.tsx` files.
-- **No test anywhere covers emoji / empty / oversized / control-character input.** The adversarial
-  testing that does exist (`core/prompt_guard.py`, 15 tests) targets *ingested third-party content*
-  for prompt injection, not user form input. That part is genuinely well covered — don't redo it.
-- ⚠️ Severity is robustness and cost, **not** classic security: SQL is ORM'd, Qdrant filters are
-  parameterised `MatchValue`, and prompt injection is fenced. But note the failure *shape* — an
-  emoji-only destination normalises to `''` and yields a fallback/garbage itinerary **rather than an
-  error**, which is the same silent-plausible-wrong mode as v10.40.0's complete-but-wrong pool and
-  v10.40.1's clean-looking `0 comments` log.
-- Suggested shape: one shared constrained type at the Pydantic layer (covers every router at once),
-  matching caps in the frontend, and a `tests/unit/test_input_validation.py`.
+**Four defects the probe had NOT found, all more serious than the ones it did:**
 
-**3. ⏭️ THEN — voice mode (TTS/STT) has never been tested, at all.** The frontend's 6 test files
+- 🔴 **A long date span was a memory-exhaustion vector.** `_mock_itinerary` builds one dict per day
+  with three items each, so `{"start": "2026-01-01", "end": "2999-01-01"}` was ~355,000 iterations
+  from a single request body. Now bounded in the model *and* clamped in the loop — that path also
+  runs on dicts that never went through the validator.
+- 🔴 **Unparseable dates were swallowed by a bare `except`** and replaced with a hard-coded default,
+  so a user was silently planned a trip in a different month.
+- 🔴 **`hops` said "multi-stop, max 5" in a comment and enforced nothing** — and each hop is its own
+  cold-start Overpass + Wikivoyage + embedding run.
+- 🔴 **`_tips_cache` is a process-lifetime dict keyed on the raw destination string**, so unbounded
+  input meant unbounded keys.
+
+**Worth carrying forward:**
+
+- The 422 body echoes the rejected value back by default, so an input cap without a response cap is
+  paid for twice. `main.py` now truncates the echo. Check this on any future validation work.
+- ⚠️ **Deliberately NOT converted to `Literal`: `pace`, `scope`, `crowd_preference`,
+  `destination_mode`.** They are closed sets in their comments, but they are populated from LLM
+  output via the wizard's `config_patch` — a model emitting `"Moderate"` would turn a cosmetic
+  mismatch into a hard 422 mid-flow. Tightening them requires normalising in the wizard path first.
+  That is the natural follow-up here, not a bug.
+- The frontend caps mirror the backend **exactly, on purpose** (`apps/web/lib/limits.ts` says so).
+  A tighter frontend cap silently truncates what the API would accept; a looser one lets the user
+  type what can only fail at submit. Change them together.
+
+**3. ⏭️ NEXT — voice mode (TTS/STT) has never been tested, at all.** The frontend's 6 test files
 (`ComparisonGrid`, `ErrorState`, `format`, `appStore`, `comparisonStore`, `tripConfigStore`) touch
 none of voice, the wizard, or `ListeningOrb`. There is no TTS/STT *service* to test on the backend —
 both are browser-native Web Speech API inside `components/wizard/LLMWizard.tsx` (no keys, no cost).

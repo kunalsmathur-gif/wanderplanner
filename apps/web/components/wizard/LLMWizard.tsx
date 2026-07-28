@@ -12,6 +12,7 @@ import { wizardChat } from '@/lib/api'
 import { streamItinerary, checkFeasibility } from '@/lib/api'
 import { savePendingGeneration, getPendingGeneration, clearPendingGeneration } from '@/lib/pendingGeneration'
 import { formatCurrency } from '@/lib/format'
+import { MAX_CHAT_MESSAGE_LEN } from '@/lib/limits'
 import type { TripConfig } from '@/types'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 
@@ -922,6 +923,7 @@ export function LLMWizard() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
                 placeholder={voiceActive ? 'Listening…' : 'Type your reply…'}
+                maxLength={MAX_CHAT_MESSAGE_LEN}
                 disabled={isSending || voiceActive}
                 className="flex-1 rounded-xl border border-[var(--_border)] bg-[var(--_bg)] px-3 py-2.5 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none disabled:opacity-50"
                 aria-label="Message to Anya"

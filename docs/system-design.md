@@ -916,6 +916,43 @@ Response: { best_months: string[], weather_summary: string, avoid_months: string
             events: [{name, month, description}] }
 ```
 
+### Input validation & limits (⭐ NEW v10.43)
+
+Every field a user can type into is a constrained type from `core/validation.py`, applied at the
+Pydantic layer so one definition covers every route carrying a `TripConfig`. Query and path
+parameters go through `validate_query_param`, which applies the same rules and converts the
+`ValueError` into a 422 (a raised `ValueError` is a 422 inside a request body but a 500 inside a
+route handler).
+
+| Field | Limit |
+|---|---|
+| `destination.city`, `origin.city`, `country`, any destination query param | ≤ 80 chars, must contain a letter or digit in any script |
+| `purpose` | ≤ 200 chars |
+| themes / personas / accommodation styles / budget categories | ≤ 60 chars each; ≤ 20, 20, 20, 10 entries |
+| `hops` | ≤ 5 (was a comment, not a constraint) |
+| `lat` / `lon` | ±90 / ±180 |
+| `dates` | ISO dates only, `end >= start`, window ≤ 366 days, `duration_days` 1–60 |
+| chat message | ≤ 4,000 chars, ≤ 100 per request |
+| `trip_context` / `partial_config` | ≤ 8,000 chars serialised |
+| "Start Anywhere" input | ≤ 8,000 chars |
+| group sizes / budget / prebooked costs | ≤ 30 per role; ≤ ₹1,000,000,000 / ₹100,000,000 |
+
+Three rules govern the normaliser, and each exists because of a specific failure:
+
+1. **Over-length input is rejected, not truncated.** Truncation turns an abusive request into a
+   valid-looking one and yields a plausible-but-wrong itinerary — the same silent-plausible-wrong
+   shape as v10.40.0's complete-but-wrong POI pool.
+2. **Place names must contain a letter or digit.** A length check alone passes `🎉🎉🎉`, which then
+   normalises to nothing useful and produces a fallback plan instead of an error.
+3. **ZWJ/ZWNJ survive; all other control and format codepoints become a space.** They are
+   load-bearing in Devanagari and emoji sequences — this is the fourth bug in the character-rule
+   family documented in `core/keyword_match.py`.
+
+This is **not** the prompt-injection boundary. `core/prompt_guard.py` neutralises override phrasing
+where text meets the prompt (`chains/itinerary_chain.py` neutralises the whole serialised
+`TripConfig`), and that layer is unchanged. Validation bounds size and shape; the guard handles
+intent.
+
 ---
 
 ## 8A. Database Schema
@@ -1655,6 +1692,19 @@ instead of the agent) that govern how these tools are meant to be used.
 ---
 
 ## 16. Change Log
+
+### v10.43 (July 2026) — Input validation: nothing a user typed was bounded
+
+- **New `core/validation.py`** — length, charset and shape rules for every user-typed field, applied as `Annotated` Pydantic types plus a `validate_query_param` helper for query/path parameters. Full table in §8. Before this, `DestinationInput.city` was a bare `str` and an empty string, `🎉🎉🎉`, `A` × 10,000, NUL bytes, zero-width spaces and an RTL override all reached the Gemini prompt, Nominatim and Overpass.
+- **Architectural note: rejection is the design.** Truncating an over-long value produces a request that looks valid and an itinerary that looks plausible — the failure mode this project keeps re-encountering. The only place anything is dropped silently is the `dates` key allowlist, and it says so in the code.
+- 🔴 **A long date span was a memory-exhaustion vector.** `TripConfig.dates` was an unvalidated dict and `chains/itinerary_chain.py::_mock_itinerary` builds one dict per day, so `end: "2999-01-01"` was ~355,000 iterations from one request body. The window is now capped at 366 days (wide, because a *flexible* trip is legitimately expressed as a wide window with a short `duration_days` inside it) and the loop is clamped independently, since that path also runs on dicts that never passed through the validator.
+- 🔴 **Unparseable dates were swallowed by a bare `except`** and replaced with a hard-coded default date, silently planning a different month than the user asked for.
+- 🔴 **`hops` claimed "max 5" in a comment and enforced nothing** — and each hop triggers its own cold-start Overpass + Wikivoyage + embedding run, so the list length multiplies the slowest path in the system.
+- 🔴 **`routers/travel_tips.py::_tips_cache` is keyed on the raw destination string** and lives for the process lifetime, so an unbounded destination was an unbounded key.
+- **422 bodies are bounded.** FastAPI echoes the rejected value back, so rejecting a 100,000-character payload produced an equally large response; `main.py` now truncates the echo while keeping the reason.
+- **Frontend caps mirror the backend exactly** (`apps/web/lib/limits.ts`, 16 inputs across 11 files). A tighter frontend cap would silently truncate what the API accepts; a looser one lets the user type what can only fail at submit.
+- **Unchanged on purpose:** `core/prompt_guard.py`. Validation bounds size and shape; the guard handles intent, and it already covers the trip config.
+- New `tests/unit/test_input_validation.py` (**84 tests**), pairing every rejection case with an acceptance case for Devanagari/CJK/Cyrillic/accented names — the tempting over-correction here is a Latin-only charset allowlist. Suite **806 passed / 6 skipped**; ruff + mypy clean. See `TECHNICAL_DOCUMENTATION.md` §14 v10.43.0.
 
 ### v10.38 (July 2026) — YouTube ingestion automated behind a quota budget, gems dead zone, price-retrieval category error, food grounding anchored on observed data
 

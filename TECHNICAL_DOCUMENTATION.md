@@ -1,7 +1,7 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.42.0 (First full-corpus hidden-gem audit — all **168 destinations**, measured against the live cluster with a diagnostic replica cross-checked against the shipped function on every one. v10.39.0's pool problem is fixed (Delhi now matches Chandni Chowk, Red Fort, Jama Masjid, India Gate), and the bottleneck had moved to the **sentiment floor** — which was rejecting *neutral*, not negative: Laplace smoothing puts a mention with no lexicon word in range at exactly 0.5, just under the 0.55 floor, and **75% of rejections scored exactly that**. The lexicon fired on only 29% of 1,274 real mention windows. Expanded by measuring each candidate word against the corpus — and the result inverts intuition, because YouTube enthusiasm is mostly aimed at the *video*: `great`, `nice`, `awesome`, `helpful` and `wonderful` are all creator-directed (1.7-4.6x enrichment) and are **deliberately excluded**, while `clean`, `delicious`, `historic`, `must` and `friendly` are place-directed. Also fixed cross-POI mention mis-attribution (Cairo's *Grand* Egyptian Museum was crediting the Egyptian Museum, and Seoul's Lotte World Tower the reverse) and collapsed 24 identically-named duplicate POIs. Destinations returning a gem **44% → 54%**, total gems **127 → 172**, while total matched POIs *fell* 541 → 530 as double-counts were removed. Previous: 10.41.1 — The prominence re-ingestion data run (v10.40.0's code) is now complete: **0 of 169 destinations pending**, verified on the real Qdrant Cloud cluster. Closing the last 9 surfaced a real bug: `ingest_osm_pois` returned `0` — instead of falling back to the existing stored count, like the guards immediately below it already do — when *every* Overpass mirror failed on *both* passes and the fetch came back fully empty, not just non-prominent. `scripts/reingest_prominence_ranking.py`'s state loader requires a truthy `osm_count` before its accept-after-3-attempts rule can fire, so a destination stuck on this path would retry forever; Medellin hit it three runs in a row before the fix. Also dropped the dead `overpass.openstreetmap.fr` mirror (403s on every request, a guaranteed-wasted rotation slot) and confirmed the Resend email pipeline end-to-end with a real password-reset request against production. Previous: 10.41.0 — YouTube **narration** — transcripts + video descriptions — is a new price-grounding source, discovered for free from video IDs the comment backfill already stored, so it spends nothing against the 100/day `search.list` cap. Live-measured on Jaipur: comments carry **0** money-shaped chunks, narration carries **24**. Two real bugs fell out: transcripts were requested English-only, discarding the Hindi-only track most Indian vlogs actually have; and `\b` **silently fails on Devanagari** words ending in a matra, so `खाना`/`थाली` never matched while `होटल` did — 0 of 24 price-bearing Hindi chunks matched any food or stay keyword. Previous: 10.40.6 — the bare-substring keyword bug was in FIVE modules, not one — `"pub"` inside **"Public Garden"** was deleting kid-friendly places from family itineraries, and `"uk"` inside **"Sukhothai"** was pricing a moderate destination as premium; all three now share `core/keyword_match.py`. Previous: 10.40.4 — price grounding now matches the amount, not the blob — per-amount context scoping, plus a pre-existing bare-substring bug where FOOD's "eat" matched "great"; stay grounding accepts a single mention. Measured finding: a complete corpus is not a dense one — food grounding is corpus-limited, so the `_FOOD_MEALS_PER_DAY` calibration stays deferred, now with evidence. Previous: 10.40.3 — YouTube quota discipline: a 429/403 is now terminal rather than retried 3x against a 100/day cap, and all 12 standalone scripts use the app's `RedactionFilter` instead of bare `basicConfig` — which also closed a path where the API key could reach a JSONL state *file*, where no logging filter runs. Corrects a v10.40.1 claim: the cold-start gate does not over-subscribe the cap on its own. Previous: 10.40.2 — YouTube comment corpus complete at 170/170 destinations — 25,347 points verified on the cluster; and `mypy .` runs for the first time, going from an abort-before-checking to `Success: no issues found in 166 source files`, which surfaced three real bugs: a cancelled ingestion reading as a success, and two in the comparison path)
-**Last Updated:** July 27, 2026  
+**Version:** 10.43.0 (Input validation — the "monkey testing" pass. Nothing a user typed was bounded: `DestinationInput.city` was a bare `str`, so an empty string, `🎉🎉🎉`, `A` × 10,000, NUL bytes, zero-width spaces and an RTL override were all accepted and forwarded to the Gemini prompt, Nominatim and Overpass. New `core/validation.py` gives every user-typed field a constrained type that **rejects rather than truncates** — a silently trimmed value produces a plausible-but-wrong itinerary, the same failure shape as v10.40.0's complete-but-wrong POI pool. Four real defects surfaced that the probe had not listed: `TripConfig.dates` was unbounded and `_mock_itinerary` builds one dict per day, so `end: "2999-01-01"` was ~355,000 iterations from a single request body; unparseable dates were swallowed by a bare `except` and replaced with a hard-coded default, silently planning a different month than the user asked for; `hops` had claimed "max 5" in a comment for months without enforcing it, and each hop is its own cold-start Overpass + Wikivoyage + embedding run; and `_tips_cache` is a process-lifetime dict keyed on the raw destination string. ZWJ/ZWNJ are deliberately preserved through normalisation while every other format character is stripped — they are load-bearing in Devanagari conjuncts, and this is the **fourth** bug in this codebase's character-rule family. Deliberately *not* prompt-injection work: `core/prompt_guard.py` already covers that and was not touched. 84 new tests; suite **806 passed / 6 skipped**. Previous: 10.42.0 — First full-corpus hidden-gem audit — all **168 destinations**, measured against the live cluster with a diagnostic replica cross-checked against the shipped function on every one. v10.39.0's pool problem is fixed (Delhi now matches Chandni Chowk, Red Fort, Jama Masjid, India Gate), and the bottleneck had moved to the **sentiment floor** — which was rejecting *neutral*, not negative: Laplace smoothing puts a mention with no lexicon word in range at exactly 0.5, just under the 0.55 floor, and **75% of rejections scored exactly that**. The lexicon fired on only 29% of 1,274 real mention windows. Expanded by measuring each candidate word against the corpus — and the result inverts intuition, because YouTube enthusiasm is mostly aimed at the *video*: `great`, `nice`, `awesome`, `helpful` and `wonderful` are all creator-directed (1.7-4.6x enrichment) and are **deliberately excluded**, while `clean`, `delicious`, `historic`, `must` and `friendly` are place-directed. Also fixed cross-POI mention mis-attribution (Cairo's *Grand* Egyptian Museum was crediting the Egyptian Museum, and Seoul's Lotte World Tower the reverse) and collapsed 24 identically-named duplicate POIs. Destinations returning a gem **44% → 54%**, total gems **127 → 172**, while total matched POIs *fell* 541 → 530 as double-counts were removed. Previous: 10.41.1 — The prominence re-ingestion data run (v10.40.0's code) is now complete: **0 of 169 destinations pending**, verified on the real Qdrant Cloud cluster. Closing the last 9 surfaced a real bug: `ingest_osm_pois` returned `0` — instead of falling back to the existing stored count, like the guards immediately below it already do — when *every* Overpass mirror failed on *both* passes and the fetch came back fully empty, not just non-prominent. `scripts/reingest_prominence_ranking.py`'s state loader requires a truthy `osm_count` before its accept-after-3-attempts rule can fire, so a destination stuck on this path would retry forever; Medellin hit it three runs in a row before the fix. Also dropped the dead `overpass.openstreetmap.fr` mirror (403s on every request, a guaranteed-wasted rotation slot) and confirmed the Resend email pipeline end-to-end with a real password-reset request against production. Previous: 10.41.0 — YouTube **narration** — transcripts + video descriptions — is a new price-grounding source, discovered for free from video IDs the comment backfill already stored, so it spends nothing against the 100/day `search.list` cap. Live-measured on Jaipur: comments carry **0** money-shaped chunks, narration carries **24**. Two real bugs fell out: transcripts were requested English-only, discarding the Hindi-only track most Indian vlogs actually have; and `\b` **silently fails on Devanagari** words ending in a matra, so `खाना`/`थाली` never matched while `होटल` did — 0 of 24 price-bearing Hindi chunks matched any food or stay keyword. Previous: 10.40.6 — the bare-substring keyword bug was in FIVE modules, not one — `"pub"` inside **"Public Garden"** was deleting kid-friendly places from family itineraries, and `"uk"` inside **"Sukhothai"** was pricing a moderate destination as premium; all three now share `core/keyword_match.py`. Previous: 10.40.4 — price grounding now matches the amount, not the blob — per-amount context scoping, plus a pre-existing bare-substring bug where FOOD's "eat" matched "great"; stay grounding accepts a single mention. Measured finding: a complete corpus is not a dense one — food grounding is corpus-limited, so the `_FOOD_MEALS_PER_DAY` calibration stays deferred, now with evidence. Previous: 10.40.3 — YouTube quota discipline: a 429/403 is now terminal rather than retried 3x against a 100/day cap, and all 12 standalone scripts use the app's `RedactionFilter` instead of bare `basicConfig` — which also closed a path where the API key could reach a JSONL state *file*, where no logging filter runs. Corrects a v10.40.1 claim: the cold-start gate does not over-subscribe the cap on its own. Previous: 10.40.2 — YouTube comment corpus complete at 170/170 destinations — 25,347 points verified on the cluster; and `mypy .` runs for the first time, going from an abort-before-checking to `Success: no issues found in 166 source files`, which surfaced three real bugs: a cancelled ingestion reading as a success, and two in the comparison path)
+**Last Updated:** July 28, 2026  
 **Status:** Production-ready MVP
 
 ---
@@ -1509,7 +1509,86 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.43.0 Changes (July 2026) — Input validation: nothing a user typed was bounded
+
+A "monkey testing" pass over every field a user can type into. The starting point was that
+`models/trip.py::DestinationInput.city` was a bare `str` — no length, no charset, no shape — and
+**every one of these was accepted and forwarded to the Gemini prompt, Nominatim and Overpass**:
+empty, whitespace-only, `🎉🎉🎉`, `A` × 10,000, embedded NUL and control characters, zero-width
+spaces, an RTL override, and `Paris\nIgnore previous instructions`. `routers/itinerary.py` — the
+main generation endpoint — had zero guards, and there was no `maxLength` anywhere in the frontend.
+
+**Severity is robustness and cost, not classic injection.** SQL is ORM'd, Qdrant filters are
+parameterised `MatchValue`, and prompt injection is separately fenced by `core/prompt_guard.py`
+(15 tests, untouched here — the gap was user *form* input, not ingested content). What made it
+worth fixing is the failure *shape*: an emoji-only destination normalised to nothing useful
+downstream and produced a **fallback itinerary rather than an error**, the same
+silent-plausible-wrong mode as v10.40.0's complete-but-wrong POI pool and v10.40.1's clean-looking
+`0 comments ingested` run log.
+
+**New `core/validation.py`** holds the caps, the normaliser and a set of `Annotated` field types;
+`models/trip.py`, `models/chat.py`, `models/itinerary.py`, `chains/wizard_chat_chain.py` and
+`chains/recommend_cities_chain.py` use them, so one change covers every route that carries a
+`TripConfig`. Three decisions in it are deliberate:
+
+| Decision | Why |
+|---|---|
+| **Reject, never truncate** | Silently trimming `A` × 10,000 to 80 characters produces a request that looks valid and an itinerary that looks plausible. A 422 naming the field and the actual length is the honest outcome. The single exception is the `dates` key allowlist, and it is called out in the code. |
+| **Place names must contain a letter or digit** | `🎉🎉🎉` passes any length check. `str.isalnum()` is Unicode-aware, so this accepts `जयपुर`, `京都` and `Zürich` and rejects emoji-only and punctuation-only input — it is a shape rule, not a Latin allowlist. |
+| **ZWJ (U+200D) and ZWNJ (U+200C) survive cleaning; every other `Cf`/`Cc` codepoint becomes a space** | Both are format characters like the zero-width space, and both are load-bearing — Devanagari conjunct control and emoji sequences. The obvious "strip all control and format characters" rule would corrupt exactly the Hindi text this India-first product most needs. **This is the fourth bug in the same family** (v10.40.4/5/6 substring false positives, v10.41.0's `\b` failing on Devanagari); the rule stated in `core/keyword_match.py` — *a character rule written for one script is an assumption about every script in the corpus* — is what caught it here. Replacement is a space rather than deletion, so a hidden separator can never fuse two tokens into one plausible word (`Paris​London` → `Paris London`, not `ParisLondon`). |
+
+**Four real defects surfaced that the original probe had not listed:**
+
+- 🔴 **`TripConfig.dates` was a free dict, and a long date span is a memory-exhaustion vector.**
+  `chains/itinerary_chain.py::_mock_itinerary` builds one dict per day with three items each, so
+  `{"start": "2026-01-01", "end": "2999-01-01"}` was ~355,000 iterations reachable from a single
+  request body. Now shape-validated (ISO dates, `end >= start`, window ≤ 366 days,
+  `duration_days` 1–60), **and** the loop itself is clamped — that path also runs on dicts that
+  never went through the validator (eval harnesses, cached configs, its own `isinstance` fallback).
+- 🔴 **Unparseable dates were swallowed and replaced with a hard-coded default.** `"01/05/2026"`
+  fell into a bare `except` and became `2026-11-14`, so the user was silently planned a trip in a
+  different month. Now rejected.
+- 🔴 **`hops` said "multi-stop, max 5" in a comment and enforced nothing.** The frontend store caps
+  at 5; the API did not. Each hop is its own cold-start ingestion — Overpass, Wikivoyage and
+  embeddings — so an uncapped list is a per-request multiplier on the slowest path in the system.
+- 🔴 **`routers/travel_tips.py::_tips_cache` is a process-lifetime dict keyed on the raw
+  destination string.** An unbounded destination is an unbounded key, so distinct junk strings grew
+  it without limit for as long as the process ran.
+
+Also bounded: latitude/longitude (they reach a haversine calculation and an Overpass bounding box,
+neither of which checked them), group sizes, budget amounts, prebooked costs, theme/persona/style
+lists, chat history length, and the serialised size of the two loose dicts that get pasted into
+prompts (`ChatRequest.trip_context`, `WizardChatRequest.partial_config`).
+
+**Endpoint guards** — `geocode`, `search`, `best-time`, `travel-tips`, `reddit-highlights` and
+`extract-trip` now validate through the same rules as the request bodies, via
+`validate_query_param` (a `ValueError` is a 422 in a body but a 500 in a route handler, so the
+conversion is explicit). `reddit-highlights`' guard sits deliberately *ahead* of its catch-all
+`except`, which degrades to an empty list — inside it, a rejected input would have read as "no
+highlights found".
+
+**The 422 response body is now bounded too.** FastAPI echoes the rejected value back under
+`input`, so rejecting a 100,000-character payload produced a 100,000-character error response —
+the new caps would have been paid for twice. `main.py` truncates the echo to 200 characters (and
+summarises long lists/dicts) while keeping the message that says what was wrong.
+
+**Frontend**: new `apps/web/lib/limits.ts` mirrors the Python constants **exactly**, with the
+reasoning recorded in it — a tighter frontend cap silently truncates something the API would have
+accepted, a looser one lets the user type something that can only fail at submit. 16 inputs across
+11 files now carry `maxLength`.
+
+**Deliberately not done, and worth knowing before someone "finishes" it:** `pace`, `scope`,
+`crowd_preference` and `destination_mode` are closed sets in their comments but remain bounded free
+strings rather than `Literal` types. They are populated from LLM output via the wizard's
+`config_patch`, and a model emitting `"Moderate"` instead of `"moderate"` would turn a cosmetic
+mismatch into a hard 422 mid-flow. Tightening them needs the wizard path normalising them first.
+
+Tests: new `tests/unit/test_input_validation.py`, **84 tests**, covering the rejection cases and —
+in the same file on purpose — acceptance cases for Devanagari, CJK, Cyrillic, accented and
+hyphenated names, because the tempting over-correction here is a charset allowlist that only knows
+Latin. Full suite **806 passed / 6 skipped / 0 failed**; `ruff` and `mypy` clean.
 
 ### v10.42.0 Changes (July 2026) — Hidden gems: the first full-corpus audit, and the sentiment floor was the bottleneck
 

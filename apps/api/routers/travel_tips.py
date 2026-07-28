@@ -23,6 +23,7 @@ from core.config import settings
 from core.llm_client import track_gemini_usage
 from core.llm_usage import reset_usage
 from core.rate_limit import LLM_RATE_LIMIT, limiter
+from core.validation import MAX_CITY_LEN, validate_query_param
 from db import get_db
 from db_models import User
 
@@ -183,12 +184,18 @@ def _fallback_tips(destination: str, limit: int) -> list[TravelTip]:
 @limiter.limit(LLM_RATE_LIMIT)
 async def travel_tips(
     request: Request,
-    destination: str = Query(..., description="Destination city/country"),
+    destination: str = Query(..., description="Destination city/country", max_length=MAX_CITY_LEN),
     limit: int = Query(6, ge=1, le=20),
     db: AsyncSession = Depends(get_db),
     user: User | None = Depends(get_optional_user),
 ) -> TravelTipsResponse:
     reset_usage()
+    # `_tips_cache` is a process-lifetime dict keyed on this value, so an
+    # unbounded destination is also an unbounded key: without the cap, distinct
+    # junk strings grow it without limit for as long as the process runs.
+    destination = validate_query_param(
+        destination, field="destination", max_length=MAX_CITY_LEN, require_alphanumeric=True
+    )
     try:
         cache_key = destination.strip().lower()
 

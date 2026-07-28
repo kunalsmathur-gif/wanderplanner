@@ -9,6 +9,7 @@ import { ThemeToggle } from '@/components/common/ThemeToggle'
 import { UserMenu } from '@/components/common/UserMenu'
 import { useWikiImage } from '@/hooks/useWikiImage'
 import { extractTrip } from '@/lib/api'
+import { MAX_EXTRACT_INPUT_LEN } from '@/lib/limits'
 
 const FEATURED_TRIPS = [
   { emoji: '🏖️', dest: 'Bali, Indonesia',    days: 7,  budget: '₹80,000',   theme: 'Beach & Temples',      gradient: 'linear-gradient(135deg,#0EA5E9 0%,#0C4A6E 100%)' },
@@ -243,6 +244,7 @@ export function LandingHero() {
                   onChange={(e) => setStartInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleStartAnywhere()}
                   placeholder="Paste a URL or describe where you want to go…"
+                  maxLength={MAX_EXTRACT_INPUT_LEN}
                   className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
                   style={{ paddingLeft: '2.25rem' }}
                   aria-label="Paste a travel URL or text to start from"

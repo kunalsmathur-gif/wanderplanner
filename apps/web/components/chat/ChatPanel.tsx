@@ -10,6 +10,7 @@ import { useAppStore } from '@/store/appStore'
 import { chatRefine, streamItinerary } from '@/lib/api'
 import { savePendingGeneration } from '@/lib/pendingGeneration'
 import { diffItineraries, isEmptyDiff } from '@/lib/itineraryDiff'
+import { MAX_CHAT_MESSAGE_LEN } from '@/lib/limits'
 import { ChatMessage } from './ChatMessage'
 import { ThemeToggle } from '@/components/common/ThemeToggle'
 import type { ChatRefineResponse, TripConfig } from '@/types'
@@ -262,6 +263,7 @@ export function ChatPanel() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Ask about your trip or request changes…"
+            maxLength={MAX_CHAT_MESSAGE_LEN}
             rows={1}
             disabled={status === 'sending' || regenNote !== null}
             className="max-h-24 flex-1 resize-none overflow-y-auto rounded-xl border border-[var(--_border)] bg-[var(--_bg)] px-3 py-2 text-sm leading-snug text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none disabled:opacity-50"

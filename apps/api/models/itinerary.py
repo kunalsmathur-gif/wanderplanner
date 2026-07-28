@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from core.validation import MAX_COMPARED_DESTINATIONS
 from models.trip import DestinationInput, TripConfig
 
 
@@ -77,7 +78,10 @@ class GenerateItineraryRequest(BaseModel):
 
 
 class CompareDestinationsRequest(BaseModel):
-    destinations: list[DestinationInput]
+    # services/comparison.py does per-destination work (geocode, budget
+    # estimate, RAG lookups) for every entry, so the list length is a direct
+    # multiplier on the request's cost.
+    destinations: list[DestinationInput] = Field(default_factory=list, max_length=MAX_COMPARED_DESTINATIONS)
     trip_config: TripConfig
 
 

@@ -8,6 +8,7 @@ import { AuthLayout } from '@/components/common/AuthLayout'
 import { GoogleSsoSection } from '@/components/common/GoogleSsoSection'
 import { useAuthStore } from '@/store/authStore'
 import { authErrorMessage } from '@/lib/authApi'
+import { MAX_EMAIL_LEN, MAX_PASSWORD_LEN } from '@/lib/limits'
 
 export default function LoginPage() {
   return (
@@ -73,6 +74,7 @@ function LoginForm() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
+            maxLength={MAX_EMAIL_LEN}
             className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 px-3.5 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
           />
         </div>
@@ -94,6 +96,7 @@ function LoginForm() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Your password"
+              maxLength={MAX_PASSWORD_LEN}
               className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 px-3.5 pr-10 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
             />
             <button

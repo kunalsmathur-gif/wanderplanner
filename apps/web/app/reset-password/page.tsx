@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { CheckCircle2, Eye, EyeOff, Loader2 } from 'lucide-react'
 import { AuthLayout } from '@/components/common/AuthLayout'
 import { resetPassword, authErrorMessage } from '@/lib/authApi'
+import { MAX_PASSWORD_LEN } from '@/lib/limits'
 
 export default function ResetPasswordPage() {
   return (
@@ -96,6 +97,7 @@ function ResetPasswordForm() {
               type={showPassword ? 'text' : 'password'}
               required
               minLength={8}
+              maxLength={MAX_PASSWORD_LEN}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="At least 8 characters"
@@ -121,6 +123,7 @@ function ResetPasswordForm() {
             type={showPassword ? 'text' : 'password'}
             required
             minLength={8}
+            maxLength={MAX_PASSWORD_LEN}
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             placeholder="Re-enter your new password"

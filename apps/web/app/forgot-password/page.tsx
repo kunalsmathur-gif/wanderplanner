@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Loader2, MailCheck } from 'lucide-react'
 import { AuthLayout } from '@/components/common/AuthLayout'
 import { forgotPassword, authErrorMessage } from '@/lib/authApi'
+import { MAX_EMAIL_LEN } from '@/lib/limits'
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
@@ -67,6 +68,7 @@ export default function ForgotPasswordPage() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
+            maxLength={MAX_EMAIL_LEN}
             className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 px-3.5 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
           />
         </div>

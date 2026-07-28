@@ -11,6 +11,7 @@ from core.config import settings
 from core.keyword_match import has_keyword
 from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize
+from core.validation import CountryName
 from models.trip import TripConfig
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ class RecommendCitiesResponse(BaseModel):
 
 
 class RecommendCitiesRequest(BaseModel):
-    country: str
+    country: CountryName
     trip_config: TripConfig
 
 
