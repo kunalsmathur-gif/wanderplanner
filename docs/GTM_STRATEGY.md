@@ -130,6 +130,44 @@ The consumer app's real job isn't just SEO/eval showcase — it's the **top of t
 - One state tourism board pilot (credibility anchor).
 - Creator-itinerary licensing into the corpus (attribution + rev-share).
 - Revisit consumer premium (₹99/mo: unlimited refinements + live budget alerts) **only after** B2B revenue exists.
+- **Give Anya a voice of her own** (see below) — **traction-gated, not scheduled.**
+
+#### Anya's own voice — long-term, gated on traction
+
+**The intent.** Anya has a written personality today (`WIZARD_SYSTEM_PROMPT`: warm, Indian,
+well-travelled, speaks Hindi or English to match the user) but **no voice of her own.** Voice mode
+uses the Web Speech API, which means she is whatever voice the user's device happens to have
+installed. A branded, consistent voice — via ElevenLabs or equivalent — is the natural completion
+of the persona, and is a genuine differentiator for an India-first product where a warm Hindi voice
+is a category of its own.
+
+**Why it is deferred rather than built.** Today's voice costs nothing: no key, no per-request
+spend, no added latency, works offline. Every one of those flips with a cloud TTS. That trade is
+worth making for a product with users and worth nothing for one without, so this is explicitly
+gated on traction.
+
+**What it would actually fix** (the current state is measured, not assumed — see
+`TECHNICAL_DOCUMENTATION.md` §14 v10.45.0):
+
+- **Device fragmentation disappears.** A Hindi voice is absent on most Windows desktops and
+  unguaranteed on macOS; on Android, Google's voices expose no name or gender, so we cannot even
+  reliably pick a female one. A cloud voice is identical for every user on every device.
+- **The persona becomes ownable.** "Anya sounds like Anya" is brand; "Anya sounds like Microsoft
+  Heera, or Google's default, or nothing at all" is not.
+- **Hindi speech stops being a device lottery** — the single biggest gap in the India-first story.
+
+**What it costs, honestly.** Per-character billing on a path that currently runs free, on *every*
+wizard turn; a network round trip added to a reply that is already the latency-sensitive part of
+the product (streaming TTS mitigates but does not remove this); another production key to manage —
+and this codebase has twice shipped a feature that silently no-opped in production because its key
+was never set on Railway (`YOUTUBE_API_KEY`, `RESEND_API_KEY`). Any adoption needs a real
+per-conversation cost estimate first, and a decision on whether voice becomes a paid-tier feature
+rather than a default.
+
+**Suggested gate:** revisit once Phase 2's go-criterion is met (5 paying agents) **or** consumer
+voice-mode usage is measurably non-trivial — which is currently unknown, because nothing
+instruments it. Cheapest first step is not the integration but the measurement: record voice-mode
+activation rate before spending anything on it.
 
 ---
 

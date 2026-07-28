@@ -102,19 +102,8 @@ end-to-end — verified by measurement against `clean_user_text`, not assumed fr
   reasons about our English field names.
 - **UI chrome stays English when हिंदी is selected.** The toggle is scoped to voice and labelled
   that way; full interface localisation is separate work.
-- 📱 **THE OPEN ITEM — mobile is unverified, and mobile is the bulk of the users.** Run
-  **`/dev/voice`** on a real iPhone and a real Android (new page, `noindex`, added for exactly
-  this), hit *Copy report*, and feed the output back in. Two specific things to look at:
-  **(a) Android defeats the curated name lists entirely** — Google's voices arrive as
-  `"Google हिन्दी"` with no personal name and no gender token, so selection falls through to the
-  platform's order; it usually lands on a female Hindi voice, but that is Google's default, not
-  ours. The report's `voiceURI` column is the thing that might yield a usable signal
-  (`hi-in-x-hia-local` style ids) — **do not invent a mapping for those without real data.**
-  **(b) The iOS gesture unlock is defensive and untested.** WebKit only allows
-  `speechSynthesis.speak()` inside a user gesture, and Anya speaks after an awaited API call, so
-  `useVoice` primes with a zero-volume utterance inside the toggle handler. The page's
-  *delayed-speech test* is what confirms whether that was necessary — desktop passes it, which
-  proves nothing about iOS.
+- 📱 **Mobile is unverified and mobile is the bulk of the users — see queue item 6 below for the
+  step-by-step.**
 - 🔴 **Anya was speaking in a *male* voice, and it was measured not guessed.** The female
   preference matched `/female/` in the voice name, but no platform puts it there. On the real dev
   machine `pickVoice(voices, 'en-IN')` returned **Microsoft Ravi**, with Heera sitting right beside
@@ -221,6 +210,54 @@ chain":
   structurally, before adding further generation-path refinements — you need real numbers to know if
   this is already a problem, not another guess. Also consider moving the photo fetch off the
   critical path (client-fetched after render) since it's explicitly non-blocking in intent already.
+
+**6. 📱 NEW (2026-07-28) — verify voice on real iOS and Android, then extend the voice lists from
+that data.** Shipped v10.45.0 without this: Android and iOS are the bulk of the users and **neither
+is measurable from a Windows dev box**. Everything needed is already committed — `app/dev/voice` is
+a `noindex` diagnostic built for exactly this. **This is a data-collection task, not a coding task;
+the coding only starts at step 5.**
+
+**Steps:**
+
+1. **Serve the app somewhere the phone can reach.** Either deploy to Vercel and use the live URL,
+   or run `npm run dev -- --host` and hit `http://<dev-machine-LAN-IP>:3000` from a phone on the
+   same Wi-Fi. `localhost` will not work from the phone.
+2. **On a real iPhone (Safari)**, open `/dev/voice`. Do all three:
+   - Read the **What Anya would use** section — note the selected voice and whether it is
+     classified `female`, `male` or `unknown` for **both** English and Hindi.
+   - Tap **Speak English sample** and **Speak Hindi sample**. Confirm audio actually plays, and
+     whether the Hindi one sounds like a Hindi speaker or an English voice mangling Devanagari.
+   - Tap **Run delayed-speech test**. 🔴 **This is the important one.** It waits a second and then
+     speaks with no user gesture on the stack — exactly how Anya's real replies arrive, after an
+     awaited API call. `SILENT` means WebKit's gesture restriction is real here and the
+     zero-volume priming utterance in `useVoice.primeSynthesis()` is load-bearing. `spoke` means
+     the priming is harmless insurance. Desktop reports `spoke`, which proves nothing about iOS.
+3. **On a real Android (Chrome)**, repeat all of step 2.
+4. **Hit *Copy report* on each device and save both outputs**, labelled by device and OS version.
+   The report carries `userAgent`, capability flags, the delayed-speech result, and every voice
+   with `name | lang | guessed gender | localService | voiceURI`.
+5. **Only now, extend `apps/web/lib/voice.ts`.** Add any newly-seen female/male voice names to
+   `FEMALE_VOICE_TOKENS` / `MALE_VOICE_TOKENS`, and add a regression test using the **real captured
+   voice list** for that device — the same way `voice.test.ts` already pins the measured Windows
+   list and asserts Heera over Ravi.
+
+**⚠️ The caution that matters most here.** Android's Google TTS voices arrive with **no personal
+name and no gender token** — `"Google हिन्दी"`, `"Google English (India)"` — so the curated name
+lists cannot match them at all and selection falls through to the platform's own ordering. It
+usually lands on a female Hindi voice, but **that is Google's default landing right, not this code
+getting it right**, and the two must not be conflated in the docs.
+
+The one place a signal *might* exist is the `voiceURI`, which on Android looks like
+`hi-in-x-hia-local` / `hi-in-x-hid-network`. 🔴 **Those `x-hia` / `x-hid` variant codes are
+undocumented. Do NOT invent a gender mapping for them — not from pattern-matching, not from
+plausibility, not because an LLM (including me) suggests one.** The only acceptable basis is
+listening to each variant on a real device and recording what it actually sounds like. A wrong
+mapping is worse than no mapping: today an unrecognised voice scores neutral and is still used,
+whereas a wrong entry actively selects the wrong gender and looks authoritative in the code.
+
+**Definition of done:** two saved reports (iOS + Android), a recorded yes/no on whether the iOS
+gesture restriction applies, and either extended token lists backed by device tests or an explicit
+note that no name-based signal exists on that platform.
 
 ---
 
@@ -1705,6 +1742,17 @@ Added `eval/data_completeness_scoring.py` (pure scoring: `MIN_WIKI_CHUNKS`, `MIN
 
 - **BestTime.app live crowd-forecast layer** (paid API) — premium/B2B upsell candidate.
 - **Booking.com affiliate accommodation pricing** — blocked on partner approval.
+- 🎙️ **Anya's own branded voice** (ElevenLabs or equivalent) — **founder decision 2026-07-28: long-term,
+  gated on traction.** Full write-up in `docs/GTM_STRATEGY.md` §5 Phase 3. Short version: Anya has a
+  written personality but no voice of her own — the Web Speech API means she is whatever voice the
+  user's device happens to have, which on most Windows desktops is *no Hindi voice at all* and on
+  Android is a voice we cannot even identify the gender of. A cloud voice fixes device fragmentation,
+  makes the persona ownable, and stops Hindi speech being a device lottery. It also flips voice from
+  free/offline/zero-latency to per-character billing plus a network round trip on the latency-critical
+  reply path, and adds a third production key to a project that has already shipped two features which
+  silently no-opped in prod because their key was never set on Railway. **Do not start with the
+  integration — start with the measurement:** nothing currently instruments voice-mode activation, so
+  the usage number that would justify the spend does not exist yet.
 
 ## 📋 Phase 2 preview (publish is done — Phase 2 can start once founder signs off on the piece)
 
