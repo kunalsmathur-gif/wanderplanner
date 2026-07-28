@@ -391,6 +391,16 @@ Extract if the user mentions them. Never ask for them directly (the checkpoint i
                        "religious", "vegetarian_food"]
     Auto-infer: honeymoon -> add "wellness" | adventure purpose -> add "adventure"
                 family with seniors -> add "wellness"
+    CRITICAL — whenever you offer themes as a chip choice (e.g. after the user picks
+    "Add themes" at the Stage 2 checkpoint, or asks to add/change themes), you MUST
+    reply with chips set to EXACTLY this fixed list, in this exact wording, every time —
+    do not invent destination-specific wording, do not omit or reorder any, do not add
+    extras: ["Culture 🏛️", "Food 🍜", "Adventure 🏔️", "Nature 🌿", "Shopping 🛍️",
+    "Photography 📸", "Nightlife 🌃", "Sports ⚽", "Wellness 🧘", "Religious 🛕",
+    "Vegetarian Food 🥗", "No preference"]. This exact, fixed wording is required for the
+    app's multi-select UI to work — free-form or reworded chips silently break multi-select
+    and force the user back to picking just one. Map the user's selected chip(s) back to the
+    enum values above (e.g. "Vegetarian Food" -> "vegetarian_food"); "No preference" -> [].
   accommodation: {{"style": ["Hotel"], "min_bedrooms": 1, "bathrooms": 1,
                     "private_pool": false, "kitchen": false,
                     "wheelchair_accessible": false, "pet_friendly": false}}
@@ -802,8 +812,24 @@ def _summarise_state(config: dict[str, Any]) -> str:
     dates = config.get("dates", {})
     if dates.get("start") and dates.get("end"):
         lines.append(f"dates: {dates['start']} → {dates['end']}")
-    elif dates.get("flexible") and dates.get("duration_days"):
-        lines.append(f"dates: flexible, {dates['duration_days']} days")
+    elif dates.get("duration_days"):
+        # Duration alone is NOT sufficient (see Field 3 rules) — a real
+        # travel period (month/season -> start/end) is still required.
+        # Bug fix: this used to read `dates.get("flexible") and
+        # dates.get("duration_days")` and report dates as already known
+        # ("flexible, N days") whenever BOTH were set, even with start/end
+        # still null — exactly the shape the inspiration-card/preload flow
+        # seeds (flexible: true, duration_days: N, start/end: null). The LLM
+        # then believed dates were complete and silently skipped asking WHEN
+        # the trip was, so it never reached ready_to_generate (which
+        # correctly still requires start/end via _has_all_required),
+        # leaving the user stuck with no exact dates ever asked and no
+        # Generate button ever appearing. Report duration-known-but-period-
+        # missing instead so the LLM asks for the remaining piece.
+        lines.append(
+            f"dates: duration known ({dates['duration_days']} days) but travel period "
+            "(month/season) is NOT yet known — dates field is still INCOMPLETE, must ask when"
+        )
 
     budget = config.get("budget", {})
     if budget.get("amount", 0) > 0:
@@ -830,7 +856,20 @@ def _summarise_state(config: dict[str, Any]) -> str:
     if config.get("_checkpoint_asked"):
         lines.append("status: checkpoint-asked (Stage 2 done — generate on next user confirmation)")
     elif all([
-        config.get("purpose"), config.get("dates"), (config.get("budget") or {}).get("amount", 0) > 0,
+        config.get("purpose"),
+        # Bug fix: this used to be a bare `config.get("dates")` truthiness
+        # check, which passed for ANY non-empty dates dict — including the
+        # preload-seeded `{start: null, end: null, flexible: true,
+        # duration_days: N}` shape with no real travel period. That falsely
+        # flipped this to "all-6-collected" (and could even reach
+        # checkpoint-asked / ready_to_generate territory) while
+        # _has_all_required() below correctly still required start/end,
+        # silently desyncing the two and leaving the wizard stuck asking
+        # nothing further while never actually becoming ready to generate.
+        # Require the same start+end check used everywhere else so the
+        # status line can never outrun the real gate.
+        bool((config.get("dates") or {}).get("start") and (config.get("dates") or {}).get("end")),
+        (config.get("budget") or {}).get("amount", 0) > 0,
         (config.get("group") or {}).get("adults", 0) >= 1, config.get("pace"),
         (config.get("destination_mode", "fixed") != "fixed" or (config.get("destination") or {}).get("city"))
     ]):

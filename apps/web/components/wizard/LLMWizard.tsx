@@ -114,7 +114,16 @@ function _isFieldFilled(key: string, config: Partial<TripConfig>): boolean {
     case 'dates': {
       const d = config.dates
       if (!d) return false
-      return (Boolean(d.start && d.end)) || Boolean(d.flexible && (d as { duration_days?: number }).duration_days)
+      // Bug fix: this previously also counted flexible+duration_days alone
+      // (with start/end still null) as "filled" — exactly the shape the
+      // inspiration-card preload seeds before the user has said WHEN they
+      // want to travel. That showed the Dates pill as complete (and could
+      // even look ready to generate) while the backend's own gate
+      // (_has_all_required in wizard_chat_chain.py) correctly still
+      // requires a real start/end, and the exact travel period was never
+      // actually asked for. A real start+end (even approximate month
+      // boundaries for flexible trips) must be present to count as filled.
+      return Boolean(d.start && d.end)
     }
     case 'budget':      return (config.budget?.amount ?? 0) > 0
     case 'group':       return (config.group?.adults ?? 0) >= 1
