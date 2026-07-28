@@ -60,11 +60,73 @@ covers it (84 tests). Suite **806 passed / 6 skipped**, ruff + mypy clean.
   A tighter frontend cap silently truncates what the API would accept; a looser one lets the user
   type what can only fail at submit. Change them together.
 
-**3. ⏭️ NEXT — voice mode (TTS/STT) has never been tested, at all.** The frontend's 6 test files
-(`ComparisonGrid`, `ErrorState`, `format`, `appStore`, `comparisonStore`, `tripConfigStore`) touch
-none of voice, the wizard, or `ListeningOrb`. There is no TTS/STT *service* to test on the backend —
-both are browser-native Web Speech API inside `components/wizard/LLMWizard.tsx` (no keys, no cost).
-Four real defects found by reading it:
+**3. ✅ DONE 2026-07-28 — voice mode tested for the first time, and Anya now speaks Hindi (shipped
+as v10.45.0).** Full write-up in `TECHNICAL_DOCUMENTATION.md` §14 v10.45.0 and
+`docs/system-design.md` §16. Voice moved out of the 959-line `LLMWizard.tsx` into
+`apps/web/lib/voice.ts` (pure helpers) and `apps/web/hooks/useVoice.ts` (state + Web Speech
+wiring). Frontend tests **44 → 122**, backend **830 → 844**; ruff, mypy and `tsc --noEmit` clean.
+
+> 🔴 **A fifth defect, larger than the four below, only turned up while writing the tests: TTS had
+> never fired in production at all.** Two independent causes, either sufficient. (1) `toggleVoice()`
+> assigned `rec.onresult` and *then* called `setVoiceActive(true)`, so the handler held the
+> `handleSubmit`/`sendMessage` pair from the render where the flag was still `false` — and
+> `sendMessage`'s `if (voiceActive) speak(res.reply)` read that stale `false` every time. (2) One
+> flag meant both "the user wants a spoken conversation" and "the mic is open", and `rec.onend`
+> fires the moment the user stops talking, seconds before the reply lands. **Confirmed by
+> reconstructing the old implementation and running it through the real event order**, not by
+> reading — the reply arrived, `speak` was never called. `voiceMode` / `isListening` / `isSpeaking`
+> are now three separate things.
+
+⭐ **New in the same release: Hindi voice I/O.** `rec.lang` was hardcoded `en-IN` (Indian-accented
+*English*), so speaking Hindi returned garbled English guesses. The Web Speech API has **no
+auto-detect** — one language per recognition session — so there is now an explicit English / हिंदी
+toggle driving recognition language, utterance language and voice selection together.
+`WIZARD_SYSTEM_PROMPT` §3a makes Anya reply in the user's language, while **`chips` and
+`config_patch` stay English**: chips are classified by English keyword match (a translated chip
+silently collapses multi-select rather than failing), and a destination is a database key, so "गोवा"
+would fork from "Goa" and trigger a redundant cold-start ingestion. Typed Devanagari already worked
+end-to-end — verified by measurement against `clean_user_text`, not assumed from its docstring.
+
+⚠️ **Residuals worth carrying (measured, not guessed):**
+
+- **The dev machine has no `hi-IN` voice installed** — `getVoices()` returns five, all
+  `en-US`/`en-IN`. Hindi *recognition* works (Chrome routes it to a cloud service); Hindi *speech*
+  needs a Windows Hindi language pack. This is the expected desktop case, so the hook checks voice
+  availability up front and says so, rather than waiting for a `language-unavailable` event that
+  several browsers never fire.
+- **English-in-`config_patch` is a prompt-level guarantee, not an enforced one.** `CityName` accepts
+  `"गोवा"` — verified. Enforcing it needs transliteration or a lookup; not built.
+- **`_strip_leaked_reasoning` does not fire on Hindi replies.** Pass 1 matches English warm openers,
+  pass 2 splits on `[.!?]` which a danda-terminated sentence never matches. It degrades to "return
+  unchanged" — the safe direction — and leaks are English-shaped in practice because the model
+  reasons about our English field names.
+- **UI chrome stays English when हिंदी is selected.** The toggle is scoped to voice and labelled
+  that way; full interface localisation is separate work.
+- 📱 **THE OPEN ITEM — mobile is unverified, and mobile is the bulk of the users.** Run
+  **`/dev/voice`** on a real iPhone and a real Android (new page, `noindex`, added for exactly
+  this), hit *Copy report*, and feed the output back in. Two specific things to look at:
+  **(a) Android defeats the curated name lists entirely** — Google's voices arrive as
+  `"Google हिन्दी"` with no personal name and no gender token, so selection falls through to the
+  platform's order; it usually lands on a female Hindi voice, but that is Google's default, not
+  ours. The report's `voiceURI` column is the thing that might yield a usable signal
+  (`hi-in-x-hia-local` style ids) — **do not invent a mapping for those without real data.**
+  **(b) The iOS gesture unlock is defensive and untested.** WebKit only allows
+  `speechSynthesis.speak()` inside a user gesture, and Anya speaks after an awaited API call, so
+  `useVoice` primes with a zero-volume utterance inside the toggle handler. The page's
+  *delayed-speech test* is what confirms whether that was necessary — desktop passes it, which
+  proves nothing about iOS.
+- 🔴 **Anya was speaking in a *male* voice, and it was measured not guessed.** The female
+  preference matched `/female/` in the voice name, but no platform puts it there. On the real dev
+  machine `pickVoice(voices, 'en-IN')` returned **Microsoft Ravi**, with Heera sitting right beside
+  him in the list, purely because neither name says "female" so it fell through to array order.
+  Fixed with curated per-platform name lists (Kalpana/Lekha/Swara for hi-IN, Heera/Veena/Neerja for
+  en-IN, plus the male names to rank *below* unknown ones). **The Web Speech API has no gender
+  field** — verified: Windows records `Attributes\Gender` per voice in the registry and the browser
+  drops it, so name matching is the only lever, not a shortcut. An unrecognised name scores neutral
+  and is still used; the cost of not knowing a voice is the wrong gender, the cost of refusing it is
+  silence.
+
+**The four defects as originally filed, all fixed:**
 
 - 🔴 **The mic button is dead on Firefox with no feedback.** Rendered unconditionally
   (`LLMWizard.tsx:692` and `:922`), but `toggleVoice` does `if (!Ctor) return` (`:640`) and Firefox
@@ -82,8 +144,13 @@ Four real defects found by reading it:
   means TTS **says nothing**. `₹` was explicitly whitelisted, so India was in mind — just the
   currency, not the script. **Same bug family as v10.41.0's "`\b` silently fails on Devanagari", in
   a module nobody had connected to it — the third recurrence of that pattern.**
-- ℹ️ Before editing: `ConversationalWizard.tsx` also contains voice code but is **imported nowhere**
-  (dead, like `WizardForm.tsx`). `app/page.tsx:44` renders `LLMWizard`.
+- ℹ️ **Stale as written — corrected 2026-07-28:** `ConversationalWizard.tsx` no longer exists in the
+  repo (it was deleted along with `WizardForm.tsx`). `app/page.tsx` renders `LLMWizard`, which was
+  the only voice code left.
+- ➕ **Found while doing this, also fixed:** `isSpeaking` was set in three places and read in none,
+  so there was no speaking indicator anywhere in the UI; and `ListeningOrb` is rendered only by
+  `FloatingAnyaButton` with hardcoded `isActive={false} isRecording={false}`, so **the orb has never
+  animated** — still true, and out of scope here since that button has no access to wizard state.
 
 **4. 🔴 Carried out of the gem audit, NOT fixed — `name_matching.py` derives demonyms.**
 `name_variants("Egyptian Museum")` peels the structural word "museum" and emits the bare token
@@ -135,7 +202,7 @@ Prague "National Theatre"); Melbourne gained one.
 - `services/data/common_english_words.txt` is **generated, not hand-edited** — re-run
   `scripts/generate_common_words.py` if the embedding model ever changes.
 
-**5. ⏭️ NEW (2026-07-28) — no observability into `generate_itinerary()` latency, and it keeps
+**5. ⏭️ NEXT (filed 2026-07-28) — no observability into `generate_itinerary()` latency, and it keeps
 growing more steps.** Asked to check latency metrics this session and found there's nothing to
 check: zero timing instrumentation anywhere in the request path (`grep` for
 `time.time()`/`perf_counter` across `chains/`/`routers/` returns nothing), confirming

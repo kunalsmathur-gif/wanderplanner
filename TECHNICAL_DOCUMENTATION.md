@@ -1,6 +1,6 @@
 # WanderPlanner — Technical Documentation
 
-**Version:** 10.44.0 (Derived name cores are now tested for being ordinary words instead of merely long — and the bug was an order of magnitude bigger than reported. It was filed as a demonym issue: `name_variants("Egyptian Museum")` peels the structural word and emits the bare token `egyptian`, which matched "egyptian food", giving Cairo's Egyptian Museum 30 mentions of which 29 were wrong. The same peel does it to **any** POI whose name starts with a common word or with its own city — measured on the live corpus, **Singapore Zoo had 100 mentions and now has 2, Edinburgh Castle 84 → 2, and Melbourne Museum / Melbourne Park / Melbourne City Synagogue were each absorbing the whole of Melbourne's comment volume at 59-61**. The threshold could not be raised out of it: `egyptian` is exactly 8 characters and so is `immanuel`, the genuine recovery it would cost. Length was standing in for the real question — *is this token an ordinary English word or is it specific to this place?* — which is now asked directly against a word list generated from the embedding model's own WordPiece vocabulary, committed as data so the runtime path never loads a model. A second guard in `services/gems.py` drops a variant equal to the destination's own name, which the word list cannot catch for destinations absent from it (Queenstown, Hoi An, Abu Dhabi). Across all 168 destinations: matched POIs **530 → 472**, crowd favourites **87 → 50**, gems 172 → 166, destinations returning a gem 90 → 88. Every one of those falls is a mis-attribution removed, verified POI by POI. Also corrects the TODO's framing: `poi_pinning.py` imports only `normalize_name`, so this guard has exactly one production consumer, and the "needs calibration across both consumers" caution did not apply. Previous: 10.43.0 — Input validation — the "monkey testing" pass. Nothing a user typed was bounded: `DestinationInput.city` was a bare `str`, so an empty string, `🎉🎉🎉`, `A` × 10,000, NUL bytes, zero-width spaces and an RTL override were all accepted and forwarded to the Gemini prompt, Nominatim and Overpass. New `core/validation.py` gives every user-typed field a constrained type that **rejects rather than truncates** — a silently trimmed value produces a plausible-but-wrong itinerary, the same failure shape as v10.40.0's complete-but-wrong POI pool. Four real defects surfaced that the probe had not listed: `TripConfig.dates` was unbounded and `_mock_itinerary` builds one dict per day, so `end: "2999-01-01"` was ~355,000 iterations from a single request body; unparseable dates were swallowed by a bare `except` and replaced with a hard-coded default, silently planning a different month than the user asked for; `hops` had claimed "max 5" in a comment for months without enforcing it, and each hop is its own cold-start Overpass + Wikivoyage + embedding run; and `_tips_cache` is a process-lifetime dict keyed on the raw destination string. ZWJ/ZWNJ are deliberately preserved through normalisation while every other format character is stripped — they are load-bearing in Devanagari conjuncts, and this is the **fourth** bug in this codebase's character-rule family. Deliberately *not* prompt-injection work: `core/prompt_guard.py` already covers that and was not touched. 84 new tests; suite **806 passed / 6 skipped**. Previous: 10.42.0 — First full-corpus hidden-gem audit — all **168 destinations**, measured against the live cluster with a diagnostic replica cross-checked against the shipped function on every one. v10.39.0's pool problem is fixed (Delhi now matches Chandni Chowk, Red Fort, Jama Masjid, India Gate), and the bottleneck had moved to the **sentiment floor** — which was rejecting *neutral*, not negative: Laplace smoothing puts a mention with no lexicon word in range at exactly 0.5, just under the 0.55 floor, and **75% of rejections scored exactly that**. The lexicon fired on only 29% of 1,274 real mention windows. Expanded by measuring each candidate word against the corpus — and the result inverts intuition, because YouTube enthusiasm is mostly aimed at the *video*: `great`, `nice`, `awesome`, `helpful` and `wonderful` are all creator-directed (1.7-4.6x enrichment) and are **deliberately excluded**, while `clean`, `delicious`, `historic`, `must` and `friendly` are place-directed. Also fixed cross-POI mention mis-attribution (Cairo's *Grand* Egyptian Museum was crediting the Egyptian Museum, and Seoul's Lotte World Tower the reverse) and collapsed 24 identically-named duplicate POIs. Destinations returning a gem **44% → 54%**, total gems **127 → 172**, while total matched POIs *fell* 541 → 530 as double-counts were removed. Previous: 10.41.1 — The prominence re-ingestion data run (v10.40.0's code) is now complete: **0 of 169 destinations pending**, verified on the real Qdrant Cloud cluster. Closing the last 9 surfaced a real bug: `ingest_osm_pois` returned `0` — instead of falling back to the existing stored count, like the guards immediately below it already do — when *every* Overpass mirror failed on *both* passes and the fetch came back fully empty, not just non-prominent. `scripts/reingest_prominence_ranking.py`'s state loader requires a truthy `osm_count` before its accept-after-3-attempts rule can fire, so a destination stuck on this path would retry forever; Medellin hit it three runs in a row before the fix. Also dropped the dead `overpass.openstreetmap.fr` mirror (403s on every request, a guaranteed-wasted rotation slot) and confirmed the Resend email pipeline end-to-end with a real password-reset request against production. Previous: 10.41.0 — YouTube **narration** — transcripts + video descriptions — is a new price-grounding source, discovered for free from video IDs the comment backfill already stored, so it spends nothing against the 100/day `search.list` cap. Live-measured on Jaipur: comments carry **0** money-shaped chunks, narration carries **24**. Two real bugs fell out: transcripts were requested English-only, discarding the Hindi-only track most Indian vlogs actually have; and `\b` **silently fails on Devanagari** words ending in a matra, so `खाना`/`थाली` never matched while `होटल` did — 0 of 24 price-bearing Hindi chunks matched any food or stay keyword. Previous: 10.40.6 — the bare-substring keyword bug was in FIVE modules, not one — `"pub"` inside **"Public Garden"** was deleting kid-friendly places from family itineraries, and `"uk"` inside **"Sukhothai"** was pricing a moderate destination as premium; all three now share `core/keyword_match.py`. Previous: 10.40.4 — price grounding now matches the amount, not the blob — per-amount context scoping, plus a pre-existing bare-substring bug where FOOD's "eat" matched "great"; stay grounding accepts a single mention. Measured finding: a complete corpus is not a dense one — food grounding is corpus-limited, so the `_FOOD_MEALS_PER_DAY` calibration stays deferred, now with evidence. Previous: 10.40.3 — YouTube quota discipline: a 429/403 is now terminal rather than retried 3x against a 100/day cap, and all 12 standalone scripts use the app's `RedactionFilter` instead of bare `basicConfig` — which also closed a path where the API key could reach a JSONL state *file*, where no logging filter runs. Corrects a v10.40.1 claim: the cold-start gate does not over-subscribe the cap on its own. Previous: 10.40.2 — YouTube comment corpus complete at 170/170 destinations — 25,347 points verified on the cluster; and `mypy .` runs for the first time, going from an abort-before-checking to `Success: no issues found in 166 source files`, which surfaced three real bugs: a cancelled ingestion reading as a success, and two in the comparison path)
+**Version:** 10.45.0 (Voice mode had never spoken a single word in production, and it was the last feature in the product with zero tests. Two independent bugs each sufficed: `rec.onresult` captured the render *before* `setVoiceActive(true)`, so `if (voiceActive) speak(reply)` read a stale `false` on every voice turn; and one flag stood for both "the user wants a spoken conversation" and "the mic is open", so `onend` cleared the mode seconds before the reply arrived. Confirmed by reconstructing the old implementation and running it, rather than by reading. Text-to-speech also **stripped Devanagari entirely** — the allowlist used `\w`, which in JavaScript is always ASCII regardless of the `u` flag, so `clean` emptied and the next line's `if (!clean) return` produced silence; `₹` had been whitelisted, so India was in mind, just the currency and not the script. That is the **fifth** bug in this codebase's character-rule family. The new allowlist keeps `\p{M}`, because Devanagari vowel signs are combining marks and dropping them turns `खाना` into `खन` — a real word meaning something else — and keeps the danda `।`, the Hindi full stop. Three smaller defects fixed: the mic button was dead on Firefox with no feedback at all, all six recognition error codes collapsed into one silent handler so denied permission looked like a pause, and `getVoices()` was read before Chrome populates it so every cold session's first utterance used the platform default voice. **New:** an English / हिंदी toggle drives recognition language, utterance language and voice selection together — the Web Speech API has no auto-detect, so this has to be an explicit choice — and `WIZARD_SYSTEM_PROMPT` section 3a makes Anya reply in the user's language while `chips` and `config_patch` stay English, because chips are classified by English keyword match and a destination is a database key that would fork "गोवा" from "Goa". 🔴 **Anya was also speaking in a *male* voice** — the persona is a woman, the preference matched `/female/` in a voice name, and no platform puts it there; measured on the real device, `pickVoice(voices, 'en-IN')` returned Microsoft Ravi with Heera sitting beside him in the same array. **The Web Speech API exposes no gender field** — Windows records `Attributes\Gender` per voice and the browser discards it — so curated per-platform name lists are the only lever, with unrecognised names scoring neutral and still used, because not knowing a voice costs the wrong gender while refusing it costs silence. The missing-voice notice now fires at language selection rather than on Anya's first reply. Voice moved out of the 959-line `LLMWizard.tsx` into `lib/voice.ts` and `hooks/useVoice.ts`. Mobile — the bulk of the users and the least verifiable from a dev box — is instrumented rather than assumed: **Android defeats name matching entirely** (Google ships `"Google हिन्दी"`, no personal name, no gender token, so selection falls through to the platform's own order and a female Hindi default is Google landing right rather than this code doing so), **iOS Safari only permits `speak()` inside a user gesture** while Anya speaks after an awaited API call — so `useVoice` primes with a zero-volume utterance inside the toggle handler, defensively and unverified on a real device — and a new `noindex` diagnostic at `app/dev/voice` reports every voice a device exposes with its `voiceURI` and guessed gender, shows what `pickVoice` chooses and why, and speaks after a delay with no gesture on the stack, so the curated lists get corrected from real device data instead of extended by guessing. 122 frontend tests (was 44), 844 backend (was 830). Residuals stated rather than hidden: the dev machine has no `hi-IN` voice installed at all, so Hindi speech needs a Windows language pack even though Hindi recognition works; and English-in-`config_patch` is a prompt-level guarantee, not an enforced one. Previous: 10.44.0 — Derived name cores are now tested for being ordinary words instead of merely long — and the bug was an order of magnitude bigger than reported. It was filed as a demonym issue: `name_variants("Egyptian Museum")` peels the structural word and emits the bare token `egyptian`, which matched "egyptian food", giving Cairo's Egyptian Museum 30 mentions of which 29 were wrong. The same peel does it to **any** POI whose name starts with a common word or with its own city — measured on the live corpus, **Singapore Zoo had 100 mentions and now has 2, Edinburgh Castle 84 → 2, and Melbourne Museum / Melbourne Park / Melbourne City Synagogue were each absorbing the whole of Melbourne's comment volume at 59-61**. The threshold could not be raised out of it: `egyptian` is exactly 8 characters and so is `immanuel`, the genuine recovery it would cost. Length was standing in for the real question — *is this token an ordinary English word or is it specific to this place?* — which is now asked directly against a word list generated from the embedding model's own WordPiece vocabulary, committed as data so the runtime path never loads a model. A second guard in `services/gems.py` drops a variant equal to the destination's own name, which the word list cannot catch for destinations absent from it (Queenstown, Hoi An, Abu Dhabi). Across all 168 destinations: matched POIs **530 → 472**, crowd favourites **87 → 50**, gems 172 → 166, destinations returning a gem 90 → 88. Every one of those falls is a mis-attribution removed, verified POI by POI. Also corrects the TODO's framing: `poi_pinning.py` imports only `normalize_name`, so this guard has exactly one production consumer, and the "needs calibration across both consumers" caution did not apply. Previous: 10.43.0 — Input validation — the "monkey testing" pass. Nothing a user typed was bounded: `DestinationInput.city` was a bare `str`, so an empty string, `🎉🎉🎉`, `A` × 10,000, NUL bytes, zero-width spaces and an RTL override were all accepted and forwarded to the Gemini prompt, Nominatim and Overpass. New `core/validation.py` gives every user-typed field a constrained type that **rejects rather than truncates** — a silently trimmed value produces a plausible-but-wrong itinerary, the same failure shape as v10.40.0's complete-but-wrong POI pool. Four real defects surfaced that the probe had not listed: `TripConfig.dates` was unbounded and `_mock_itinerary` builds one dict per day, so `end: "2999-01-01"` was ~355,000 iterations from a single request body; unparseable dates were swallowed by a bare `except` and replaced with a hard-coded default, silently planning a different month than the user asked for; `hops` had claimed "max 5" in a comment for months without enforcing it, and each hop is its own cold-start Overpass + Wikivoyage + embedding run; and `_tips_cache` is a process-lifetime dict keyed on the raw destination string. ZWJ/ZWNJ are deliberately preserved through normalisation while every other format character is stripped — they are load-bearing in Devanagari conjuncts, and this is the **fourth** bug in this codebase's character-rule family. Deliberately *not* prompt-injection work: `core/prompt_guard.py` already covers that and was not touched. 84 new tests; suite **806 passed / 6 skipped**. Previous: 10.42.0 — First full-corpus hidden-gem audit — all **168 destinations**, measured against the live cluster with a diagnostic replica cross-checked against the shipped function on every one. v10.39.0's pool problem is fixed (Delhi now matches Chandni Chowk, Red Fort, Jama Masjid, India Gate), and the bottleneck had moved to the **sentiment floor** — which was rejecting *neutral*, not negative: Laplace smoothing puts a mention with no lexicon word in range at exactly 0.5, just under the 0.55 floor, and **75% of rejections scored exactly that**. The lexicon fired on only 29% of 1,274 real mention windows. Expanded by measuring each candidate word against the corpus — and the result inverts intuition, because YouTube enthusiasm is mostly aimed at the *video*: `great`, `nice`, `awesome`, `helpful` and `wonderful` are all creator-directed (1.7-4.6x enrichment) and are **deliberately excluded**, while `clean`, `delicious`, `historic`, `must` and `friendly` are place-directed. Also fixed cross-POI mention mis-attribution (Cairo's *Grand* Egyptian Museum was crediting the Egyptian Museum, and Seoul's Lotte World Tower the reverse) and collapsed 24 identically-named duplicate POIs. Destinations returning a gem **44% → 54%**, total gems **127 → 172**, while total matched POIs *fell* 541 → 530 as double-counts were removed. Previous: 10.41.1 — The prominence re-ingestion data run (v10.40.0's code) is now complete: **0 of 169 destinations pending**, verified on the real Qdrant Cloud cluster. Closing the last 9 surfaced a real bug: `ingest_osm_pois` returned `0` — instead of falling back to the existing stored count, like the guards immediately below it already do — when *every* Overpass mirror failed on *both* passes and the fetch came back fully empty, not just non-prominent. `scripts/reingest_prominence_ranking.py`'s state loader requires a truthy `osm_count` before its accept-after-3-attempts rule can fire, so a destination stuck on this path would retry forever; Medellin hit it three runs in a row before the fix. Also dropped the dead `overpass.openstreetmap.fr` mirror (403s on every request, a guaranteed-wasted rotation slot) and confirmed the Resend email pipeline end-to-end with a real password-reset request against production. Previous: 10.41.0 — YouTube **narration** — transcripts + video descriptions — is a new price-grounding source, discovered for free from video IDs the comment backfill already stored, so it spends nothing against the 100/day `search.list` cap. Live-measured on Jaipur: comments carry **0** money-shaped chunks, narration carries **24**. Two real bugs fell out: transcripts were requested English-only, discarding the Hindi-only track most Indian vlogs actually have; and `\b` **silently fails on Devanagari** words ending in a matra, so `खाना`/`थाली` never matched while `होटल` did — 0 of 24 price-bearing Hindi chunks matched any food or stay keyword. Previous: 10.40.6 — the bare-substring keyword bug was in FIVE modules, not one — `"pub"` inside **"Public Garden"** was deleting kid-friendly places from family itineraries, and `"uk"` inside **"Sukhothai"** was pricing a moderate destination as premium; all three now share `core/keyword_match.py`. Previous: 10.40.4 — price grounding now matches the amount, not the blob — per-amount context scoping, plus a pre-existing bare-substring bug where FOOD's "eat" matched "great"; stay grounding accepts a single mention. Measured finding: a complete corpus is not a dense one — food grounding is corpus-limited, so the `_FOOD_MEALS_PER_DAY` calibration stays deferred, now with evidence. Previous: 10.40.3 — YouTube quota discipline: a 429/403 is now terminal rather than retried 3x against a 100/day cap, and all 12 standalone scripts use the app's `RedactionFilter` instead of bare `basicConfig` — which also closed a path where the API key could reach a JSONL state *file*, where no logging filter runs. Corrects a v10.40.1 claim: the cold-start gate does not over-subscribe the cap on its own. Previous: 10.40.2 — YouTube comment corpus complete at 170/170 destinations — 25,347 points verified on the cluster; and `mypy .` runs for the first time, going from an abort-before-checking to `Success: no issues found in 166 source files`, which surfaced three real bugs: a cancelled ingestion reading as a success, and two in the comparison path)
 **Last Updated:** July 28, 2026  
 **Status:** Production-ready MVP
 
@@ -1509,7 +1509,197 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.45.0 Changes (July 2026) — Voice mode had never spoken, and Anya now speaks Hindi
+
+Voice was the last feature in the product with **zero tests of any kind**. The
+six frontend test files covered stores and formatters; none touched voice, the
+wizard, or `ListeningOrb`. Reading the code turned up four defects, and writing
+the tests turned up a fifth that was larger than all of them.
+
+**🔴 Text-to-speech had never run in production. Not once.** Two independent
+bugs, either of which alone is enough:
+
+1. `toggleVoice()` assigned `rec.onresult = () => handleSubmit(...)` and *then*
+   called `setVoiceActive(true)`, so the handler held the `handleSubmit` — and
+   transitively the `sendMessage` — from the render where the flag was still
+   `false`. `sendMessage`'s `if (voiceActive) speak(res.reply)` therefore read
+   `false` on every voice-driven turn.
+2. A single `voiceActive` flag stood for both "the user wants a spoken
+   conversation" and "the mic is open". `rec.onend` fires the moment the user
+   stops talking, so it cleared the mode seconds before the API replied — even
+   a fresh read would have been `false`.
+
+**This was verified by execution, not by reading.** The previous implementation
+was reconstructed structurally in a throwaway test and driven through the real
+event order: the reply arrived, and `speak` was never called. That step is
+deliberate — this project has three recorded instances of a causal claim being
+propagated into docs before it was measured.
+
+**🔴 Text-to-speech also stripped Devanagari entirely** — the fifth bug in this
+codebase's character-rule family, after `core/keyword_match.py` (substring
+false positives), `\b` failing on matra-final Hindi words, and
+`core/validation.py`'s ZWJ/ZWNJ handling. The allowlist was
+`[^\w\s.,!?'₹%-]`, and **JavaScript's `\w` is always ASCII `[A-Za-z0-9_]`; the
+`u` flag does not change it**. Every Devanagari character was removed, `clean`
+became empty, and the next line's `if (!clean) return` produced silence. `₹`
+had been whitelisted explicitly, so India was in mind — just the currency, not
+the script.
+
+The replacement allowlist is keyed on Unicode categories, and two of its
+entries are the whole point:
+
+| Kept | Why |
+|---|---|
+| `\p{M}` | Devanagari vowel signs are **combining marks, not letters**. `खाना` is ख + ा + न + ा; `\p{L}` alone yields `खन` — a real word meaning something else, spoken confidently. Half-fixing this is worse than not fixing it, because silence is at least obviously broken. |
+| `।` | The danda is the Hindi full stop. Allowing `.` but not `।` runs every Hindi sentence into one flat utterance. |
+| ZWJ / ZWNJ | Load-bearing in conjuncts. `core/validation.py` preserves them through backend normalisation; stripping them here would undo that one layer later. |
+
+Because ZWJ now survives, an emoji-only reply cleans down to bare invisible
+joiners — non-empty to a truthiness check, silent to a synthesiser. The
+sanitiser therefore requires at least one letter or digit, mirroring the rule
+`core/validation.py` already applies to place names.
+
+**Three smaller defects, all fixed.** The mic button was rendered
+unconditionally but `toggleVoice` did `if (!Ctor) return`, and **Firefox has
+never shipped `SpeechRecognition`** — a click produced no state change and no
+message, a completely dead control. Every recognition failure collapsed into
+`rec.onerror = () => setVoiceActive(false)`, so denying microphone permission
+looked exactly like pausing mid-sentence; the six error codes now map to
+distinct messages, with `aborted` deliberately silent because it is our own
+`stop()`. And `getVoices()` was read at speak time, but Chrome returns `[]`
+until it fires `voiceschanged` — with no listener anywhere in the file, the
+first utterance of every cold session fell through to the platform default
+voice, which is the one that sets the tone.
+
+**🔴 Anya was speaking in a male voice.** The persona is a woman; the voice
+preference matched `/female/` in a voice name; **no platform puts it there.**
+Measured on the dev machine's real voice list, `pickVoice(voices, 'en-IN')`
+returned **Microsoft Ravi** — with Heera sitting immediately beside him in the
+same array — because neither name says "female" and the rule fell through to
+array order.
+
+**The Web Speech API has no gender field.** `SpeechSynthesisVoice` is `name`,
+`lang`, `default`, `localService`, `voiceURI` and nothing else. The OS *does*
+know: every Windows voice token carries `Attributes\Gender` in the registry,
+verified as `Female` for Heera and `Male` for Ravi. That information is
+discarded at the browser boundary, so curated name lists are not a shortcut
+around a real API — they are the only lever that exists. Selection now scores
+each candidate on language first and gender second, covering the voices
+Windows, Apple and Edge ship for `hi-IN` (Kalpana, Lekha, Swara vs. Hemant,
+Neel, Madhur) and `en-IN` (Heera, Veena, Neerja vs. Ravi, Rishi, Prabhat). An
+unrecognised name scores **neutral and is still used** — deliberately, since
+not recognising a voice costs the wrong gender while refusing it costs silence.
+Language always outranks gender: a Hindi line read by an English voice is
+unintelligible, whereas the wrong gender is merely off-persona.
+
+**The missing-voice notice fires at language selection**, not on Anya's first
+reply. Discovering three turns in that the device cannot speak Hindi is worse
+than being told when you pick it. A selection made before `voiceschanged` has
+fired cannot be judged — `getVoices()` is empty then, which means *unknown*
+rather than *absent* — so the check re-runs when the real list arrives.
+Explicit re-selection always re-answers, while the automatic re-checks
+deduplicate, because silence in response to a deliberate tap reads as "it works
+now".
+
+**⭐ NEW — Hindi voice input and output.** `rec.lang` was hardcoded `en-IN`,
+which tells the recogniser to expect Indian-accented *English*; speaking Hindi
+at it returns garbled English guesses, never Devanagari. The Web Speech API has
+**no auto-detect** — recognition takes exactly one language per session — so
+this is an explicit English / हिंदी toggle in the wizard header rather than a
+smarter default. It drives recognition language, utterance language and voice
+selection together.
+
+`WIZARD_SYSTEM_PROMPT` gained section 3a: mirror the user's language in
+`reply`, and **only** in `reply`. Section 3 had always handled Hinglish *input*
+("Mumbai se Bali 7 days mein") but said nothing about output. The asymmetry is
+deliberate and load-bearing in both directions:
+
+- **`chips` stay English.** `LLMWizard.tsx` classifies chip groups by matching
+  English keywords, so a translated chip does not fail visibly — it silently
+  turns a multi-select theme group into single-select, which is a bug the file
+  already carries a comment about having shipped once.
+- **`config_patch` stays English, Latin script.** A destination is a database
+  key: geocoded, ingested and cached under its English name. "गोवा" and "Goa"
+  would become two unrelated destinations, and the Hindi one would trigger a
+  whole redundant cold-start ingestion of data already held.
+
+Typed Devanagari already worked end to end and this was confirmed by
+measurement rather than assumed from `core/validation.py`'s docstring:
+`clean_user_text` round-trips Hindi byte-identically, including conjuncts and
+embedded ZWJ, and the pydantic models accept it.
+
+**Structure.** Voice moved out of the 959-line `LLMWizard.tsx` into
+`apps/web/lib/voice.ts` (pure: sanitiser, voice selection, error mapping,
+capability detection, the language table) and `apps/web/hooks/useVoice.ts`
+(state and Web Speech wiring), matching how `lib/format.ts` and `lib/limits.ts`
+are already tested. `voiceMode`, `isListening` and `isSpeaking` are now three
+separate things; `isSpeaking` had been set in three places and read in none, so
+there was no speaking indicator anywhere. The mic re-arms after Anya finishes
+speaking and **only** from the utterance's own `onend`, never while audio is
+playing, so an open mic cannot transcribe Anya back into the conversation.
+
+**Mobile is where this gets least verifiable, so it is instrumented rather
+than assumed.** Android and iOS are the bulk of the user base and neither can
+be measured from a dev box:
+
+- **Android defeats name matching entirely.** Google's TTS voices arrive as
+  `"Google हिन्दी"` — no personal name, no gender token — so nothing in the
+  curated lists can match and selection falls through to whatever the platform
+  lists first. In practice Android usually exposes one voice per language, so
+  there is no choice to make and Google's Hindi default happens to be female.
+  That is the platform landing right, not this code getting it right, and the
+  distinction is worth keeping honest.
+- 🔴 **iOS Safari only permits `speechSynthesis.speak()` from inside a user
+  gesture, and Anya's first utterance arrives after an awaited API call** —
+  long past the tap that started voice mode. That would be silence on iPhone
+  regardless of voice selection. `useVoice` now speaks a zero-volume space
+  synchronously inside the toggle handler, which unlocks the synthesiser for
+  the session. **Not verified on a real device** — it is defensive, based on a
+  documented WebKit constraint, and free everywhere else.
+- **`/dev/voice` is a new on-device diagnostic** (`app/dev/voice`, `noindex`).
+  It lists every voice the device reports with its `voiceURI` and the guessed
+  gender, shows which one `pickVoice` selects for each language and why, and —
+  the part no unit test can cover — speaks *after a delay with no gesture on
+  the stack*, reproducing exactly how a real reply arrives. It emits a
+  copy-pasteable report, so the curated lists can be corrected from real
+  device data rather than extended by guessing.
+
+On the dev machine the page agrees with the OS registry on **all five voices**
+(David/Ravi/Mark male, Heera/Zira female), selects Heera for `en-IN`, reports
+no `hi-IN` voice, and passes the delayed-speech test — the expected desktop
+baseline, since the gesture restriction is a WebKit behaviour.
+
+**Tests: 122 frontend (was 44) and 844 backend (was 830).** Ruff, mypy and
+`tsc --noEmit` clean.
+
+**Honest residuals, measured not guessed:**
+
+- 🔴 **The dev machine has no `hi-IN` voice installed** — `getVoices()` returns
+  five voices, all `en-US`/`en-IN`. Hindi *recognition* still works (Chrome
+  routes it to a cloud service), but Hindi *speech* needs a Windows Hindi
+  language pack. This is the expected desktop case, not an edge case, which is
+  why the hook checks voice availability up front and says so rather than
+  waiting for a `language-unavailable` event that several browsers never fire.
+- **English-in-`config_patch` is a prompt-level guarantee, not an enforced
+  one.** `CityName` accepts `"गोवा"` — verified — so nothing downstream stops a
+  Devanagari destination reaching geocoding. Enforcing it needs transliteration
+  or a lookup, and is not built.
+- **`_strip_leaked_reasoning` does not fire on Hindi replies.** Pass 1 matches
+  English warm openers; pass 2 splits on `[.!?]`, which a danda-terminated
+  sentence never matches. It degrades to "return unchanged" — the safe
+  direction — so leaked reasoning in a Hindi reply would reach the user. In
+  practice leaks are English-shaped, because the model reasons about our
+  English field names, and that case still strips correctly.
+- The curated female-voice list (below) covers the voices Windows, Apple and
+  Edge are known to ship for `hi-IN` and `en-IN`. It is a best effort, not a
+  registry: an unrecognised name scores neutral and is still used, because
+  not recognising a voice costs the wrong gender while refusing it costs
+  silence.
+- UI chrome stays English when हिंदी is selected. The toggle is scoped to
+  voice, and labelled that way, but full interface localisation is a separate
+  piece of work.
 
 ### v10.44.0 Changes (July 2026) — A derived name core has to be a name, not a word
 

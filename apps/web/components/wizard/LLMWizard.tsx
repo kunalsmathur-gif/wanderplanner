@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Mic, MicOff, Send, Plane, X, CheckCircle2, Loader2 } from 'lucide-react'
+import { Mic, MicOff, Send, Plane, X, CheckCircle2, Loader2, Volume2 } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
@@ -13,6 +13,8 @@ import { streamItinerary, checkFeasibility } from '@/lib/api'
 import { savePendingGeneration, getPendingGeneration, clearPendingGeneration } from '@/lib/pendingGeneration'
 import { formatCurrency } from '@/lib/format'
 import { MAX_CHAT_MESSAGE_LEN } from '@/lib/limits'
+import { VOICE_LANGS, type VoiceLang } from '@/lib/voice'
+import { useVoice } from '@/hooks/useVoice'
 import type { TripConfig } from '@/types'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 
@@ -50,25 +52,11 @@ const nextId = () => {
   return `llm-msg-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-// ── Voice helpers ─────────────────────────────────────────────────────────────
-
-type RecognitionInstance = {
-  continuous: boolean
-  interimResults: boolean
-  lang: string
-  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
-  onerror: ((e: { error?: string }) => void) | null
-  onend: (() => void) | null
-  start: () => void
-  stop: () => void
-}
-
-declare global {
-  interface Window {
-    SpeechRecognition?: new () => RecognitionInstance
-    webkitSpeechRecognition?: new () => RecognitionInstance
-  }
-}
+// Voice I/O lives in `lib/voice.ts` (pure helpers) and `hooks/useVoice.ts`
+// (state and Web Speech API wiring). It used to be inline here, untested, with
+// a single `voiceActive` flag standing in for both "the user wants a spoken
+// conversation" and "the mic is open" — see the hook's docstring for what that
+// conflation broke.
 
 // ── Required-field progress display ──────────────────────────────────────────
 
@@ -153,8 +141,10 @@ export function LLMWizard() {
   const [summary, setSummary]         = useState<string | null>(null)
   const [progress, setProgress]       = useState<ItineraryProgress>({ message: '', step: 0, total: 6 })
   const [error, setError]             = useState('')
-  const [voiceActive, setVoiceActive] = useState(false)
-  const [isSpeaking, setIsSpeaking]   = useState(false)
+  // Voice notices are kept out of `error` on purpose: that banner carries a
+  // Retry button wired to resend the last message, which makes no sense as a
+  // response to "microphone access is blocked".
+  const [voiceNotice, setVoiceNotice] = useState('')
   // Per-message selection set, only used for multi-select theme chip groups
   const [themeSelections, setThemeSelections] = useState<Record<string, Set<string>>>({})
 
@@ -176,9 +166,12 @@ export function LLMWizard() {
 
   const messagesEndRef  = useRef<HTMLDivElement>(null)
   const inputRef        = useRef<HTMLInputElement>(null)
-  const recognitionRef  = useRef<RecognitionInstance | null>(null)
-  const synthRef        = useRef<SpeechSynthesisUtterance | null>(null)
   const cancelStreamRef = useRef<(() => void) | null>(null)
+  // Read by the voice hook's re-arm gate, which fires from a speech event and
+  // so would otherwise capture whichever phase was current when voice mode
+  // started.
+  const phaseRef        = useRef<Phase>('chatting')
+  phaseRef.current = phase
   // Watchdog for the generate-itinerary SSE stream: guards against the UI
   // getting stuck on "generating" forever if the stream silently dies with
   // no error event — e.g. a dropped connection, or (in dev) a Fast Refresh
@@ -200,6 +193,21 @@ export function LLMWizard() {
   // twice, each getting its own real LLM round trip and reply. This ref is
   // set the instant a send starts, closing that window immediately.
   const sendingLockRef = useRef(false)
+
+  // ── Voice I/O ──────────────────────────────────────────────────────────────
+
+  // `handleSubmit` is a hoisted function declaration further down, so it is in
+  // scope here; the hook only ever calls it from an event, never during render.
+  const voice = useVoice({
+    onTranscript: (text) => {
+      setInput(text)
+      handleSubmit(text)
+    },
+    onNotice: setVoiceNotice,
+    // Don't reopen the mic once we've left the chat — during generation there
+    // is nothing for the user to answer.
+    canListen: () => phaseRef.current === 'chatting',
+  })
 
   // ── Bootstrap first Anya message ───────────────────────────────────────────
 
@@ -339,11 +347,11 @@ export function LLMWizard() {
 
   // ── Cleanup on unmount ─────────────────────────────────────────────────────
 
+  // useVoice cleans up its own recognition and synthesis on unmount.
   useEffect(() => {
     return () => {
       cancelStreamRef.current?.()
       clearGenerationWatchdog()
-      window.speechSynthesis?.cancel()
     }
   }, [])
 
@@ -351,35 +359,6 @@ export function LLMWizard() {
 
   function addMessage(msg: Omit<Message, 'id'>) {
     setMessages((prev) => [...prev, { ...msg, id: nextId() }])
-  }
-
-  function speak(text: string) {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return
-    window.speechSynthesis.cancel()
-
-    const clean = text
-      .replace(/[*_~`#]/g, '')
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-      .replace(/[^\w\s.,!?'₹%-]/g, '')
-      .trim()
-    if (!clean) return
-
-    const utterance = new SpeechSynthesisUtterance(clean)
-    utterance.lang = 'en-IN'
-    const voices = window.speechSynthesis.getVoices()
-    const preferred =
-      voices.find((v) => v.lang.includes('en-IN') && v.name.toLowerCase().includes('female')) ||
-      voices.find((v) => v.lang.startsWith('en') && v.name.toLowerCase().includes('female')) ||
-      voices.find((v) => v.lang.includes('en-IN'))
-    if (preferred) utterance.voice = preferred
-    utterance.rate = 1.05
-    utterance.pitch = 1.15
-    utterance.volume = 1.0
-    utterance.onstart = () => setIsSpeaking(true)
-    utterance.onend   = () => setIsSpeaking(false)
-    utterance.onerror = () => setIsSpeaking(false)
-    synthRef.current = utterance
-    window.speechSynthesis.speak(utterance)
   }
 
   // ── Send a message to Anya ─────────────────────────────────────────────────
@@ -467,7 +446,9 @@ export function LLMWizard() {
       }
       setMessages([...nextMessages, assistantMsg])
 
-      if (voiceActive) speak(res.reply)
+      // No-op unless voice mode is on. The check lives inside the hook, read
+      // from a ref — doing it here is what made this line dead code before.
+      voice.speakReply(res.reply)
 
       if (res.ready_to_generate) {
         setSummary(res.summary)
@@ -635,34 +616,16 @@ export function LLMWizard() {
     startGeneration(fullConfig)
   }
 
-  // ── Voice input ────────────────────────────────────────────────────────────
+  // ── Voice controls ─────────────────────────────────────────────────────────
 
-  function toggleVoice() {
-    if (voiceActive) {
-      recognitionRef.current?.stop()
-      setVoiceActive(false)
-      window.speechSynthesis?.cancel()
-      setIsSpeaking(false)
-      return
-    }
+  function handleToggleVoice() {
+    setVoiceNotice('')
+    voice.toggleVoiceMode()
+  }
 
-    const Ctor = window.SpeechRecognition ?? window.webkitSpeechRecognition
-    if (!Ctor) return
-
-    const rec = new Ctor()
-    rec.continuous = false
-    rec.interimResults = false
-    rec.lang = 'en-IN'
-    rec.onresult = (e) => {
-      const transcript = e.results[0][0].transcript
-      setInput(transcript)
-      handleSubmit(transcript)
-    }
-    rec.onerror = () => setVoiceActive(false)
-    rec.onend = () => setVoiceActive(false)
-    rec.start()
-    recognitionRef.current = rec
-    setVoiceActive(true)
+  function handleVoiceLangChange(next: VoiceLang) {
+    setVoiceNotice('')
+    voice.setLang(next)
   }
 
   // ── Filled fields count for progress bar ──────────────────────────────────
@@ -697,18 +660,58 @@ export function LLMWizard() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* Language applies to both directions: what the recogniser listens
+                for and what Anya speaks back. The Web Speech API has no
+                auto-detect — recognition takes exactly one language per
+                session — so this has to be an explicit choice, not a guess. */}
+            <div
+              role="group"
+              aria-label="Voice language"
+              className="flex items-center rounded-full bg-white/20 p-0.5 text-xs font-semibold"
+            >
+              {(Object.keys(VOICE_LANGS) as VoiceLang[]).map((code) => (
+                <button
+                  key={code}
+                  type="button"
+                  onClick={() => handleVoiceLangChange(code)}
+                  aria-pressed={voice.lang === code}
+                  aria-label={`Speak and listen in ${VOICE_LANGS[code].label}`}
+                  className={[
+                    'rounded-full px-2 py-1 leading-none transition-colors',
+                    voice.lang === code
+                      ? 'bg-white text-[var(--_primary)]'
+                      : 'text-white/80 hover:text-white',
+                  ].join(' ')}
+                >
+                  {VOICE_LANGS[code].nativeLabel}
+                </button>
+              ))}
+            </div>
             <button
               type="button"
-              onClick={toggleVoice}
-              aria-label={voiceActive ? 'Stop voice mode' : 'Start voice mode'}
+              onClick={handleToggleVoice}
+              aria-label={voice.voiceMode ? 'Stop voice mode' : 'Start voice mode'}
+              aria-pressed={voice.voiceMode}
+              title={
+                voice.supported
+                  ? undefined
+                  : 'Voice input isn’t supported in this browser'
+              }
               className={[
                 'flex h-9 w-9 items-center justify-center rounded-full transition-colors',
-                voiceActive
-                  ? 'bg-white text-[var(--_primary)] animate-pulse'
-                  : 'bg-white/20 text-white hover:bg-white/30',
+                !voice.supported
+                  ? 'bg-white/10 text-white/40'
+                  : voice.voiceMode
+                    ? 'bg-white text-[var(--_primary)]'
+                    : 'bg-white/20 text-white hover:bg-white/30',
+                // Pulse only while the mic is genuinely open. The old UI
+                // pulsed for the whole session because one flag meant both.
+                voice.isListening ? 'animate-pulse' : '',
               ].join(' ')}
             >
-              {voiceActive ? <MicOff size={16} /> : <Mic size={16} />}
+              {voice.isSpeaking
+                ? <Volume2 size={16} />
+                : voice.voiceMode ? <MicOff size={16} /> : <Mic size={16} />}
             </button>
             <button
               type="button"
@@ -915,6 +918,22 @@ export function LLMWizard() {
             feasibility warning) instead of only having quick-reply chips. */}
         {phase === 'chatting' && (
           <div className="shrink-0 border-t border-[var(--_border)] bg-[var(--_card)] px-3 py-3">
+            {/* Voice status and failures. `role="status"` so a screen reader
+                announces "microphone blocked" — the case that previously
+                produced no feedback of any kind. */}
+            {(voiceNotice || voice.isSpeaking || voice.isListening) && (
+              <p
+                role="status"
+                aria-live="polite"
+                className="mb-2 px-1 text-xs text-[var(--_muted-fg)]"
+              >
+                {voiceNotice
+                  ? voiceNotice
+                  : voice.isListening
+                    ? `Listening in ${VOICE_LANGS[voice.lang].label}…`
+                    : 'Anya is speaking…'}
+              </p>
+            )}
             <div className="flex items-center gap-2">
               <input
                 ref={inputRef}
@@ -922,24 +941,30 @@ export function LLMWizard() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-                placeholder={voiceActive ? 'Listening…' : 'Type your reply…'}
+                placeholder={voice.isListening ? 'Listening…' : 'Type your reply…'}
                 maxLength={MAX_CHAT_MESSAGE_LEN}
-                disabled={isSending || voiceActive}
+                // Only blocked while the mic is actually open. Disabling for
+                // the whole voice-mode session meant switching to voice took
+                // typing away entirely, with no way back but toggling off.
+                disabled={isSending || voice.isListening}
                 className="flex-1 rounded-xl border border-[var(--_border)] bg-[var(--_bg)] px-3 py-2.5 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none disabled:opacity-50"
                 aria-label="Message to Anya"
               />
               <button
                 type="button"
-                onClick={toggleVoice}
-                aria-label={voiceActive ? 'Stop voice' : 'Voice input'}
+                onClick={handleToggleVoice}
+                aria-label={voice.voiceMode ? 'Stop voice' : 'Voice input'}
+                aria-pressed={voice.voiceMode}
                 className={[
                   'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-colors',
-                  voiceActive
-                    ? 'border-red-400 bg-red-50 text-red-500 dark:border-red-600 dark:bg-red-950/40 dark:text-red-400'
-                    : 'border-[var(--_border)] text-[var(--_muted-fg)] hover:border-[var(--_primary)] hover:text-[var(--_primary)]',
+                  !voice.supported
+                    ? 'border-[var(--_border)] text-[var(--_muted-fg)] opacity-50'
+                    : voice.voiceMode
+                      ? 'border-red-400 bg-red-50 text-red-500 dark:border-red-600 dark:bg-red-950/40 dark:text-red-400'
+                      : 'border-[var(--_border)] text-[var(--_muted-fg)] hover:border-[var(--_primary)] hover:text-[var(--_primary)]',
                 ].join(' ')}
               >
-                {voiceActive ? <MicOff size={16} /> : <Mic size={16} />}
+                {voice.voiceMode ? <MicOff size={16} /> : <Mic size={16} />}
               </button>
               <button
                 type="button"
