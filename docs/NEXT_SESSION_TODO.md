@@ -87,6 +87,26 @@ documented as calibrated against the 2026-07-25 audit, `egyptian` is exactly 8 c
 the genuine recovery `immanuel` — raising it to 9 loses the latter. The module is shared with
 `services/poi_pinning.py`, so any change needs its own calibration pass across both consumers.
 
+**5. ⏭️ NEW (2026-07-28) — no observability into `generate_itinerary()` latency, and it keeps
+growing more steps.** Asked to check latency metrics this session and found there's nothing to
+check: zero timing instrumentation anywhere in the request path (`grep` for
+`time.time()`/`perf_counter` across `chains/`/`routers/` returns nothing), confirming
+`scaling-tech-challenges.md`'s "No observability stack" finding still stands. Static review of
+`chains/itinerary_chain.py::generate_itinerary()` turned up concrete, unmeasured latency risk that
+each new refinement (scoring, persona injection, pin enforcement, now `generation_tier`) stacks onto
+the same critical path, against a PRD budget the docs already call "tight with a single model call
+chain":
+- **Destination cold-start ingestion** (`ensure_destination_ingested`) runs Overpass + Wikivoyage +
+  embeddings inline on a place's first-ever request, blocking that user's response.
+- **Retry cascade** — up to 3 models × 5 attempts = 15 sequential LLM calls before falling back
+  (already flagged in `scaling-tech-challenges.md` §4, but still no cap on worst-case wall-clock).
+- **Pexels day-photo fetch** — a synchronous `await` with a 6-second timeout added to *every*
+  response for a purely cosmetic, best-effort enhancement.
+- Suggested shape: add lightweight per-stage timing (LLM call, ingestion, photo fetch, total) logged
+  structurally, before adding further generation-path refinements — you need real numbers to know if
+  this is already a problem, not another guess. Also consider moving the photo fetch off the
+  critical path (client-fetched after render) since it's explicitly non-blocking in intent already.
+
 ---
 
 ## ✅ DO THIS NEXT — open items as of 2026-07-27 (v10.40.7)
