@@ -661,6 +661,7 @@ async def _fallback_itinerary(trip_config: TripConfig, error: Exception) -> dict
 async def generate_itinerary(trip_config: TripConfig) -> ItineraryResponse:
     if settings.llm_provider == "mock":
         raw = _mock_itinerary(trip_config)
+        raw.setdefault("_from_fallback", "mock")
     else:
         dest = trip_config.destination.city if trip_config.destination else ""
         if dest:
@@ -724,6 +725,7 @@ async def generate_itinerary(trip_config: TripConfig) -> ItineraryResponse:
         days=scored_days,
         alignment_score=round(overall_score, 2),
         expense_breakdown=_parse_expense_breakdown(raw.get("expense_breakdown", {}), trip_config),
+        generation_tier=raw.get("_from_fallback", "live"),
     )
 
 

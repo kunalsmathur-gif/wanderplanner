@@ -57,6 +57,7 @@ export function ChatPanel() {
           result.days,
           result.alignment_score,
           result.expense_breakdown,
+          result.generation_tier,
         )
         setRegenNote(null)
         const diff = diffItineraries(oldDays, result.days)

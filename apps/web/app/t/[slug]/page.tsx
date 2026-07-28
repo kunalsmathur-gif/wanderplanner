@@ -105,6 +105,11 @@ export default async function SharedTripPage({ params }: { params: Promise<{ slu
               <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-amber-300/60 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-400">
                 👁 View-only — plan your own trip to personalise it
               </div>
+              {data.itinerary.generation_tier && data.itinerary.generation_tier !== 'live' && (
+                <div className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-amber-300/60 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-400">
+                  ⚠️ This plan uses backup data — some details may be less current
+                </div>
+              )}
             </div>
 
             {/* Day-by-day itinerary */}

@@ -14,18 +14,47 @@ import { ShareButton } from '@/components/common/ShareButton'
 import { ThemeToggle } from '@/components/common/ThemeToggle'
 import { UserMenu } from '@/components/common/UserMenu'
 
+// ── Fallback-tier disclosure banner ───────────────────────────────────────────
+// generation_tier !== 'live' means the backend degraded to cache / RAG
+// skeleton / (enhanced) mock data (docs §4) — never present that as a fully
+// verified, freshly-generated plan without saying so.
+const TIER_COPY: Record<string, string> = {
+  cache: 'Showing a previously generated plan for a similar trip — live generation was unavailable.',
+  rag_skeleton: 'Built from verified places only, without AI narration — live generation was unavailable.',
+  enhanced_mock: 'This is a backup sample plan with real destination tips spliced in — live generation failed.',
+  mock: 'This is a sample plan for demo purposes, not a live generation.',
+}
+
+function GenerationTierBanner() {
+  const tier = useItineraryStore((state) => state.generationTier)
+  if (tier === 'live') return null
+  const message = TIER_COPY[tier] ?? 'This plan uses backup data — some details may be less current.'
+  return (
+    <div
+      role="status"
+      className="flex shrink-0 items-center gap-2 border-b border-amber-300/60 bg-amber-50 px-4 py-1.5 text-xs font-medium text-amber-800 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-400 sm:px-6"
+    >
+      <span aria-hidden="true">⚠️</span>
+      <span>{message}</span>
+    </div>
+  )
+}
+
 // ── Shared title bar ──────────────────────────────────────────────────────────
 function TitleBar({ destination, days }: { destination: { city: string; country: string } | null; days: number }) {
   return (
-    <div className="flex shrink-0 items-center justify-between border-b border-[var(--_border)] px-4 py-2 sm:px-6">
-      <p className="truncate text-xs font-semibold text-[var(--_muted-fg)]">
-        {destination ? `${destination.city}, ${destination.country}` : 'Your Itinerary'} · {days} days
-      </p>
-      <div className="flex items-center gap-2">
-        <ThemeToggle className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--_border)] text-[var(--_fg)] transition-colors hover:border-[var(--_primary)] hover:text-[var(--_primary)]" />
-        <ShareButton />
-        <UserMenu />
+    <div className="flex shrink-0 flex-col">
+      <div className="flex items-center justify-between border-b border-[var(--_border)] px-4 py-2 sm:px-6">
+        <p className="truncate text-xs font-semibold text-[var(--_muted-fg)]">
+          {destination ? `${destination.city}, ${destination.country}` : 'Your Itinerary'} · {days} days
+        </p>
+        <div className="flex items-center gap-2">
+          <ThemeToggle className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--_border)] text-[var(--_fg)] transition-colors hover:border-[var(--_primary)] hover:text-[var(--_primary)]" />
+          <ShareButton />
+          <UserMenu />
+        </div>
       </div>
+      <GenerationTierBanner />
     </div>
   )
 }

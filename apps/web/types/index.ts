@@ -130,7 +130,13 @@ export interface ItineraryResponse {
   alignment_score: number
   warnings: string[]
   expense_breakdown: ExpenseBreakdown
+  // "live" = real LLM generation. Anything else means the backend degraded
+  // to a fallback tier (cache / rag_skeleton / enhanced_mock / mock) — the
+  // UI must disclose this rather than present it as a verified plan.
+  generation_tier?: GenerationTier
 }
+
+export type GenerationTier = 'live' | 'cache' | 'rag_skeleton' | 'enhanced_mock' | 'mock'
 
 // Expense breakdown types
 export interface ExpenseBreakdown {

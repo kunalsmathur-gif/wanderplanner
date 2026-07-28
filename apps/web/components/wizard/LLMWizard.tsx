@@ -595,7 +595,7 @@ export function LLMWizard() {
       },
       (result) => {
         clearGenerationWatchdog()
-        setDays(result.days, result.alignment_score, result.expense_breakdown)
+        setDays(result.days, result.alignment_score, result.expense_breakdown, result.generation_tier)
         setPhase('done')
         closeWizard()
       },

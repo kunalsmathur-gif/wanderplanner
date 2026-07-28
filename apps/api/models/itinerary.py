@@ -64,6 +64,11 @@ class ItineraryResponse(BaseModel):
     alignment_score: float
     warnings: list[str] = Field(default_factory=list)
     expense_breakdown: ExpenseBreakdown = Field(default_factory=ExpenseBreakdown)
+    # "live" = real LLM generation (the verified-data path). Anything else
+    # means generate_itinerary degraded to a fallback tier (docs §4) — the
+    # client must disclose this, never present a fallback plan as verified.
+    # One of: "live", "cache", "rag_skeleton", "enhanced_mock", "mock".
+    generation_tier: str = "live"
 
 
 

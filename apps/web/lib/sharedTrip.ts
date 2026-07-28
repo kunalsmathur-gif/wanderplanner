@@ -3,7 +3,12 @@
 import type { ItineraryDay, ExpenseBreakdown } from '@/types'
 
 export interface SharedTripData {
-  itinerary: { days: ItineraryDay[]; alignment_score: number; expense_breakdown?: ExpenseBreakdown }
+  itinerary: {
+    days: ItineraryDay[]
+    alignment_score: number
+    expense_breakdown?: ExpenseBreakdown
+    generation_tier?: string
+  }
   trip_config: Record<string, unknown>
   labels: Record<string, string>
   destination_label: string
