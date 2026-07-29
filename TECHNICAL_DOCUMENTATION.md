@@ -1509,7 +1509,69 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.52.0 Changes (July 2026) — entry/visa corpus from free sources (#37)
+
+Suite **976 passed / 6 skipped** (`pytest tests/`), up 18 from v10.51.0's 958; ruff clean,
+mypy clean (61 files).
+
+New `visa_info` Qdrant collection, `scrapers/visa_info.py`, `services/visa.py`, a monthly
+`visa_info_refresh` scheduler job, and a gated hint in the wizard prompt.
+
+🔴 **Keyed by COUNTRY, not city — measured, not assumed.** #37 proposed scraping the
+existing destination list. Counting visa/passport/e-visa mentions inside each article's
+"Get in" section on 2026-07-29:
+
+| | | | | | | |
+|---|---|---|---|---|---|---|
+| India **76** | Thailand **30** | UAE **31** | France **28** | Japan **16** | Jaipur **0** | Bangkok **0** |
+
+Scraping the ~170 city guides would have yielded almost nothing; ~70 country articles cover
+all of them. Per-city keying would also have stored one country's rules 170 times, each copy
+drifting as it refreshed on its own schedule.
+
+**This is genuinely new corpus, not a duplicate of `wiki`.** `scrapers/wikivoyage.py`'s
+`SECTIONS_OF_INTEREST` is `{go, stay_safe, see, do, eat, drink, sleep, understand}` matched
+as substrings, and `get_in` contains none of them — so entry rules had never been ingested
+for any destination.
+
+The subsection holding the rules is **not consistently named** (India "Visa", Thailand/
+France/UAE "Entry requirements", Japan none), so the scraper takes the whole `Get in` H2
+including subsections and filters chunk-by-chunk on visa vocabulary through
+`core/keyword_match.py` rather than hunting for a heading by name. Whole-word matching is
+load-bearing: **bare-substring "visa" matches "Visakhapatnam"**, an Indian city this product
+will genuinely see — the sixth instance of the v10.40.4/5/6 bug class, caught before it
+shipped this time. Pinned by test.
+
+🔴 **A defect found by reading the scraped text rather than the chunk counts.** France and
+UAE came back with literal `[ edit ]` runs embedded mid-sentence — MediaWiki's per-heading
+edit links, which `get_text()` pulls in whenever a section includes its subsection headings.
+Counts looked perfect (20 and 15 chunks). These chunks are both embedded *and* surfaced into
+the wizard prompt, so the noise would have shifted the vectors and been visible to users.
+Stripped, with a regression test. **Same lesson as v10.40.1's `0 comments ingested`: the
+count was never going to show it.**
+
+**Live, read-only, through the shipped scraper:** India 47 chunks, Thailand 26, France 20,
+UAE 15, Japan 13, Bhutan 13.
+
+**Retrieval is deliberately conservative.** `services/visa.py::retrieve_visa_note()` returns
+a short note *with its source URL and an explicit "confirm with the official immigration
+site" line*, or `""`. It never states a determination, and any failure degrades to silence —
+a traveller acting on a stale visa rule misses a flight, so the asymmetry is nothing like a
+bad restaurant suggestion. The wizard prompt is instructed not to answer from its own
+knowledge when nothing is on file.
+
+⚠️ **The wizard hint is gated on the user actually asking** (`_visa_hint_for`,
+whole-word matched). An unconditional lookup would put an embedding plus a Qdrant round-trip
+on *every* wizard turn's critical path to serve a question that comes up in a minority of
+conversations — v10.47.0's latency work is why this is a gate, not an always-on hint.
+
+**Not done:** no ingestion run has been performed, so the collection is empty until the
+scheduler's first fire or a manual run. `visa_info_retrieval_enabled` defaults on, but with
+an empty collection the wizard correctly says nothing.
+
+---
 
 ### v10.51.0 Changes (July 2026) — Wikivoyage district sub-article scraping for hub cities (#45)
 

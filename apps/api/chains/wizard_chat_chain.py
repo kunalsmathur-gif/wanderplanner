@@ -643,9 +643,60 @@ Treat it as ground truth. Only ask for keys that are null or absent here.
 ## FOREIGN CURRENCY CONVERSION HINT (only relevant if the user's latest message stated a budget in a non-INR currency)
 {currency_conversion_hint}
 
+## ENTRY / VISA CONTEXT (background only — present when the destination country has entry rules on file)
+{visa_hint}
+Rules for using it:
+  - Only mention it if the user ASKS about visas, entry rules, or documents. Never volunteer it
+    mid-wizard — the job of this conversation is to collect trip fields, not to brief the user.
+  - It is community-sourced and may be out of date. Never state it as a determination ("you do not
+    need a visa"). Summarise it as what the guide says, and always tell the user to confirm with the
+    destination's official immigration site before booking.
+  - If it says "(none on file)", say you don't have reliable entry information for that country and
+    point them at the official source. Do not answer from your own knowledge — a wrong visa answer
+    costs the user a trip.
+
 ## PRELOADED DESTINATION
 {preloaded_destination}
 """
+
+
+# Only asked-about visa questions trigger a lookup. Whole-word matched via
+# core/keyword_match.py, not `in` — "visa" as a bare substring hits
+# "Visakhapatnam", an Indian city this product will genuinely see.
+_VISA_QUESTION_KEYWORDS = frozenset({
+    "visa", "visas", "e-visa", "evisa", "passport", "passports",
+    "entry", "immigration", "customs", "permit", "permits", "eta",
+})
+
+
+async def _visa_hint_for(partial_config: dict[str, Any], last_user_text: str | None) -> str:
+    """Entry-rules context for the wizard prompt, or "" for "say nothing".
+
+    🔴 **Gated on the user actually asking.** Every wizard turn is on the
+    user's critical path, and an unconditional lookup would add an embedding
+    plus a Qdrant round-trip to all of them to serve a question that comes up
+    in a small minority of conversations. v10.47.0's measurements are the
+    reason this is a gate rather than an always-on hint.
+
+    Resolves the country from the collected config only — never from the city
+    name — because a city->country lookup here would mean a geocode call on
+    the same critical path, and `destination.country` is already collected by
+    the wizard itself.
+    """
+    if not has_keyword(last_user_text or "", _VISA_QUESTION_KEYWORDS):
+        return ""
+
+    destination = partial_config.get("destination") or {}
+    country = ""
+    if isinstance(destination, dict):
+        country = (destination.get("country") or "").strip()
+    if not country:
+        country = (partial_config.get("destination_country") or "").strip()
+    if not country:
+        return ""
+
+    from services.visa import retrieve_visa_note
+    return await retrieve_visa_note(country, last_user_text or "")
 # ── Required field check ──────────────────────────────────────────────────────
 
 _REQUIRED_KEYS = {
@@ -1186,11 +1237,19 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
     except Exception:
         currency_hint = ""
 
+    try:
+        visa_hint = await _visa_hint_for(request.partial_config, last_user_text)
+    except Exception:
+        # Same contract as the budget/currency hints above: a hint that can't be
+        # computed must not cost the user their turn.
+        visa_hint = ""
+
     system_prompt = WIZARD_SYSTEM_PROMPT.format(
         preloaded_destination=request.preloaded_destination or "None",
         collected_state=_summarise_state(request.partial_config),
         budget_estimate_hint=budget_hint or "(not applicable this turn)",
         currency_conversion_hint=currency_hint or "(not applicable this turn — user has not stated a foreign-currency amount)",
+        visa_hint=visa_hint or "(none on file)",
     )
 
     # Last 20 messages as conversation history

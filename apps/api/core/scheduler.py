@@ -33,6 +33,32 @@ async def _refresh_itinerary_corpus():
         logger.warning("Itinerary corpus ingestion failed: %s", e)
 
 
+async def _refresh_visa_info():
+    """Refresh the `visa_info` entry-rules corpus (issue #37).
+
+    Iterates countries, not destinations: visa rules are country-level (see
+    scrapers/visa_info.py for the measurement behind that). Failures are
+    per-country and non-fatal — one unreachable article must not cost the
+    other sixty, the same contract as `_refresh_osm_pois`.
+    """
+    from scrapers.visa_info import VISA_SEED_COUNTRIES, ingest_visa_info
+
+    total = failures = 0
+    for country in VISA_SEED_COUNTRIES:
+        try:
+            total += await ingest_visa_info(country)
+        except Exception as e:
+            failures += 1
+            logger.warning("visa_info refresh failed for %r: %s", country, e)
+        # Wikimedia asks for unhurried serial access; this is a long, entirely
+        # background loop so there is no reason to hurry it.
+        await asyncio.sleep(1.0)
+    logger.info(
+        "visa_info refresh complete: %d chunks across %d countries (%d failed)",
+        total, len(VISA_SEED_COUNTRIES), failures,
+    )
+
+
 async def _refresh_osm_pois():
     """Refresh OSM POI + Wikivoyage data for destinations actually requested
     by users (docs/scaling-tech-challenges.md §8), instead of looping a fixed
@@ -276,6 +302,12 @@ async def start_scheduler():
         _refresh_youtube_comments,
         trigger=IntervalTrigger(days=settings.youtube_refresh_days),
         id="youtube_comments_refresh",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        _refresh_visa_info,
+        trigger=IntervalTrigger(days=settings.visa_info_refresh_days),
+        id="visa_info_refresh",
         replace_existing=True,
     )
     _scheduler.add_job(

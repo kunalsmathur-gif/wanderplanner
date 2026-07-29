@@ -30,6 +30,9 @@ _DESTINATION_INDEXED_COLLECTIONS = (
     "qdrant_collection_itinerary_corpus",
     "qdrant_collection_youtube_comments",
     "qdrant_collection_youtube_narration",
+    # visa_info filters by "destination" too — it just stores a country name
+    # there rather than a city (see scrapers/visa_info.py).
+    "qdrant_collection_visa_info",
 )
 
 
@@ -56,6 +59,7 @@ def _ensure_collections(client: QdrantClient):
         settings.qdrant_collection_itinerary_cache: 384,
         settings.qdrant_collection_youtube_comments: 384,
         settings.qdrant_collection_youtube_narration: 384,
+        settings.qdrant_collection_visa_info: 384,
     }
     existing = {c.name for c in client.get_collections().collections}
     for name, dim in collections.items():

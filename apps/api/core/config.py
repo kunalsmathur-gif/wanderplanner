@@ -72,6 +72,20 @@ class Settings(BaseSettings):
     # community signal and one vlogger repeating a name is not that. See
     # scrapers/youtube_narration.py.
     qdrant_collection_youtube_narration: str = "youtube_narration"
+    # Entry/visa rules (scrapers/visa_info.py, issue #37). Keyed by COUNTRY,
+    # not city — measured 2026-07-29, visa content is a country-level fact on
+    # Wikivoyage: the "Get in" section of India/Thailand/UAE/France carries
+    # 76/30/31/28 visa-word mentions while Jaipur's carries 0 and Bangkok's 0.
+    # Storing it per-city would mean 170 near-duplicate copies of one country's
+    # rules, all drifting apart as they refresh at different times.
+    qdrant_collection_visa_info: str = "visa_info"
+    # Visa rules are low-churn, so a monthly refresh is plenty; and unlike the
+    # metered YouTube sources this is a free Wikimedia API, so the cadence is
+    # about staleness, not quota.
+    visa_info_refresh_days: int = 30
+    # Retrieval side: off switch for the wizard's visa note, matching the
+    # pattern of itinerary_corpus_retrieval_enabled.
+    visa_info_retrieval_enabled: bool = True
 
     # Qdrant Cloud free tier is capped at 1GiB shared across every collection
     # above, with no built-in usage monitoring — the first symptom of hitting
