@@ -1509,7 +1509,65 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.49.0 Changes (July 2026) — venv/httpx pin fixed, Qdrant headroom monitored, share links + travel tips moved onto Redis
+
+**Local dev environment, live-reproduced this session:** `apps/api/.venv` had drifted to
+Python 3.9 (a bare `python3 -m venv .venv` picking up the macOS Command Line Tools stub),
+which fails on `datetime.UTC` (3.11+) deep inside `core/scheduler.py` with a cryptic
+`ImportError`. Fixed with a `sys.version_info < (3, 11)` guard as the literal first lines
+of `main.py` (before any other import), an explicit Python-3.11+ warning added to
+README's setup instructions, and `requirements-dev.txt`'s `httpx==0.27.0` bumped to
+`0.28.1` to match `requirements.txt` (was silently divergent). `.venv` rebuilt clean on
+Python 3.12; full suite re-verified at that point: **883 passed / 6 skipped**.
+
+**Qdrant Cloud free-tier 1GiB headroom monitored** (`core/qdrant.py::estimate_storage_usage()`,
+`core/scheduler.py::_check_qdrant_storage_headroom()`, daily) — logs WARNING/ERROR past
+70%/90% of the cap, surfaced on `/admin/metrics/summary`. **Self-correction, same day:** the
+first version estimated vector bytes from dimensions (`points × dims × 4 bytes`) and came
+out ~70MiB, **4.4x under** the ~304MiB the real Qdrant Cloud console showed for the
+identical corpus (System 104.90MiB + Cache 171.59MiB + Data 27.96MiB, ~39,862 points) —
+real per-point RAM cost is dominated by HNSW index/cache overhead, not raw vector floats.
+The estimator now uses a flat ~8KiB/point figure back-derived from that live console
+measurement, verified afterward to land within ~2% of it.
+
+**Share links + travel-tips cache moved from plain in-process `dict`s to Redis**
+(Railway's "Redis" template, deployed 2026-07-29 — available on all Railway plans
+including free/Hobby, 5GB volume cap; billed as ordinary usage, not a separate line item).
+`docs/scaling-tech-challenges.md` had flagged both as a correctness bug (all data lost on
+every restart/deploy, would be inconsistent across any future multiple instances) and a
+memory-leak risk — the travel-tips cache's own docstring claimed "1h cache" but never
+actually checked an expiry. New `core/redis_client.py` exposes `get_json`/`set_json`/
+`delete`/`flush` with a real TTL (90 days share links, 1 hour travel tips), backed by
+Redis in production and an in-process dict fallback locally when `REDIS_URL` is unset —
+local dev never requires standing up Redis. Verified live end-to-end: created a share
+link, killed and restarted the local API process, confirmed the link still resolved (the
+exact bug class this fixes) — then confirmed a lowered memory ceiling correctly triggers
+the auto-flush path described below and the link 404s afterward as expected.
+
+**Redis memory monitored with an automatic ceiling, not just a log line**
+(`core/scheduler.py::_check_redis_memory_headroom()`, every 6h) — logs WARNING past 70%
+of a configurable 256MiB ceiling and, unlike the Qdrant check, **flushes the cache
+outright** past 100%. Deliberately more aggressive than the Qdrant check because
+everything in this Redis instance is disposable/derived (share links, tips), not
+source-of-truth data — a full flush is a safe, cheap recovery from unexpected growth
+(e.g. a key-explosion bug) rather than something needing careful selective eviction.
+Same numbers (used-MB, key count) surfaced on `/admin/metrics/summary`.
+
+**Found, not fixed:** `services/geocode.py::_cached_geocode()` is `@lru_cache`-decorated
+but its body unconditionally `return None`s — despite the module's own docstring (and
+`docs/scaling-tech-challenges.md`) describing a working "geocode cache," it has never
+actually cached a real result; every `geocode_city()` call hits Nominatim live. Left out
+of scope for this pass; flagged for a future fix that should wire it into this same Redis
+layer rather than reintroducing an in-process `lru_cache`.
+
+**Stale docs deleted:** `KNOWN_ISSUES.md` (June 18) and `BUG_FIXES_SUMMARY.md` (June 17)
+both referenced `ConversationalWizard.tsx`, removed months ago and replaced by
+`LLMWizard.tsx`; every "pending" item in them had since shipped or no longer applied.
+
+Backend **917 passed / 6 skipped** (rebuilt `.venv`, Python 3.12); ruff + mypy clean on
+all touched files.
 
 ### v10.48.0 Changes (July 2026) — Voice-mic states redesigned, full E2E accessibility pass, zero backend impact
 

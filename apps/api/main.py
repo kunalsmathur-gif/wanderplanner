@@ -1,3 +1,13 @@
+import sys
+
+if sys.version_info < (3, 11):  # noqa: UP036 — deliberate runtime guard, not dead code
+    raise RuntimeError(
+        f"WanderPlanner's API requires Python 3.11+ (uses `datetime.UTC`, added in "
+        f"3.11), but this interpreter is {sys.version_info.major}.{sys.version_info.minor}. "
+        "If you created .venv with a bare `python3 -m venv .venv`, it likely picked up "
+        "an older system Python — recreate it with `python3.11 -m venv .venv` (or newer)."
+    )
+
 import asyncio
 from contextlib import asynccontextmanager
 

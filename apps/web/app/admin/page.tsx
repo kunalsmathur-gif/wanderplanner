@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Loader2, ShieldAlert, Users, LogIn, Sparkles, IndianRupee, AlertTriangle, ShieldCheck, Check, X } from 'lucide-react'
+import { Loader2, ShieldAlert, Users, LogIn, Sparkles, IndianRupee, AlertTriangle, ShieldCheck, Check, X, Database } from 'lucide-react'
 import {
   ResponsiveContainer,
   LineChart,
@@ -282,6 +282,43 @@ export default function AdminDashboardPage() {
               <StatCard icon={<IndianRupee size={16} />} label="Est. Gemini cost (30d)" value={`₹${summary.cost_usage.gemini_estimated_cost_inr_30d.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} sub="Approximate — for monitoring only" />
               <StatCard icon={<IndianRupee size={16} />} label="Pexels calls (30d)" value={summary.cost_usage.pexels_calls_30d} sub="Free tier: 200 req/hour" />
             </div>
+
+            {summary.qdrant_storage && (
+              <>
+                <h2 className="mt-8 text-base font-semibold text-[var(--_fg)]">Qdrant Cloud storage (free tier)</h2>
+                <div className="mt-3 grid grid-cols-2 gap-4 md:grid-cols-4">
+                  <StatCard
+                    icon={<Database size={16} className={summary.qdrant_storage.used_fraction != null && summary.qdrant_storage.used_fraction >= 0.7 ? 'text-[var(--_destructive)]' : undefined} />}
+                    label="Estimated usage"
+                    value={`${summary.qdrant_storage.estimated_used_mb.toLocaleString()} MB`}
+                    sub={
+                      summary.qdrant_storage.used_fraction != null
+                        ? `${Math.round(summary.qdrant_storage.used_fraction * 100)}% of ${summary.qdrant_storage.limit_mb.toLocaleString()}MB free-tier cap · estimate, not exact`
+                        : 'Estimate, not exact'
+                    }
+                  />
+                </div>
+              </>
+            )}
+
+            {summary.redis_storage && (
+              <>
+                <h2 className="mt-8 text-base font-semibold text-[var(--_fg)]">Redis cache (share links + travel tips)</h2>
+                <div className="mt-3 grid grid-cols-2 gap-4 md:grid-cols-4">
+                  <StatCard
+                    icon={<Database size={16} className={summary.redis_storage.used_fraction != null && summary.redis_storage.used_fraction >= 0.7 ? 'text-[var(--_destructive)]' : undefined} />}
+                    label="Memory usage"
+                    value={`${summary.redis_storage.estimated_used_mb.toLocaleString()} MB`}
+                    sub={
+                      summary.redis_storage.used_fraction != null
+                        ? `${Math.round(summary.redis_storage.used_fraction * 100)}% of ${summary.redis_storage.limit_mb.toLocaleString()}MB cap · auto-flushes past 100%`
+                        : undefined
+                    }
+                  />
+                  <StatCard icon={<Database size={16} />} label="Cached keys" value={summary.redis_storage.key_count ?? '—'} />
+                </div>
+              </>
+            )}
 
             <h2 className="mt-8 text-base font-semibold text-[var(--_fg)]">Activity over time</h2>
             <div className="mt-3 rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-4">

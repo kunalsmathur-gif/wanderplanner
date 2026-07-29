@@ -333,6 +333,27 @@ passed** across 10 files (2 new: `UserMenu.test.tsx`, `ListeningOrb.test.tsx`).
 **Not yet done:** none of this session's changes have been committed to git — everything is still
 an uncommitted working-tree diff across ~21 files plus 2 new test files.
 
+**8. ✅ DONE 2026-07-29 — the two repo-hygiene items filed above (v10.48.0) fixed, plus Qdrant
+storage monitoring and a full Redis migration (shipped as v10.49.0).** Full write-up in
+`TECHNICAL_DOCUMENTATION.md` §14 v10.49.0 and `docs/system-design.md`. Rebuilt local `.venv` on
+Python 3.12, added a fail-fast `sys.version_info` guard to `main.py`, and aligned the `httpx` pins.
+Added a calibrated Qdrant Cloud headroom check (scheduler job + admin dashboard card) — the first
+estimate, based on vector-dimension math, undercounted real usage by ~4.4x against the live
+console, so it now uses an empirically-derived bytes/point constant instead. Migrated share links
+and the travel-tips cache off in-process dicts (which lost everything on every restart, and never
+actually enforced the tips cache's claimed 1h TTL) onto a real Redis instance deployed on Railway,
+with a periodic memory-headroom check that auto-flushes the cache past a configured ceiling.
+Deleted `KNOWN_ISSUES.md`/`BUG_FIXES_SUMMARY.md` (stale, referenced a component removed months
+ago). Suite **917 passed / 6 skipped**; ruff + mypy clean.
+
+**🆕 New backlog item found along the way, not fixed here:** `services/geocode.py`'s
+`_cached_geocode()` is decorated with `@lru_cache` but its body unconditionally `return None`s —
+it has never actually cached a real geocode response, despite the module's docstring and
+`docs/scaling-tech-challenges.md` describing a working geocode cache. When this is fixed, wire it
+into the new `apps/api/core/redis_client.py` cache layer (same `get_cache()` used by share links
+and travel tips) rather than reintroducing a process-local `lru_cache`, so it survives restarts
+too.
+
 ---
 
 ## ✅ DO THIS NEXT — open items as of 2026-07-27 (v10.40.7)

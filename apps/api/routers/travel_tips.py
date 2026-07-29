@@ -23,6 +23,7 @@ from core.config import settings
 from core.llm_client import track_gemini_usage
 from core.llm_usage import reset_usage
 from core.rate_limit import LLM_RATE_LIMIT, limiter
+from core.redis_client import get_cache
 from core.validation import MAX_CITY_LEN, validate_query_param
 from db import get_db
 from db_models import User
@@ -30,9 +31,12 @@ from db_models import User
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# In-memory cache: destination (lowercased) → list of tips
-# Persists for the lifetime of the API process (cleared on restart)
-_tips_cache: dict[str, list[dict]] = {}
+# Cache key prefix: destination (lowercased) → list of tip dicts. Backed by
+# Redis in production with a real `settings.travel_tips_ttl_seconds` (1h)
+# expiry — see core/redis_client.py. The previous plain in-process dict here
+# claimed a "1h cache" in this docstring but never actually enforced any
+# expiry; entries lived for the process's full lifetime.
+_TIPS_CACHE_PREFIX = "travel_tips:"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -190,17 +194,19 @@ async def travel_tips(
     user: User | None = Depends(get_optional_user),
 ) -> TravelTipsResponse:
     reset_usage()
-    # `_tips_cache` is a process-lifetime dict keyed on this value, so an
-    # unbounded destination is also an unbounded key: without the cap, distinct
-    # junk strings grow it without limit for as long as the process runs.
+    # Keys now expire after `travel_tips_ttl_seconds` (Redis) rather than
+    # living for the process lifetime, but the length cap on `destination`
+    # still matters — an unbounded destination is an unbounded key even with
+    # a TTL, and this also guards the LLM prompt built from it below.
     destination = validate_query_param(
         destination, field="destination", max_length=MAX_CITY_LEN, require_alphanumeric=True
     )
     try:
-        cache_key = destination.strip().lower()
+        cache_key = _TIPS_CACHE_PREFIX + destination.strip().lower()
 
-        if cache_key in _tips_cache:
-            cached = [TravelTip(**t) for t in _tips_cache[cache_key]]
+        cached_raw = await get_cache().get_json(cache_key)
+        if cached_raw is not None:
+            cached = [TravelTip(**t) for t in cached_raw]
             return TravelTipsResponse(tips=cached[:limit], destination=destination)
 
         async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True) as http:
@@ -221,7 +227,11 @@ async def travel_tips(
             combined = _fallback_tips(destination, limit)
 
         combined = combined[:limit]
-        _tips_cache[cache_key] = [t.model_dump() for t in combined]
+        await get_cache().set_json(
+            cache_key,
+            [t.model_dump() for t in combined],
+            ttl_seconds=settings.travel_tips_ttl_seconds,
+        )
 
         return TravelTipsResponse(tips=combined, destination=destination)
     finally:

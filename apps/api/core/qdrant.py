@@ -91,6 +91,66 @@ def _ensure_collections(client: QdrantClient):
             )
 
 
+def estimate_storage_usage(client: QdrantClient) -> dict:
+    """Estimate current Qdrant usage against the Cloud free tier's 1GiB RAM
+    cap (`settings.qdrant_storage_limit_bytes`).
+
+    qdrant-client 1.9's `get_collection()` returns `points_count` etc. but no
+    RAM/disk-usage figure, and Qdrant Cloud's cluster-level usage API isn't
+    reachable with the collection API key this app authenticates with — so
+    this estimates `points_count × a flat calibrated bytes-per-point figure`.
+
+    That constant was **not** derived from vector-size math (dims × 4 bytes
+    per float32) — an earlier version of this function did that and came out
+    to ~70MiB for the corpus at the time, ~4.4x under the ~304MiB the Qdrant
+    Cloud console's own "Resources" tab showed for the same corpus on the
+    same day (System 104.90MiB + Cache 171.59MiB + Data 27.96MiB = 304.45MiB
+    RAM used, of the 1GiB free-tier RAM cap — confirmed live 2026-07-29).
+    Per-point RAM cost is dominated by the HNSW graph index and Qdrant's own
+    cache/system overhead, not raw vector floats, and that overhead doesn't
+    reduce cleanly to a dims-based formula. `_BYTES_PER_POINT_CALIBRATED`
+    below is instead back-calculated from that real measurement (304.45MiB /
+    ~39,862 points ≈ 8KiB/point) and should be re-derived the same way
+    (console → Resources tab → Total, divided by summed `points_count` across
+    collections) if a future recalibration is needed — this is a floor
+    approximation of a moving target (HNSW overhead scales with graph
+    structure, not just point count), not an exact or billing-grade figure.
+
+    Note this tracks **RAM**, not the separate Disk metric the console also
+    shows (a larger, ~4GiB-scale allocation) — RAM is the tighter, binding
+    constraint on the free tier and where "Index required but not found"/
+    write-failure symptoms would first appear.
+
+    Used by both `core/scheduler.py`'s periodic headroom check (logs
+    WARNING/ERROR past threshold) and `/admin/metrics/summary` (surfaces the
+    same numbers on the admin dashboard).
+    """
+    _BYTES_PER_POINT_CALIBRATED = 8192  # ~8KiB/point, see calibration note above
+
+    collections = {c.name for c in client.get_collections().collections}
+    per_collection: dict[str, dict] = {}
+    total_bytes = 0
+
+    for name in sorted(collections):
+        info = client.get_collection(name)
+        points_count = info.points_count or 0
+        collection_bytes = points_count * _BYTES_PER_POINT_CALIBRATED
+
+        per_collection[name] = {
+            "points_count": points_count,
+            "estimated_bytes": collection_bytes,
+        }
+        total_bytes += collection_bytes
+
+    limit_bytes = settings.qdrant_storage_limit_bytes
+    return {
+        "collections": per_collection,
+        "total_estimated_bytes": total_bytes,
+        "limit_bytes": limit_bytes,
+        "used_fraction": (total_bytes / limit_bytes) if limit_bytes else None,
+    }
+
+
 def count_destination_points(client: QdrantClient, collection_name: str, destination: str) -> int:
     """Count existing points for `destination` in `collection_name` — used to
     guard against a fresh ingestion run silently overwriting a good,

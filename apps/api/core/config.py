@@ -73,6 +73,36 @@ class Settings(BaseSettings):
     # scrapers/youtube_narration.py.
     qdrant_collection_youtube_narration: str = "youtube_narration"
 
+    # Qdrant Cloud free tier is capped at 1GiB shared across every collection
+    # above, with no built-in usage monitoring — the first symptom of hitting
+    # it would otherwise be write failures mid-ingestion (docs/
+    # scaling-tech-challenges.md §"No corpus size ceiling planning"). These
+    # drive the periodic headroom check in core/scheduler.py and the
+    # `/admin/metrics/summary` estimate — both use an estimate (points_count ×
+    # vector bytes + a per-point payload overhead), not a real disk-usage API,
+    # since qdrant-client 1.9's `get_collection()` doesn't expose disk bytes.
+    qdrant_storage_limit_bytes: int = 1_073_741_824  # 1 GiB, the Cloud free-tier cap
+    qdrant_storage_warn_threshold: float = 0.7  # log WARNING past 70% used
+    qdrant_storage_critical_threshold: float = 0.9  # log ERROR past 90% used
+    qdrant_storage_check_hours: int = 24
+
+    # Redis (deployed on Railway 2026-07-29, replacing the previous in-process
+    # dict caches for share links + travel tips — see core/redis_client.py for
+    # the local-dev fallback rationale). Empty string = not configured, which
+    # falls back to the old in-process dict behavior (local dev only).
+    redis_url: str = ""
+    share_link_ttl_seconds: int = 90 * 24 * 60 * 60  # 90 days
+    travel_tips_ttl_seconds: int = 60 * 60  # 1 hour
+    # Railway's free/Hobby Redis has no hard memory cap of its own to alert
+    # on, so this is an app-level guardrail: a conservative ceiling for what
+    # these small, short-TTL caches should ever legitimately need. Past it,
+    # something is wrong (e.g. a key-explosion bug) rather than "healthy
+    # growth", so the periodic check clears the cache outright rather than
+    # trying to selectively evict — see core/scheduler.py.
+    redis_memory_limit_bytes: int = 256 * 1024 * 1024  # 256 MiB
+    redis_memory_warn_threshold: float = 0.7
+    redis_memory_check_hours: int = 6
+
     # Embeddings
     embedding_model: str = "all-MiniLM-L6-v2"
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"

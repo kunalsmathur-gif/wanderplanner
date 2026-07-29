@@ -150,6 +150,109 @@ async def _refresh_youtube_comments():
         await asyncio.sleep(settings.osm_ingest_delay_seconds)
 
 
+async def _check_qdrant_storage_headroom():
+    """Log a warning/error once estimated Qdrant RAM usage crosses
+    `qdrant_storage_warn_threshold`/`qdrant_storage_critical_threshold` of the
+    Cloud free tier's 1GiB cap (docs/scaling-tech-challenges.md — "nothing
+    monitors headroom... the first symptom would be write failures during an
+    ingestion run"). This doesn't prevent that failure, but turns it from a
+    silent surprise into a logged, actionable warning well before the cap is
+    hit — the same estimate is also surfaced on `/admin/metrics/summary` for
+    a non-log view. Skipped entirely for the local `:memory:` fallback, which
+    has no tier limit to run out of.
+    """
+    if settings.qdrant_url == ":memory:":
+        return
+
+    from core.qdrant import estimate_storage_usage, get_qdrant
+
+    try:
+        usage = estimate_storage_usage(get_qdrant())
+    except Exception as e:
+        logger.warning("Qdrant storage headroom check failed: %s", e)
+        return
+
+    fraction = usage["used_fraction"] or 0.0
+    total_mb = usage["total_estimated_bytes"] / (1024 * 1024)
+    limit_mb = usage["limit_bytes"] / (1024 * 1024)
+
+    if fraction >= settings.qdrant_storage_critical_threshold:
+        logger.error(
+            "Qdrant Cloud storage estimate at %.1f%% of the free-tier cap "
+            "(~%.0fMB / %.0fMB) — write failures may start soon; plan a paid "
+            "tier upgrade or corpus pruning. Per-collection: %s",
+            fraction * 100, total_mb, limit_mb, usage["collections"],
+        )
+    elif fraction >= settings.qdrant_storage_warn_threshold:
+        logger.warning(
+            "Qdrant Cloud storage estimate at %.1f%% of the free-tier cap "
+            "(~%.0fMB / %.0fMB) — approaching the 1GiB limit.",
+            fraction * 100, total_mb, limit_mb,
+        )
+    else:
+        logger.info(
+            "Qdrant Cloud storage estimate at %.1f%% of the free-tier cap "
+            "(~%.0fMB / %.0fMB).",
+            fraction * 100, total_mb, limit_mb,
+        )
+
+
+async def _check_redis_memory_headroom():
+    """Monitor Redis memory usage and clear the cache outright once it passes
+    `redis_memory_limit_bytes` — unlike the Qdrant check (which only warns),
+    this one *acts*, because everything stored here (share links, travel
+    tips) is disposable cache/derived data, not source-of-truth data: a
+    flush is a cheap, safe way to recover from unexpectedly large growth
+    (e.g. a bug causing unbounded distinct cache keys), and share links
+    already carry a documented TTL/expiry expectation rather than a
+    permanence guarantee. Logs a WARNING at `redis_memory_warn_threshold`
+    before that point so a real trend is visible before it triggers a flush.
+    Skipped entirely for the local in-process dict fallback (no REDIS_URL),
+    which has no shared/persistent state worth protecting this way.
+    """
+    if not settings.redis_url:
+        return
+
+    from core.redis_client import get_cache
+
+    cache = get_cache()
+    try:
+        used_bytes = await cache.memory_usage_bytes()
+        key_count = await cache.key_count()
+    except Exception as e:
+        logger.warning("Redis memory headroom check failed: %s", e)
+        return
+
+    if used_bytes is None:
+        return
+
+    limit_bytes = settings.redis_memory_limit_bytes
+    fraction = used_bytes / limit_bytes if limit_bytes else 0.0
+    used_mb = used_bytes / (1024 * 1024)
+    limit_mb = limit_bytes / (1024 * 1024)
+
+    if fraction >= 1.0:
+        logger.error(
+            "Redis memory usage (~%.1fMB / %.0fMB, %d keys) exceeded the "
+            "configured cap — flushing the cache (share links + travel tips; "
+            "both are disposable/derived, not source-of-truth data).",
+            used_mb, limit_mb, key_count or 0,
+        )
+        await cache.flush()
+    elif fraction >= settings.redis_memory_warn_threshold:
+        logger.warning(
+            "Redis memory usage at %.1f%% of its configured cap (~%.1fMB / "
+            "%.0fMB, %d keys) — a flush will trigger automatically past 100%%.",
+            fraction * 100, used_mb, limit_mb, key_count or 0,
+        )
+    else:
+        logger.info(
+            "Redis memory usage at %.1f%% of its configured cap (~%.1fMB / "
+            "%.0fMB, %d keys).",
+            fraction * 100, used_mb, limit_mb, key_count or 0,
+        )
+
+
 async def start_scheduler():
     _scheduler.add_job(
         _refresh_reddit,
@@ -173,6 +276,18 @@ async def start_scheduler():
         _refresh_youtube_comments,
         trigger=IntervalTrigger(days=settings.youtube_refresh_days),
         id="youtube_comments_refresh",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        _check_qdrant_storage_headroom,
+        trigger=IntervalTrigger(hours=settings.qdrant_storage_check_hours),
+        id="qdrant_storage_headroom_check",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        _check_redis_memory_headroom,
+        trigger=IntervalTrigger(hours=settings.redis_memory_check_hours),
+        id="redis_memory_headroom_check",
         replace_existing=True,
     )
     _scheduler.start()

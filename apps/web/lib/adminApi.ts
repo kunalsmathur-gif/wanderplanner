@@ -18,6 +18,22 @@ export interface AdminSummary {
     gemini_estimated_cost_inr_30d: number
     pexels_calls_30d: number
   }
+  // Estimate of Qdrant Cloud free-tier RAM usage (1GiB cap) — null if the
+  // estimate couldn't be computed (e.g. local :memory: mode, Qdrant outage).
+  qdrant_storage: {
+    estimated_used_mb: number
+    limit_mb: number
+    used_fraction: number | null
+    collections: Record<string, { points_count: number; estimated_mb: number }>
+  } | null
+  // Redis cache memory usage (share links + travel tips) — null if running
+  // the local in-process fallback (no REDIS_URL) or on a Redis error.
+  redis_storage: {
+    estimated_used_mb: number
+    limit_mb: number
+    used_fraction: number | null
+    key_count: number | null
+  } | null
 }
 
 export interface AdminTimeseries {

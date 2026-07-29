@@ -199,9 +199,15 @@ If you want Google SSO, add the `GOOGLE_*` variables. If you want password reset
 
 ### 3. Start the backend
 
+**Requires Python 3.11+** (the codebase uses `datetime.UTC`, added in 3.11 — a
+plain `python3 -m venv` can silently pick up an older system Python, e.g.
+macOS's Command Line Tools stub at `/usr/bin/python3`, which is 3.9 and fails
+at import time). Check first with `python3 --version`; if it's below 3.11,
+substitute the versioned binary (`python3.11`, `python3.12`, etc.) below.
+
 ```bash
 cd apps/api
-python3 -m venv .venv
+python3 -m venv .venv   # use python3.11/python3.12/etc. if python3 --version < 3.11
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
@@ -284,6 +290,13 @@ Open `http://localhost:3000`.
 ---
 
 ## Changelog
+
+### v5.14 — Local venv/httpx Fix, Qdrant Storage Headroom Monitoring, Redis-Backed Share Links + Travel Tips (July 2026)
+- 🔴 **FIXED: local `.venv` silently drifted to an unsupported Python (3.9)**, failing on `datetime.UTC` deep inside the scheduler with a cryptic error. `main.py` now fails fast with a clear, actionable `RuntimeError` if run under Python < 3.11; README's setup instructions call out the `python3 -m venv` pitfall explicitly; `requirements-dev.txt`'s `httpx` pin was silently behind `requirements.txt`'s — now matched.
+- ✅ **NEW: Qdrant Cloud's 1GiB free-tier headroom is now monitored**, not silent. A daily check estimates usage per collection and logs a warning well before the cap, surfaced too on the admin dashboard. The estimate was recalibrated mid-session after comparing against the real Qdrant Cloud console — the first version, based on vector-dimension math, undercounted actual usage by ~4.4x (real per-point RAM cost is dominated by Qdrant's own index/cache overhead, not raw vector floats).
+- ✅ **NEW: share links and the travel-tips cache now live in Redis** (deployed on Railway 2026-07-29) instead of plain in-process dictionaries — both previously lost all data on every server restart/deploy, and the travel-tips cache never actually enforced its claimed 1-hour expiry. Verified live: a share link now survives a full API restart. A periodic check also monitors Redis's own memory usage and automatically clears the cache if it ever crosses a configured ceiling, since everything stored there is disposable/derived data, not anything that needs to be preserved.
+- 🗑️ **Deleted `KNOWN_ISSUES.md` and `BUG_FIXES_SUMMARY.md`** — both were months stale, referenced a component removed long ago, and every "pending" bug listed in them had since shipped.
+- Backend **917 passed / 6 skipped** on a rebuilt Python 3.12 `.venv`; ruff + mypy clean. Full detail: `TECHNICAL_DOCUMENTATION.md` §14 v10.49.0, `docs/system-design.md`, `docs/scaling-tech-challenges.md`.
 
 ### v5.13 — Hidden-Gem Full-Corpus Audit + Fixes, POI Prominence Ranking, YouTube Narration Pricing, Input Validation Hardening, Voice Mode Fixed + Hindi Support, Itinerary Timing Instrumentation, Voice-Mic Redesign + Full Accessibility Pass (July 2026)
 - ✅ **NEW: the OSM POI pool is ranked by prominence, not arrival order.** Famous landmarks (Kiyomizu-dera, Delhi's Jama Masjid) were mapped as ways/relations, but the ingestion query only ever asked for `node` elements, so they were never candidates — not merely out-ranked. A second wikidata-filtered pass plus prominence-tiered selection with a per-category cap fixes it; verified across 160+ re-ingested destinations.

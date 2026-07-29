@@ -81,6 +81,51 @@ async def metrics_summary(
     ).where(Event.event_type == "pexels_usage", Event.created_at >= d30)
     pexels_calls_30d = (await db.execute(pexels_stmt)).scalar_one()
 
+    # Qdrant Cloud free-tier RAM headroom — same estimate core/scheduler.py's
+    # periodic job logs a WARNING/ERROR for; surfaced here too so an admin can
+    # see current usage without digging through logs. Best-effort: a Qdrant
+    # outage shouldn't take down the whole summary endpoint.
+    qdrant_storage = None
+    try:
+        from core.qdrant import estimate_storage_usage, get_qdrant
+        if settings.qdrant_url != ":memory:":
+            usage = estimate_storage_usage(get_qdrant())
+            qdrant_storage = {
+                "estimated_used_mb": round(usage["total_estimated_bytes"] / (1024 * 1024), 1),
+                "limit_mb": round(usage["limit_bytes"] / (1024 * 1024), 1),
+                "used_fraction": round(usage["used_fraction"], 3) if usage["used_fraction"] is not None else None,
+                "collections": {
+                    name: {
+                        "points_count": d["points_count"],
+                        "estimated_mb": round(d["estimated_bytes"] / (1024 * 1024), 1),
+                    }
+                    for name, d in usage["collections"].items()
+                },
+            }
+    except Exception as e:
+        _log.warning("Qdrant storage estimate failed for admin summary: %s", e)
+
+    # Redis memory headroom — same numbers core/scheduler.py's periodic job
+    # logs for; None when running the local in-process dict fallback (no
+    # REDIS_URL) or if the Redis call itself fails.
+    redis_storage = None
+    try:
+        if settings.redis_url:
+            from core.redis_client import get_cache
+            cache = get_cache()
+            used_bytes = await cache.memory_usage_bytes()
+            key_count = await cache.key_count()
+            if used_bytes is not None:
+                limit_bytes = settings.redis_memory_limit_bytes
+                redis_storage = {
+                    "estimated_used_mb": round(used_bytes / (1024 * 1024), 1),
+                    "limit_mb": round(limit_bytes / (1024 * 1024), 1),
+                    "used_fraction": round(used_bytes / limit_bytes, 3) if limit_bytes else None,
+                    "key_count": key_count,
+                }
+    except Exception as e:
+        _log.warning("Redis memory estimate failed for admin summary: %s", e)
+
     return {
         "total_users": total_users,
         "signups": {"today": signups_today, "7d": signups_7d, "30d": signups_30d},
@@ -103,6 +148,8 @@ async def metrics_summary(
             "gemini_estimated_cost_inr_30d": round(float(gemini_cost_30d or 0.0) * settings.usd_to_inr_rate, 2),
             "pexels_calls_30d": int(pexels_calls_30d or 0),
         },
+        "qdrant_storage": qdrant_storage,
+        "redis_storage": redis_storage,
     }
 
 
