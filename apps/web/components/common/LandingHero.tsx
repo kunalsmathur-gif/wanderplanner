@@ -82,6 +82,16 @@ function InspirationCard({
             src={imgUrl}
             alt={trip.dest}
             fill
+            // Wikipedia's thumbnail API already returns an appropriately-sized
+            // image (pithumbsize=600 in useWikiImage), so re-optimizing gains
+            // nothing. More importantly: Next's optimizer fetches the source
+            // server-side without a descriptive User-Agent, which Wikimedia's
+            // User-Agent policy (meta.wikimedia.org/wiki/User-Agent_policy)
+            // throttles with 429s once a few cards load in parallel — that's
+            // what was rendering as a broken-image icon on every card.
+            // `unoptimized` makes the browser fetch upload.wikimedia.org
+            // directly instead, which isn't subject to that throttling.
+            unoptimized
             sizes="(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
             className="object-cover transition-transform duration-500 group-hover:scale-105"
             loading="lazy"
