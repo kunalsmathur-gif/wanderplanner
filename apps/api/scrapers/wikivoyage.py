@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 
 from core.config import settings
 from core.embeddings import embed
+from core.ingestion_metadata import build_ingestion_payload
 from core.qdrant import delete_stale_destination_points, get_qdrant
 from services.geocode import geocode_city
 
@@ -172,13 +173,14 @@ def _parse_sections(html: str, destination: str, url: str) -> list[dict]:
         if texts:
             full_text = " ".join(texts)
             for chunk in _sentence_boundary_chunks(full_text, max_chars=500):
-                docs.append({
-                    "destination": destination,
-                    "source": "wikivoyage",
-                    "section": section_id,
-                    "text": chunk,
-                    "source_url": url,
-                })
+                docs.append(build_ingestion_payload(
+                    destination=destination,
+                    source="wikivoyage",
+                    text=chunk,
+                    source_url=url,
+                    source_name="Wikivoyage",
+                    extra={"section": section_id},
+                ))
     return docs
 
 

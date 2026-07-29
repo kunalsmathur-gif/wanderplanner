@@ -171,6 +171,19 @@ WIKIVOYAGE_ITINERARY_TITLES = [
     # silently break them).
     "Kerala Backwaters",
     "Rail travel in India",
+    # Two more India entries (2026-07-29, issue #47) taking the India-specific
+    # share from 3 of 7 to 5 of 9. Both live-verified via `action=parse` to
+    # resolve to canonical (non-redirect) articles with real rendered content —
+    # 6.8k and 7.5k chars respectively — and both additionally confirmed via
+    # `action=query&prop=categories` to sit in Wikivoyage's own
+    # `Category:Itineraries` + `Category:South Asia itineraries`, so they are
+    # itinerary-shaped by the wiki's classification rather than by their title
+    # reading like one. (Checked and rejected on the same run: "Kashmir Valley"
+    # has the most text of any candidate at 13.6k chars but is
+    # `Category:Region articles`, not an itinerary; "Char Dham" and "Coastal
+    # Karnataka" both redirect away from the requested title.)
+    "Grand Trunk Road",
+    "Buddhist Circuit",
     "Grand Tour of Europe",
     "Trans-Siberian Railway",
     "Backpacking in Southeast Asia",

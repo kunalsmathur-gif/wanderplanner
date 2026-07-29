@@ -174,6 +174,44 @@ class TestConfigAndContentText:
         assert "Tip:" not in text.split("\n")[1]  # no tip line appended for empty tips
 
 
+class TestWikivoyageItinerarySeedList:
+    """The seed list is hand-curated, so the India share can only regress by
+    someone editing it. This pins the coverage that issue #47 established.
+
+    Deliberately asserts titles rather than a count: a bare count passes if
+    someone swaps an India entry for another European one, which is the exact
+    regression worth catching for an India-first product.
+    """
+
+    INDIA_TITLES = (
+        "Golden Triangle (India)",
+        "Kerala Backwaters",
+        "Rail travel in India",
+        "Grand Trunk Road",
+        "Buddhist Circuit",
+    )
+
+    def test_india_specific_titles_present(self):
+        from scrapers.itinerary_corpus import WIKIVOYAGE_ITINERARY_TITLES
+
+        missing = [t for t in self.INDIA_TITLES if t not in WIKIVOYAGE_ITINERARY_TITLES]
+        assert not missing, f"India seed titles removed from the corpus list: {missing}"
+
+    def test_india_share_is_at_least_half(self):
+        """3 of 7 was the shortfall #47 was filed for; 5 of 9 is the floor now."""
+        from scrapers.itinerary_corpus import WIKIVOYAGE_ITINERARY_TITLES
+
+        india = sum(1 for t in WIKIVOYAGE_ITINERARY_TITLES if t in self.INDIA_TITLES)
+        assert india * 2 >= len(WIKIVOYAGE_ITINERARY_TITLES)
+
+    def test_no_duplicate_titles(self):
+        """Each title is one Qdrant point id (md5 of source_url), so a
+        duplicate is silently a no-op rather than an error."""
+        from scrapers.itinerary_corpus import WIKIVOYAGE_ITINERARY_TITLES
+
+        assert len(WIKIVOYAGE_ITINERARY_TITLES) == len(set(WIKIVOYAGE_ITINERARY_TITLES))
+
+
 class TestIngestItineraryCorpus:
     @pytest.mark.asyncio
     async def test_full_pipeline_with_mocked_dependencies(self):

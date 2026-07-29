@@ -1509,7 +1509,80 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.50.0 Changes (July 2026) — unified ingestion metadata schema (#33), India itinerary seeds (#47), and #36 closed as already-built
+
+Suite **951 passed / 6 skipped** (`pytest tests/`, the command CI runs), up 34 from
+v10.49.0's 917; ruff clean, mypy clean on all touched modules.
+
+> ⚠️ **Measurement note, since this bit me while writing this entry.** v10.49.0's §14 text
+> quotes **883** and README quotes **917** for the same commit. Both are correct and neither
+> is the other's error: `pytest tests/unit` is 883 and `pytest tests/` (unit + the 6
+> integration files, which is what `.github/workflows/ci.yml:94` runs) is 917. **Quote the
+> full-suite number and say which command produced it** — an unqualified count is ambiguous
+> here, and the two scopes happen to differ by exactly the 34 tests this release adds, which
+> is precisely the coincidence that makes it easy to misread.
+
+**#33 — unified metadata schema.** New `core/ingestion_metadata.py::build_ingestion_payload()`;
+`scrapers/{osm,wikivoyage,reddit,youtube_comments,youtube_narration}.py` all build payloads
+through it instead of hand-rolling a dict. Adds `source_name`, `country`, `content_type`,
+`language`, `quality_score`, `ingested_at`, and optional `published_date`/`attraction_type`
+to sources that previously carried only `destination`/`source`/`text`/`source_url`.
+
+**Two deliberate deviations from `docs/rag-strategy.md` §11 as written, and §11 is now
+corrected rather than left disagreeing with the code:**
+
+1. **`text`/`source_url`, not the spec's `content`/`url`.** Every scraper *and every reader*
+   (`core/cost_grounding.py`, `services/gems.py`, `services/search.py`,
+   `core/price_extraction.py`) has always used the former, as does all live cluster data.
+   Renaming meant re-ingesting every collection *and* rewriting every consumer for zero
+   behavioural gain. The spec was written ahead of the code; the code's names win.
+2. **`attraction_type` gains `"landmark"`.** §11's seven values have no bucket for a
+   monument, castle, ruin, memorial or place of worship — together the largest slice of the
+   OSM corpus. Forcing them into `"activity"` would defeat the precision filtering the field
+   exists for. Extending the vocabulary is honest; silently mis-bucketing is not.
+
+**Cutover point:** pre-2026-07-29 points carry only the four legacy fields, so every added
+field is **optional at read time** — consumers must `.get()` with a default. Backfilling the
+existing corpus is a data run, not a code change, and has **not** been done.
+
+`language` is Devanagari-aware by **presence, not ratio**: Hinglish mixes scripts freely
+("Jaipur ka khana ₹200 me मिल जाता है") and a ratio threshold would file exactly those chunks
+as English and hide them — the same class of failure v10.41.0 paid for when `\b` silently
+failed on Devanagari. A test pins that `₹` (U+20B9) is *outside* the U+0900–U+097F block, so
+an English chunk quoting a rupee price stays `en`.
+
+**#47 — 2 more India itinerary seeds**, taking `WIKIVOYAGE_ITINERARY_TITLES` from 3 of 7
+India-specific to 5 of 9: `Grand Trunk Road` and `Buddhist Circuit`. Live-verified through the
+real `scrape_wikivoyage_itinerary()` rather than a proxy predicate, **then** cross-checked
+against `action=query&prop=categories` — both sit in Wikivoyage's own `Category:Itineraries`
+and `Category:South Asia itineraries`. 🔴 **That second check is what earned its keep:**
+`Kashmir Valley` returned more content than any other candidate (13,582 chars, twice the
+accepted two) but is `Category:Region articles` — it would have passed a
+content-length-only bar and quietly seeded a region guide into an itinerary corpus.
+`Char Dham` and `Coastal Karnataka` both silently redirect away from the requested title.
+Incidental finding recorded rather than acted on: two *pre-existing* entries are not
+itineraries either (`Kerala Backwaters` is a region, `Rail travel in India` a travel topic),
+so the two added here clear a higher bar than the list they joined.
+
+**#36 — closed as already implemented, no code written.** The issue asked to add a second
+named vector to `itinerary_corpus` "which currently retrieves using a single embedding". It
+does not: `core/qdrant.py:74-81` creates named `config` + `content` vectors,
+`chains/itinerary_corpus_extraction_chain.py:260` writes both, and
+`services/search.py:456-493` searches both and merges 60/40 with `quality_score` weighting —
+which is the issue's own acceptance criteria, already met. **Recorded because the cost of
+re-verifying a premise is a few minutes and the cost of not doing so was a duplicate
+implementation of a shipped feature.**
+
+**Tests:** `tests/unit/test_ingestion_metadata.py` (31) and
+`TestWikivoyageItinerarySeedList` (3). Two are deliberately structural rather than
+behavioural: one asserts every `source` string the scrapers actually write is present in
+`SOURCE_CONTENT_TYPE` (the only failure mode of that map is silent fallthrough to the
+default), and one pins `OSM_POI_TYPE_TO_ATTRACTION`'s keys against the real
+`POI_TAG_QUERIES` values, since a typo there never raises — it just never matches.
+
+---
 
 ### v10.49.0 Changes (July 2026) — venv/httpx pin fixed, Qdrant headroom monitored, share links + travel tips moved onto Redis
 

@@ -11,6 +11,7 @@ from better_profanity import profanity
 
 from core.config import settings
 from core.embeddings import embed
+from core.ingestion_metadata import build_ingestion_payload
 from core.qdrant import get_qdrant
 
 SUBREDDITS = ["travel", "solotravel", "digitalnomad", "backpacking", "IndiaTravel"]
@@ -139,17 +140,24 @@ async def ingest_reddit():
                 )
 
                 for chunk_text in _chunk_reddit_post(title, selftext):
-                    docs.append({
-                        "destination": destination,
-                        "source": "reddit",
-                        "subreddit": sub,
-                        "title": title,
-                        "text": chunk_text,
-                        "text_preview": chunk_text[:300],
-                        "post_url": post_url,
-                        "reddit_score": data.get("score", 0),
-                        "published_date": published_date,
-                    })
+                    docs.append(build_ingestion_payload(
+                        destination=destination,
+                        source="reddit",
+                        text=chunk_text,
+                        source_url=post_url,
+                        source_name=f"r/{sub}",
+                        published_date=published_date or "",
+                        extra={
+                            "subreddit": sub,
+                            "title": title,
+                            "text_preview": chunk_text[:300],
+                            # Kept alongside the unified `source_url` because the
+                            # point id is hashed from it (`doc['post_url']`) —
+                            # dropping it would re-key every existing point.
+                            "post_url": post_url,
+                            "reddit_score": data.get("score", 0),
+                        },
+                    ))
 
             if not docs:
                 continue

@@ -22,6 +22,7 @@ import httpx
 
 from core.config import settings
 from core.embeddings import embed
+from core.ingestion_metadata import OSM_POI_TYPE_TO_ATTRACTION, build_ingestion_payload
 from core.qdrant import count_destination_points, delete_stale_destination_points, get_qdrant
 from services.geocode import geocode_city
 
@@ -442,19 +443,26 @@ def _element_to_poi(element: dict, destination: str) -> dict | None:
 
     poi_type = _poi_type(tags)
     element_type = element.get("type") or "node"
-    return {
-        "destination": destination,
-        "name": name,
-        "name_local": local_name if local_name != name else "",
-        "poi_type": poi_type,
-        "lat": float(poi_lat),
-        "lon": float(poi_lon),
-        "prominence": _prominence_score(tags),
-        "tags": {k: v for k, v in tags.items() if k in ("cuisine", "opening_hours", "website")},
-        "text": _describe_poi(name, poi_type, destination, tags),
-        "source": "osm",
-        "source_url": f"https://www.openstreetmap.org/{element_type}/{element.get('id', '')}",
-    }
+    return build_ingestion_payload(
+        destination=destination,
+        source="osm",
+        text=_describe_poi(name, poi_type, destination, tags),
+        source_url=f"https://www.openstreetmap.org/{element_type}/{element.get('id', '')}",
+        source_name="OpenStreetMap",
+        # `poi_type` is the human-readable label from POI_TAG_QUERIES; anything
+        # not in the map (including `_poi_type`'s "place of interest" fallback)
+        # is a generic activity.
+        attraction_type=OSM_POI_TYPE_TO_ATTRACTION.get(poi_type, "activity"),
+        extra={
+            "name": name,
+            "name_local": local_name if local_name != name else "",
+            "poi_type": poi_type,
+            "lat": float(poi_lat),
+            "lon": float(poi_lon),
+            "prominence": _prominence_score(tags),
+            "tags": {k: v for k, v in tags.items() if k in ("cuisine", "opening_hours", "website")},
+        },
+    )
 
 
 async def _fetch_osm_pois_with_meta(

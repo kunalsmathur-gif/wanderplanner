@@ -47,6 +47,7 @@ import httpx
 
 from core.config import settings
 from core.embeddings import embed
+from core.ingestion_metadata import build_ingestion_payload
 from core.qdrant import delete_stale_destination_points, get_qdrant
 
 logger = logging.getLogger(__name__)
@@ -278,26 +279,26 @@ async def ingest_youtube_narration(destination: str) -> int:
         description = descriptions.get(video_id, "")
         if description:
             for chunk in _narration_chunks(description):
-                docs.append({
-                    "destination": destination,
-                    "source": "youtube_description",
-                    "video_id": video_id,
-                    "video_title": title,
-                    "text": chunk,
-                    "source_url": url,
-                })
+                docs.append(build_ingestion_payload(
+                    destination=destination,
+                    source="youtube_description",
+                    text=chunk,
+                    source_url=url,
+                    source_name="YouTube",
+                    extra={"video_id": video_id, "video_title": title},
+                ))
 
         transcript = await _transcript_text(video_id, title)
         if transcript:
             for chunk in _narration_chunks(transcript)[:_MAX_CHUNKS_PER_VIDEO]:
-                docs.append({
-                    "destination": destination,
-                    "source": "youtube_transcript",
-                    "video_id": video_id,
-                    "video_title": title,
-                    "text": chunk,
-                    "source_url": url,
-                })
+                docs.append(build_ingestion_payload(
+                    destination=destination,
+                    source="youtube_transcript",
+                    text=chunk,
+                    source_url=url,
+                    source_name="YouTube",
+                    extra={"video_id": video_id, "video_title": title},
+                ))
 
     if not docs:
         logger.info("%r: %d videos known but no transcripts or descriptions", destination, len(videos))

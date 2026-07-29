@@ -40,6 +40,7 @@ import httpx
 
 from core.config import settings
 from core.embeddings import embed
+from core.ingestion_metadata import build_ingestion_payload
 from core.qdrant import delete_stale_destination_points, get_qdrant
 
 logger = logging.getLogger(__name__)
@@ -244,15 +245,18 @@ async def ingest_youtube_comments(destination: str) -> int:
     for video in videos:
         comments = await fetch_video_comments(video["video_id"])
         for c in comments:
-            docs.append({
-                "destination": destination,
-                "source": "youtube_comment",
-                "video_id": video["video_id"],
-                "video_title": video["title"],
-                "text": c["text"],
-                "like_count": c["like_count"],
-                "source_url": f"https://www.youtube.com/watch?v={video['video_id']}&lc={c['comment_id']}",
-            })
+            docs.append(build_ingestion_payload(
+                destination=destination,
+                source="youtube_comment",
+                text=c["text"],
+                source_url=f"https://www.youtube.com/watch?v={video['video_id']}&lc={c['comment_id']}",
+                source_name="YouTube",
+                extra={
+                    "video_id": video["video_id"],
+                    "video_title": video["title"],
+                    "like_count": c["like_count"],
+                },
+            ))
 
     if not docs:
         return 0

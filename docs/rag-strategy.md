@@ -934,14 +934,16 @@ Over time the system **automatically learns** which itinerary structures work fo
 
 Every document from every source (wiki, reddit, blog, YouTube, TripAdvisor, etc.) is normalised to a **single JSON schema** before embedding. This makes retrieval filters consistent across collections:
 
+Implemented 2026-07-29 (issue #33) as `core/ingestion_metadata.py::build_ingestion_payload()`, which every scraper now calls instead of hand-building its own dict.
+
 ```json
 {
   "source":          "reddit",
   "source_name":     "r/solotravel",
-  "url":             "https://reddit.com/r/solotravel/...",
+  "source_url":      "https://reddit.com/r/solotravel/...",
   "destination":     "Kyoto",
   "country":         "Japan",
-  "content":         "The bamboo forest is crowded, go to Gio-ji Temple instead...",
+  "text":            "The bamboo forest is crowded, go to Gio-ji Temple instead...",
   "published_date":  "2026-03-15",
   "content_type":    "review",
   "attraction_type": "nature",
@@ -952,7 +954,15 @@ Every document from every source (wiki, reddit, blog, YouTube, TripAdvisor, etc.
 ```
 
 **`content_type`** options: `"review"`, `"itinerary"`, `"tip"`, `"guide"`, `"news"`, `"vlog_transcript"`  
-**`attraction_type`** options: `"restaurant"`, `"museum"`, `"nature"`, `"transport"`, `"accommodation"`, `"activity"`, `"festival"`
+**`attraction_type`** options: `"restaurant"`, `"museum"`, `"nature"`, `"transport"`, `"accommodation"`, `"activity"`, `"festival"`, `"landmark"`
+
+**Two corrections to this section as originally written**, both made when it was implemented:
+
+1. **The fields are `text` and `source_url`, not `content` and `url`.** This section specified the latter, but every scraper *and every reader* — `core/cost_grounding.py`, `services/gems.py`, `services/search.py`, `core/price_extraction.py` — has always used `text`/`source_url`, as does all live data on the Qdrant Cloud cluster. Renaming would have meant re-ingesting every collection *and* rewriting every consumer for no behavioural gain. This spec was written ahead of the code; the code's names win.
+
+2. **`attraction_type` gained `"landmark"`.** The original seven values had no bucket for a monument, castle, ruin, memorial or place of worship — together the largest slice of the OSM POI corpus. Forcing them into `"activity"` would defeat the precision filtering this field exists for.
+
+**Cutover point:** points written before 2026-07-29 carry only `destination`/`source`/`text`/`source_url`. Every field added here is therefore **optional at read time** — consumers must use `.get()` with a default and must not assume presence. Backfilling the existing corpus is a data run, not a code change, and has **not** been done.
 
 The `attraction_type` field enables **precision filtering** in the LLM prompt — e.g. for a food-focused trip, filter `attraction_type IN ("restaurant", "food_market")` before retrieval, cutting irrelevant museum content entirely.
 
