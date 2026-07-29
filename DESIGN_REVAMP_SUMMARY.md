@@ -215,3 +215,28 @@ Found via live testing of the budget/theme/pace/feasibility conversation flow:
 
 ### Progressively engaging generation loader
 Previously the loading screen went completely silent for the 30–90s LLM call after only 2 status messages, giving no sense that anything was happening. `routers/itinerary.py` now runs generation as a background task while polling every 3s and streaming rotating filler status messages ("Planning day 1...", "Fetching local tips...", "Balancing your budget...", etc.) until the real result is ready.
+
+---
+
+## 🧩 Component Updates (July 29, 2026) — Voice-mic states + full E2E accessibility pass (v10.48.0)
+
+Full findings + fix-by-fix detail: `docs/UI_UX_AUDIT_2026-07-29.md`. Backend/perf regression check: `TECHNICAL_DOCUMENTATION.md` §14 v10.48.0.
+
+### Voice UX — reported live by a user, fixed as issues [#30](https://github.com/kunalsmathur-gif/wanderplanner/issues/30) / [#31](https://github.com/kunalsmathur-gif/wanderplanner/issues/31)
+- **Persistent language toggle → one-time prompt.** `LLMWizard.tsx`'s header English/हिंदी toggle competed with the mic button for space on narrow viewports and could clip it off-screen entirely. Removed; a one-time "which language?" overlay now appears only the first time voice is activated in a session (`voiceLangAskedRef`).
+- **Mic icon states, redesigned.** The mic button previously rendered a single hardcoded red/`MicOff`-style icon regardless of state — indistinguishable from "broken." Now four distinct states: grey idle `Mic`, `Volume2` while Anya is speaking, a visibly disabled state on unsupported browsers (Firefox), and an active/listening state with `animate-pulse`.
+- **Active-state color: red → emerald, per explicit user pushback and the `ui-ux-pro-max` skill.** Red reads as "stopped/broken" (and this app already reserves `--_destructive` red for real errors); surveyed reference conventions (ChatGPT's green ring, Gemini's non-red pulse, Siri's non-red color wash) confirm red is not how top voice UIs signal "actively listening." Switched to `emerald-400`/`emerald-950`, chosen for guaranteed contrast in both themes without adding a new token.
+
+### Full end-to-end accessibility/UX pass — every finding fixed, not a top-5 subset
+A read-only `ui-ux-pro-max` audit covering landing, auth, wizard, dashboard, itinerary, account, admin, layout/nav, voice, and comparison surfaces surfaced ~25 findings; per explicit direction, all were fixed in the same pass rather than triaged to a subset:
+- **Landing + wizard:** inspiration-card `<img>` → `next/image`; "Plan this" CTA no longer hover-only invisible on touch devices; extract-error banner now `role="alert"` with icon; a previously-dead `FEATURES` array now renders as a new "How it works" section; wizard modal gained a full focus trap + Escape-to-close + focus-return; both progress bars gained `role="progressbar"` ARIA; header icon buttons and chips bumped to the 44px tap-target minimum.
+- **Auth flows:** `aria-invalid`/`aria-describedby` wired on all four auth pages' form fields; password-toggle and consent-checkbox tap targets enlarged; `returnTo` now survives the forgot-password → reset-password hop.
+- **Dashboard + chat:** `BookingHub` tabs given visible labels and an always-focusable delete control; `BestTimeWidget` gained non-color-only best/avoid cues at larger text; `ChatPanel` is now responsive instead of a fixed-width overflow on mobile.
+- **Itinerary view:** removed a nested-interactive pattern in `ItineraryTimeline`/`PolaroidCard` (single button control); `next/image` for timeline and sidebar thumbnails (`img.youtube.com` added to remote patterns); fixed an empty-origin "→ Destination" string in `BookingLinksSection`.
+- **Account + admin:** labeled the type-to-confirm delete/purge inputs; admin usage chart gained a horizontal-scroll + text-legend + compact-table fallback for narrow viewports and non-visual access.
+- **Layout + voice:** `UserMenu` gained full keyboard focus management (focus-first-item, Escape, arrow/Home/End nav, focus-restore) with new tests; `ListeningOrb`'s barely-visible red listening dot replaced with a clearly visible green status pill, animation made `prefers-reduced-motion`-safe.
+- **Comparison components:** `DestinationSearchInput` gained full combobox/listbox ARIA + keyboard nav; `ComparisonPanel` reflows to a single column on mobile; `ComparisonGrid`'s label column is now sticky on scroll.
+
+### Regression + performance verification
+- **Backend untouched:** `git diff apps/api` empty across the entire pass; full pytest suite **917 passed / 6 skipped**; itinerary-timing instrumentation suite re-verified **22/22**.
+- **Frontend:** `tsc --noEmit` clean; `vitest run` **126 passed** (10 files, incl. 2 new test files); real before/after `next build` bundle comparison: client JS **+0.6%** raw and gzip (+18KB / +5.6KB), fully attributable to the added a11y code, zero new npm dependencies.

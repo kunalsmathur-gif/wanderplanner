@@ -1509,7 +1509,73 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.48.0 Changes (July 2026) — Voice-mic states redesigned, full E2E accessibility pass, zero backend impact
+
+Two live user reports on voice mode, followed by a full read-only `ui-ux-pro-max` audit
+of every surface (landing, auth, wizard, dashboard, itinerary, account, admin, layout/nav,
+voice, comparison) — fixed **every** finding rather than a top-priority subset, then
+verified no backend regression and measured the frontend cost. Full findings write-up:
+`docs/UI_UX_AUDIT_2026-07-29.md`. Design-system framing: `DESIGN_REVAMP_SUMMARY.md` (July
+29, 2026 section).
+
+**Voice mode, reported as issues [#30](https://github.com/kunalsmathur-gif/wanderplanner/issues/30) / [#31](https://github.com/kunalsmathur-gif/wanderplanner/issues/31):**
+- 🔴 **Persistent language toggle clipped the mic icon on mobile.** `LLMWizard.tsx`'s
+  header English/हिंदी toggle and the mic button competed for the same row below `sm:`,
+  and on narrow viewports the mic lost. Removed the persistent toggle; added a one-time
+  overlay prompt shown only on the first voice activation per session
+  (`voiceLangAskedRef`), gated through a new `handleChooseVoiceLang`. Relies on
+  `useVoice.ts`'s `setLang` updating `langRef.current` synchronously, so calling
+  `voice.setLang(next)` immediately followed by `voice.toggleVoiceMode()` in the same
+  handler picks up the new language with no stale-closure risk.
+- 🔴 **The mic button had one visual state (red, slash icon) for idle/active/unsupported
+  alike** — indistinguishable from broken. Both mic buttons (header pill + footer bar) now
+  render `Mic` (grey, idle) / `Mic` with `animate-pulse` (active/listening) / `Volume2`
+  (Anya speaking) / a visibly disabled control (unsupported browser, e.g. Firefox — the
+  button previously did nothing on click with zero feedback).
+- ⚠️ **Follow-up from the same user: "is red really the right active color?"** — asked to
+  use `ui-ux-pro-max` rather than pick another color by feel. Queried the skill's palette
+  data against this app's own tokens (`apps/web/app/globals.css`): `--_destructive` (red)
+  is reserved app-wide for genuine errors, and a `--_success` (emerald) token already
+  exists for positive/active states. Surveyed top-chatbot conventions as reference (ChatGPT
+  — green ring; Gemini — non-red pulse; Siri — non-red color wash): none use red for
+  "actively listening," it reads as "stopped/broken" instead. Changed the active state to
+  `emerald-400`/`emerald-950` (Tailwind fixed classes, not the `--_success` var itself,
+  chosen to guarantee contrast in both themes without adding a new on-color token).
+
+**Full E2E pass — asked to fix every finding, not the top 5:**
+
+| Area | Representative fixes |
+|---|---|
+| Landing + wizard | `<img>` → `next/image` (added `images.remotePatterns` for `upload.wikimedia.org`); "Plan this" CTA no longer hover-only invisible; extract-error banner now `role="alert"`; previously-dead `FEATURES` array now rendered as a "How it works" section; wizard modal gained a full focus trap + Escape-to-close + focus-return (`dialogRef`/`previouslyFocusedRef`/`handleDialogKeyDown`); both progress bars gained `role="progressbar"` ARIA; icon buttons/chips bumped to the 44px tap-target minimum. |
+| Auth (login/signup/forgot/reset) | `aria-invalid`/`aria-describedby` wired to field errors; password-toggle + consent-checkbox tap targets enlarged; `returnTo` now survives the forgot-password → reset-password hop via `useSearchParams` + `sessionStorage`. |
+| Dashboard + chat | `BookingHub` tabs given visible labels, delete control always focusable (was hover-only); `BestTimeWidget` gained non-color-only best/avoid cues at larger text; `ChatPanel` responsive (`inset-x-4 bottom-4` mobile → `w-[360px] right-6 bottom-24` at `sm:`). |
+| Itinerary view | Removed nested-interactive pattern in `ItineraryTimeline`/`PolaroidCard` (single `button`); `next/image` for timeline/sidebar thumbnails (`img.youtube.com` added to remote patterns — this and the wikimedia pattern above were added by different parallel agents and had to be merged, not overwritten); fixed an empty-origin "→ Destination" string in `BookingLinksSection`. |
+| Account + admin | Labeled the type-to-confirm delete/purge inputs; admin usage chart gained horizontal-scroll + text-legend + compact-table fallback. |
+| Layout + voice | `UserMenu` gained full focus management (first-item focus, Escape, arrow/Home/End nav, focus-restore) + new tests; `ListeningOrb`'s near-invisible red listening dot replaced with a visible green status pill, animation made `prefers-reduced-motion`-safe. New test files: `__tests__/components/UserMenu.test.tsx`, `ListeningOrb.test.tsx`. |
+| Comparison | `DestinationSearchInput` gained full combobox/listbox ARIA + keyboard nav; `ComparisonPanel` reflows `grid-cols-1 sm:grid-cols-2`; `ComparisonGrid`'s label column made sticky. |
+
+**Regression + performance check, done because every change above is UI-only:**
+- **Backend: zero files touched** (`git diff apps/api` empty) — confirms no latency/cost/flow
+  regression is even possible from this pass. Ran the full suite anyway on a rebuilt Python
+  3.12 venv (the committed `.venv` is 3.9, incompatible with `datetime.UTC`): **917 passed,
+  6 skipped**. Re-ran `tests/unit/test_itinerary_timing.py` (v10.47.0's instrumentation)
+  in isolation — **22/22** — to confirm the LLM-latency measurement path itself wasn't
+  disturbed. Did **not** run `load_test_rag.py` (needs live Gemini/embedding keys, real
+  cost, and nothing backend changed for it to catch).
+- **Frontend: `tsc --noEmit` clean; `vitest run` 126 passed** (10 files, incl. the 2 new
+  ones above). Real before/after `next build` (fixes stashed vs. applied, identical 14
+  routes both times): client JS **2,944,818 B → 2,962,893 B raw (+0.6%)**, **937,680 B →
+  943,306 B gzip (+0.6%)** — fully attributable to the added a11y logic (focus trap,
+  combobox keyboard handling, extra legend/label markup); `package.json`/lockfile diff
+  empty, so none of it is a new dependency. `next/image` conversions (landing,
+  `PolaroidCard`, `Column3Sidebar`) don't show up in that static diff but should reduce
+  real transferred image bytes and improve LCP at runtime.
+
+**Filed, not fixed — pre-existing repo hygiene, found incidentally:** the committed
+`apps/api/.venv` targets Python 3.9 while the code requires ≥3.11; `requirements.txt` pins
+`httpx==0.28.1` while `requirements-dev.txt` pins `httpx==0.27.0`.
 
 ### v10.47.0 Changes (July 2026) — `generate_itinerary()` is measured for the first time
 

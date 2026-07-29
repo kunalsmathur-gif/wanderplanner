@@ -1711,6 +1711,34 @@ instead of the agent) that govern how these tools are meant to be used.
 
 ## 16. Change Log
 
+### v10.48 (July 2026) — Voice-mic states redesigned, full E2E accessibility pass, zero backend impact
+
+- **Voice UX, reported live and filed as issues #30/#31:** the persistent
+  English/हिंदी language toggle in `LLMWizard.tsx` clipped the mic button on mobile —
+  replaced with a one-time per-session language-choice overlay. The mic button had a
+  single hardcoded red/slashed-icon look regardless of state — replaced with four distinct
+  states (idle/listening/speaking/unsupported), and the active-state color changed from
+  red to emerald after explicit user pushback ("red reads as stopped/broken") confirmed via
+  the `ui-ux-pro-max` skill and a survey of top voice-chat conventions (ChatGPT, Gemini,
+  Siri all avoid red for "listening").
+- **Full read-only `ui-ux-pro-max` audit, then every finding fixed (not a top-5 subset)**
+  across landing/wizard, auth, dashboard/chat, itinerary view, account/admin, layout/voice,
+  and comparison components — ARIA labeling, focus management (trap/Escape/restore),
+  44px tap targets, `next/image` conversions, responsive layout fixes, and non-color-only
+  status cues. Full detail: `docs/UI_UX_AUDIT_2026-07-29.md`, `TECHNICAL_DOCUMENTATION.md`
+  §14 v10.48.0, `DESIGN_REVAMP_SUMMARY.md` (July 29, 2026 section).
+- **Zero backend files touched by any of the above** — `git diff apps/api` empty for the
+  entire pass, so this entry exists for completeness rather than because the backend
+  changed. Verified rather than assumed: full pytest suite **917 passed / 6 skipped** on a
+  rebuilt Python 3.12 venv, and `tests/unit/test_itinerary_timing.py` (v10.47.0's
+  instrumentation) re-run in isolation, **22/22**, confirming the timing path itself is
+  undisturbed. `load_test_rag.py` was deliberately not run (needs live Gemini/embedding
+  keys and real cost; nothing backend changed for it to catch).
+- **Frontend cost, measured with a real before/after `next build`** (fixes stashed vs.
+  applied): client JS **+0.6% raw and gzip** (+18KB / +5.6KB), attributable to the added
+  a11y code with zero new npm dependencies. `tsc --noEmit` clean; `vitest run` **126
+  passed** across 10 files (2 new).
+
 ### v10.47 (July 2026) — generate_itinerary() is measured for the first time
 
 - **New `core/timing.py`: per-stage wall-clock instrumentation on the generation path.** This document has listed "No observability stack" as an open finding for months; the concrete gap was that a repo-wide grep for `time.time()`/`perf_counter` across `chains/` and `routers/` returned **zero hits**. Every latency claim here was reasoned about statically. Timings accumulate against a `ContextVar`, so no function signature had to change to thread a timer through six call sites, and one structured record is emitted per generation — at WARNING past `slow_itinerary_threshold_seconds`, which is the cheapest useful alerting available without an APM.

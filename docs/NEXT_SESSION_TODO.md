@@ -298,6 +298,41 @@ whereas a wrong entry actively selects the wrong gender and looks authoritative 
 gesture restriction applies, and either extended token lists backed by device tests or an explicit
 note that no name-based signal exists on that platform.
 
+**7. ✅ DONE 2026-07-29 — voice-mic states redesigned + every finding from a full E2E accessibility
+audit fixed (shipped as v10.48.0).** Full write-up in `docs/UI_UX_AUDIT_2026-07-29.md`,
+`TECHNICAL_DOCUMENTATION.md` §14 v10.48.0, `docs/system-design.md` §16 v10.48, and
+`DESIGN_REVAMP_SUMMARY.md` (July 29, 2026 section). Started from two live user reports (issues
+[#30](https://github.com/kunalsmathur-gif/wanderplanner/issues/30)/[#31](https://github.com/kunalsmathur-gif/wanderplanner/issues/31)):
+the persistent language toggle clipped the mic icon on mobile (→ one-time per-session prompt
+instead), and the mic button had one red/broken-looking state for idle, active and unsupported
+alike (→ four distinct states). Follow-up pushback ("is red really the right active color?") was
+answered with the `ui-ux-pro-max` skill against the app's own tokens plus a survey of top
+voice-chat conventions (ChatGPT/Gemini/Siri all avoid red for "listening") — switched to emerald.
+
+Asked next to run a full read-only `ui-ux-pro-max` audit across every surface, then, per explicit
+direction, **fix every finding rather than a top-priority subset** — ~25 items across landing,
+auth, wizard, dashboard/chat, itinerary view, account/admin, layout/voice, and comparison
+components (ARIA labeling, focus trap/Escape/restore, 44px tap targets, `<img>` → `next/image`,
+responsive-layout fixes, non-color-only status cues).
+
+**Every UI/UX change was backed by a concrete regression + performance check, not asserted:**
+`git diff apps/api` confirmed **zero backend files touched**; full backend suite run anyway on a
+rebuilt Python 3.12 venv (committed `.venv` is 3.9, incompatible with `datetime.UTC`) — **917
+passed / 6 skipped**; `tests/unit/test_itinerary_timing.py` re-run in isolation, **22/22**, to
+confirm v10.47.0's LLM-latency instrumentation itself wasn't disturbed. `load_test_rag.py` was
+deliberately **not** run — needs live Gemini/embedding keys and real cost, and nothing backend
+changed for it to catch. Frontend: real before/after `next build` (fixes stashed vs. applied,
+identical 14 routes) measured client JS **+0.6% raw and gzip** (+18KB / +5.6KB), fully attributable
+to the added a11y code with **zero new npm dependencies**; `tsc --noEmit` clean; `vitest run` **126
+passed** across 10 files (2 new: `UserMenu.test.tsx`, `ListeningOrb.test.tsx`).
+
+**Filed, not fixed — pre-existing repo hygiene found incidentally:** the committed
+`apps/api/.venv` targets Python 3.9 while the code requires ≥3.11; `requirements.txt` pins
+`httpx==0.28.1` while `requirements-dev.txt` pins `httpx==0.27.0`.
+
+**Not yet done:** none of this session's changes have been committed to git — everything is still
+an uncommitted working-tree diff across ~21 files plus 2 new test files.
+
 ---
 
 ## ✅ DO THIS NEXT — open items as of 2026-07-27 (v10.40.7)

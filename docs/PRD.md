@@ -535,6 +535,18 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 
 ---
 
+### **Clarification #18 — Voice Mic Active-State Color + Full E2E Accessibility Pass ✅ RESOLVED**
+
+| Question | Decision |
+|---|---|
+| Two live voice-mode bugs reported (persistent language toggle clipping the mic icon on mobile; mic icon showing a single red/broken-looking state regardless of idle/active/unsupported) — fix, and if so what should the active-listening color be given red reads as "stopped/broken," not "in use"? | **Fixed both, and switched active-state red → emerald.** Removed the persistent toggle for a one-time per-session language prompt; gave the mic four distinct states (idle/active/speaking/unsupported). For color, used the `ui-ux-pro-max` skill against the app's own tokens (`--_destructive` red is reserved for real errors; `--_success` emerald already exists) and checked how top voice chatbots signal "listening" (ChatGPT, Gemini, Siri all avoid red for this) before picking emerald. |
+| Should the fix-everything follow-on E2E accessibility review (~25 findings across landing, auth, wizard, dashboard, itinerary, account, admin, layout, voice, comparison) be triaged to a top-priority subset? | **No — fix every finding.** Explicit direction: don't stop at the top 5. |
+| Should every UI/UX change get a concrete backend regression + performance check before being considered done? | **Yes.** Confirmed `git diff apps/api` empty (no backend files touched by any of the fixes), ran the full backend suite (917 passed / 6 skipped) plus the itinerary-timing instrumentation suite in isolation (22/22), and measured a real before/after frontend bundle build (+0.6% JS, no new dependencies) rather than asserting "no regression" without evidence. |
+| Fix | See `docs/UI_UX_AUDIT_2026-07-29.md` for the full findings list and fix-by-fix detail. |
+| Where documented | `docs/UI_UX_AUDIT_2026-07-29.md`, `TECHNICAL_DOCUMENTATION.md` §14 v10.48.0, `docs/system-design.md` §16 v10.48, `DESIGN_REVAMP_SUMMARY.md` (July 29, 2026 section). |
+
+---
+
 ## **Rev 5 — Phase 1B Requirements** *(Updated: 2026-06-15)*
 
 ---
