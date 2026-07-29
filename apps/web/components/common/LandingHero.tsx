@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { Users, Wallet, MapPin, Sparkles, ArrowRight, Plane, Link2, Loader2 } from 'lucide-react'
+import Image from 'next/image'
+import { Users, Wallet, MapPin, Sparkles, ArrowRight, Plane, Link2, Loader2, AlertCircle } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
 import type { WizardPreload } from '@/store/appStore'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
@@ -77,10 +78,12 @@ function InspirationCard({
         style={{ background: trip.gradient }}
       >
         {imgUrl && (
-          <img
+          <Image
             src={imgUrl}
             alt={trip.dest}
-            className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+            fill
+            sizes="(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
+            className="object-cover transition-transform duration-500 group-hover:scale-105"
             loading="lazy"
           />
         )}
@@ -100,7 +103,7 @@ function InspirationCard({
         <p className="mt-0.5 text-xs text-[var(--_muted-fg)]">
           {trip.days} days · {trip.budget}
         </p>
-        <span className="mt-2 inline-flex items-center gap-0.5 text-xs font-semibold text-[var(--_primary)] opacity-0 transition-opacity group-hover:opacity-100">
+        <span className="mt-2 inline-flex items-center gap-0.5 text-xs font-semibold text-[var(--_primary)] opacity-70 transition-opacity group-hover:opacity-100">
           Plan this <ArrowRight size={11} />
         </span>
       </div>
@@ -261,8 +264,37 @@ export function LandingHero() {
               </button>
             </div>
             {extractError && (
-              <p className="mt-1.5 text-xs text-[var(--_muted-fg)]">{extractError}</p>
+              <p role="alert" className="mt-1.5 flex items-center gap-1 text-xs font-medium text-[var(--_destructive)]">
+                <AlertCircle size={13} aria-hidden="true" />
+                {extractError}
+              </p>
             )}
+          </div>
+        </section>
+
+        {/* ── How it works / trust ─────────────────────────────────── */}
+        {/* Reuses FEATURES — previously defined but never rendered anywhere
+            in this file, so these four selling points never actually
+            reached a visitor before deciding whether to sign up. */}
+        <section
+          aria-labelledby="how-it-works-heading"
+          className="border-t border-[var(--_border)] bg-[var(--_bg)] px-6 py-12"
+        >
+          <div className="mx-auto max-w-6xl">
+            <h2 id="how-it-works-heading" className="sr-only">
+              Why plan with Wanderplanner
+            </h2>
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+              {FEATURES.map(({ icon: Icon, title, desc }) => (
+                <div key={title} className="flex flex-col items-center text-center sm:items-start sm:text-left">
+                  <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-[var(--_muted)] text-[var(--_primary)]">
+                    <Icon size={18} aria-hidden="true" />
+                  </span>
+                  <p className="text-sm font-bold text-[var(--_fg)]">{title}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--_muted-fg)]">{desc}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
 

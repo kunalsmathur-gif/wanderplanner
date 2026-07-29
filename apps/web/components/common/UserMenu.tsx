@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react'
 import { LogOut, User, ChevronDown, ShieldCheck } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 
@@ -19,15 +19,80 @@ export function UserMenu({ inverted = false }: { inverted?: boolean }) {
 
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuItemRefs = useRef<Array<HTMLElement | null>>([])
+
+  function getMenuItems() {
+    return menuItemRefs.current.filter((item): item is HTMLElement => item !== null)
+  }
+
+  function focusMenuItem(index: number) {
+    const items = getMenuItems()
+    if (!items.length) return
+
+    const normalizedIndex = ((index % items.length) + items.length) % items.length
+    items[normalizedIndex]?.focus()
+  }
+
+  function closeMenu({ restoreFocus = true }: { restoreFocus?: boolean } = {}) {
+    setOpen(false)
+    if (restoreFocus) {
+      triggerRef.current?.focus()
+    }
+  }
+
+  function setMenuItemRef(index: number) {
+    return (node: HTMLElement | null) => {
+      menuItemRefs.current[index] = node
+    }
+  }
 
   useEffect(() => {
     if (!open) return
-    function onClick(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false)
+
+    focusMenuItem(0)
+
+    function onClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        closeMenu()
+      }
     }
-    document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
+
+    document.addEventListener('click', onClickOutside)
+    return () => document.removeEventListener('click', onClickOutside)
   }, [open])
+
+  function handleMenuKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
+    const items = getMenuItems()
+    if (!items.length) return
+
+    const currentIndex = items.indexOf(document.activeElement as HTMLElement)
+
+    switch (e.key) {
+      case 'Escape':
+        e.preventDefault()
+        closeMenu()
+        break
+      case 'ArrowDown':
+        e.preventDefault()
+        focusMenuItem(currentIndex === -1 ? 0 : currentIndex + 1)
+        break
+      case 'ArrowUp':
+        e.preventDefault()
+        focusMenuItem(currentIndex === -1 ? items.length - 1 : currentIndex - 1)
+        break
+      case 'Home':
+        e.preventDefault()
+        focusMenuItem(0)
+        break
+      case 'End':
+        e.preventDefault()
+        focusMenuItem(items.length - 1)
+        break
+      default:
+        break
+    }
+  }
 
   const mutedClass = inverted ? 'text-white/70 hover:text-white' : 'text-[var(--_muted-fg)] hover:text-[var(--_primary)]'
 
@@ -49,9 +114,10 @@ export function UserMenu({ inverted = false }: { inverted?: boolean }) {
   }
 
   const label = user.display_name || user.email || 'Account'
+  const logoutIndex = user.is_admin ? 2 : 1
 
   async function handleLogout() {
-    setOpen(false)
+    closeMenu()
     await logout()
     router.push('/')
   }
@@ -59,8 +125,9 @@ export function UserMenu({ inverted = false }: { inverted?: boolean }) {
   return (
     <div className="relative" ref={menuRef}>
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => (open ? closeMenu() : setOpen(true))}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Signed in as ${label}`}
@@ -78,6 +145,7 @@ export function UserMenu({ inverted = false }: { inverted?: boolean }) {
       {open && (
         <div
           role="menu"
+          onKeyDown={handleMenuKeyDown}
           className="absolute right-0 top-full z-20 mt-2 w-48 overflow-hidden rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-1 shadow-lg"
         >
           <div className="border-b border-[var(--_border)] px-3 py-2">
@@ -87,18 +155,20 @@ export function UserMenu({ inverted = false }: { inverted?: boolean }) {
             )}
           </div>
           <Link
+            ref={setMenuItemRef(0)}
             href="/account"
             role="menuitem"
-            onClick={() => setOpen(false)}
+            onClick={() => closeMenu()}
             className="block px-3 py-2 text-sm text-[var(--_fg)] transition-colors hover:bg-[var(--_bg)]"
           >
             Account settings
           </Link>
           {user.is_admin && (
             <Link
+              ref={setMenuItemRef(1)}
               href="/admin"
               role="menuitem"
-              onClick={() => setOpen(false)}
+              onClick={() => closeMenu()}
               className="flex items-center gap-2 px-3 py-2 text-sm text-[var(--_fg)] transition-colors hover:bg-[var(--_bg)]"
             >
               <ShieldCheck size={14} aria-hidden="true" />
@@ -106,6 +176,7 @@ export function UserMenu({ inverted = false }: { inverted?: boolean }) {
             </Link>
           )}
           <button
+            ref={setMenuItemRef(logoutIndex)}
             type="button"
             role="menuitem"
             onClick={handleLogout}

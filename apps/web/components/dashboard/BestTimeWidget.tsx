@@ -57,25 +57,31 @@ export function BestTimeWidget({ destination }: Props) {
         {MONTHS.map((m) => {
           const isBest = data.best_months?.some((bm) => bm.toLowerCase().startsWith(m.toLowerCase()))
           const isAvoid = data.avoid_months?.some((am) => am.toLowerCase().startsWith(m.toLowerCase()))
+          const statusLabel = isBest ? 'Best' : isAvoid ? 'Avoid' : 'OK'
+          const statusCue = isBest ? '✓' : isAvoid ? '!' : '–'
           return (
             <div key={m} className="flex-1 text-center">
               <div
+                aria-label={`${m}: ${statusLabel}`}
+                title={`${m}: ${statusLabel}`}
                 className={[
-                  'h-3 rounded-sm',
+                  'flex h-5 items-center justify-center rounded-sm text-xs font-semibold',
                   isBest ? 'bg-green-400' : isAvoid ? 'bg-red-300' : 'bg-[var(--_muted)]',
                 ].join(' ')}
-              />
-              <span className="text-[9px] text-[var(--_muted-fg)] mt-0.5 block">{m[0]}</span>
+              >
+                {statusCue}
+              </div>
+              <span className="mt-0.5 block text-xs text-[var(--_muted-fg)]">{m[0]}</span>
             </div>
           )
         })}
       </div>
 
       {/* Legend */}
-      <div className="flex gap-3 text-[10px] text-[var(--_muted-fg)]">
-        <span><span className="inline-block w-2 h-2 bg-green-400 rounded-sm mr-1" />Best</span>
-        <span><span className="inline-block w-2 h-2 bg-red-300 rounded-sm mr-1" />Avoid</span>
-        <span><span className="inline-block w-2 h-2 bg-[var(--_muted)] rounded-sm mr-1" />OK</span>
+      <div className="flex flex-wrap gap-3 text-xs text-[var(--_muted-fg)]">
+        <span><span className="mr-1 inline-flex h-4 w-4 items-center justify-center rounded-sm bg-green-400 text-[10px] font-semibold text-[var(--_fg)]">✓</span>Best</span>
+        <span><span className="mr-1 inline-flex h-4 w-4 items-center justify-center rounded-sm bg-red-300 text-[10px] font-semibold text-[var(--_fg)]">!</span>Avoid</span>
+        <span><span className="mr-1 inline-flex h-4 w-4 items-center justify-center rounded-sm bg-[var(--_muted)] text-[10px] font-semibold text-[var(--_fg)]">–</span>OK</span>
       </div>
 
       {/* Summary */}

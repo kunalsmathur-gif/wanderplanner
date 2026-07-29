@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { useMemo, useState } from 'react'
 
 interface PolaroidCardProps {
@@ -9,7 +10,7 @@ interface PolaroidCardProps {
   category?: string
   /** Real image URL (e.g. YouTube thumbnail). Falls back to gradient. */
   imageSrc?: string | null
-  /** YouTube video link — opens on image click */
+  /** Shows a play affordance when a related video exists. */
   videoHref?: string | null
   /** Override gradient (CSS string). Auto-generated from title if omitted. */
   imageGradient?: string
@@ -60,11 +61,12 @@ export function PolaroidCard({
       style={{ background: showImage ? undefined : gradient }}
     >
       {showImage && (
-        <img
+        <Image
           src={imageSrc!}
           alt={title}
-          className="h-full w-full object-cover"
-          loading="lazy"
+          fill
+          sizes="(max-width: 640px) 80px, 96px"
+          className="object-cover"
           onError={() => setImgFailed(true)}
         />
       )}
@@ -79,30 +81,19 @@ export function PolaroidCard({
   )
 
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
+      aria-label={`Show ${title} on the map`}
       className={[
-        'group flex cursor-pointer gap-3 overflow-hidden rounded-xl border bg-[var(--_card)] p-2.5 shadow-sm transition-all duration-200',
+        'group flex w-full cursor-pointer gap-3 overflow-hidden rounded-xl border bg-[var(--_card)] p-2.5 text-left shadow-sm transition-all duration-200',
         'hover:shadow-md',
         isActive
           ? 'border-[var(--_primary)] shadow-[0_0_0_2px_var(--_primary)]'
           : 'border-[var(--_border)]',
       ].join(' ')}
     >
-      {/* Thumbnail — clickable to video if href exists */}
-      {videoHref ? (
-        <a
-          href={videoHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className="block shrink-0"
-        >
-          {thumbnail}
-        </a>
-      ) : (
-        thumbnail
-      )}
+      {thumbnail}
 
       {/* Content */}
       <div className="min-w-0 flex-1 py-0.5">
@@ -117,6 +108,6 @@ export function PolaroidCard({
         <h3 className="mt-0.5 truncate text-sm font-semibold leading-snug text-[var(--_fg)]">{title}</h3>
         <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-[var(--_muted-fg)]">{description}</p>
       </div>
-    </div>
+    </button>
   )
 }

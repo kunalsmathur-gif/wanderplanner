@@ -31,6 +31,10 @@ function SignupForm() {
   const [consentAccepted, setConsentAccepted] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const errorId = error ? 'signup-form-error' : undefined
+  const consentError = error === 'Please accept the Terms of Service and Privacy Policy to continue.'
+  const passwordError = error === 'Password must be at least 8 characters.'
+  const sharedAuthError = Boolean(error && !consentError && !passwordError)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -99,6 +103,8 @@ function SignupForm() {
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
             maxLength={MAX_EMAIL_LEN}
+            aria-invalid={sharedAuthError ? true : undefined}
+            aria-describedby={sharedAuthError ? errorId : undefined}
             className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 px-3.5 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
           />
         </div>
@@ -117,12 +123,14 @@ function SignupForm() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="At least 8 characters"
-              className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 px-3.5 pr-10 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
+              aria-invalid={passwordError || sharedAuthError ? true : undefined}
+              aria-describedby={passwordError || sharedAuthError ? errorId : undefined}
+              className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 px-3.5 pr-12 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
             />
             <button
               type="button"
               onClick={() => setShowPassword((v) => !v)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--_muted-fg)] hover:text-[var(--_fg)]"
+              className="absolute right-1 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center text-[var(--_muted-fg)] hover:text-[var(--_fg)]"
               aria-label={showPassword ? 'Hide password' : 'Show password'}
             >
               {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -134,12 +142,16 @@ function SignupForm() {
             the common Indian travel-platform pattern (single checkbox, detail
             lives behind the links) rather than a wall of text on the form. */}
         <label className="flex items-start gap-2.5 text-sm text-[var(--_muted-fg)]">
-          <input
-            type="checkbox"
-            checked={consentAccepted}
-            onChange={(e) => setConsentAccepted(e.target.checked)}
-            className="mt-0.5 h-4 w-4 shrink-0 rounded border-[var(--_border)] accent-[var(--_primary)]"
-          />
+          <span className="mt-[-0.625rem] flex h-11 w-11 shrink-0 items-center justify-center self-start">
+            <input
+              type="checkbox"
+              checked={consentAccepted}
+              onChange={(e) => setConsentAccepted(e.target.checked)}
+              aria-invalid={consentError ? true : undefined}
+              aria-describedby={consentError ? errorId : undefined}
+              className="h-4 w-4 shrink-0 rounded border-[var(--_border)] accent-[var(--_primary)]"
+            />
+          </span>
           <span>
             I agree to the{' '}
             <Link href="/terms" target="_blank" className="font-medium text-[var(--_primary)] hover:underline">
@@ -153,7 +165,11 @@ function SignupForm() {
           </span>
         </label>
 
-        {error && <p className="text-sm text-[var(--_destructive)]">{error}</p>}
+        {error && (
+          <p id={errorId} role="alert" className="text-sm text-[var(--_destructive)]">
+            {error}
+          </p>
+        )}
 
         <button
           type="submit"

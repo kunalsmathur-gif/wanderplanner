@@ -10,6 +10,7 @@ import { getMyAdminRequest, requestAdminAccess, type AdminRequest } from '@/lib/
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 
 export default function AccountPage() {
+  const deleteConfirmationInputId = 'delete-account-confirmation'
   const router = useRouter()
   const user = useAuthStore((s) => s.user)
   const status = useAuthStore((s) => s.status)
@@ -162,7 +163,11 @@ export default function AccountPage() {
                 <p className="text-sm font-medium text-[var(--_fg)]">
                   Type <span className="font-mono">DELETE</span> to confirm.
                 </p>
+                <label htmlFor={deleteConfirmationInputId} className="block text-sm font-medium text-[var(--_fg)]">
+                  Confirmation phrase
+                </label>
                 <input
+                  id={deleteConfirmationInputId}
                   type="text"
                   value={confirmText}
                   onChange={(e) => setConfirmText(e.target.value)}

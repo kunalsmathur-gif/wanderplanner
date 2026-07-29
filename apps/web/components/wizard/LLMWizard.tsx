@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { Mic, MicOff, Send, Plane, X, CheckCircle2, Loader2, Volume2 } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
@@ -145,6 +145,18 @@ export function LLMWizard() {
   // Retry button wired to resend the last message, which makes no sense as a
   // response to "microphone access is blocked".
   const [voiceNotice, setVoiceNotice] = useState('')
+  // Whether the one-time "choose a voice language" prompt is showing. Voice
+  // language used to be a persistent toggle in the header — always taking up
+  // space even for users who never touch voice — and on narrow screens it
+  // crowded out the mic button entirely. Asking once, only when the user
+  // actually starts a spoken conversation, means the header never has to
+  // make room for it.
+  const [voiceLangPrompt, setVoiceLangPrompt] = useState(false)
+  // Whether we've already asked for a language this session. Session-scoped
+  // (a ref, not persisted) rather than per-turn: the wizard component itself
+  // is recreated each time it's opened, which is the granularity "once per
+  // session" means here.
+  const voiceLangAskedRef = useRef(false)
   // Per-message selection set, only used for multi-select theme chip groups
   const [themeSelections, setThemeSelections] = useState<Record<string, Set<string>>>({})
 
@@ -167,6 +179,14 @@ export function LLMWizard() {
   const messagesEndRef  = useRef<HTMLDivElement>(null)
   const inputRef        = useRef<HTMLInputElement>(null)
   const cancelStreamRef = useRef<(() => void) | null>(null)
+  // Focus management for the modal dialog: `dialogRef` scopes the Tab trap
+  // to content actually inside the card, and `previouslyFocusedRef` is
+  // whatever had focus the instant this component mounted — i.e. whichever
+  // of the wizard's several trigger buttons (header, hero CTA, inspiration
+  // cards, floating orb) the user just activated — so focus can return
+  // there when the wizard closes.
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null)
   // Read by the voice hook's re-arm gate, which fires from a speech event and
   // so would otherwise capture whichever phase was current when voice mode
   // started.
@@ -354,6 +374,56 @@ export function LLMWizard() {
       clearGenerationWatchdog()
     }
   }, [])
+
+  // ── Modal focus management ──────────────────────────────────────────────────
+
+  // Move focus into the dialog on open, and back to whatever triggered it on
+  // close. Without this, the mic/toolbar buttons this component uses as its
+  // "first focusable element" would otherwise be reached only by tabbing in
+  // from wherever the page happened to leave focus — or, on close, focus
+  // would fall back to <body>, silently dropping keyboard users at the top
+  // of the page.
+  useEffect(() => {
+    previouslyFocusedRef.current = document.activeElement as HTMLElement | null
+    const toFocus = dialogRef.current?.querySelector<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    )
+    toFocus?.focus()
+
+    return () => {
+      previouslyFocusedRef.current?.focus?.()
+    }
+  }, [])
+
+  /** Escape closes the wizard; Tab/Shift+Tab is trapped within the dialog card. */
+  function handleDialogKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.stopPropagation()
+      cancelStreamRef.current?.()
+      closeWizard()
+      return
+    }
+    if (e.key !== 'Tab' || !dialogRef.current) return
+
+    const focusable = Array.from(
+      dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter((el) => el.offsetParent !== null) // skip hidden elements
+    if (focusable.length === 0) return
+
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    const active = document.activeElement
+
+    if (e.shiftKey && active === first) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -620,12 +690,27 @@ export function LLMWizard() {
 
   function handleToggleVoice() {
     setVoiceNotice('')
+    // First time starting a spoken conversation this session: ask which
+    // language, once, instead of turning the mic on immediately. Every
+    // subsequent toggle (on or off) reuses the answer.
+    if (!voice.voiceMode && !voiceLangAskedRef.current) {
+      setVoiceLangPrompt(true)
+      return
+    }
     voice.toggleVoiceMode()
   }
 
   function handleVoiceLangChange(next: VoiceLang) {
     setVoiceNotice('')
     voice.setLang(next)
+  }
+
+  /** User picked a language from the one-time prompt: apply it and start listening. */
+  function handleChooseVoiceLang(next: VoiceLang) {
+    voiceLangAskedRef.current = true
+    setVoiceLangPrompt(false)
+    handleVoiceLangChange(next)
+    voice.toggleVoiceMode()
   }
 
   // ── Filled fields count for progress bar ──────────────────────────────────
@@ -646,9 +731,10 @@ export function LLMWizard() {
       role="dialog"
       aria-modal="true"
       aria-label="Anya — AI Trip Planner"
+      onKeyDown={handleDialogKeyDown}
       className="fixed inset-0 z-50 flex items-end justify-center bg-white/30 backdrop-blur-md sm:items-center dark:bg-black/30"
     >
-      <div className="flex w-full max-h-screen flex-col overflow-hidden bg-[var(--_card)] sm:mx-4 sm:max-h-[90vh] sm:max-w-lg sm:rounded-2xl rounded-t-2xl shadow-2xl">
+      <div ref={dialogRef} className="relative flex w-full max-h-screen flex-col overflow-hidden bg-[var(--_card)] sm:mx-4 sm:max-h-[90vh] sm:max-w-lg sm:rounded-2xl rounded-t-2xl shadow-2xl">
 
         {/* ── Header ──────────────────────────────────────────────────── */}
         <div className="flex shrink-0 items-center justify-between bg-[var(--_primary)] px-5 py-4 text-white">
@@ -660,72 +746,105 @@ export function LLMWizard() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {/* Language applies to both directions: what the recogniser listens
-                for and what Anya speaks back. The Web Speech API has no
-                auto-detect — recognition takes exactly one language per
-                session — so this has to be an explicit choice, not a guess. */}
-            <div
-              role="group"
-              aria-label="Voice language"
-              className="flex items-center rounded-full bg-white/20 p-0.5 text-xs font-semibold"
-            >
-              {(Object.keys(VOICE_LANGS) as VoiceLang[]).map((code) => (
-                <button
-                  key={code}
-                  type="button"
-                  onClick={() => handleVoiceLangChange(code)}
-                  aria-pressed={voice.lang === code}
-                  aria-label={`Speak and listen in ${VOICE_LANGS[code].label}`}
-                  className={[
-                    'rounded-full px-2 py-1 leading-none transition-colors',
-                    voice.lang === code
-                      ? 'bg-white text-[var(--_primary)]'
-                      : 'text-white/80 hover:text-white',
-                  ].join(' ')}
-                >
-                  {VOICE_LANGS[code].nativeLabel}
-                </button>
-              ))}
-            </div>
+            {/* Language is no longer a persistent header toggle — it used to
+                compete with this mic button for space and get clipped on
+                narrow screens. It's now asked once, only when the user
+                starts a spoken conversation (see the language-prompt overlay
+                below), then reused for the rest of the session. */}
             <button
               type="button"
               onClick={handleToggleVoice}
               aria-label={voice.voiceMode ? 'Stop voice mode' : 'Start voice mode'}
               aria-pressed={voice.voiceMode}
+              disabled={!voice.supported}
               title={
                 voice.supported
                   ? undefined
                   : 'Voice input isn’t supported in this browser'
               }
               className={[
-                'flex h-9 w-9 items-center justify-center rounded-full transition-colors',
+                'flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors duration-300',
                 !voice.supported
-                  ? 'bg-white/10 text-white/40'
-                  : voice.voiceMode
-                    ? 'bg-white text-[var(--_primary)]'
-                    : 'bg-white/20 text-white hover:bg-white/30',
-                // Pulse only while the mic is genuinely open. The old UI
-                // pulsed for the whole session because one flag meant both.
-                voice.isListening ? 'animate-pulse' : '',
+                  // Idle / unavailable: greyed out, not interactive-looking.
+                  ? 'cursor-not-allowed bg-white/10 text-white/30'
+                  : voice.isListening
+                    // Active: the one state that should visually pop, with
+                    // motion — the mic is genuinely capturing audio right now.
+                    // Green reads as "live" (recording light, call-in-progress,
+                    // online dot) without the alarm/failure connotation red
+                    // carries elsewhere in this app (`--_destructive`).
+                    ? 'bg-emerald-400 text-emerald-950 animate-pulse'
+                    : voice.voiceMode
+                      // Voice mode on, mic momentarily closed (e.g. Anya is
+                      // replying): a quieter "on" state, no animation.
+                      ? 'bg-white text-[var(--_primary)]'
+                      // Not in use: greyed out, matching the unavailable state.
+                      : 'bg-white/15 text-white/50 hover:bg-white/25 hover:text-white',
               ].join(' ')}
             >
               {voice.isSpeaking
                 ? <Volume2 size={16} />
-                : voice.voiceMode ? <MicOff size={16} /> : <Mic size={16} />}
+                : !voice.supported
+                  ? <MicOff size={16} />
+                  : <Mic size={16} />}
             </button>
             <button
               type="button"
               onClick={() => { cancelStreamRef.current?.(); closeWizard() }}
               aria-label="Close"
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30"
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30"
             >
               <X size={16} />
             </button>
           </div>
         </div>
 
+        {/* ── One-time voice-language prompt ─────────────────────────────
+            Shown once per session, the moment the user first starts a
+            spoken conversation — replaces the old always-visible header
+            toggle (see handleToggleVoice). */}
+        {voiceLangPrompt && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 p-6">
+            <div className="w-full max-w-xs rounded-2xl bg-[var(--_card)] p-5 text-center shadow-xl">
+              <p className="mb-1 text-sm font-semibold text-[var(--_fg)]">
+                Which language would you like to speak?
+              </p>
+              <p className="mb-4 text-xs text-[var(--_muted-fg)]">
+                Anya will listen and reply in this language for the rest of the conversation.
+              </p>
+              <div className="flex justify-center gap-3">
+                {(Object.keys(VOICE_LANGS) as VoiceLang[]).map((code) => (
+                  <button
+                    key={code}
+                    type="button"
+                    onClick={() => handleChooseVoiceLang(code)}
+                    aria-label={`Speak and listen in ${VOICE_LANGS[code].label}`}
+                    className="rounded-full border border-[var(--_border)] px-4 py-2 text-sm font-semibold text-[var(--_fg)] transition-colors hover:border-[var(--_primary)] hover:text-[var(--_primary)]"
+                  >
+                    {VOICE_LANGS[code].nativeLabel}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setVoiceLangPrompt(false)}
+                className="mt-4 text-xs text-[var(--_muted-fg)] underline"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* ── Progress bar ────────────────────────────────────────────── */}
-        <div className="relative h-1 w-full shrink-0 overflow-hidden bg-[var(--_primary)]/20">
+        <div
+          role="progressbar"
+          aria-valuenow={progressPct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`Trip details ${progressPct}% complete`}
+          className="relative h-1 w-full shrink-0 overflow-hidden bg-[var(--_primary)]/20"
+        >
           <div
             className="h-full rounded-r-full bg-gradient-to-r from-[var(--_primary)] to-sky-300 transition-all duration-500"
             style={{ width: `${progressPct}%` }}
@@ -795,7 +914,7 @@ export function LLMWizard() {
                                 onClick={() => (isThemeGroup ? toggleTheme(chip) : handleSubmit(chip))}
                                 disabled={isSending || phase !== 'chatting'}
                                 className={[
-                                  'rounded-full border border-[var(--_primary)] px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50',
+                                  'rounded-full border border-[var(--_primary)] px-3.5 py-2 text-xs font-medium transition-colors disabled:opacity-50',
                                   isSelected
                                     ? 'bg-[var(--_primary)] text-white'
                                     : 'text-[var(--_primary)] hover:bg-[var(--_primary)] hover:text-white',
@@ -850,8 +969,15 @@ export function LLMWizard() {
 
           {/* Generating progress */}
           {phase === 'generating' && (
-            <div className="flex items-center gap-3 rounded-2xl border border-[var(--_border)] bg-[var(--_card)] px-4 py-3">
-              <Loader2 size={16} className="shrink-0 animate-spin text-[var(--_primary)]" />
+            <div
+              role="progressbar"
+              aria-valuenow={progress.total > 0 ? Math.round((progress.step / progress.total) * 100) : undefined}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={progress.message || 'Generating your itinerary'}
+              className="flex items-center gap-3 rounded-2xl border border-[var(--_border)] bg-[var(--_card)] px-4 py-3"
+            >
+              <Loader2 size={16} className="shrink-0 animate-spin text-[var(--_primary)]" aria-hidden="true" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-[var(--_fg)]">{progress.message || 'Generating your itinerary…'}</p>
                 <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-[var(--_muted)]">
@@ -865,7 +991,7 @@ export function LLMWizard() {
           )}
 
           {error && (
-            <div className="flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2 dark:bg-red-950/40">
+            <div role="alert" className="flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2 dark:bg-red-950/40">
               <p className="flex-1 text-xs text-red-600 dark:text-red-400">{error}</p>
               <button
                 type="button"
@@ -955,16 +1081,32 @@ export function LLMWizard() {
                 onClick={handleToggleVoice}
                 aria-label={voice.voiceMode ? 'Stop voice' : 'Voice input'}
                 aria-pressed={voice.voiceMode}
+                disabled={!voice.supported}
                 className={[
-                  'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-colors',
+                  'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-colors duration-300',
                   !voice.supported
-                    ? 'border-[var(--_border)] text-[var(--_muted-fg)] opacity-50'
-                    : voice.voiceMode
-                      ? 'border-red-400 bg-red-50 text-red-500 dark:border-red-600 dark:bg-red-950/40 dark:text-red-400'
-                      : 'border-[var(--_border)] text-[var(--_muted-fg)] hover:border-[var(--_primary)] hover:text-[var(--_primary)]',
+                    // Idle / unavailable: greyed out, not interactive-looking.
+                    ? 'cursor-not-allowed border-[var(--_border)] text-[var(--_muted-fg)] opacity-50'
+                    : voice.isListening
+                      // Active: the one state that should visually pop, with
+                      // motion — the mic is genuinely capturing audio right now.
+                      // Green ("live", like a recording light) rather than red
+                      // avoids implying something has stopped or gone wrong —
+                      // this app's red (`--_destructive`) means exactly that.
+                      ? 'border-emerald-400 bg-emerald-50 text-emerald-600 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-400 animate-pulse'
+                      : voice.voiceMode
+                        // Voice mode on, mic momentarily closed (e.g. Anya is
+                        // replying): a quieter "on" state, no animation.
+                        ? 'border-[var(--_primary)] text-[var(--_primary)]'
+                        // Not in use: greyed out, matching the unavailable state.
+                        : 'border-[var(--_border)] text-[var(--_muted-fg)] hover:border-[var(--_primary)] hover:text-[var(--_primary)]',
                 ].join(' ')}
               >
-                {voice.voiceMode ? <MicOff size={16} /> : <Mic size={16} />}
+                {voice.isSpeaking
+                  ? <Volume2 size={16} />
+                  : !voice.supported
+                    ? <MicOff size={16} />
+                    : <Mic size={16} />}
               </button>
               <button
                 type="button"

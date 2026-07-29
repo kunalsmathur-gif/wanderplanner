@@ -56,7 +56,7 @@ export function ComparisonPanel({ onClose }: Props) {
 
       {/* Inputs */}
       <div className="shrink-0 border-b border-[var(--_border)] bg-[var(--_bg)] px-5 py-4">
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <DestinationSearchInput label="Destination A" value={destA} onChange={setDestA} />
           <DestinationSearchInput label="Destination B" value={destB} onChange={setDestB} />
         </div>

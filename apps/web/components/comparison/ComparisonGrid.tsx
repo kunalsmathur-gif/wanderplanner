@@ -20,10 +20,10 @@ export function ComparisonGrid({ result, destA, destB }: Props) {
         </div>
       )}
 
-      <table className="w-full border-collapse text-sm">
+      <table className="min-w-[42rem] w-full border-collapse text-sm">
         <thead>
           <tr className="border-b-2 border-[var(--_border)]">
-            <th className="w-[28%] px-3 py-3 text-left text-xs font-semibold uppercase tracking-widest text-[var(--_muted-fg)]">
+            <th className="sticky left-0 z-20 w-[28%] bg-[var(--_card)] px-3 py-3 text-left text-xs font-semibold uppercase tracking-widest text-[var(--_muted-fg)] shadow-[1px_0_0_0_var(--_border)]">
               Parameter
             </th>
             <th className="w-[30%] px-3 py-3 text-center text-xs font-semibold uppercase tracking-widest text-[var(--_primary)]">
@@ -40,15 +40,16 @@ export function ComparisonGrid({ result, destA, destB }: Props) {
         <tbody>
           {result.comparison.map((row, idx) => {
             const isEven = idx % 2 === 0
+            const rowBgClass = isEven ? 'bg-[var(--_card)]' : 'bg-[var(--_bg)]'
             const aWins = row.winner === destA.city
             const bWins = row.winner === destB.city
 
             return (
-              <tr
-                key={row.parameter}
-                className={isEven ? 'bg-[var(--_card)]' : 'bg-[var(--_bg)]'}
-              >
-                <td className="px-3 py-3 font-medium text-[var(--_fg)]">
+              <tr key={row.parameter} className={rowBgClass}>
+                <td className={[
+                  'sticky left-0 z-10 px-3 py-3 font-medium text-[var(--_fg)] shadow-[1px_0_0_0_var(--_border)]',
+                  rowBgClass,
+                ].join(' ')}>
                   {row.parameter}
                   {row.unit && <span className="ml-1 text-xs text-[var(--_muted-fg)]">({row.unit})</span>}
                 </td>

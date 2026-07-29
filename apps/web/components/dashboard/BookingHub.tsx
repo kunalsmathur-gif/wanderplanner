@@ -110,35 +110,59 @@ export function BookingHub() {
                 ))}
               </div>
 
-              <input
-                className="input w-full rounded-lg border border-[var(--_border)] bg-[var(--_bg)] px-3 py-1.5 text-xs text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
-                placeholder="Name (e.g. IndiGo 6E-123, Taj Hotel)"
-                maxLength={MAX_BOOKING_NAME_LEN}
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              />
-              <div className="flex gap-2">
+              <div>
+                <label htmlFor="booking-name" className="mb-1 block text-xs font-medium text-[var(--_fg)]">
+                  Booking name
+                </label>
                 <input
-                  className="input flex-1 rounded-lg border border-[var(--_border)] bg-[var(--_bg)] px-3 py-1.5 text-xs text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
-                  placeholder="Confirmation #"
-                  maxLength={MAX_BOOKING_REF_LEN}
-                  value={form.confirmation}
-                  onChange={(e) => setForm((f) => ({ ...f, confirmation: e.target.value }))}
-                />
-                <input
-                  type="date"
-                  className="input flex-1 rounded-lg border border-[var(--_border)] bg-[var(--_bg)] px-3 py-1.5 text-xs text-[var(--_fg)] focus:border-[var(--_primary)] focus:outline-none"
-                  value={form.date}
-                  onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+                  id="booking-name"
+                  className="input w-full rounded-lg border border-[var(--_border)] bg-[var(--_bg)] px-3 py-1.5 text-xs text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
+                  placeholder="e.g. IndiGo 6E-123, Taj Hotel"
+                  maxLength={MAX_BOOKING_NAME_LEN}
+                  value={form.name}
+                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 />
               </div>
-              <input
-                type="number"
-                className="input w-full rounded-lg border border-[var(--_border)] bg-[var(--_bg)] px-3 py-1.5 text-xs text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
-                placeholder="Amount (₹, optional)"
-                value={form.amount || ''}
-                onChange={(e) => setForm((f) => ({ ...f, amount: Number(e.target.value) }))}
-              />
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label htmlFor="booking-confirmation" className="mb-1 block text-xs font-medium text-[var(--_fg)]">
+                    Confirmation #
+                  </label>
+                  <input
+                    id="booking-confirmation"
+                    className="input w-full rounded-lg border border-[var(--_border)] bg-[var(--_bg)] px-3 py-1.5 text-xs text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
+                    placeholder="Optional"
+                    maxLength={MAX_BOOKING_REF_LEN}
+                    value={form.confirmation}
+                    onChange={(e) => setForm((f) => ({ ...f, confirmation: e.target.value }))}
+                  />
+                </div>
+                <div className="flex-1">
+                  <label htmlFor="booking-date" className="mb-1 block text-xs font-medium text-[var(--_fg)]">
+                    Date
+                  </label>
+                  <input
+                    id="booking-date"
+                    type="date"
+                    className="input w-full rounded-lg border border-[var(--_border)] bg-[var(--_bg)] px-3 py-1.5 text-xs text-[var(--_fg)] focus:border-[var(--_primary)] focus:outline-none"
+                    value={form.date}
+                    onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div>
+                <label htmlFor="booking-amount" className="mb-1 block text-xs font-medium text-[var(--_fg)]">
+                  Amount (₹)
+                </label>
+                <input
+                  id="booking-amount"
+                  type="number"
+                  className="input w-full rounded-lg border border-[var(--_border)] bg-[var(--_bg)] px-3 py-1.5 text-xs text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
+                  placeholder="Optional"
+                  value={form.amount || ''}
+                  onChange={(e) => setForm((f) => ({ ...f, amount: Number(e.target.value) }))}
+                />
+              </div>
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -174,7 +198,7 @@ export function BookingHub() {
 
 function BookingRow({ booking: b, onDelete }: { booking: Booking; onDelete: () => void }) {
   return (
-    <div className="group flex items-start gap-2 rounded-xl border border-[var(--_border)] bg-[var(--_card)] p-2.5">
+    <div className="flex items-start gap-2 rounded-xl border border-[var(--_border)] bg-[var(--_card)] p-2.5">
       <span className={['mt-0.5 flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-semibold', TYPE_COLORS[b.type]].join(' ')}>
         {TYPE_ICONS[b.type]}
       </span>
@@ -197,7 +221,7 @@ function BookingRow({ booking: b, onDelete }: { booking: Booking; onDelete: () =
       <button
         type="button"
         onClick={onDelete}
-        className="shrink-0 text-[var(--_muted-fg)] opacity-0 transition-opacity group-hover:opacity-100 hover:text-red-500"
+        className="shrink-0 rounded-md p-1 text-[var(--_muted-fg)] transition-colors hover:bg-red-500/10 hover:text-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/30 focus-visible:text-red-500"
         aria-label="Remove booking"
       >
         <Trash2 size={13} />

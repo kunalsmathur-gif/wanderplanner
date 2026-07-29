@@ -149,6 +149,13 @@ export function BookingLinksSection() {
       return diff > 0 ? diff : null
     } catch { return null }
   })()
+  const routeSummary = origin
+    ? (
+        <>
+          {origin} → <span className="font-medium text-[var(--_fg)]">{dest}</span>
+        </>
+      )
+    : <span className="font-medium text-[var(--_fg)]">{dest}</span>
 
   return (
     <div className="border-t border-[var(--_border)] pt-4 space-y-3">
@@ -158,7 +165,7 @@ export function BookingLinksSection() {
 
       {/* Pre-fill summary */}
       <p className="text-xs text-[var(--_muted-fg)] leading-relaxed">
-        {origin} → <span className="font-medium text-[var(--_fg)]">{dest}</span>
+        {routeSummary}
         {checkin && ` · ${checkin}`}
         {nightCount && ` (${nightCount}n)`}
         {` · ${adults} adult${adults > 1 ? 's' : ''}`}

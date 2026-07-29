@@ -1,23 +1,47 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { Loader2, MailCheck } from 'lucide-react'
 import { AuthLayout } from '@/components/common/AuthLayout'
 import { forgotPassword, authErrorMessage } from '@/lib/authApi'
 import { MAX_EMAIL_LEN } from '@/lib/limits'
 
+const AUTH_RETURN_TO_STORAGE_KEY = 'wp_auth_return_to'
+
+function saveAuthReturnTo(returnTo: string) {
+  try {
+    sessionStorage.setItem(AUTH_RETURN_TO_STORAGE_KEY, returnTo)
+  } catch {
+    // ignore
+  }
+}
+
 export default function ForgotPasswordPage() {
+  return (
+    <Suspense fallback={null}>
+      <ForgotPasswordForm />
+    </Suspense>
+  )
+}
+
+function ForgotPasswordForm() {
+  const searchParams = useSearchParams()
+  const returnTo = searchParams.get('returnTo') || '/'
   const [email, setEmail] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
+  const errorId = error ? 'forgot-password-error' : undefined
+  const loginHref = `/login?returnTo=${encodeURIComponent(returnTo)}`
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     setSubmitting(true)
     try {
+      saveAuthReturnTo(returnTo)
       await forgotPassword(email)
       // Backend always returns a generic success regardless of whether the
       // email exists, to prevent account enumeration — mirror that here.
@@ -38,7 +62,7 @@ export default function ForgotPasswordPage() {
             If an account exists for <strong className="text-[var(--_fg)]">{email}</strong>, we've sent a link to
             reset your password. It expires in 30 minutes.
           </p>
-          <Link href="/login" className="mt-2 text-sm font-semibold text-[var(--_primary)] hover:underline">
+          <Link href={loginHref} className="mt-2 text-sm font-semibold text-[var(--_primary)] hover:underline">
             Back to log in
           </Link>
         </div>
@@ -51,7 +75,7 @@ export default function ForgotPasswordPage() {
       title="Forgot your password?"
       subtitle="Enter your email and we'll send you a reset link."
       footer={
-        <Link href="/login" className="font-semibold text-[var(--_primary)] hover:underline">
+        <Link href={loginHref} className="font-semibold text-[var(--_primary)] hover:underline">
           Back to log in
         </Link>
       }
@@ -69,11 +93,17 @@ export default function ForgotPasswordPage() {
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
             maxLength={MAX_EMAIL_LEN}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={errorId}
             className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 px-3.5 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
           />
         </div>
 
-        {error && <p className="text-sm text-[var(--_destructive)]">{error}</p>}
+        {error && (
+          <p id={errorId} role="alert" className="text-sm text-[var(--_destructive)]">
+            {error}
+          </p>
+        )}
 
         <button
           type="submit"

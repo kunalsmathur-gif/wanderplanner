@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { useEffect, useState } from 'react'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
@@ -100,12 +101,15 @@ export function Column3Sidebar() {
               const body = (
                 <>
                   {tip.thumbnailUrl && (
-                    <img
-                      src={tip.thumbnailUrl}
-                      alt={tip.title}
-                      className="h-24 w-full object-cover"
-                      loading="lazy"
-                    />
+                    <div className="relative h-24 w-full overflow-hidden">
+                      <Image
+                        src={tip.thumbnailUrl}
+                        alt={tip.title}
+                        fill
+                        sizes="(max-width: 768px) 100vw, 360px"
+                        className="object-cover"
+                      />
+                    </div>
                   )}
                   <div className="p-3">
                     <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -160,4 +164,3 @@ function TipSkeletonCard() {
     </div>
   )
 }
-

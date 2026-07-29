@@ -32,6 +32,7 @@ function LoginForm() {
     ssoError === 'google_sso_failed' ? 'Google sign-in failed. Please try again or use email + password.' : null,
   )
   const [submitting, setSubmitting] = useState(false)
+  const errorId = error ? 'login-form-error' : undefined
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -75,6 +76,8 @@ function LoginForm() {
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
             maxLength={MAX_EMAIL_LEN}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={errorId}
             className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 px-3.5 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
           />
         </div>
@@ -84,7 +87,7 @@ function LoginForm() {
             <label htmlFor="password" className="block text-sm font-medium text-[var(--_fg)]">
               Password
             </label>
-            <Link href="/forgot-password" className="text-xs font-medium text-[var(--_primary)] hover:underline">
+            <Link href={`/forgot-password?returnTo=${encodeURIComponent(returnTo)}`} className="text-xs font-medium text-[var(--_primary)] hover:underline">
               Forgot password?
             </Link>
           </div>
@@ -97,12 +100,14 @@ function LoginForm() {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Your password"
               maxLength={MAX_PASSWORD_LEN}
-              className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 px-3.5 pr-10 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
+              aria-invalid={error ? true : undefined}
+              aria-describedby={errorId}
+              className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 px-3.5 pr-12 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none"
             />
             <button
               type="button"
               onClick={() => setShowPassword((v) => !v)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--_muted-fg)] hover:text-[var(--_fg)]"
+              className="absolute right-1 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center text-[var(--_muted-fg)] hover:text-[var(--_fg)]"
               aria-label={showPassword ? 'Hide password' : 'Show password'}
             >
               {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -110,7 +115,11 @@ function LoginForm() {
           </div>
         </div>
 
-        {error && <p className="text-sm text-[var(--_destructive)]">{error}</p>}
+        {error && (
+          <p id={errorId} role="alert" className="text-sm text-[var(--_destructive)]">
+            {error}
+          </p>
+        )}
 
         <button
           type="submit"

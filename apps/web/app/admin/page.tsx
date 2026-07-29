@@ -27,6 +27,13 @@ import {
 } from '@/lib/adminApi'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 
+const ACTIVITY_SERIES = [
+  { key: 'sessions', label: 'Sessions', stroke: '#3b82f6' },
+  { key: 'signups', label: 'Sign-ups', stroke: '#22c55e' },
+  { key: 'logins', label: 'Logins', stroke: '#f59e0b' },
+  { key: 'itineraries', label: 'Itineraries', stroke: '#a855f7' },
+] as const
+
 function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: string; value: string | number; sub?: string }) {
   return (
     <div className="rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-5">
@@ -41,6 +48,7 @@ function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: s
 }
 
 export default function AdminDashboardPage() {
+  const purgeConfirmationInputId = 'purge-users-confirmation'
   const status = useAuthStore((s) => s.status)
   const user = useAuthStore((s) => s.user)
 
@@ -276,20 +284,74 @@ export default function AdminDashboardPage() {
             </div>
 
             <h2 className="mt-8 text-base font-semibold text-[var(--_fg)]">Activity over time</h2>
-            <div className="mt-3 h-72 rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--_border)" />
-                  <XAxis dataKey="day" fontSize={12} />
-                  <YAxis fontSize={12} allowDecimals={false} />
-                  <Tooltip />
-                  <Legend />
-                  <Line type="monotone" dataKey="sessions" stroke="#3b82f6" strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="signups" stroke="#22c55e" strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="logins" stroke="#f59e0b" strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="itineraries" stroke="#a855f7" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
+            <div className="mt-3 rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-4">
+              <div className="overflow-x-auto">
+                <div className="h-72 min-w-[520px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--_border)" />
+                      <XAxis dataKey="day" fontSize={12} />
+                      <YAxis fontSize={12} allowDecimals={false} />
+                      <Tooltip />
+                      <Legend />
+                      {ACTIVITY_SERIES.map((series) => (
+                        <Line
+                          key={series.key}
+                          type="monotone"
+                          dataKey={series.key}
+                          stroke={series.stroke}
+                          strokeWidth={2}
+                          dot={false}
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              <p className="mt-3 text-xs text-[var(--_muted-fg)]">
+                On small screens, scroll horizontally for the full chart. The data table below lists the same values as
+                text.
+              </p>
+              <ul className="mt-3 grid gap-2 text-sm text-[var(--_fg)] sm:grid-cols-2">
+                {ACTIVITY_SERIES.map((series) => (
+                  <li key={series.key} className="flex items-center gap-2 rounded-lg border border-[var(--_border)] px-3 py-2">
+                    <span
+                      aria-hidden="true"
+                      className="h-0.5 w-6 shrink-0 rounded-full"
+                      style={{ backgroundColor: series.stroke }}
+                    />
+                    <span className="font-medium">{series.label}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="text-[var(--_muted-fg)]">
+                    <tr className="border-b border-[var(--_border)]">
+                      <th scope="col" className="px-3 py-2 font-medium">Day</th>
+                      {ACTIVITY_SERIES.map((series) => (
+                        <th key={series.key} scope="col" className="px-3 py-2 font-medium">
+                          {series.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {chartData.map((row) => (
+                      <tr key={row.day} className="border-b border-[var(--_border)] last:border-0">
+                        <th scope="row" className="px-3 py-2 font-medium text-[var(--_fg)]">
+                          {row.day}
+                        </th>
+                        {ACTIVITY_SERIES.map((series) => (
+                          <td key={series.key} className="px-3 py-2 text-[var(--_muted-fg)]">
+                            {row[series.key]}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             <div className="mt-10 border-t border-[var(--_border)] pt-6">
@@ -317,7 +379,11 @@ export default function AdminDashboardPage() {
                   <p className="text-sm font-medium text-[var(--_fg)]">
                     Type <span className="font-mono">{PURGE_PHRASE}</span> to confirm.
                   </p>
+                  <label htmlFor={purgeConfirmationInputId} className="block text-sm font-medium text-[var(--_fg)]">
+                    Confirmation phrase
+                  </label>
                   <input
+                    id={purgeConfirmationInputId}
                     type="text"
                     value={purgeText}
                     onChange={(e) => setPurgeText(e.target.value)}

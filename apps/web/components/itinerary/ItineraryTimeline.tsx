@@ -92,18 +92,14 @@ function ActivityCard({ item, isActive, onHover, onSelect }: {
 
   // Pick category badge from first tag
   const category = item.tags[0]?.replace(/_/g, ' ') ?? undefined
+  const extraTags = item.tags.slice(1)
+  const bookingHref = isSafeExternalUrl(item.booking_url) ? item.booking_url : null
+  const hasMetadataRow = extraTags.length > 0 || Boolean(videoHref) || Boolean(bookingHref)
 
   return (
     <div
       onMouseEnter={() => onHover(item.id)}
       onMouseLeave={() => onHover(null)}
-      onClick={() => onSelect(item.id)}
-      role="button"
-      tabIndex={0}
-      aria-label={`Show ${item.title} on the map`}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(item.id) }
-      }}
     >
       <PolaroidCard
         time={`${item.time_start} → ${item.time_end}`}
@@ -113,11 +109,11 @@ function ActivityCard({ item, isActive, onHover, onSelect }: {
         imageSrc={thumbnailUrl}
         videoHref={videoHref}
         isActive={isActive}
+        onClick={() => onSelect(item.id)}
       />
-      {/* Extra tags row */}
-      {item.tags.length > 1 && (
+      {hasMetadataRow && (
         <div className="-mt-1 mb-2 flex flex-wrap gap-1 px-1">
-          {item.tags.slice(1).map((tag) => (
+          {extraTags.map((tag) => (
             <span
               key={tag}
               className={
@@ -131,12 +127,21 @@ function ActivityCard({ item, isActive, onHover, onSelect }: {
               {tag === 'instaworthy' ? '📸 ' : tag === 'hidden_gem' ? '💎 ' : tag === 'pinned' ? '📌 ' : ''}{tag.replace(/_/g, ' ')}
             </span>
           ))}
-          {isSafeExternalUrl(item.booking_url) && (
+          {videoHref && (
             <a
-              href={item.booking_url}
+              href={videoHref}
               target="_blank"
               rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
+              className="rounded bg-[var(--_muted)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--_muted-fg)] hover:underline"
+            >
+              Watch →
+            </a>
+          )}
+          {bookingHref && (
+            <a
+              href={bookingHref}
+              target="_blank"
+              rel="noopener noreferrer"
               className="rounded bg-[var(--_primary)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--_primary)] hover:underline"
             >
               Book →
@@ -221,4 +226,3 @@ export function ItineraryTimeline() {
     </div>
   )
 }
-

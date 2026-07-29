@@ -162,7 +162,7 @@ export function ChatPanel() {
 
   return (
     <div
-      className="fixed bottom-24 right-6 z-[9998] flex w-[360px] flex-col overflow-hidden rounded-2xl border border-[var(--_border)] bg-[var(--_card)] shadow-2xl"
+      className="fixed inset-x-4 bottom-4 z-[9998] flex w-auto flex-col overflow-hidden rounded-2xl border border-[var(--_border)] bg-[var(--_card)] shadow-2xl sm:left-auto sm:right-6 sm:bottom-24 sm:w-[360px]"
       style={{ maxHeight: '540px' }}
     >
       {/* Header */}
