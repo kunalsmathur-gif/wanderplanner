@@ -152,6 +152,18 @@ class Settings(BaseSettings):
     # thousands (Delhi 77 -> 159, Bangkok 668).
     osm_prominence_radius_m: int = 15000
 
+    # How many district sub-articles to pull per hub city (scrapers/wikivoyage.py,
+    # issue #45). Big-city guides delegate their priced Eat/Sleep listings to
+    # per-district pages, so the parent alone under-reports what the guide
+    # actually documents. Live-measured 2026-07-29 with only the first FIVE
+    # districts: price-bearing chunks went Paris 28->85, Bangkok 17->44,
+    # Tokyo 11->26 and Delhi 8->61 (x7.6, the largest gain and an India
+    # destination). 8 is a deliberate compromise — the yield per district falls
+    # off well before a city's full list is exhausted (Paris has 21 non-redirect
+    # sub-pages, Tokyo 29), and each one costs an HTTP fetch plus an embedding
+    # pass at ingestion time. Set to 0 to disable district scraping entirely.
+    wikivoyage_max_district_subpages: int = 8
+
     # CORS
     allowed_origins: list[str] = ["http://localhost:3000"]
 

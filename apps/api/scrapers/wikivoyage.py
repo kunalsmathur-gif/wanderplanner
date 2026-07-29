@@ -37,6 +37,12 @@ WIKIVOYAGE_TITLE_OVERRIDES: dict[str, str] = {
 _MAX_FETCH_ATTEMPTS = 3
 _RETRY_BASE_DELAY_S = 5.0
 
+# Politeness gap between district sub-article fetches (issue #45). Short,
+# because these are cheap cached article reads on Wikimedia's own API and a
+# capped handful per destination — but non-zero, since this is the one loop in
+# this scraper that issues a burst rather than one or two requests.
+_DISTRICT_FETCH_DELAY_S = 0.4
+
 # Qualifiers used on Wikivoyage disambiguation pages that denote an
 # administrative region rather than a specific city/settlement — e.g.
 # "Oaxaca (state)" vs "Oaxaca (city)". Deprioritized in favor of the actual
@@ -139,7 +145,7 @@ async def _resolve_disambiguation(client: httpx.AsyncClient, title: str, destina
     return (non_region or matches)[0][1]
 
 
-def _parse_sections(html: str, destination: str, url: str) -> list[dict]:
+def _parse_sections(html: str, destination: str, url: str, district: str = "") -> list[dict]:
     soup = BeautifulSoup(html, "lxml")
     docs = []
     for h2 in soup.find_all("h2"):
@@ -179,8 +185,94 @@ def _parse_sections(html: str, destination: str, url: str) -> list[dict]:
                     text=chunk,
                     source_url=url,
                     source_name="Wikivoyage",
-                    extra={"section": section_id},
+                    # `destination` stays the parent city for district pages so
+                    # everything stays retrievable under one key; `district`
+                    # keeps the provenance visible.
+                    extra={"section": section_id, "district": district} if district
+                    else {"section": section_id},
                 ))
+    return docs
+
+
+async def _discover_district_subpages(client: httpx.AsyncClient, slug: str) -> list[str]:
+    """Titles of a hub city's district sub-articles, e.g. "Paris/11th
+    arrondissement" (issue #45).
+
+    🔴 **Enumerated by title prefix, deliberately NOT by parsing the parent
+    guide's "Districts" section.** Issue #45 proposed the latter; measured
+    live 2026-07-29, it finds nothing at all — Paris/Bangkok/Tokyo/London
+    return **zero** `/wiki/<City>/<District>` hrefs in their rendered HTML and
+    their Districts sections contain only `Special:Map` links. Wikivoyage
+    builds those lists through map/template markup, not plain article links.
+    The sub-pages themselves very much exist (Paris 21 non-redirect, Tokyo 29,
+    Bangkok 12, Delhi 6), so `list=allpages&apprefix=` is the mechanism that
+    actually works. A link-parsing implementation would have shipped, passed
+    its unit tests against a hand-written fixture, and silently ingested
+    nothing.
+
+    `apfilterredir=nonredirects` matters as much: Wikivoyage carries heavy
+    aliasing (`Paris/10th` -> `Paris/10th arrondissement`, and three spellings
+    of `Bangkok/Banglamphu`), so unfiltered enumeration would fetch, embed and
+    store the same district several times over.
+    """
+    limit = settings.wikivoyage_max_district_subpages
+    if limit <= 0:
+        return []
+    try:
+        resp = await client.get(
+            WIKIVOYAGE_API_URL,
+            params={
+                "action": "query",
+                "list": "allpages",
+                # Titles normalise underscores to spaces; send the space form.
+                "apprefix": f"{slug.replace('_', ' ')}/",
+                "apnamespace": "0",
+                "apfilterredir": "nonredirects",
+                "aplimit": str(max(limit, 50)),
+                "format": "json",
+            },
+        )
+        resp.raise_for_status()
+        pages = resp.json().get("query", {}).get("allpages", [])
+    except Exception as e:
+        logger.warning("Wikivoyage district discovery failed for %r: %s", slug, e)
+        return []
+    return [p["title"] for p in pages][:limit]
+
+
+async def _scrape_district_subpages(
+    client: httpx.AsyncClient, slug: str, destination: str
+) -> list[dict]:
+    """Fetch and parse a hub city's district sub-articles, returning chunks
+    tagged with the *parent* city as `destination`.
+
+    Best-effort per district, matching this module's contract everywhere else:
+    one 404 or timeout must not discard the districts already collected, nor
+    the parent article's own chunks.
+    """
+    titles = await _discover_district_subpages(client, slug)
+    if not titles:
+        return []
+
+    docs: list[dict] = []
+    for title in titles:
+        url = BASE_URL.format(destination=title.replace(" ", "_"))
+        try:
+            resp = await client.get(url)
+            resp.raise_for_status()
+        except Exception as e:
+            logger.warning("Wikivoyage district fetch failed for %r: %s", title, e)
+            continue
+        district = title.split("/", 1)[-1]
+        docs.extend(_parse_sections(resp.text, destination, url, district=district))
+        # Wikimedia asks for serial, unhurried access; this loop is the only
+        # place this scraper makes more than a couple of requests per run.
+        await asyncio.sleep(_DISTRICT_FETCH_DELAY_S)
+
+    if docs:
+        logger.info(
+            "%r: +%d chunks from %d district sub-articles", destination, len(docs), len(titles)
+        )
     return docs
 
 
@@ -227,6 +319,7 @@ async def scrape_wikivoyage(destination: str) -> list[dict]:
 
         docs = _parse_sections(resp.text, destination, url)
         if docs:
+            docs.extend(await _scrape_district_subpages(client, slug, destination))
             return docs
 
         # Zero usable chunks despite a 200 — worth the extra round-trip to
@@ -243,7 +336,11 @@ async def scrape_wikivoyage(destination: str) -> list[dict]:
         except Exception as e:
             logger.warning("Wikivoyage disambiguated fetch failed for %r -> %r: %s", destination, slug, e)
             return docs
-        return _parse_sections(resp.text, destination, url)
+        docs = _parse_sections(resp.text, destination, url)
+        # Districts are discovered from the *resolved* slug, so a destination
+        # that only reached its real guide via disambiguation still gets them.
+        docs.extend(await _scrape_district_subpages(client, slug, destination))
+        return docs
 
 
 async def ingest_wikivoyage(destination: str) -> int:

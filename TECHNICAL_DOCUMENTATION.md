@@ -1509,7 +1509,64 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.51.0 Changes (July 2026) — Wikivoyage district sub-article scraping for hub cities (#45)
+
+Suite **958 passed / 6 skipped** (`pytest tests/`), up 7 from v10.50.0's 951; ruff clean,
+mypy clean.
+
+Big-city guides delegate their priced Budget/Mid-range/Splurge listings to per-district
+sub-articles, so the parent guide alone under-reports what Wikivoyage actually documents.
+`scrapers/wikivoyage.py` now discovers and ingests those sub-articles, tagged with the
+**parent city** as `destination` (so everything stays retrievable under one key) plus a
+`district` field for provenance. Capped by `settings.wikivoyage_max_district_subpages`
+(default 8; `0` disables).
+
+🔴 **The mechanism in the issue would have silently ingested nothing, and this is the
+finding worth keeping.** Issue #45 specified detecting hub articles by parsing links out of
+the guide's "Districts" section. Measured live 2026-07-29: Paris, Bangkok, Tokyo and London
+render **zero** `/wiki/<City>/<District>` hrefs, and their Districts sections contain only
+`Special:Map` links — Wikivoyage builds those lists through map/template markup, not plain
+article links. The sub-pages exist in bulk regardless (Paris 21 non-redirect, Tokyo 29,
+Bangkok 12, Delhi 6), so discovery goes through `list=allpages&apprefix=<City>/` instead.
+**A link-parsing implementation would have shipped, passed unit tests written against a
+hand-made fixture, and quietly done nothing in production** — the same
+complete-but-wrong shape as v10.40.0's POI pool and v10.40.1's `0 comments ingested`.
+`test_discovery_uses_allpages_not_link_parsing` pins the mechanism so it can't regress
+back.
+
+`apfilterredir=nonredirects` is load-bearing, not incidental: Wikivoyage aliases districts
+heavily (`Paris/10th` → `Paris/10th arrondissement`; three spellings of
+`Bangkok/Banglamphu`), so unfiltered enumeration would fetch, embed and store the same
+district several times.
+
+**Live end-to-end through the real `scrape_wikivoyage()` at the default cap of 8** — chunks
+and price-bearing chunks, measured with `has_price_mention()`, the same way §A measured
+Jaipur:
+
+| destination | chunks | price-bearing | |
+|---|---|---|---|
+| Paris | 156 → **377** | 28 → **123** | ×4.4 |
+| Bangkok | 143 → **680** | 17 → **67** | ×3.9 |
+| Tokyo | 94 → **293** | 11 → **31** | ×2.8 |
+| Delhi | 64 → **312** | 8 → **65** | **×8.1** |
+| Jaipur (control) | 141 → 141 | 74 → 74 | 0 districts, unchanged |
+
+**Delhi gains the most of any city measured**, which matters for an India-first product,
+and Jaipur is the control proving non-hub destinations pay nothing — zero extra article
+fetches, asserted in `test_non_hub_city_fetches_no_extra_articles`.
+
+⚠️ **The issue's stated motivation was already stale when it was picked up.** It says these
+cities produce "zero food/stay pricing data"; they no longer do — the §A `<section>` parser
+fix (`9fa3106`) already got Paris to 28 and Bangkok to 17 price-bearing chunks. The
+*opportunity* was real and much larger than the stated symptom, but the premise as written
+was out of date. Re-measure before trusting a filed motivation.
+
+**Not done:** this is ingestion-time only, so it changes nothing until destinations are
+re-ingested — a data run that has **not** been performed.
+
+---
 
 ### v10.50.0 Changes (July 2026) — unified ingestion metadata schema (#33), India itinerary seeds (#47), and #36 closed as already-built
 

@@ -815,11 +815,32 @@ is a third data run. ✅ **The "must not overlap the prominence run" constraint 
 run finished at `0 pending` on 2026-07-27 (item 2), so this can be scheduled freely. Re-measure food
 grounding afterwards — Jaipur should produce a real grounded figure for the first time.
 
-### B. Big-city guides still yield nothing — district sub-articles
+### B. ✅ Big-city guides — district sub-articles — DONE 2026-07-29 (v10.51.0, issue #45)
 
-Paris and Bangkok gained chunks but no food amounts: their guides delegate listings to district
-sub-pages (`Paris/Le_Marais`, `Paris/1st_arrondissement`, …) which the scraper never fetches. This
-is the remaining half of the Wikivoyage story and is what unblocks the big destinations.
+Original note: "Paris and Bangkok gained chunks but no food amounts: their guides delegate listings
+to district sub-pages (`Paris/Le_Marais`, `Paris/1st_arrondissement`, …) which the scraper never
+fetches."
+
+Shipped in `scrapers/wikivoyage.py` via `_discover_district_subpages()` +
+`_scrape_district_subpages()`, capped by `settings.wikivoyage_max_district_subpages` (default 8,
+`0` disables). Full write-up in `TECHNICAL_DOCUMENTATION.md` §14 v10.51.0. **Three corrections to
+the note above, all measured rather than assumed:**
+
+1. 🔴 **The proposed detection mechanism does not work.** Both this note and issue #45 assumed the
+   parent guide *links* its district sub-pages. It does not — Paris/Bangkok/Tokyo/London render
+   **zero** `/wiki/<City>/<District>` hrefs, and their Districts sections contain only
+   `Special:Map` links. Discovery goes through `list=allpages&apprefix=<City>/` instead. A
+   link-parsing build would have passed fixture-based unit tests and ingested nothing in prod.
+2. ⚠️ **"Yield nothing" was already stale.** The §A `<section>` fix (`9fa3106`) had already taken
+   Paris to 28 and Bangkok to 17 price-bearing chunks. The upside was real and *larger* than this
+   note claimed, but the stated symptom had been fixed before the issue was picked up.
+3. **`Paris/Le_Marais` does not exist** — verified MISSING via the API. `Paris/1st arrondissement`
+   and `Bangkok/Sukhumvit` do. Don't hard-code example titles copied out of a note.
+
+Live at the default cap, price-bearing chunks: Paris 28→123, Bangkok 17→67, Tokyo 11→31, **Delhi
+8→65 (×8.1, the largest gain and an India destination)**; Jaipur unchanged at 74 with 0 districts,
+the non-hub control. ⚠️ **Ingestion-time only — the re-ingestion data run has NOT been done**, so
+none of this is live on the cluster yet.
 
 ### C. ✅ YouTube transcripts + video descriptions — SHIPPED v10.41.0 (2026-07-27)
 
