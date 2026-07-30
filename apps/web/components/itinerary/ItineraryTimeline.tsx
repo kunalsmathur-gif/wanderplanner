@@ -2,14 +2,13 @@
 
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useAppStore } from '@/store/appStore'
-import { useTripConfigStore } from '@/store/tripConfigStore'
 import { PolaroidCard } from '@/components/itinerary/PolaroidCard'
+import { ItineraryFeedbackWidget } from '@/components/itinerary/ItineraryFeedbackWidget'
 import type { ItineraryItem } from '@/types'
 import { useEffect, useState } from 'react'
 import { isSafeExternalUrl } from '@/lib/url-safety'
 import { formatDayDate } from '@/lib/format'
 import { logClientEvent } from '@/lib/analyticsBeacon'
-import { createItineraryFeedback, updateItineraryFeedback, type FeedbackSentiment } from '@/lib/api'
 
 const thumbnailCache = new Map<string, string | null>()
 const videoIdCache   = new Map<string, string | null>()
@@ -75,50 +74,9 @@ function useThumbnail(query?: string, fallbackVideoId?: string) {
   return { thumbnailUrl, videoId }
 }
 
-// A place-level thumbs-up/down reaction. Fire-and-forget on first click
-// (creates a feedback row scoped to this day/place); clicking the other
-// thumb afterwards PATCHes the same row's sentiment rather than creating a
-// duplicate. Clicking the currently-active thumb again is a no-op — this is
-// a reaction, not a toggle-off control, keeping the flow single-purpose.
-function useItemFeedback(dayIndex: number, item: ItineraryItem) {
-  const config = useTripConfigStore((s) => s.config)
-  const [feedbackId, setFeedbackId] = useState<string | null>(null)
-  const [vote, setVote] = useState<FeedbackSentiment | null>(null)
-  const [submitting, setSubmitting] = useState(false)
-
-  async function react(sentiment: 'thumbs_up' | 'thumbs_down') {
-    if (submitting || vote === sentiment) return
-    setSubmitting(true)
-    try {
-      if (feedbackId) {
-        await updateItineraryFeedback(feedbackId, sentiment)
-        setVote(sentiment)
-      } else {
-        const result = await createItineraryFeedback({
-          trip_config_snapshot: config as unknown as Record<string, unknown>,
-          scope: 'place',
-          day_index: dayIndex,
-          place_ref: item.title,
-          sentiment,
-        })
-        setFeedbackId(result.id)
-        setVote(sentiment)
-      }
-    } catch {
-      // Silently ignored — a failed reaction isn't worth surfacing an error
-      // for on what's meant to be a low-friction, ambient control.
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return { vote, react }
-}
-
-function ActivityCard({ item, isActive, dayIndex, onHover, onSelect }: {
+function ActivityCard({ item, isActive, onHover, onSelect }: {
   item: ItineraryItem
   isActive: boolean
-  dayIndex: number
   onHover: (id: string | null) => void
   onSelect: (id: string) => void
 }) {
@@ -126,7 +84,6 @@ function ActivityCard({ item, isActive, dayIndex, onHover, onSelect }: {
     item.youtube_search_query,
     item.youtube_video_id || undefined,
   )
-  const { vote, react } = useItemFeedback(dayIndex, item)
 
   const videoHref = videoId
     ? `https://youtube.com/watch?v=${videoId}`
@@ -189,34 +146,6 @@ function ActivityCard({ item, isActive, dayIndex, onHover, onSelect }: {
             Book →
           </a>
         )}
-        <span className="ml-auto flex items-center gap-1">
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); react('thumbs_up') }}
-            aria-label="This was a good recommendation"
-            aria-pressed={vote === 'thumbs_up'}
-            className={
-              vote === 'thumbs_up'
-                ? 'rounded bg-[var(--_success)]/15 px-1.5 py-0.5 text-[11px] text-[var(--_success)]'
-                : 'rounded px-1.5 py-0.5 text-[11px] text-[var(--_muted-fg)] hover:bg-[var(--_muted)]'
-            }
-          >
-            👍
-          </button>
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); react('thumbs_down') }}
-            aria-label="This missed the mark"
-            aria-pressed={vote === 'thumbs_down'}
-            className={
-              vote === 'thumbs_down'
-                ? 'rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-600 dark:bg-red-950/40 dark:text-red-400'
-                : 'rounded px-1.5 py-0.5 text-[11px] text-[var(--_muted-fg)] hover:bg-[var(--_muted)]'
-            }
-          >
-            👎
-          </button>
-        </span>
       </div>
     </div>
   )
@@ -279,7 +208,6 @@ export function ItineraryTimeline() {
               key={item.id}
               item={item}
               isActive={item.id === hoveredItemId}
-              dayIndex={activeDay}
               onHover={setHoveredItem}
               onSelect={handleSelectItem}
             />
@@ -292,6 +220,13 @@ export function ItineraryTimeline() {
             <p className="text-xs text-amber-700 dark:text-amber-400">{warning.message}</p>
           </div>
         ))}
+
+        {/* Itinerary-wide (not per-item) feedback — one vote per generated
+            plan, always visible in the centre section regardless of which
+            day is active. */}
+        <div className="mt-4">
+          <ItineraryFeedbackWidget />
+        </div>
       </div>
     </div>
   )

@@ -47,7 +47,7 @@ export function PdfDownloadButton() {
   if (!days.length) return (
     <button
       disabled
-      className="w-full h-9 rounded-lg text-xs font-semibold bg-[var(--_muted)] text-[var(--_muted-fg)] cursor-not-allowed"
+      className="btn btn-primary h-11 w-full cursor-not-allowed text-sm opacity-45"
     >
       ⬇️ Download Itinerary PDF
     </button>
@@ -59,10 +59,8 @@ export function PdfDownloadButton() {
         onClick={handleDownload}
         disabled={generating}
         className={[
-          'w-full h-9 rounded-lg text-xs font-semibold transition-all',
-          generating
-            ? 'bg-[var(--_muted)] text-[var(--_muted-fg)] cursor-not-allowed'
-            : 'bg-[var(--_muted)] text-[var(--_fg)] hover:bg-[var(--_border)]/40 border border-[var(--_border)]',
+          'btn btn-primary h-11 w-full text-sm shadow-md shadow-[var(--_primary)]/20',
+          generating ? 'cursor-not-allowed' : '',
         ].join(' ')}
       >
         {generating ? 'Preparing PDF…' : '⬇️ Download Itinerary PDF'}

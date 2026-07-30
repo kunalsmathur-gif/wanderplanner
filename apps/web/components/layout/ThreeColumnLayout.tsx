@@ -13,6 +13,7 @@ import { MapWrapper } from '@/components/map/MapWrapper'
 import { ShareButton } from '@/components/common/ShareButton'
 import { ThemeToggle } from '@/components/common/ThemeToggle'
 import { UserMenu } from '@/components/common/UserMenu'
+import { TripFeedbackPopup } from '@/components/itinerary/TripFeedbackPopup'
 
 // ── Fallback-tier disclosure banner ───────────────────────────────────────────
 // generation_tier !== 'live' means the backend degraded to cache / RAG
@@ -241,6 +242,7 @@ export function ThreeColumnLayout() {
     <>
       {mobileContent}
       {desktopContent}
+      <TripFeedbackPopup />
     </>
   )
 }

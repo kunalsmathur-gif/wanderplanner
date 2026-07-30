@@ -6,6 +6,7 @@ import { createAgentLead } from '@/lib/api'
 import { formatCurrency } from '@/lib/format'
 import { useAuthStore } from '@/store/authStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
+import { useFeedbackPromptStore } from '@/store/feedbackPromptStore'
 
 const CONCIERGE_WHATSAPP_NUMBER = process.env.NEXT_PUBLIC_AGENT_CONCIERGE_WHATSAPP ?? ''
 
@@ -87,6 +88,9 @@ export function AgentHandoffCard() {
       if (nextUrl) {
         window.open(nextUrl, '_blank', 'noopener,noreferrer')
       }
+      // Booking via a local expert is a strong "I'm satisfied enough to act
+      // on this plan" signal — a natural moment to ask for a reaction too.
+      useFeedbackPromptStore.getState().request('book')
     } catch {
       setState('error')
       setError('Couldn’t send your request just now. Please retry.')
@@ -94,7 +98,7 @@ export function AgentHandoffCard() {
   }
 
   return (
-    <section className="rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-4">
+    <section className="rounded-2xl border-2 border-[var(--_accent)]/40 bg-gradient-to-br from-[var(--_accent)]/8 to-[var(--_card)] p-4 shadow-md shadow-[var(--_accent)]/10">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-[var(--_muted-fg)]">
@@ -153,7 +157,7 @@ export function AgentHandoffCard() {
             type="button"
             onClick={handleSubmit}
             disabled={state === 'loading' || !email.trim()}
-            className="btn btn-accent w-full rounded-xl"
+            className="btn btn-accent h-11 w-full rounded-xl text-sm shadow-md shadow-[var(--_accent)]/20"
           >
             {state === 'loading' ? 'Sending…' : 'Get Quotation'}
           </button>

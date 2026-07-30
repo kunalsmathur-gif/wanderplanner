@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import type { ItineraryDay, ExpenseBreakdown, GenerationTier } from '@/types'
+import { useItineraryFeedbackStore } from '@/store/itineraryFeedbackStore'
+import { useFeedbackPromptStore } from '@/store/feedbackPromptStore'
 
 type GenerationStatus = 'idle' | 'loading' | 'success' | 'error'
 
@@ -51,14 +53,21 @@ export const useItineraryStore = create<ItineraryStore>((set) => ({
   expenseBreakdown: null,
   generationTier: 'live',
 
-  setDays: (days, score, breakdown, generationTier) =>
+  setDays: (days, score, breakdown, generationTier) => {
+    // A fresh itinerary deserves its own feedback opportunity — clear any
+    // vote/prompt state left over from the previous one so the widget/popup
+    // don't show a stale "already answered" state for a plan the user
+    // hasn't actually reacted to yet.
+    useItineraryFeedbackStore.getState().reset()
+    useFeedbackPromptStore.getState().resetForNewItinerary()
     set({
       days,
       alignmentScore: score,
       status: 'success',
       expenseBreakdown: breakdown ?? null,
       generationTier: generationTier ?? 'live',
-    }),
+    })
+  },
   setActiveDay: (activeDay) => set({ activeDay }),
   setHoveredItem: (hoveredItemId) => set({ hoveredItemId }),
   setStatus: (status) => set({ status }),

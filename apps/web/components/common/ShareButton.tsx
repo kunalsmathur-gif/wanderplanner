@@ -5,6 +5,7 @@ import { Share2, Check, Loader2, Copy } from 'lucide-react'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useWizardChatStore } from '@/store/wizardChatStore'
+import { useFeedbackPromptStore } from '@/store/feedbackPromptStore'
 import { shareTrip } from '@/lib/api'
 
 export function ShareButton() {
@@ -12,6 +13,10 @@ export function ShareButton() {
   const [shareUrl, setShareUrl] = useState<string | null>(null)
 
   async function handleShare() {
+    // Sharing means the user is confident enough in this plan to send it
+    // to someone else — ask for a reaction on the way out.
+    useFeedbackPromptStore.getState().request('share')
+
     if (shareUrl) {
       navigator.clipboard.writeText(window.location.origin + shareUrl)
       setStatus('copied')

@@ -8,8 +8,8 @@ import { useAppStore } from '@/store/appStore'
 import { CurrencyWidget } from '@/components/dashboard/CurrencyWidget'
 import { formatCurrency } from '@/lib/format'
 import { ExpenseBreakupCard } from '@/components/dashboard/ExpenseBreakupCard'
-import { BookingHub } from '@/components/dashboard/BookingHub'
 import { AgentHandoffCard } from '@/components/itinerary/AgentHandoffCard'
+import { useFeedbackPromptStore } from '@/store/feedbackPromptStore'
 
 const PdfDownloadButton = dynamic(
   () => import('@/components/pdf/PdfDownloadButton').then((m) => ({ default: m.PdfDownloadButton })),
@@ -37,9 +37,19 @@ export function Column1Metrics() {
   const hops = useTripConfigStore((state) => state.config.hops)
   const days = useItineraryStore((state) => state.days)
   const openWizard = useAppStore((state) => state.openWizard)
+  const requestFeedbackPrompt = useFeedbackPromptStore((state) => state.request)
 
   const totalActivities = days.reduce((sum, day) => sum + day.items.length, 0)
   void totalActivities // used only for potential future re-add
+
+  // "Edit Trip" is the closest real analog to "navigating back" in this UI
+  // (there's no literal back button) — reopening the wizard means leaving
+  // the current itinerary view, so it's the right moment to ask for a
+  // reaction on the plan the user is about to move away from.
+  function handleEditTrip() {
+    if (days.length > 0) requestFeedbackPrompt('back')
+    openWizard()
+  }
 
   // Fallback chain so the metrics panel never shows a bare "—": prefer the
   // resolved city, then list multi-city stops, then fall back to the country
@@ -64,7 +74,7 @@ export function Column1Metrics() {
       </div>
 
       <div className="space-y-2 pt-1">
-        <button onClick={openWizard} type="button" className="btn btn-ghost w-full">
+        <button onClick={handleEditTrip} type="button" className="btn btn-ghost w-full">
           <Edit2 size={14} />
           Edit Trip
         </button>
@@ -74,17 +84,16 @@ export function Column1Metrics() {
       {hasDestination && (
         <>
           <div className="border-t border-[var(--_border)] pt-3">
+            <AgentHandoffCard />
+          </div>
+          <div className="border-t border-[var(--_border)] pt-3">
             <ExpenseBreakupCard />
           </div>
           <div className="border-t border-[var(--_border)] pt-3">
             <CurrencyWidget baseCurrency={budget.currency} />
           </div>
-          <div className="border-t border-[var(--_border)] pt-3">
-            <AgentHandoffCard />
-          </div>
         </>
       )}
-      <BookingHub />
     </div>
   )
 }

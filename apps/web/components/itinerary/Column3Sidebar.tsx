@@ -2,7 +2,6 @@
 
 import Image from 'next/image'
 import { useEffect, useState } from 'react'
-import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useWizardChatStore } from '@/store/wizardChatStore'
 import { getTravelTips, type TravelTip } from '@/lib/api'
@@ -10,11 +9,9 @@ import { logClientEvent } from '@/lib/analyticsBeacon'
 import { MapWrapper } from '@/components/map/MapWrapper'
 import { BestTimeWidget } from '@/components/dashboard/BestTimeWidget'
 import { BookingLinksSection } from '@/components/itinerary/BookingLinksSection'
-import { ItineraryFeedbackFlag } from '@/components/itinerary/ItineraryFeedbackFlag'
+import { BookingHub } from '@/components/dashboard/BookingHub'
 
 export function Column3Sidebar() {
-  const days = useItineraryStore((state) => state.days)
-  const activeDay = useItineraryStore((state) => state.activeDay)
   const collectedLabels = useWizardChatStore((state) => state.collectedLabels)
   const configDestination = useTripConfigStore((state) => state.config.destination?.city ?? '')
   const destinationCountry = useTripConfigStore((state) => state.config.destination_country ?? '')
@@ -24,8 +21,6 @@ export function Column3Sidebar() {
   const destination = collectedLabels.destination || configDestination || destinationCountry
   const [tips, setTips] = useState<TravelTip[]>([])
   const [loadingTips, setLoadingTips] = useState(false)
-
-  const day = days[activeDay]
 
   useEffect(() => {
     let cancelled = false
@@ -77,11 +72,14 @@ export function Column3Sidebar() {
       )}
 
       {destination && (
-        <div className="space-y-3 border-t border-[var(--_border)] pt-2">
+        <div className="border-t border-[var(--_border)] pt-2">
           <BookingLinksSection />
-          {day && <ItineraryFeedbackFlag />}
         </div>
       )}
+
+      <div className="border-t border-[var(--_border)] pt-2">
+        <BookingHub />
+      </div>
 
       <div>
         <h4 className="mb-2 text-xs font-semibold uppercase tracking-widest text-[var(--_muted-fg)]">

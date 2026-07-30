@@ -8,6 +8,7 @@ import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useWizardChatStore } from '@/store/wizardChatStore'
 import { useAuthStore } from '@/store/authStore'
+import { useFeedbackPromptStore } from '@/store/feedbackPromptStore'
 import { wizardChat } from '@/lib/api'
 import { streamItinerary, checkFeasibility } from '@/lib/api'
 import { savePendingGeneration, getPendingGeneration, clearPendingGeneration } from '@/lib/pendingGeneration'
@@ -681,6 +682,13 @@ export function LLMWizard() {
       savePendingGeneration(fullConfig)
       router.push(`/signup?returnTo=${encodeURIComponent('/')}`)
       return
+    }
+
+    // Regenerating replaces whatever itinerary is currently on screen —
+    // if one exists, ask for a reaction on it before it's gone. A brand
+    // new (first-ever) generation has nothing to react to yet.
+    if (useItineraryStore.getState().days.length > 0) {
+      useFeedbackPromptStore.getState().request('generate')
     }
 
     startGeneration(fullConfig)
