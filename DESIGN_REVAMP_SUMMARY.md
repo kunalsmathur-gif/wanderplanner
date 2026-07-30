@@ -258,3 +258,34 @@ New consumer-facing feedback surface, built entirely on existing design tokens �
 ### Regression + performance verification
 - **Backend:** full pytest suite **1006 passed / 6 skipped**, 0 failed.
 - **Frontend:** existing Playwright e2e suite (`apps/web/e2e/wizard.spec.ts`) **5/6 passed** — the one failure is a pre-existing, unrelated flake on the landing page (anonymous `/api/auth/me` 401 tripping a "no console errors" assertion), not touched by this change since the new components only render inside the itinerary view.
+
+## 🧩 Component Updates (July 30, 2026) — Dashboard panel reorder, CTA prominence, itinerary-wide feedback redesign
+
+Two back-to-back review passes on the itinerary dashboard's left/right panels, both live-tested on `localhost:3000` before commit.
+
+### Round 1 — Left panel restructure
+- **Compare Destinations hidden.** Removed the entry-point button from `Column1Metrics.tsx` only — `ComparisonPanel.tsx`, the `step3View` state machine, and `ThreeColumnLayout.tsx`'s conditional rendering are all left fully intact. Since nothing else calls `setStep3View('comparison')`, the feature is unreachable but trivially restorable (re-add the button) rather than deleted outright.
+- **"Download PDF" → "Download Itinerary PDF"** (`PdfDownloadButton.tsx`, both button-text variants).
+- **Trip Metrics condensed from 3 stacked rows to 1 row** — `Column1Metrics.tsx`'s `MetricRow` replaced with a `MetricCell` rendered 3-across (Destination / Budget / Days) inside a single bordered strip.
+- **"Expense Breakup" → "Estimated Expenses"**, and the accordion now defaults to **collapsed** (`ExpenseBreakupCard.tsx`'s `useState(true)` → `useState(false)`) — expand-on-demand instead of always-open.
+- **Local Expert Handoff → "Local Expert Help"**, moved from the right sidebar (`Column3Sidebar.tsx`) into the left panel (`Column1Metrics.tsx`), positioned after Estimated Expenses; CTA renamed **"Get It Booked" → "Get Quotation"** (`AgentHandoffCard.tsx`).
+- **My Bookings moved below Local Expert Help** in the left panel (`BookingHub` reordered in `Column1Metrics.tsx`).
+
+### Round 2 — CTA prominence + feedback overhaul (same day, follow-up review)
+- **PDF download and Local Expert Help promoted to the page's two primary CTAs** — `PdfDownloadButton.tsx` restyled to `.btn-primary`, taller (`h-11`), with a brand-colored shadow; `AgentHandoffCard.tsx`'s section wrapper gained a 2px accent border, subtle gradient background, and shadow, with its CTA button enlarged to match.
+- **Local Expert Help moved above Estimated Expenses** (reversing Round 1's ordering, per this round's explicit direction) in `Column1Metrics.tsx`.
+- **My Bookings moved out of the left panel entirely, into the right sidebar** (`Column3Sidebar.tsx`), rendered below `BookingLinksSection.tsx`'s "🔗 Book This Trip" — unconditional (not gated on a resolved destination), matching its original always-visible behavior.
+- **Per-item thumbs up/down replaced with a single itinerary-wide vote.** The previous design (👍/👎 on every `ActivityCard`, an unused `useItemFeedback` hook per card, plus a separate `ItineraryFeedbackFlag.tsx` "missed the mark" link in the sidebar) asked for a reaction far too often and, per direct user feedback, felt "completely broken." Replaced with:
+  - `store/itineraryFeedbackStore.ts` — single source of truth for the vote/note/submission state (`idle → awaiting_note (on 👎) → loading → sent/error`), shared by both surfaces below so a vote given in one isn't re-asked in the other.
+  - `store/feedbackPromptStore.ts` — tracks whether the dismissible popup has been shown/interacted-with this itinerary session (latches after first submit or dismiss, so it fires at most once per itinerary).
+  - `ItineraryFeedbackWidget.tsx` — persistent inline "Was this itinerary helpful?" 👍/👎, rendered at the bottom of the centre itinerary section.
+  - `TripFeedbackPopup.tsx` — dismissible popup, fixed bottom-right, rendered globally in `ThreeColumnLayout.tsx`. Triggered from four "leaving/acting on this plan" moments: **Edit Trip** (`Column1Metrics.tsx` — the closest real analog to "back," since no literal back button exists in this UI), **Generate/regenerate** (`LLMWizard.tsx::handleGenerate`, gated so a brand-new first generation with nothing to react to yet doesn't prompt), **Get Quotation** (`AgentHandoffCard.tsx::handleSubmit`), and **Share** (`ShareButton.tsx::handleShare`).
+  - Thumbs-down on either surface asks an optional "What went wrong?" free-text note before submitting (`sentiment: "thumbs_down"`, `note`).
+  - Both feedback stores reset automatically on every freshly generated itinerary (`itineraryStore.ts::setDays`), so a new plan gets its own clean feedback opportunity rather than inheriting the prior one's "already voted"/"already dismissed" state.
+  - `ItineraryFeedbackFlag.tsx` deleted (fully superseded); `ItineraryTimeline.tsx` had its `useItemFeedback` hook and per-card 👍/👎 buttons removed entirely.
+  - No backend changes — `POST/PATCH /api/itinerary-feedback` already supported `scope: "itinerary"` and `sentiment: "thumbs_up"|"thumbs_down"`; this was a pure frontend re-architecture. See `docs/system-design.md` §9C for the full before/after data-flow writeup.
+
+### Regression + performance verification
+- **Frontend:** `tsc --noEmit` clean across both rounds; `next build` clean (all 14 routes compiled) after each round.
+- **Backend:** untouched — no `apps/api` changes in either round.
+- Live-tested on `localhost:3000` (`next dev`) before commit, per explicit request.
