@@ -11,6 +11,7 @@ import pytest
 from scrapers.youtube_narration import (
     _CHUNK_CHARS,
     _narration_chunks,
+    destinations_missing_transcripts,
     fetch_video_descriptions,
     ingest_youtube_narration,
     known_video_ids_sync,
@@ -230,3 +231,66 @@ class TestPriceCollectionWiring:
 
         import services.gems as gems
         assert "youtube_narration" not in inspect.getsource(gems)
+
+
+class TestDestinationsMissingTranscripts:
+    """Feeds the scheduler's slow drip-retry job (core/scheduler.py::
+    _retry_youtube_narration_transcripts, issue #46 follow-up) — must find
+    exactly the destinations whose narration points are description-only."""
+
+    def _point(self, destination, source):
+        p = MagicMock()
+        p.payload = {"destination": destination, "source": source}
+        return p
+
+    @pytest.mark.asyncio
+    async def test_finds_description_only_destinations(self):
+        points = [
+            self._point("Jaipur", "youtube_description"),
+            self._point("Jaipur", "youtube_description"),
+            self._point("Paris", "youtube_transcript"),
+            self._point("Paris", "youtube_description"),
+        ]
+        fake_client = MagicMock()
+        fake_client.scroll.return_value = (points, None)
+
+        with patch("scrapers.youtube_narration.get_qdrant", return_value=fake_client):
+            missing = await destinations_missing_transcripts()
+
+        assert missing == ["Jaipur"]
+
+    @pytest.mark.asyncio
+    async def test_destination_with_any_transcript_chunk_is_not_missing(self):
+        points = [
+            self._point("Tokyo", "youtube_transcript"),
+            self._point("Tokyo", "youtube_description"),
+        ]
+        fake_client = MagicMock()
+        fake_client.scroll.return_value = (points, None)
+
+        with patch("scrapers.youtube_narration.get_qdrant", return_value=fake_client):
+            missing = await destinations_missing_transcripts()
+
+        assert missing == []
+
+    @pytest.mark.asyncio
+    async def test_no_narration_at_all_returns_empty(self):
+        fake_client = MagicMock()
+        fake_client.scroll.return_value = ([], None)
+
+        with patch("scrapers.youtube_narration.get_qdrant", return_value=fake_client):
+            missing = await destinations_missing_transcripts()
+
+        assert missing == []
+
+    @pytest.mark.asyncio
+    async def test_paginates_across_multiple_scroll_pages(self):
+        page1 = ([self._point("A", "youtube_description")], "cursor-1")
+        page2 = ([self._point("B", "youtube_transcript")], None)
+        fake_client = MagicMock()
+        fake_client.scroll.side_effect = [page1, page2]
+
+        with patch("scrapers.youtube_narration.get_qdrant", return_value=fake_client):
+            missing = await destinations_missing_transcripts()
+
+        assert missing == ["A"]

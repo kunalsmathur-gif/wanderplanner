@@ -333,3 +333,43 @@ async def ingest_youtube_narration(destination: str) -> int:
         destination, len(points), n_desc, len(points) - n_desc, len(videos),
     )
     return len(points)
+
+
+async def destinations_missing_transcripts() -> list[str]:
+    """Destinations whose stored `youtube_narration` points are
+    description-only — i.e. every transcript fetch failed for that
+    destination's videos.
+
+    In practice this almost always means a YouTube transcript-endpoint IP
+    block hit mid-run (observed 2026-07-30: a 172-destination backfill burst
+    got blocked after ~70 destinations, and even a single retry burst
+    re-triggered the block within 2-3 destinations). Descriptions still
+    landed via the separate, unrelated `videos.list` path, so these
+    destinations are NOT "no docs" — they're specifically missing the
+    higher-value transcript source. Used by the scheduler's slow drip-retry
+    job (`core/scheduler.py::_retry_youtube_narration_transcripts`) rather
+    than the one-time full-backfill script
+    (`scripts/ingest_youtube_narration.py`), since retrying transcripts is
+    free but must be done in a small trickle, not a full-corpus burst, to
+    avoid re-triggering the same block.
+    """
+    client = get_qdrant()
+    has_transcript: set[str] = set()
+    has_narration: set[str] = set()
+    offset = None
+    while True:
+        points, offset = client.scroll(
+            collection_name=settings.qdrant_collection_youtube_narration,
+            limit=500, with_payload=["destination", "source"], with_vectors=False, offset=offset,
+        )
+        for point in points:
+            payload = point.payload or {}
+            destination = payload.get("destination")
+            if not destination:
+                continue
+            has_narration.add(destination)
+            if payload.get("source") == "youtube_transcript":
+                has_transcript.add(destination)
+        if offset is None:
+            break
+    return sorted(has_narration - has_transcript)

@@ -162,3 +162,52 @@ class TestRefreshYoutubeComments:
         async with session_maker() as db:
             assert (await db.get(DestinationIngestionState, "Broken")).youtube_last_ingested_at is None
             assert (await db.get(DestinationIngestionState, "Fine")).youtube_last_ingested_at is not None
+
+
+class TestRetryYoutubeNarrationTranscripts:
+    """Tests for the slow drip-retry job (issue #46 follow-up) — retries a
+    small batch of transcript-missing destinations on a short cadence rather
+    than a full-corpus burst, since a burst reliably re-triggers the YouTube
+    IP block that caused the gap in the first place."""
+
+    @pytest.mark.asyncio
+    async def test_nothing_missing_is_a_clean_noop(self):
+        with patch("scrapers.youtube_narration.destinations_missing_transcripts",
+                   new=AsyncMock(return_value=[])), \
+             patch("scrapers.youtube_narration.ingest_youtube_narration", new=AsyncMock()) as mock_ingest:
+            await scheduler._retry_youtube_narration_transcripts()
+        mock_ingest.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_respects_the_small_batch_cap(self):
+        missing = [f"Dest{i}" for i in range(10)]
+        with patch("scrapers.youtube_narration.destinations_missing_transcripts",
+                   new=AsyncMock(return_value=missing)), \
+             patch("core.scheduler.settings.youtube_narration_transcript_retry_batch_size", 3), \
+             patch("scrapers.youtube_narration.ingest_youtube_narration",
+                   new=AsyncMock(return_value=10)) as mock_ingest:
+            await scheduler._retry_youtube_narration_transcripts()
+        assert mock_ingest.await_count == 3
+        retried = [call.args[0] for call in mock_ingest.await_args_list]
+        assert retried == missing[:3]
+
+    @pytest.mark.asyncio
+    async def test_one_destination_failing_does_not_abort_the_batch(self):
+        async def _flaky(destination):
+            if destination == "Blocked":
+                raise RuntimeError("IP blocked")
+            return 12
+
+        with patch("scrapers.youtube_narration.destinations_missing_transcripts",
+                   new=AsyncMock(return_value=["Blocked", "Fine"])), \
+             patch("scrapers.youtube_narration.ingest_youtube_narration", new=_flaky):
+            await scheduler._retry_youtube_narration_transcripts()
+        # No exception propagated — reaching this line is the assertion.
+
+    @pytest.mark.asyncio
+    async def test_lister_failure_is_a_clean_noop_not_a_crash(self):
+        with patch("scrapers.youtube_narration.destinations_missing_transcripts",
+                   new=AsyncMock(side_effect=RuntimeError("qdrant down"))), \
+             patch("scrapers.youtube_narration.ingest_youtube_narration", new=AsyncMock()) as mock_ingest:
+            await scheduler._retry_youtube_narration_transcripts()
+        mock_ingest.assert_not_awaited()

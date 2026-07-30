@@ -263,6 +263,16 @@ class Settings(BaseSettings):
     # single burst, leaving none for cold starts until the window rolls.
     youtube_refresh_batch_size: int = 20
 
+    # Slow drip-retry for youtube_narration destinations that landed
+    # description-only because a transcript-fetch burst got IP-blocked
+    # (issue #46 follow-up, observed 2026-07-30). No quota cost — this is
+    # about spreading load thin over time, not budget — so the cadence is
+    # short (hours, not days) and the batch is small, on purpose: a handful
+    # of destinations every few hours looks nothing like the burst that
+    # triggered the block in the first place.
+    youtube_narration_transcript_retry_hours: int = 4
+    youtube_narration_transcript_retry_batch_size: int = 5
+
     log_level: str = "INFO"
 
     # Optional error-tracking/APM (Sentry). Unset by default — a missing DSN

@@ -176,6 +176,43 @@ async def _refresh_youtube_comments():
         await asyncio.sleep(settings.osm_ingest_delay_seconds)
 
 
+async def _retry_youtube_narration_transcripts():
+    """Slow drip-retry for `youtube_narration` destinations that landed
+    description-only because a transcript-fetch burst hit a YouTube IP block
+    mid-run (issue #46 follow-up — a 172-destination backfill got blocked
+    after ~70 destinations, and even a small retry burst re-triggered the
+    block within 2-3 destinations on 2026-07-30). Retrying is free, but only
+    safe in a small trickle: a handful of destinations every few hours,
+    rather than a full-corpus burst, so this never looks like the same abuse
+    pattern to YouTube. Naturally converges to nothing left to retry as
+    destinations pick up real transcripts and drop out of the missing set.
+    """
+    from scrapers.youtube_narration import (
+        destinations_missing_transcripts,
+        ingest_youtube_narration,
+    )
+
+    try:
+        missing = await destinations_missing_transcripts()
+    except Exception as e:
+        logger.warning("youtube_narration transcript retry: could not list missing destinations: %s", e)
+        return
+
+    batch = missing[: settings.youtube_narration_transcript_retry_batch_size]
+    if not batch:
+        logger.info("youtube_narration transcript retry: nothing missing — all destinations have transcripts")
+        return
+
+    for destination in batch:
+        try:
+            count = await ingest_youtube_narration(destination)
+        except Exception as e:
+            logger.warning("youtube_narration transcript retry failed for %s: %s", destination, e)
+            continue
+        logger.info("youtube_narration transcript retry for %s: %d chunks stored", destination, count)
+        await asyncio.sleep(settings.osm_ingest_delay_seconds)
+
+
 async def _check_qdrant_storage_headroom():
     """Log a warning/error once estimated Qdrant RAM usage crosses
     `qdrant_storage_warn_threshold`/`qdrant_storage_critical_threshold` of the
@@ -375,6 +412,12 @@ async def start_scheduler():
         _refresh_visa_info,
         trigger=IntervalTrigger(days=settings.visa_info_refresh_days),
         id="visa_info_refresh",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        _retry_youtube_narration_transcripts,
+        trigger=IntervalTrigger(hours=settings.youtube_narration_transcript_retry_hours),
+        id="youtube_narration_transcript_retry",
         replace_existing=True,
     )
     _scheduler.add_job(
