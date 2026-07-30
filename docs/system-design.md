@@ -1225,22 +1225,22 @@ However, **Gemini token/cost event instrumentation is still in progress** in the
 
 ---
 
-## 9B. Agent-Lead SLA & Escalation (⏳ PLANNED — not yet built, issues #62/#63)
+## 9B. Agent-Lead SLA & Escalation (✅ BUILT — issues #48/#62/#63)
 
 **Why this exists:** faculty Deploy-review feedback flagged that as sole builder, every "request a quotation" escalation routes only to Kunal personally with no routing built, and asked for a hard response-time commitment plus a defined fallback for when he's unreachable. Scoped as email-only (no phone/WhatsApp auth — see `docs/PRD.md` Clarification #19 for the full rationale on why that was deferred).
 
-**Data model (new, issue #62):** `agent_leads` table — `id`, `user_id`/`email`, `trip_config_summary`, `created_at`, `responded_at` (nullable), `escalated_at` (nullable), `reassurance_sent_at` (nullable). Same migration pattern as `0004_destination_ingestion_state`.
+**Data model:** `agent_leads` table (`apps/api/db_models/agent_lead.py`, migration `0006_agent_leads.py`) — `id`, `user_id` (nullable FK), `email`, `destination`, `trip_config_summary`, `created_at`, `responded_at`, `escalated_at`, `reassurance_sent_at`, `marked_booked_at`.
 
 **Flow:**
-1. Lead created (via `POST /api/agent-leads`, issue #48) → immediate confirmation email to the user via `core/email.py` (Resend), stating an explicit **24-hour** response SLA.
-2. New hourly job in `core/scheduler.py` (same `IntervalTrigger` pattern as `_refresh_reddit`/`_refresh_visa_info`):
+1. Lead created (via `POST /api/agent-leads`) → immediate confirmation email to the user via `core/email.py::send_agent_lead_confirmation_email`, stating an explicit **24-hour** response SLA. The consumer UI is `apps/web/components/itinerary/AgentHandoffCard.tsx`, placed alongside `BookingLinksSection.tsx`; it persists the lead first, then opens a `wa.me/` deep link.
+2. Hourly job in `core/scheduler.py::_check_agent_lead_sla` (`IntervalTrigger(hours=settings.agent_lead_sla_check_hours)`):
    - Unanswered at 24h, not yet escalated → email the admin, set `escalated_at`. Idempotent (checked via `escalated_at IS NULL`, never re-fires).
    - Unanswered at 48h, not yet reassured → auto-email the *user* a reassurance message, set `reassurance_sent_at`. Idempotent.
    - `responded_at` set before either threshold short-circuits both — no escalation/reassurance email sent for that lead.
 
-**Admin visibility (issue #63):** `GET /api/admin/metrics/summary` gains an `agent_lead` event family — created/responded/escalated/reassurance-sent counts, response-time avg/p50/p90, and an `agent_lead_sla_breach_rate` (`escalated_total / created_total`) — the single number meant to catch a slipping solo-builder response time before it costs a pilot user. A manual "mark as booked" toggle on each lead row in `/admin` gives a lead → booked-trip conversion signal despite no real booking-completion webhook existing yet.
+**Admin visibility:** `GET /api/admin/metrics/summary` now exposes an `agent_leads` block with `created_total`, `responded_total`, `escalated_total`, `reassurance_sent_total`, `response_time_avg_hours`, `response_time_p50_hours`, `response_time_p90_hours`, `sla_breach_rate`, `marked_booked_total`, and `top_destinations`. `GET /api/admin/metrics/timeseries` now carries `agent_lead_created` counts plus `agent_lead_response_avg_hours` per day. `GET /api/admin/leads` returns the latest lead rows, and `POST /api/admin/leads/{lead_id}/mark-booked` is the manual conversion toggle used by the admin console.
 
-**Eval cases:** planned in `docs/eval-set.md` under "Agent-Lead SLA & Escalation" (LEAD-001–005) — to be implemented as real automated checks as part of issue #62, not left as prose.
+**Eval cases / automated checks:** implemented in `apps/api/tests/integration/test_agent_leads.py`, `apps/api/tests/unit/test_agent_lead_sla.py`, and `apps/api/tests/integration/test_admin.py`; see `docs/eval-set.md` Section 11.
 
 ---
 
@@ -2077,6 +2077,7 @@ Addresses 9 of the 10 findings in `docs/scaling-tech-challenges.md` §1 (full de
 - 3-tier RAG-powered fallback chain implemented in `chains/itinerary_chain.py` for LLM failures: cache hit → OSM-grounded skeleton (`services/rag_fallback.py`) → RAG-tipped enhanced mock
 - Fixed a concurrency bug where blocking `embed()`/Qdrant calls inside `async def` functions serialized on the event loop despite `asyncio.gather()`; now offloaded via `asyncio.to_thread()`, plus batched embedding of the 3 query variants in one call — throughput ~10 → ~23.6 req/s @ concurrency=50 (pre-hybrid/HyDE/rerank)
 - Golden dataset + automated retrieval evaluation added (`apps/api/eval/golden_dataset.json`, `apps/api/eval/run_rag_eval.py`) — Precision@k/Recall@k/MRR/nDCG@k metrics
+- **Follow-up (issue #50):** the harness above originally measured `semantic_search()` in isolation, not the real retrieval path. Now wired to the actual `retrieve_context()` production function (reranking on) — see `docs/rag-strategy.md` §16 for the full writeup, including a disclosed, understood metric drop (production's multi-query RRF fusion dilutes rank for narrow queries vs. the old single-query harness) and how that compares to competitor models with no retrieval-grounding step at all.
 - Load testing tool added (`apps/api/load_test_rag.py`) to measure retrieval throughput/latency under concurrency
 
 ### v8.0 (June 2026)

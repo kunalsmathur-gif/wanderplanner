@@ -111,7 +111,18 @@ An LLM only knows what it was trained on — ask it to plan a trip to a smaller 
 
 ### Q12. How do we evaluate RAG performance?
 
-A hand-labeled "golden dataset" (`apps/api/eval/golden_dataset.json`) with known correct retrievals, scored with standard IR metrics via `apps/api/eval/run_rag_eval.py`: **Precision@10**, **Recall@10**, **MRR**, **nDCG@10**. This objective harness is exactly what caught a real production bug — RAG silently returning nothing for months due to a missing Qdrant payload index.
+A hand-labeled "golden dataset" (`apps/api/eval/golden_dataset.json`, 20 queries against a 40-chunk curated corpus) with known correct retrievals, scored with standard IR metrics via `apps/api/eval/run_rag_eval.py`:
+
+- **Precision@10** — of the top 10 chunks retrieved, what fraction are actually relevant?
+- **Recall@10** — of all the relevant chunks that exist, what fraction did the top 10 surface at all?
+- **MRR (Mean Reciprocal Rank)** — how close to #1 was the first relevant result, averaged across queries? (1.0 = always first; 0.5 = typically second.)
+- **nDCG@10** — like Recall, but rank-aware: rewards several relevant chunks bunched near the top, not just present somewhere in the top 10.
+
+This objective harness is exactly what caught a real production bug — RAG silently returning nothing for months due to a missing Qdrant payload index.
+
+**An honest correction, on the record (issue #50, resolved this session):** this harness used to score `semantic_search()` in isolation — a simplified stand-in, not the actual code path a real request takes. It's now wired to the real `retrieve_context()` production function (the same one `chains/itinerary_chain.py` calls, reranking on). Measured through the real path, the numbers came down materially: Recall@10 0.95 (was 1.00), MRR ≈0.46 (was ≈0.85–0.94), nDCG@10 ≈0.58 (was ≈0.89–0.96). **This is disclosed, not hidden, because that's the standard we hold engineering claims to here** — the same discipline that caught the payload-index bug above. The cause is understood: production runs three broad query variants in parallel (config/persona, purpose/vibe, practical-logistics) merged via Reciprocal Rank Fusion, which is the right call for a well-rounded itinerary day, but means a chunk relevant to only one narrow topic now competes against two unrelated query variants for rank — something the old single-query harness never tested. One case (`q_rome_scam`) now returns zero relevant results and is a flagged follow-up.
+
+**Why this doesn't undercut the pitch:** the comparison that matters isn't our score in isolation — it's grounded-but-imperfectly-ranked vs. not-grounded-at-all. Free ChatGPT/Gemini/Claude don't retrieve from a curated, verifiable corpus at all; they answer from parametric memory with no retrieval step to measure (see Q13's model-comparison numbers below — 0.74 unverifiable-claim rate, 0/4 honesty score for free ChatGPT vs. our 4/4). A retrieval layer with room to improve its ranking is still a materially stronger hallucination defense than having no retrieval layer.
 
 ### Q13. Where does RAG shine, and where will it start failing?
 

@@ -382,7 +382,7 @@ Open `http://localhost:3000`.
 - ✅ **NEW: OSM POI ingestion** — `scrapers/osm.py` fetches real POIs (name, category, lat/lon) from the free Overpass API, weekly scheduled refresh, feeds the new `osm_pois` Qdrant collection.
 - ✅ **NEW: Itinerary cache + 3-tier RAG fallback** — successful itineraries cached (`itinerary_cache` collection); on LLM failure, falls through cache hit → OSM-grounded skeleton → RAG-tipped enhanced mock instead of a hard error.
 - ✅ **FIXED: RAG retrieval concurrency bug** — blocking `embed()`/Qdrant calls previously serialized on the event loop despite `asyncio.gather()`; now correctly offloaded via `asyncio.to_thread()` + batched embedding. Throughput ~10 → ~23.6 req/s @ concurrency=50 (pre-hybrid/HyDE/rerank).
-- ✅ **NEW: Golden dataset + automated retrieval eval** — `apps/api/eval/golden_dataset.json` + `run_rag_eval.py` compute Precision@k/Recall@k/MRR/nDCG@k.
+- ✅ **NEW: Golden dataset + automated retrieval eval** — `apps/api/eval/golden_dataset.json` + `run_rag_eval.py` compute Precision@k/Recall@k/MRR/nDCG@k against the real `retrieve_context()` production path (issue #50) — Recall@10=0.95, MRR≈0.46, nDCG@10≈0.58; a disclosed, understood drop from the old isolated-`semantic_search()` numbers, see `docs/rag-strategy.md` §16.
 - ✅ **NEW: RAG load test tool** — `apps/api/load_test_rag.py` measures retrieval throughput/latency under concurrency.
 
 ### v5.2 — RAG Pipeline Overhaul (June 2026)

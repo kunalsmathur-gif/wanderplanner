@@ -396,7 +396,7 @@ apps/api/
 │   └── osm.py                 — ⭐ NEW (v9.0): Overpass API POI scraper → Qdrant 'osm_pois' ingestion
 ├── eval/                      — ⭐ NEW (v9.0)
 │   ├── golden_dataset.json    — curated corpus + labeled queries for retrieval eval
-│   └── run_rag_eval.py        — Precision@k/Recall@k/MRR/nDCG@k against semantic_search()
+│   └── run_rag_eval.py        — Precision@k/Recall@k/MRR/nDCG@k against retrieve_context() (issue #50)
 ├── load_test_rag.py           — ⭐ NEW (v9.0): concurrent-request throughput/latency load test
 └── models/
     ├── common.py              — GeocodeResponse (+ is_country: bool)
@@ -1004,9 +1004,9 @@ context = "No pre-fetched research available — use your own knowledge of the d
 - **Scope:** only the final itinerary-generation retrieval call (see latency tradeoff above)
 
 #### Golden Dataset & Retrieval Evaluation
-- `apps/api/eval/golden_dataset.json` — curated corpus + labeled queries with expected-relevant chunk IDs
-- `apps/api/eval/run_rag_eval.py` — computes Precision@k, Recall@k, MRR, nDCG@k against `semantic_search()` (exercises hybrid BM25, not HyDE/reranking — those live only inside `retrieve_context()`)
-- Current results: Recall@10 = 1.00, MRR ≈ 0.85–0.94, nDCG@10 ≈ 0.89–0.96 (see `docs/eval-set.md` for full methodology and how to run)
+- `apps/api/eval/golden_dataset.json` — curated corpus + 20 labeled queries with expected-relevant chunk IDs (9 now carry `personas`/`purpose`/`crowd_preference` overrides — see below)
+- `apps/api/eval/run_rag_eval.py` — computes Precision@k, Recall@k, MRR, nDCG@k against the **real** `retrieve_context()` production path (issue #50, resolved), reranking on — exercises the full HyDE + hybrid-search + cross-encoder pipeline end-to-end, not the isolated `semantic_search()` pass it used before
+- **Current results** (measured through the real path): Recall@10 = 0.95, MRR ≈ 0.46, nDCG@10 ≈ 0.58 — a material, **honest** drop from the old `semantic_search()`-only numbers (Recall@10 = 1.00, MRR ≈ 0.85–0.94, nDCG@10 ≈ 0.89–0.96), not a regression: production runs three broad query variants (config, vibe, practical-logistics) merged via Reciprocal Rank Fusion, which necessarily dilutes rank for narrow single-topic queries versus the old harness's one sharp query straight into `semantic_search()`. This is what real itinerary generation actually retrieves — the eval now measures reality instead of a flattering proxy. See `docs/eval-set.md` §4U for full methodology, the metric definitions, and how to run.
 
 ---
 

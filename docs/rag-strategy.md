@@ -576,7 +576,7 @@ User trip config
 | P1 | OSM POI ingestor (Overpass API) | ✅ Done | Real coordinates; eliminates hallucinated lat/lon |
 | P1 | Hybrid BM25 + semantic search | ✅ Done | Better handling of proper nouns/specific terms |
 | P2 | `itinerary_cache` collection + cache hit logic | ✅ Done | Fallback + free repeat visits |
-| P2 | Golden dataset + automated eval (`run_rag_eval.py`) | ✅ Done | Recall@10=1.00, MRR≈0.85-0.94, nDCG@10≈0.89-0.96 |
+| P2 | Golden dataset + automated eval (`run_rag_eval.py`) | ✅ Done | Recall@10=0.95, MRR≈0.46, nDCG@10≈0.58 — measured through the real `retrieve_context()` production path (issue #50); see §"Golden dataset" note below for why these are lower than the old isolated-path numbers |
 | P2 | Visa info collection + wizard injection | ❌ Pending | Practical user value |
 | P2 | HyDE query augmentation | ✅ Done | Better recall for niche personas (template-based) |
 | P3 | Cross-encoder reranker | ✅ Done | Scoped to itinerary generation only (latency-gated) |
@@ -1135,6 +1135,21 @@ Layman framing for non-technical stakeholders: an LLM only knows what it was tra
 - **Multi-tier fallback keeps the product usable under failure** — cache → RAG-skeleton (pure OSM data, no LLM) → enhanced mock (§4) means an LLM outage or a retrieval miss degrades gracefully instead of returning a hard error.
 - **Objective, repeatable evaluation** — `eval/run_rag_eval.py`'s golden-dataset IR metrics (Precision@10, Recall@10, MRR, nDCG@10) catch retrieval regressions before users do, and this exact harness is what surfaced the real production bug where RAG silently returned nothing for months (missing Qdrant payload index, fixed in `core/qdrant.py::_ensure_collections()`).
 - **Multi-query, hybrid retrieval catches what pure semantic search misses** — the BM25 + semantic RRF fusion (§2/§3) specifically catches literal nouns ("Tsukiji", "anime cafes") that embeddings alone sometimes rank lower than they should.
+
+### What the retrieval metrics actually mean (plain English)
+
+- **Precision@10** — of the top 10 chunks retrieved, what fraction are actually relevant? Low precision with a small labeled corpus is normal and expected, not alarming: with only 1–4 truly relevant chunks in a 40-chunk corpus, precision is capped low by construction even for perfect retrieval.
+- **Recall@10** — of all the relevant chunks that exist, what fraction did the top 10 actually surface? This is the "did we miss the good stuff entirely" number.
+- **MRR (Mean Reciprocal Rank)** — how close to the *very top* was the first relevant result, averaged across queries? 1.0 means it's always result #1; 0.5 means it's typically result #2; low values mean the user (or the LLM writing the itinerary) has to dig.
+- **nDCG@10 (normalized Discounted Cumulative Gain)** — like Recall, but rank-aware: it rewards having several relevant chunks bunched near the top, not just present somewhere in the top 10.
+
+### An honest correction (issue #50, this session)
+
+The numbers above used to be measured against `semantic_search()` directly — a stand-in for the real retrieval path, not the real thing. Issue #50 wired `run_rag_eval.py` to the actual `retrieve_context()` function itinerary generation calls in production, with reranking on to match that call site exactly. The result was a **material drop**: Recall@10 fell from 1.00 to 0.95, MRR from ≈0.85–0.94 to ≈0.46, and nDCG@10 from ≈0.89–0.96 to ≈0.58.
+
+This is disclosed here deliberately, not smoothed over, because **that's the standard this project holds itself to** — the same discipline that caught the RAG-silently-returning-nothing bug above. The cause is understood, not mysterious: `retrieve_context()` runs three broad query variants in parallel (a config/persona query, a purpose/vibe query, a practical-logistics query) and merges them with Reciprocal Rank Fusion, which is the right choice for generating a well-rounded, multi-faceted itinerary day — but it means a chunk that's relevant to only one narrow topic (e.g. "vegetarian food") now has to out-rank chunks pulled in by two other, unrelated query variants, where the old harness measured that one narrow query in isolation. In other words: **the harness was previously flattering itself by testing an easier version of the problem than production actually faces.** One concrete case (`q_rome_scam`, a Rome tourist-scam query) now returns zero relevant results in the top 10 and is flagged as a follow-up on query-variant weighting for pure safety/scam topics.
+
+**How this compares to other models:** this metric is specific to *our* retrieval layer — ChatGPT/Claude/Gemini's free tiers don't retrieve from a curated, verifiable corpus at all, they answer from parametric memory (see the honesty/unverifiable-claim-rate comparisons in `docs/eval-results/`, where free ChatGPT scored a 0.74 unverifiable-claim rate and 0/4 on the honesty check vs. WanderPlanner's 4/4). A lower MRR/nDCG measured through our real production path is still a *materially stronger* starting position than a competitor with **no retrieval-grounding step to measure at all** — the comparison that matters for hallucination risk is "grounded-but-imperfectly-ranked" vs. "not grounded," not our score in isolation.
 
 ### Where RAG starts failing
 - **Thin/long-tail destination coverage.** The curated corpus spans ~134 destinations, only 11 India-specific despite India being the primary user cohort (§8a in `docs/scaling-tech-challenges.md`). Outside that list, retrieval returns little-to-no real content and the model silently falls back to ungrounded general knowledge — the exact hallucination risk RAG exists to prevent, reappearing for precisely the requests where it matters most.

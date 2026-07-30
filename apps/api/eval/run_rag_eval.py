@@ -2,8 +2,11 @@
 Golden-dataset RAG retrieval evaluation for WanderPlanner.
 
 Seeds the curated corpus in `golden_dataset.json` into Qdrant, runs each golden
-query through the real `semantic_search()` retrieval path, and scores results
-against the hand-labelled `relevant_ids` using standard IR metrics:
+case through the real `retrieve_context()` production retrieval path (issue
+#50 — the same function `chains/itinerary_chain.py` calls for actual
+itinerary generation, with reranking forced on to match that call site) —
+and scores results against the hand-labelled `relevant_ids` using standard IR
+metrics:
 
     Precision@k  — fraction of the top-k results that are relevant
     Recall@k     — fraction of all relevant docs found in the top-k
@@ -30,7 +33,8 @@ from qdrant_client.models import PointStruct
 from core.config import settings
 from core.embeddings import embed
 from core.qdrant import get_qdrant
-from services.search import semantic_search
+from models.trip import DestinationInput, TripConfig
+from services.search import retrieve_context
 
 DATASET_PATH = Path(__file__).parent / "golden_dataset.json"
 K = 10  # cutoff for Precision@k / Recall@k / nDCG@k
@@ -108,14 +112,44 @@ def ndcg_at_k(retrieved_ids: list[str], relevant_ids: set[str], k: int) -> float
 # Runner
 # ---------------------------------------------------------------------------
 
+def build_trip_config(q: dict) -> TripConfig:
+    """Synthesize a minimal-but-representative `TripConfig` from a golden
+    dataset case (issue #50).
+
+    `retrieve_context()` takes a full `TripConfig`, not a bare query string —
+    it builds its three internal query variants entirely from config fields
+    (`destination`, `personas`, `purpose`, `crowd_preference`, `pace`; see
+    `services/search.py`'s `_PERSONA_QUERY_EXPANSION` /
+    `_PURPOSE_QUERY_EXPANSION` / `_CROWD_QUERY_EXPANSION`), and never reads a
+    free-text query at all. So instead of passing the dataset's `query`
+    string somewhere, each case now optionally carries the config fields that
+    would realistically produce that query — e.g. `q_bali_nomad` carries
+    `personas: ["digital_nomad"]`, `q_paris_hidden` carries
+    `crowd_preference: "offbeat"`. Cases with no clean persona/purpose/crowd
+    match (food, safety, transport, scam) are left as plain destination-only
+    configs — `retrieve_context()`'s always-on third query variant ("best
+    restaurants sightseeing transport safety advice") already covers those
+    topics without needing a tag.
+    """
+    return TripConfig(
+        destination=DestinationInput(city=q["destination"]),
+        personas=q.get("personas", []),
+        purpose=q.get("purpose", ""),
+        crowd_preference=q.get("crowd_preference", "balanced"),
+    )
+
+
 async def evaluate_query(q: dict) -> dict:
     relevant = set(q["relevant_ids"])
 
-    hits = await semantic_search(q["query"], q["destination"], limit=K)
-    # semantic_search doesn't return chunk_id on SearchResult directly, so we
-    # match retrieved text back to golden corpus ids via a lookup built by the
-    # caller — see run() below, which passes text->id through a closure.
-    retrieved_texts = [h.text for h in hits]
+    trip_config = build_trip_config(q)
+    # `enable_reranking=True` mirrors the only production call site that
+    # matters here — `chains/itinerary_chain.py`'s real itinerary generation
+    # — so this harness now exercises the full HyDE + hybrid + cross-encoder
+    # rerank pipeline, not just the isolated hybrid-search pass `semantic_search()`
+    # gave before (see docs/eval-set.md §4U's prior "known limitation").
+    hits = await retrieve_context(trip_config, enable_reranking=True)
+    retrieved_texts = [h["text"] for h in hits]
 
     return {
         "id": q["id"],

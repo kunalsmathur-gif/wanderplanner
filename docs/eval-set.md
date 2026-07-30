@@ -4,7 +4,7 @@
 **Purpose:** Manual and automated regression testing for correctness, safety, tone, cost and reliability
 
 RAG eval coverage: **RAG-001 to RAG-100** (100 cases — 74 implemented ✅, 1 partial ⚠️, 25 pending ❌)  
-Also see: **Golden Dataset & Automated Retrieval Metrics** (§4U below) for the separate `run_rag_eval.py` scoring suite (not individually numbered test cases — a single automated harness with 12 labeled queries against a 40-chunk curated corpus).  
+Also see: **Golden Dataset & Automated Retrieval Metrics** (§4U below) for the separate `run_rag_eval.py` scoring suite (not individually numbered test cases — a single automated harness with 20 labeled queries against a 40-chunk curated corpus).  
 Non-RAG coverage: **ANYA-W, ANYA-V, ITN, CITIES, CMP, CHAT, SCORE, EXT, COST, BOOKING, WIKI, MOB, THEME** (160+ cases)  
 Also see: `docs/PRD.md` §10 (product-facing "types of evals" framing), `docs/system-design.md` §15A (harness architecture), `TECHNICAL_DOCUMENTATION.md` §8A (surface-by-surface coverage table).
 
@@ -414,7 +414,7 @@ Covers: 3-tier fallback when the LLM fails: cache lookup → RAG skeleton → en
 
 Unlike the manual/unit-test cases above, this is an **automated retrieval-quality harness**, not individually numbered test cases. It measures ranking quality directly, independent of LLM output variability.
 
-**Corpus & queries:** `apps/api/eval/golden_dataset.json` — a curated 40-chunk corpus (mix of wiki-style and reddit-style travel content across several destinations/personas) plus 12 labeled queries, each with a hand-picked set of "expected relevant" chunk IDs.
+**Corpus & queries:** `apps/api/eval/golden_dataset.json` — a curated 40-chunk corpus (mix of wiki-style and reddit-style travel content across several destinations/personas) plus 20 labeled queries, each with a hand-picked set of "expected relevant" chunk IDs. Since issue #50 (below), 9 of the 20 cases also carry a `personas` / `purpose` / `crowd_preference` override — see that section for why.
 
 **Seeding quirk:** because `semantic_search()`/`retrieve_context()` always query both the `wiki` and `reddit` collections, the same 40-chunk corpus is seeded into **both** collections at eval time. This means a query can legitimately surface the same underlying chunk twice (once from each collection). `run_rag_eval.py` deduplicates retrieved chunk IDs by first-occurrence before scoring — without this, Recall could exceed 1.0, which is nonsensical. If you're extending this eval script, preserve the dedup step.
 
@@ -424,16 +424,28 @@ Unlike the manual/unit-test cases above, this is an **automated retrieval-qualit
 - **MRR (Mean Reciprocal Rank)** — 1 / rank of the first relevant result, averaged across queries
 - **nDCG@k (normalized Discounted Cumulative Gain)** — rewards relevant results appearing higher in the ranking
 
-**Current results** (against `semantic_search()` directly — see limitation below):
+**Current results** (against the real `retrieve_context()` production path, reranking on — see issue #50 below; **superseded** the prior `semantic_search()`-only numbers):
 
 | Metric | Value |
 |---|---|
-| Recall@10 | 1.00 |
-| MRR | ≈ 0.85 – 0.94 |
-| nDCG@10 | ≈ 0.89 – 0.96 |
-| Precision@10 | ≈ 0.18 – 0.21 (expected — hybrid search widens the candidate pool; low precision at k=10 is normal when only 1-4 chunks per query are truly relevant out of a 40-chunk corpus) |
+| Recall@10 | 0.95 (19/20 — `q_rome_scam` found zero relevant results; a genuine finding, not a harness bug, see below) |
+| MRR | 0.461 |
+| nDCG@10 | 0.576 |
+| Precision@10 | ≈ 0.12 – 0.25 (expected — same reasoning as before: a 40-chunk corpus with 1-4 truly relevant chunks per query) |
 
-**Known limitation:** `run_rag_eval.py` calls `semantic_search()` directly, which exercises the new hybrid BM25+semantic fusion (§4R) but does **not** exercise HyDE (§4S) or cross-encoder reranking (§4T) — those live only inside `retrieve_context()`, the higher-level function used by actual itinerary generation. A one-off manual smoke test of the full `retrieve_context()` pipeline (HyDE + hybrid + rerank) confirmed correct top-ranked results for a sample digital-nomad Bali query, but this is not part of the automated harness. Extending `run_rag_eval.py` to call `retrieve_context()` instead (with reranking forced on) is a natural follow-up if more rigorous end-to-end pipeline scoring is needed.
+**Resolved (issue #50 — "wire `run_rag_eval.py` to the real `retrieve_context()` production path"):** the harness now calls `retrieve_context()` (with `enable_reranking=True`, matching the only production call site that enables it — `chains/itinerary_chain.py`) instead of the isolated `semantic_search()` pass, so it exercises the full HyDE + hybrid-search + cross-encoder-rerank pipeline end-to-end, not just hybrid search in isolation.
+
+**Schema adaptation:** `retrieve_context()` takes a full `TripConfig`, not a bare query string — it never reads free-text at all, building its three internal query variants entirely from `destination` / `personas` / `purpose` / `crowd_preference` / `pace`. Rather than force the dataset's `query` string through some new bypass parameter, `eval/run_rag_eval.py::build_trip_config()` synthesizes a minimal `TripConfig` per case, and 9 of the 20 golden-dataset cases now carry the config fields that would realistically produce that query (e.g. `q_bali_nomad` → `personas: ["digital_nomad"]`, `q_paris_hidden` → `crowd_preference: "offbeat"`, `q_rome_family` → `purpose: "family_vacation"`). Cases with no clean persona/purpose/crowd match (food, safety, transport, scam queries) are left as plain destination-only configs — `retrieve_context()`'s always-on third query variant ("best restaurants sightseeing transport safety advice") already covers those topics without needing a tag. A regression test (`tests/unit/test_run_rag_eval.py`) asserts `evaluate_query()` calls `retrieve_context()`, not `semantic_search()`, to catch any future accidental drift back to the isolated path.
+
+**Material change vs. the old isolated-path numbers (a real finding, not a regression risk to hide):** MRR dropped from ≈0.85–0.94 to 0.461 and nDCG@10 from ≈0.89–0.96 to 0.576, and one case (`q_rome_scam`) now returns zero relevant results in the top 10 where it previously found the correct chunk. This is because `retrieve_context()` runs **three parallel broad query variants** (config-oriented, purpose/vibe, practical-logistics) and merges them with Reciprocal Rank Fusion — a deliberately wide production retrieval strategy — whereas the old harness fed the dataset's one narrow, hand-written query straight into `semantic_search()`. RRF fusion against two off-topic query variants dilutes the rank of a chunk that's only relevant to the third, narrow variant. In other words: **this is what real itinerary generation actually retrieves**, and it retrieves less precisely-ranked results for narrow single-topic asks than a bespoke single query would — a legitimate, previously-invisible characteristic of the production retrieval strategy, now visible because the eval finally measures the real path. `q_rome_scam` (Rome tourist-scam chunk `rome_06`) is a concrete case worth a follow-up look at query-variant weighting for pure-safety/scam topics.
+
+**Note on this environment:** the numbers above were measured in a sandboxed environment without outbound network access to Hugging Face, so the cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`) couldn't download and `_rerank()`'s best-effort fallback silently returned the un-reranked RRF order instead (see its docstring — this is by design, a reranker outage never breaks retrieval). Production (Railway) has outbound internet access and will exercise the real cross-encoder pass; re-run this harness there for reranked numbers.
+
+**How to run:**
+```bash
+cd apps/api
+QDRANT_URL=":memory:" python -m eval.run_rag_eval
+```
 
 **Auth-gating regression note (July 2026):** the itinerary-generation system prompt itself is unchanged by the auth rollout. Code inspection confirms the same `SYSTEM_PROMPT` in `chains/itinerary_chain.py` is still formatted with `{context}` + `{trip_config}` exactly as before; the new work wraps the Gemini call with auth checks (`Depends(get_current_user)` in `routers/itinerary.py`) and post-call usage logging (`track_gemini_usage()` / `flush_llm_usage()`), but does **not** alter prompt content, model selection, or output schema.
 
@@ -447,12 +459,6 @@ curl -c cookies.txt -X POST http://localhost:8000/api/auth/login \
 ```
 
 **Expected outcome:** auth-gating is an access-control change only. Because the prompt, model, and JSON response contract are unchanged, golden-output quality/format expectations should remain the same once the request is made with a valid authenticated session.
-
-**How to run:**
-```bash
-cd apps/api
-python -m eval.run_rag_eval
-```
 
 ---
 
@@ -1219,28 +1225,30 @@ instead:
   means "unavailable" (no API key, parse failure) — aggregation must
   exclude it from the mean, not count it as a failing score.
 
-## Section 11 — Agent-Lead SLA & Escalation (⏳ PLANNED — implement alongside issues #62/#63, not yet built)
+## Section 11 — Agent-Lead SLA & Escalation (✅ BUILT)
 
-**Why this exists:** faculty Deploy-section PRD feedback — an unanswered "request a quotation" click is "the one failure that turns a pilot user into a lost user," and the fix (issue #62: immediate Resend confirmation with an explicit 24h SLA; hourly `core/scheduler.py` job escalating to the admin at 24h and reassuring the user at 48h) needs its own automated regression cases, not just a described policy. These are **not implemented yet** — write them as real `pytest` cases (mocked clock / time-travelled `created_at`, mocked Resend call) as part of building issue #62, and wire the metrics cases as part of issue #63.
+**Why this exists:** faculty Deploy-section PRD feedback — an unanswered "request a quotation" click is "the one failure that turns a pilot user into a lost user," so the lead-capture/SLA/escalation path now has real automated coverage instead of prose-only intent.
 
 | ID | Scenario | Setup | Expected | Priority |
 |---|---|---|---|---|
-| LEAD-001 | Lead created → immediate confirmation | `POST /api/agent-leads` succeeds | A confirmation email is sent (mocked Resend call asserted) containing an explicit "24 hour" / "24-hour" SLA string, not vague language | P0 |
-| LEAD-002 | Escalation fires exactly once at 24h | Lead with `created_at` = now − 25h, `responded_at` = null, `escalated_at` = null; scheduler job runs | Admin escalation email sent once; `escalated_at` set; running the job again does **not** send a second escalation email | P0 |
-| LEAD-003 | No escalation before 24h | Lead with `created_at` = now − 10h, `responded_at` = null; scheduler job runs | No escalation email sent; `escalated_at` stays null | P0 |
-| LEAD-004 | Responding before 24h suppresses escalation | Lead with `created_at` = now − 25h, `responded_at` = now − 1h; scheduler job runs | No escalation email sent (already responded); `escalated_at` stays null | P0 |
-| LEAD-005 | Reassurance fires exactly once at 48h, only if still unanswered | Lead with `created_at` = now − 49h, `responded_at` = null, `escalated_at` = now − 25h (already escalated), `reassurance_sent_at` = null; scheduler job runs | User reassurance email sent once; `reassurance_sent_at` set; a lead with `responded_at` set before the 48h mark never triggers this email even if `escalated_at` was already set | P1 |
-| LEAD-006 | Admin metrics: `agent_lead_sla_breach_rate` math | 10 leads created in range, 3 escalated | `GET /api/admin/metrics/summary` reports `agent_lead_sla_breach_rate == 0.3`, `agent_lead_created_total == 10`, `agent_lead_escalated_total == 3` | P1 |
-| LEAD-007 | Admin metrics: empty table doesn't error | No rows in `agent_leads` yet | Summary endpoint returns zeros/nulls for all `agent_lead_*` fields, not a 500 | P1 |
+| LEAD-001 | Lead created → immediate confirmation | `POST /api/agent-leads` succeeds | Covered by `apps/api/tests/integration/test_agent_leads.py::test_create_agent_lead_persists_row_and_attempts_confirmation_email` (DB write + confirmation-email attempt asserted) | P0 |
+| LEAD-002 | Escalation fires exactly once at 24h | Lead with `created_at` = now − 25h, `responded_at` = null, `escalated_at` = null; scheduler job runs twice | Covered by `apps/api/tests/unit/test_agent_lead_sla.py::test_due_lead_escalates_once` | P0 |
+| LEAD-003 | No escalation before 24h | Lead with `created_at` = now − 23h, `responded_at` = null; scheduler job runs | Covered by `apps/api/tests/unit/test_agent_lead_sla.py::test_not_yet_due_lead_sends_no_emails` | P0 |
+| LEAD-004 | Responding before 24h/48h suppresses follow-ups | Lead is old enough for SLA checks but already has `responded_at` | Covered by `apps/api/tests/unit/test_agent_lead_sla.py::test_responded_lead_short_circuits_threshold_emails` | P0 |
+| LEAD-005 | Reassurance fires exactly once at 48h, only if still unanswered | Lead with `created_at` = now − 49h, `responded_at` = null, `reassurance_sent_at` = null; scheduler job runs twice | Covered by `apps/api/tests/unit/test_agent_lead_sla.py::test_due_lead_sends_reassurance_once` | P1 |
+| LEAD-006 | Admin metrics: SLA-breach math + response-time summary | Mixed responded/escalated/reassured/booked leads | Covered by `apps/api/tests/integration/test_admin.py::test_admin_agent_lead_metrics_and_timeseries_include_summary_math` | P1 |
+| LEAD-007 | Admin metrics: empty table doesn't error | No rows in `agent_leads` yet | Covered by `apps/api/tests/integration/test_admin.py::test_admin_metrics_summary_defaults_agent_leads_to_zero_when_empty` | P1 |
 
-### 11A — Where this is implemented (once built)
+### 11A — Where this is implemented
 
 | Step | File |
 |---|---|
-| Data model | new `agent_leads` table, Alembic migration (pattern: `0004_destination_ingestion_state`) |
-| Confirmation/escalation/reassurance email | `core/email.py` (Resend, reused from password-reset) |
-| Scheduled job | `core/scheduler.py` (hourly `IntervalTrigger`, pattern: `_refresh_reddit`/`_refresh_visa_info`) |
-| Admin metrics | `GET /api/admin/metrics/summary` / `.../timeseries`, new `agent_lead` event family |
+| Data model | `apps/api/db_models/agent_lead.py`, migration `apps/api/migrations/versions/0006_agent_leads.py` |
+| Lead-create API | `apps/api/routers/agent_leads.py` |
+| Confirmation/escalation/reassurance email | `apps/api/core/email.py` |
+| Scheduled job | `apps/api/core/scheduler.py::_check_agent_lead_sla` |
+| Admin metrics + queue actions | `apps/api/routers/admin.py` |
+| Frontend CTA + admin UI | `apps/web/components/itinerary/AgentHandoffCard.tsx`, `apps/web/app/admin/page.tsx`, `apps/web/lib/adminApi.ts` |
 | Design doc | `docs/system-design.md` §9B |
 
 ---

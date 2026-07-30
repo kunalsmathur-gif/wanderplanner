@@ -180,7 +180,7 @@ Yes, in two distinct senses, both currently lightweight and both will surface pr
 RAG (retrieval-augmented generation, `docs/rag-strategy.md`) is what keeps itinerary generation grounded in real destination content instead of the LLM's parametric memory. It's genuinely earning its place today, but every strength has a corresponding scale-driven failure mode worth naming explicitly for demo/investor Q&A.
 
 **Where it shines (today, at current scale):**
-- Grounds itinerary generation in real, ingested Wikivoyage/YouTube-comment/OSM content instead of LLM hallucination — directly measurable via the golden-dataset IR-metric eval (`eval/run_rag_eval.py`: Precision@10/Recall@10/MRR/nDCG).
+- Grounds itinerary generation in real, ingested Wikivoyage/YouTube-comment/OSM content instead of LLM hallucination — directly measurable via the golden-dataset IR-metric eval (`eval/run_rag_eval.py`: Precision@10/Recall@10/MRR/nDCG, now measured through the real `retrieve_context()` production path per issue #50 — see `docs/rag-strategy.md` §16 for the disclosed metric-drop writeup, a deliberate honesty check on the harness itself).
 - The 3-tier fallback chain (cache → RAG-skeleton → enhanced mock, §4 of `rag-strategy.md`) means an LLM outage or retrieval failure degrades quality gracefully instead of hard-failing the request.
 - The eval harness already caught a real, live production bug — RAG silently returning nothing for months because of a missing Qdrant payload index — which is the strongest evidence this approach has real operational value, not just theoretical appeal.
 

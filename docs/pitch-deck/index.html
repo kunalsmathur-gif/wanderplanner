@@ -1443,8 +1443,9 @@
           <span class="t-meta" style="background:var(--ink);padding:.5em 1em;border:1px solid rgba(255,255,255,.3)">RECALL 0.958 (was 0.938)</span>
           <span class="t-meta" style="background:var(--ink);padding:.5em 1em;border:1px solid rgba(255,255,255,.3)">STABILITY 1.000</span>
           <span class="t-meta" style="background:var(--ink);padding:.5em 1em;border:1px solid rgba(255,255,255,.3)">vs CLAUDE 0.98 recall / 0.79 unverifiable</span>
+          <span class="t-meta" style="background:var(--ink);padding:.5em 1em;border:1px solid rgba(255,255,255,.3)">RAG RETRIEVAL RECALL@10 0.95, real path</span>
         </div>
-        <div style="font-family:var(--sans),var(--sans-zh);font-size:max(14px,.86vw);color:rgba(255,255,255,.7)">Pin inclusion on every hard-pinned refinement case &mdash; a hallucinated "gem" never ships because it's OSM/Wikivoyage-verified first.</div>
+        <div style="font-family:var(--sans),var(--sans-zh);font-size:max(14px,.86vw);color:rgba(255,255,255,.7)">Pin inclusion on every hard-pinned refinement case &mdash; a hallucinated "gem" never ships because it's OSM/Wikivoyage-verified first. Retrieval MRR/nDCG dropped when we rewired the eval off a simplified stand-in onto the exact production retrieval path &mdash; disclosed, not hidden, same standard as the honesty scores above.</div>
       </div>
       <div style="display:flex;gap:.3vw;align-items:end" data-anim="bars">
         <div class="vbar" style="width:5px;height:14vh;background:rgba(255,255,255,.5)"></div>
