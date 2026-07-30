@@ -7,6 +7,7 @@ from "you're logged in but not allowed here."
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+from math import ceil
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -18,7 +19,8 @@ from core.auth_dependency import get_current_admin_user, get_current_user
 from core.config import settings
 from core.email import send_admin_request_decision_email, send_admin_request_notification
 from db import get_db
-from db_models import AdminRequest, Event, User
+from db_models import AdminRequest, AgentLead, Event, User
+from models.agent_leads import AgentLeadAdminResponse
 from models.auth import AdminAccessRequestCreate, AdminRequestResponse
 
 router = APIRouter()
@@ -35,6 +37,47 @@ async def _count_events(db: AsyncSession, event_type: str, since: datetime | Non
     if since is not None:
         stmt = stmt.where(Event.created_at >= since)
     return (await db.execute(stmt)).scalar_one()
+
+
+def _lead_response_time_hours(lead: AgentLead) -> float | None:
+    if lead.responded_at is None:
+        return None
+    return round((lead.responded_at - lead.created_at).total_seconds() / 3600, 2)
+
+
+def _lead_status(lead: AgentLead) -> str:
+    if lead.responded_at is not None:
+        return "responded"
+    if lead.reassurance_sent_at is not None:
+        return "reassured"
+    if lead.escalated_at is not None:
+        return "escalated"
+    return "pending"
+
+
+def _percentile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = max(0, ceil(percentile * len(ordered)) - 1)
+    return round(ordered[index], 2)
+
+
+def _lead_to_response(lead: AgentLead) -> AgentLeadAdminResponse:
+    return AgentLeadAdminResponse(
+        id=str(lead.id),
+        user_id=str(lead.user_id) if lead.user_id else None,
+        email=lead.email,
+        destination=lead.destination,
+        trip_config_summary=lead.trip_config_summary,
+        created_at=lead.created_at.isoformat(),
+        responded_at=lead.responded_at.isoformat() if lead.responded_at else None,
+        escalated_at=lead.escalated_at.isoformat() if lead.escalated_at else None,
+        reassurance_sent_at=lead.reassurance_sent_at.isoformat() if lead.reassurance_sent_at else None,
+        marked_booked_at=lead.marked_booked_at.isoformat() if lead.marked_booked_at else None,
+        status=_lead_status(lead),
+        response_time_hours=_lead_response_time_hours(lead),
+    )
 
 
 @router.get("/admin/metrics/summary")
@@ -80,6 +123,30 @@ async def metrics_summary(
         func.coalesce(func.sum(Event.event_metadata["call_count"].as_integer()), 0),
     ).where(Event.event_type == "pexels_usage", Event.created_at >= d30)
     pexels_calls_30d = (await db.execute(pexels_stmt)).scalar_one()
+
+    recent_leads = (
+        await db.execute(select(AgentLead).where(AgentLead.created_at >= d30))
+    ).scalars().all()
+    response_times = [
+        response_time
+        for lead in recent_leads
+        if (response_time := _lead_response_time_hours(lead)) is not None
+    ]
+    created_total = len(recent_leads)
+    responded_total = sum(1 for lead in recent_leads if lead.responded_at is not None)
+    escalated_total = sum(1 for lead in recent_leads if lead.escalated_at is not None)
+    reassurance_sent_total = sum(1 for lead in recent_leads if lead.reassurance_sent_at is not None)
+    marked_booked_total = sum(1 for lead in recent_leads if lead.marked_booked_at is not None)
+
+    top_destinations_rows = (
+        await db.execute(
+            select(AgentLead.destination, func.count().label("count"))
+            .where(AgentLead.created_at >= d30)
+            .group_by(AgentLead.destination)
+            .order_by(func.count().desc(), AgentLead.destination.asc())
+            .limit(5)
+        )
+    ).all()
 
     # Qdrant Cloud free-tier RAM headroom — same estimate core/scheduler.py's
     # periodic job logs a WARNING/ERROR for; surfaced here too so an admin can
@@ -148,6 +215,21 @@ async def metrics_summary(
             "gemini_estimated_cost_inr_30d": round(float(gemini_cost_30d or 0.0) * settings.usd_to_inr_rate, 2),
             "pexels_calls_30d": int(pexels_calls_30d or 0),
         },
+        "agent_leads": {
+            "created_total": created_total,
+            "responded_total": responded_total,
+            "escalated_total": escalated_total,
+            "reassurance_sent_total": reassurance_sent_total,
+            "response_time_avg_hours": round(sum(response_times) / len(response_times), 2) if response_times else None,
+            "response_time_p50_hours": _percentile(response_times, 0.5),
+            "response_time_p90_hours": _percentile(response_times, 0.9),
+            "sla_breach_rate": round(escalated_total / created_total, 4) if created_total else None,
+            "marked_booked_total": marked_booked_total,
+            "top_destinations": [
+                {"destination": destination, "count": count}
+                for destination, count in top_destinations_rows
+            ],
+        },
         "qdrant_storage": qdrant_storage,
         "redis_storage": redis_storage,
     }
@@ -180,6 +262,23 @@ async def metrics_timeseries(
         # date object — normalize both to an ISO "YYYY-MM-DD" string.
         key = day if isinstance(day, str) else day.isoformat()
         series.setdefault(key, {})[event_type] = count
+
+    responded_leads = (
+        await db.execute(
+            select(AgentLead).where(
+                AgentLead.responded_at.is_not(None),
+                AgentLead.responded_at >= since,
+            )
+        )
+    ).scalars().all()
+    response_times_by_day: dict[str, list[float]] = {}
+    for lead in responded_leads:
+        key = lead.responded_at.date().isoformat()
+        response_time = _lead_response_time_hours(lead)
+        if response_time is not None:
+            response_times_by_day.setdefault(key, []).append(response_time)
+    for key, values in response_times_by_day.items():
+        series.setdefault(key, {})["agent_lead_response_avg_hours"] = round(sum(values) / len(values), 2)
 
     return {"range": range, "series": series}
 
@@ -245,6 +344,44 @@ async def purge_all_users(
     await log_event(db, "admin_purge_all", user_id=admin.id, metadata={"deleted_count": deleted_count})
     _log.warning("Admin %s bulk-purged %d user accounts", admin.id, deleted_count)
     return {"status": "purged", "deleted_count": deleted_count}
+
+
+@router.get("/admin/leads", response_model=list[AgentLeadAdminResponse])
+async def list_agent_leads(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_admin_user),
+) -> list[AgentLeadAdminResponse]:
+    leads = (
+        await db.execute(
+            select(AgentLead).order_by(AgentLead.created_at.desc()).limit(limit)
+        )
+    ).scalars().all()
+    return [_lead_to_response(lead) for lead in leads]
+
+
+@router.post("/admin/leads/{lead_id}/mark-booked", response_model=AgentLeadAdminResponse)
+async def mark_agent_lead_booked(
+    lead_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin_user),
+) -> AgentLeadAdminResponse:
+    lead = (await db.execute(select(AgentLead).where(AgentLead.id == lead_id))).scalar_one_or_none()
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    if lead.marked_booked_at is None:
+        lead.marked_booked_at = datetime.now(UTC)
+        await db.commit()
+        await db.refresh(lead)
+        await log_event(
+            db,
+            "agent_lead_marked_booked",
+            user_id=admin.id,
+            metadata={"lead_id": str(lead.id), "destination": lead.destination},
+        )
+
+    return _lead_to_response(lead)
 
 
 # ── Admin access requests ────────────────────────────────────────────────

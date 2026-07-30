@@ -83,6 +83,7 @@ class Settings(BaseSettings):
     # metered YouTube sources this is a free Wikimedia API, so the cadence is
     # about staleness, not quota.
     visa_info_refresh_days: int = 30
+    agent_lead_sla_check_hours: int = 1
     # Retrieval side: off switch for the wizard's visa note, matching the
     # pattern of itinerary_corpus_retrieval_enabled.
     visa_info_retrieval_enabled: bool = True

@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import func, select
 
 from core.analytics import log_event
-from db_models import RefreshToken, User
+from db_models import AgentLead, RefreshToken, User
 from routers.admin import _PURGE_ALL_CONFIRMATION_PHRASE
 
 pytestmark = pytest.mark.asyncio
@@ -19,11 +19,41 @@ async def _login(client, email: str, password: str) -> None:
     assert response.status_code == 200
 
 
+async def _create_lead(
+    db_session_maker,
+    *,
+    destination: str,
+    created_at: datetime,
+    email: str = "lead@example.com",
+    responded_at: datetime | None = None,
+    escalated_at: datetime | None = None,
+    reassurance_sent_at: datetime | None = None,
+    marked_booked_at: datetime | None = None,
+):
+    async with db_session_maker() as session:
+        lead = AgentLead(
+            email=email,
+            destination=destination,
+            trip_config_summary={"pax": 2},
+            created_at=created_at,
+            responded_at=responded_at,
+            escalated_at=escalated_at,
+            reassurance_sent_at=reassurance_sent_at,
+            marked_booked_at=marked_booked_at,
+        )
+        session.add(lead)
+        await session.commit()
+        await session.refresh(lead)
+        return lead
+
+
 @pytest.mark.parametrize(
     ("method", "url", "kwargs"),
     [
         ("get", "/api/admin/metrics/summary", {}),
         ("get", "/api/admin/metrics/timeseries?range=7d", {}),
+        ("get", "/api/admin/leads", {}),
+        ("post", f"/api/admin/leads/{uuid.uuid4()}/mark-booked", {}),
         ("delete", f"/api/admin/users/{uuid.uuid4()}", {}),
         ("post", "/api/admin/users/purge-all", {"json": {"confirm": _PURGE_ALL_CONFIRMATION_PHRASE}}),
     ],
@@ -38,6 +68,8 @@ async def test_admin_routes_require_authentication(method, url, kwargs, client):
     [
         ("get", "/api/admin/metrics/summary", {}),
         ("get", "/api/admin/metrics/timeseries?range=7d", {}),
+        ("get", "/api/admin/leads", {}),
+        ("post", f"/api/admin/leads/{uuid.uuid4()}/mark-booked", {}),
         ("delete", f"/api/admin/users/{uuid.uuid4()}", {}),
         ("post", "/api/admin/users/purge-all", {"json": {"confirm": _PURGE_ALL_CONFIRMATION_PHRASE}}),
     ],
@@ -104,6 +136,121 @@ async def test_admin_metrics_summary_and_timeseries_return_expected_data(
     assert today_key in timeseries["series"]
     assert timeseries["series"][today_key]["signup"] == 1
     assert timeseries["series"][today_key]["gemini_usage"] == 1
+
+
+async def test_admin_metrics_summary_defaults_agent_leads_to_zero_when_empty(
+    client,
+    user_factory,
+):
+    await user_factory(email="admin@example.com", password="Password123!", is_admin=True)
+    await _login(client, "admin@example.com", "Password123!")
+
+    response = await client.get("/api/admin/metrics/summary")
+
+    assert response.status_code == 200
+    assert response.json()["agent_leads"] == {
+        "created_total": 0,
+        "responded_total": 0,
+        "escalated_total": 0,
+        "reassurance_sent_total": 0,
+        "response_time_avg_hours": None,
+        "response_time_p50_hours": None,
+        "response_time_p90_hours": None,
+        "sla_breach_rate": None,
+        "marked_booked_total": 0,
+        "top_destinations": [],
+    }
+
+
+async def test_admin_agent_lead_metrics_and_timeseries_include_summary_math(
+    client,
+    db_session_maker,
+    user_factory,
+):
+    await user_factory(email="admin@example.com", password="Password123!", is_admin=True)
+    await _login(client, "admin@example.com", "Password123!")
+
+    now = datetime.now(UTC)
+    for index in range(10):
+        created_at = now - timedelta(days=1, hours=index)
+        responded_at = None
+        escalated_at = None
+        reassurance_sent_at = None
+        marked_booked_at = None
+        if index < 3:
+            responded_at = created_at + timedelta(hours=index + 2)
+        if index in {3, 4}:
+            escalated_at = created_at + timedelta(hours=24)
+        if index == 5:
+            reassurance_sent_at = created_at + timedelta(hours=48)
+        if index in {0, 6}:
+            marked_booked_at = created_at + timedelta(hours=12)
+        await _create_lead(
+            db_session_maker,
+            destination="Kyoto" if index < 6 else "Bali",
+            email=f"lead-{index}@example.com",
+            created_at=created_at,
+            responded_at=responded_at,
+            escalated_at=escalated_at,
+            reassurance_sent_at=reassurance_sent_at,
+            marked_booked_at=marked_booked_at,
+        )
+
+    async with db_session_maker() as session:
+        await log_event(
+            session,
+            "agent_lead_created",
+            metadata={"lead_id": "lead-1", "destination": "Kyoto"},
+        )
+
+    summary_response = await client.get("/api/admin/metrics/summary")
+    timeseries_response = await client.get("/api/admin/metrics/timeseries", params={"range": "30d"})
+
+    assert summary_response.status_code == 200
+    assert timeseries_response.status_code == 200
+
+    summary = summary_response.json()["agent_leads"]
+    assert summary["created_total"] == 10
+    assert summary["responded_total"] == 3
+    assert summary["escalated_total"] == 2
+    assert summary["reassurance_sent_total"] == 1
+    assert summary["marked_booked_total"] == 2
+    assert summary["sla_breach_rate"] == pytest.approx(0.2)
+    assert summary["response_time_avg_hours"] == pytest.approx(3.0)
+    assert summary["response_time_p50_hours"] == pytest.approx(3.0)
+    assert summary["response_time_p90_hours"] == pytest.approx(4.0)
+    assert summary["top_destinations"][0] == {"destination": "Kyoto", "count": 6}
+    assert summary["top_destinations"][1] == {"destination": "Bali", "count": 4}
+
+    response_day_key = (now - timedelta(days=1) + timedelta(hours=2)).date().isoformat()
+    timeseries = timeseries_response.json()["series"]
+    assert timeseries[now.date().isoformat()]["agent_lead_created"] == 1
+    assert timeseries[response_day_key]["agent_lead_response_avg_hours"] == pytest.approx(3.0)
+
+
+async def test_admin_can_list_and_mark_leads_booked_idempotently(
+    client,
+    db_session_maker,
+    user_factory,
+):
+    await user_factory(email="admin@example.com", password="Password123!", is_admin=True)
+    lead = await _create_lead(
+        db_session_maker,
+        destination="Paris",
+        created_at=datetime.now(UTC) - timedelta(hours=2),
+    )
+    await _login(client, "admin@example.com", "Password123!")
+
+    list_response = await client.get("/api/admin/leads")
+    first_mark = await client.post(f"/api/admin/leads/{lead.id}/mark-booked")
+    second_mark = await client.post(f"/api/admin/leads/{lead.id}/mark-booked")
+
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["status"] == "pending"
+    assert first_mark.status_code == 200
+    assert second_mark.status_code == 200
+    assert first_mark.json()["marked_booked_at"] is not None
+    assert second_mark.json()["marked_booked_at"] == first_mark.json()["marked_booked_at"]
 
 
 async def test_admin_delete_user_prevents_self_delete_and_cascades_refresh_tokens(

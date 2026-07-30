@@ -26,6 +26,7 @@ from core.rate_limit import limiter
 from core.scheduler import start_scheduler, stop_scheduler
 from routers import (
     admin,
+    agent_leads,
     analytics,
     auth,
     best_time,
@@ -123,6 +124,7 @@ app.include_router(share.router, prefix="/api")
 app.include_router(wizard_chat.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
+app.include_router(agent_leads.router, prefix="/api")
 app.include_router(analytics.router, prefix="/api")
 
 

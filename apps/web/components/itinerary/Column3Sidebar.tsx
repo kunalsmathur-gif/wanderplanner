@@ -9,6 +9,7 @@ import { getTravelTips, type TravelTip } from '@/lib/api'
 import { logClientEvent } from '@/lib/analyticsBeacon'
 import { MapWrapper } from '@/components/map/MapWrapper'
 import { BestTimeWidget } from '@/components/dashboard/BestTimeWidget'
+import { AgentHandoffCard } from '@/components/itinerary/AgentHandoffCard'
 import { BookingLinksSection } from '@/components/itinerary/BookingLinksSection'
 
 export function Column3Sidebar() {
@@ -76,8 +77,9 @@ export function Column3Sidebar() {
       )}
 
       {destination && (
-        <div className="border-t border-[var(--_border)] pt-2">
+        <div className="space-y-3 border-t border-[var(--_border)] pt-2">
           <BookingLinksSection />
+          <AgentHandoffCard />
         </div>
       )}
 

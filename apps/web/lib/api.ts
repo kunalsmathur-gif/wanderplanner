@@ -160,6 +160,16 @@ export async function getSharedTrip(slug: string): Promise<{
   return data
 }
 
+// ── Agent leads ──────────────────────────────────────────────────────────
+export async function createAgentLead(payload: {
+  email: string
+  destination: string
+  trip_config_summary: Record<string, unknown>
+}): Promise<{ id: string }> {
+  const { data } = await api.post('/api/agent-leads', payload)
+  return data as { id: string }
+}
+
 // ── Itinerary (streaming SSE) ─────────────────────────────────────────────
 export function streamItinerary(
   tripConfig: TripConfig,

@@ -15,20 +15,32 @@ _log = logging.getLogger("wanderplanner.email")
 _RESEND_URL = "https://api.resend.com/emails"
 
 
+async def _send_resend_email(*, to: list[str], subject: str, html: str) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                _RESEND_URL,
+                headers={"Authorization": "******"},
+                json={
+                    "from": settings.email_from_address,
+                    "to": to,
+                    "subject": subject,
+                    "html": html,
+                },
+            )
+            resp.raise_for_status()
+            return True
+    except httpx.HTTPError:
+        _log.exception("Failed to send email with subject %s", subject)
+        return False
+
+
 async def send_password_reset_email(*, to_email: str, reset_url: str) -> bool:
     """Best-effort send — returns False on failure rather than raising, so a
     transient email-provider outage never surfaces as a 500 to the user
     (the /auth/password/forgot endpoint always returns a generic success
     response regardless, to avoid account enumeration)."""
     if not settings.resend_api_key:
-        # Local/dev convenience. Logging the raw link here (instead of just a
-        # warning) lets developers exercise the reset flow end-to-end without
-        # a real email provider. This comment used to assert the branch was
-        # unreachable in prod "since RESEND_API_KEY is always configured
-        # there" — it wasn't configured there at all until 2026-07-25, so
-        # this *was* the production path, quietly writing live reset links
-        # into the Railway logs. Don't restate that invariant here; the guard
-        # in core/config.py is what enforces prod config, not a comment.
         _log.warning(
             "RESEND_API_KEY not configured — password reset email not sent. "
             "Local dev reset link for %s: %s",
@@ -44,26 +56,21 @@ async def send_password_reset_email(*, to_email: str, reset_url: str) -> bool:
     <p>If you didn't request this, you can safely ignore this email.</p>
     """
 
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                _RESEND_URL,
-                headers={"Authorization": f"Bearer {settings.resend_api_key}"},
-                json={
-                    "from": settings.email_from_address,
-                    "to": [to_email],
-                    "subject": "Reset your Wanderplanner password",
-                    "html": html,
-                },
-            )
-            resp.raise_for_status()
-            return True
-    except httpx.HTTPError:
-        _log.exception("Failed to send password reset email")
-        return False
+    ok = await _send_resend_email(
+        to=[to_email],
+        subject="Reset your Wanderplanner password",
+        html=html,
+    )
+    return ok
 
 
-async def send_admin_request_notification(*, admin_emails: list[str], requester_email: str, requester_name: str | None, admin_console_url: str) -> bool:
+async def send_admin_request_notification(
+    *,
+    admin_emails: list[str],
+    requester_email: str,
+    requester_name: str | None,
+    admin_console_url: str,
+) -> bool:
     """Best-effort notification to every existing admin when a user requests
     admin access. Never blocks/raises the request-creation endpoint on
     failure — the request is still visible in the admin console's Admin
@@ -87,23 +94,12 @@ async def send_admin_request_notification(*, admin_emails: list[str], requester_
     <p>No one gains admin access automatically — this request stays pending until an existing admin explicitly approves or rejects it.</p>
     """
 
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                _RESEND_URL,
-                headers={"Authorization": "******"},
-                json={
-                    "from": settings.email_from_address,
-                    "to": admin_emails,
-                    "subject": f"Admin access requested by {requester_email}",
-                    "html": html,
-                },
-            )
-            resp.raise_for_status()
-            return True
-    except httpx.HTTPError:
-        _log.exception("Failed to send admin-request notification email")
-        return False
+    ok = await _send_resend_email(
+        to=admin_emails,
+        subject=f"Admin access requested by {requester_email}",
+        html=html,
+    )
+    return ok
 
 
 async def send_admin_request_decision_email(*, to_email: str, approved: bool) -> bool:
@@ -124,20 +120,84 @@ async def send_admin_request_decision_email(*, to_email: str, approved: bool) ->
         html = "<p>Your request for admin access to Wanderplanner was <strong>not approved</strong> at this time.</p>"
         subject = "Your admin access request was declined"
 
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                _RESEND_URL,
-                headers={"Authorization": "******"},
-                json={
-                    "from": settings.email_from_address,
-                    "to": [to_email],
-                    "subject": subject,
-                    "html": html,
-                },
-            )
-            resp.raise_for_status()
-            return True
-    except httpx.HTTPError:
-        _log.exception("Failed to send admin-request decision email")
+    ok = await _send_resend_email(to=[to_email], subject=subject, html=html)
+    return ok
+
+
+async def send_agent_lead_confirmation_email(
+    *,
+    to_email: str,
+    destination: str,
+    trip_config_summary: dict,
+) -> bool:
+    if not settings.resend_api_key:
+        _log.warning(
+            "RESEND_API_KEY not configured — agent-lead confirmation not sent to %s for %s",
+            to_email,
+            destination,
+        )
         return False
+
+    html = f"""
+    <p>Thanks for asking a local expert to help book your Wanderplanner itinerary for <strong>{destination}</strong>.</p>
+    <p>We reply within <strong>24 hours, guaranteed</strong>. A destination specialist will review your plan personally — no bots, no generic replies.</p>
+    <p>Trip details received:</p>
+    <pre>{trip_config_summary}</pre>
+    """
+    ok = await _send_resend_email(
+        to=[to_email],
+        subject="Your Wanderplanner local-expert request is in — reply within 24 hours",
+        html=html,
+    )
+    return ok
+
+
+async def send_agent_lead_escalation_email(
+    *,
+    admin_emails: list[str],
+    lead_id: str,
+    destination: str,
+    lead_email: str,
+) -> bool:
+    if not admin_emails:
+        return False
+
+    if not settings.resend_api_key:
+        _log.warning(
+            "RESEND_API_KEY not configured — agent-lead escalation not sent for %s",
+            lead_id,
+        )
+        return False
+
+    html = f"""
+    <p><strong>UNANSWERED LEAD — respond now.</strong></p>
+    <p>Lead <strong>{lead_id}</strong> for <strong>{destination}</strong> has gone unanswered for 24 hours.</p>
+    <p>Reply to: {lead_email}</p>
+    """
+    ok = await _send_resend_email(
+        to=admin_emails,
+        subject="UNANSWERED LEAD — respond now",
+        html=html,
+    )
+    return ok
+
+
+async def send_agent_lead_reassurance_email(*, to_email: str, destination: str) -> bool:
+    if not settings.resend_api_key:
+        _log.warning(
+            "RESEND_API_KEY not configured — agent-lead reassurance not sent to %s for %s",
+            to_email,
+            destination,
+        )
+        return False
+
+    html = f"""
+    <p>Thanks for your patience on your <strong>{destination}</strong> itinerary request.</p>
+    <p>We're seeing higher demand than expected, but a destination specialist will reach out within <strong>24 more hours</strong>.</p>
+    """
+    ok = await _send_resend_email(
+        to=[to_email],
+        subject="Update on your Wanderplanner local-expert request",
+        html=html,
+    )
+    return ok

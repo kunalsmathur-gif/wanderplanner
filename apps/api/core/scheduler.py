@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -279,6 +279,73 @@ async def _check_redis_memory_headroom():
         )
 
 
+async def _check_agent_lead_sla(*, now: datetime | None = None):
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import select
+
+    from core.email import send_agent_lead_escalation_email, send_agent_lead_reassurance_email
+    from db import AsyncSessionLocal
+    from db_models import AgentLead, User
+
+    now = now or datetime.now(UTC)
+    escalation_cutoff = now - timedelta(hours=24)
+    reassurance_cutoff = now - timedelta(hours=48)
+
+    async with AsyncSessionLocal() as db:
+        leads_to_escalate = (
+            await db.execute(
+                select(AgentLead).where(
+                    AgentLead.responded_at.is_(None),
+                    AgentLead.escalated_at.is_(None),
+                    AgentLead.created_at <= escalation_cutoff,
+                )
+            )
+        ).scalars().all()
+        leads_to_reassure = (
+            await db.execute(
+                select(AgentLead).where(
+                    AgentLead.responded_at.is_(None),
+                    AgentLead.reassurance_sent_at.is_(None),
+                    AgentLead.created_at <= reassurance_cutoff,
+                )
+            )
+        ).scalars().all()
+
+        admin_emails: list[str] = []
+        if leads_to_escalate:
+            admin_emails = [
+                row[0]
+                for row in (
+                    await db.execute(
+                        select(User.email).where(User.is_admin.is_(True), User.email.is_not(None))
+                    )
+                ).all()
+            ]
+
+        for lead in leads_to_escalate:
+            await send_agent_lead_escalation_email(
+                admin_emails=admin_emails,
+                lead_id=str(lead.id),
+                destination=lead.destination,
+                lead_email=lead.email,
+            )
+            # Mark the attempt regardless of provider outcome: the contract is
+            # "send at most once per threshold", and repeated hourly retries
+            # would be worse than one logged failure.
+            lead.escalated_at = now
+
+        for lead in leads_to_reassure:
+            await send_agent_lead_reassurance_email(
+                to_email=lead.email,
+                destination=lead.destination,
+            )
+            lead.reassurance_sent_at = now
+
+        if leads_to_escalate or leads_to_reassure:
+            await db.commit()
+
+
 async def start_scheduler():
     _scheduler.add_job(
         _refresh_reddit,
@@ -320,6 +387,12 @@ async def start_scheduler():
         _check_redis_memory_headroom,
         trigger=IntervalTrigger(hours=settings.redis_memory_check_hours),
         id="redis_memory_headroom_check",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        _check_agent_lead_sla,
+        trigger=IntervalTrigger(hours=settings.agent_lead_sla_check_hours),
+        id="agent_lead_sla_check",
         replace_existing=True,
     )
     _scheduler.start()
