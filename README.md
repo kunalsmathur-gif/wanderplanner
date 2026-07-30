@@ -47,7 +47,7 @@ WanderPlanner uses conversational AI to help you plan trips through a natural ch
 | **✅ Consent + Legal Pages** | Signup requires a minimized consent checkbox linking to `/terms` and `/privacy`, with consent timestamped per account for DPDP-aligned recordkeeping. |
 | **🗑️ Self-Service Account Deletion** | `/account` includes a danger-zone flow that requires typing `DELETE` before permanently removing the account and revoking refresh-token sessions. |
 | **📈 Admin Analytics Dashboard** | Live `/admin` console (reachable from the account menu for approved admins) showing signups, sessions, logins, itinerary generation, Gemini token/cost usage (in ₹), and Pexels free-tier call counts, plus a bulk data-purge tool. |
-| **🛡️ Admin Access Requests** | No user is ever auto-admin. Any signed-in user can request admin access from `/account`; every existing admin is emailed and sees the request in a review panel on `/admin`, where they can approve (grants access, emails requester) or reject. |
+| **🛡️ Admin Access Control** | No user is ever auto-admin, and there's no self-service request UI (removed v5.15 — no real use case in a single-operator pilot). Admin access is granted via backend action: `apps/api/scripts/grant_admin.py <email>` (idempotent CLI) for the first admin, or the existing `/admin` review panel / `POST /admin/requests` API if a request is created some other way. |
 | **🎙️ Anya Voice Assistant** | Conversational AI with voice input/output. Talk naturally to plan your trip. Young Indian female voice (20-25 yrs). |
 | **💬 Persistent Anya Chat** | After itinerary generation, the floating Anya orb opens a slide-in chat panel. Ask questions, request changes — Anya patches config or offers to regenerate. |
 | **📱 Mobile-Responsive** | Bottom tab navigation on mobile (Itinerary · Overview · Map & Tips). Full desktop 3-column layout on larger screens. |
@@ -290,6 +290,11 @@ Open `http://localhost:3000`.
 ---
 
 ## Changelog
+
+### v5.15 — Admin Access: Self-Service Request Removed, Backend-Only Grant CLI Added (July 2026)
+- ✅ **Account page simplified (2026-07-29):** removed the self-service "Request admin access" button/section from `/account` — a pre-revenue, single-operator pilot has no real use case for it, only unnecessary attack surface. "Danger zone" also renamed to "Manage account" (still destructive-styled). The `/admin` "Admin access requests" review panel and `POST /admin/requests` API are unchanged.
+- ✅ **NEW `apps/api/scripts/grant_admin.py` (2026-07-30):** with the self-service request gone, the only remaining in-app path (an existing admin approving a request) can't bootstrap the *first* admin. This idempotent one-off CLI sets `is_admin=True` for an existing user by email, run directly against a database (local `dev.db`, or prod via Railway's `DATABASE_PUBLIC_URL` proxy). No-ops if already an admin; errors clearly if the email hasn't signed up. Used to grant `kunal.s.mathur@gmail.com` admin access in production.
+- Full detail: `docs/system-design.md` §8A, `docs/PRD.md` Clarification #13, `TECHNICAL_DOCUMENTATION.md` v10.6 changelog follow-up.
 
 ### v5.14 — Local venv/httpx Fix, Qdrant Storage Headroom Monitoring, Redis-Backed Share Links + Travel Tips (July 2026)
 - 🔴 **FIXED: local `.venv` silently drifted to an unsupported Python (3.9)**, failing on `datetime.UTC` deep inside the scheduler with a cryptic error. `main.py` now fails fast with a clear, actionable `RuntimeError` if run under Python < 3.11; README's setup instructions call out the `python3 -m venv` pitfall explicitly; `requirements-dev.txt`'s `httpx` pin was silently behind `requirements.txt`'s — now matched.

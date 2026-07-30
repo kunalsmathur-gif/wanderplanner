@@ -1061,6 +1061,8 @@ The generic `event_type + JSONB metadata` design intentionally avoids new migrat
 
 Enforces the "no auto-admin" policy: `is_admin` is only ever flipped `true` via the `/admin/requests/{id}/approve` endpoint (or an out-of-band DB seed for the very first admin) — never by the signup flow itself.
 
+**Bootstrapping the first admin:** the in-app request/approve flow needs an existing admin to approve a request, which can't work the first time there are zero admins — and the front-end entry point to *create* a request was later removed (there's no UI for a regular user to self-serve one anymore, by design, since this is a pre-revenue single-operator pilot, not a multi-tenant product). `apps/api/scripts/grant_admin.py <email>` is the escape hatch: an idempotent one-off CLI that sets `is_admin=True` for an existing user by email, run directly against a database (local `dev.db`, or prod via `DATABASE_URL`/Railway's `DATABASE_PUBLIC_URL` proxy — the internal `postgres.railway.internal` host isn't reachable outside Railway's network). No-ops if the user is already an admin; errors clearly if the email hasn't signed up yet. First used 2026-07-30 to grant `kunal.s.mathur@gmail.com` admin access in production.
+
 Migrations:
 - `0001_auth_analytics`
 - `0002_password_reset`
