@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from core.airbnb_pricing import airbnb_hotel_equivalent_pp_inr
 from core.budget_estimator import (
     _AIRBNB_STAY_DISCOUNT_MULTIPLIER,
     estimate_bare_minimum_budget,
@@ -18,6 +19,43 @@ from core.budget_estimator import (
 
 COLOMBO = {"city": "Colombo", "country": "Sri Lanka", "lat": 6.9271, "lon": 79.8612}
 ISTANBUL = {"city": "Istanbul", "country": "Turkey", "lat": 41.0082, "lon": 28.9784}
+
+# 2026-07-30 (issue #56): cities added beyond the original Istanbul anchor,
+# each Wikivoyage-Sleep-section-pricing-gap-verified (zero {{sleep}} price
+# templates, live-checked via `action=parse`) and Inside-Airbnb-covered (see
+# core/airbnb_pricing.py's dict comments for full per-city sourcing).
+NEW_SEEDED_CITIES = [
+    {"city": "Mexico City", "country": "Mexico"},
+    {"city": "Rio de Janeiro", "country": "Brazil"},
+    {"city": "Vienna", "country": "Austria"},
+    {"city": "Oslo", "country": "Norway"},
+    {"city": "Toronto", "country": "Canada"},
+    {"city": "Sydney", "country": "Australia"},
+    {"city": "Buenos Aires", "country": "Argentina"},
+    {"city": "Stockholm", "country": "Sweden"},
+    {"city": "São Paulo", "country": "Brazil"},
+    {"city": "Bogotá", "country": "Colombia"},
+    {"city": "Santiago", "country": "Chile"},
+    {"city": "Riga", "country": "Latvia"},
+    {"city": "Vancouver", "country": "Canada"},
+    {"city": "Montreal", "country": "Canada"},
+    {"city": "Melbourne", "country": "Australia"},
+    {"city": "Barcelona", "country": "Spain"},
+    {"city": "Berlin", "country": "Germany"},
+    {"city": "Copenhagen", "country": "Denmark"},
+    {"city": "Edinburgh", "country": "Scotland"},
+    {"city": "Hong Kong", "country": "China"},
+    {"city": "Lisbon", "country": "Portugal"},
+    {"city": "London", "country": "England"},
+    {"city": "Los Angeles", "country": "United States"},
+    {"city": "Madrid", "country": "Spain"},
+    {"city": "Milan", "country": "Italy"},
+    {"city": "Munich", "country": "Germany"},
+    {"city": "New York", "country": "United States"},
+    {"city": "Prague", "country": "Czech Republic"},
+    {"city": "San Francisco", "country": "United States"},
+    {"city": "Washington DC", "country": "United States"},
+]
 
 
 def _config(**overrides):
@@ -110,6 +148,28 @@ class TestAirbnbHotelEquivalentFallback:
         config = _config()  # Colombo — not in the seed list
         estimate = await estimate_bare_minimum_budget(config)
         assert estimate["stay_airbnb_fallback_used"] is False
+
+    @pytest.mark.parametrize("destination", NEW_SEEDED_CITIES, ids=[d["city"] for d in NEW_SEEDED_CITIES])
+    def test_new_seeded_city_resolves_a_rate(self, destination):
+        rate = airbnb_hotel_equivalent_pp_inr(destination["city"], destination["country"])
+        assert rate is not None
+        assert rate > 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("destination", NEW_SEEDED_CITIES, ids=[d["city"] for d in NEW_SEEDED_CITIES])
+    async def test_new_seeded_city_uses_airbnb_derived_rate_not_generic_flat(self, destination):
+        from core.budget_estimator import _COST_MATRIX, resolve_destination_tier
+
+        dest = {**destination, "lat": 0.0, "lon": 0.0}
+        config = _config(destination=dest)
+        estimate = await estimate_bare_minimum_budget(config)
+
+        tier = resolve_destination_tier(dest["city"], dest["country"])
+        generic_flat_stay_pp = _COST_MATRIX[tier]["mid_range"]["stay_per_night_pp"]
+        nights = max(1, estimate["duration_days"] - 1)
+
+        assert estimate["stay_airbnb_fallback_used"] is True
+        assert estimate["breakdown"]["stay_inr"] != 2 * nights * generic_flat_stay_pp
 
     @pytest.mark.asyncio
     async def test_explicit_airbnb_request_combines_with_seeded_fallback(self):
