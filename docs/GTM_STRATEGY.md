@@ -17,7 +17,7 @@ The moat is **not** the chatbot, the voice UX, or any single feature — all rep
 
 User feedback (July 2026) was not "add features" — it was "make the intelligence real." The three complaints (touristy output, refinements don't bite, shallow budgets) share one root cause: generation is prompt-led, and the data that fixes it is built but unwired (`itinerary_corpus` is ingest-only as of this writing).
 
-**Closing the feedback loop itself is still manual (⏳ planned, issue #64).** The insights above came from direct interviews, not in-app instrumentation — there's no in-app way yet for a user to flag "this itinerary missed the mark" or react to a specific day/place, tied to the exact request that produced it. Consumer-side capture is planned (see `docs/PRD.md` Clarification #20, `docs/system-design.md` §9C); the agent/B2B side of feedback stays deliberately manual — hand-onboard a small number of real agents for free, talk to them directly, automate only once a few are willing to pay.
+**Closing the feedback loop is now instrumented in-app (✅ built, issue #64).** The insights above originally came from direct interviews, not in-app instrumentation; there's now an in-app way for a user to flag "this itinerary missed the mark" or react to a specific day/place, tied to the exact request that produced it (`trip_config_snapshot`), plus admin-visible feedback volume and negative-feedback rate by destination. See `docs/PRD.md` Clarification #20, `docs/system-design.md` §9C. The agent/B2B side of feedback stays deliberately manual — hand-onboard a small number of real agents for free, talk to them directly, automate only once a few are willing to pay.
 
 ---
 
