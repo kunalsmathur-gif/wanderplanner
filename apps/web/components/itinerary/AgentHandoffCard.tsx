@@ -98,7 +98,7 @@ export function AgentHandoffCard() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-[var(--_muted-fg)]">
-            🧭 Local Expert Handoff
+            🧭 Local Expert Help
           </p>
           <h3 className="mt-1 text-lg font-bold text-[var(--_fg)] [font-family:var(--font-display)]">
             Get This Itinerary Booked by a Local Expert
@@ -155,7 +155,7 @@ export function AgentHandoffCard() {
             disabled={state === 'loading' || !email.trim()}
             className="btn btn-accent w-full rounded-xl"
           >
-            {state === 'loading' ? 'Sending…' : 'Get It Booked'}
+            {state === 'loading' ? 'Sending…' : 'Get Quotation'}
           </button>
 
           {state === 'error' && (

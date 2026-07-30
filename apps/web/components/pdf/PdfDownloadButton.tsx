@@ -49,7 +49,7 @@ export function PdfDownloadButton() {
       disabled
       className="w-full h-9 rounded-lg text-xs font-semibold bg-[var(--_muted)] text-[var(--_muted-fg)] cursor-not-allowed"
     >
-      ⬇️ Download PDF
+      ⬇️ Download Itinerary PDF
     </button>
   )
 
@@ -65,7 +65,7 @@ export function PdfDownloadButton() {
             : 'bg-[var(--_muted)] text-[var(--_fg)] hover:bg-[var(--_border)]/40 border border-[var(--_border)]',
         ].join(' ')}
       >
-        {generating ? 'Preparing PDF…' : '⬇️ Download PDF'}
+        {generating ? 'Preparing PDF…' : '⬇️ Download Itinerary PDF'}
       </button>
       {failed && (
         <p className="text-xs text-[var(--_destructive)]">

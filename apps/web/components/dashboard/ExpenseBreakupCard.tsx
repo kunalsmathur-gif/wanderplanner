@@ -26,7 +26,7 @@ export function ExpenseBreakupCard() {
   const breakdown = useItineraryStore((s) => s.expenseBreakdown)
   const budget = useTripConfigStore((s) => s.config.budget)
   const [view, setView] = useState<'group' | 'person'>('group')
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
 
   if (!breakdown || breakdown.total_inr === 0) return null
 
@@ -43,7 +43,7 @@ export function ExpenseBreakupCard() {
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center justify-between px-3 py-2.5 bg-[var(--_muted)] hover:bg-[var(--_border)]/40 transition-colors"
       >
-        <span className="text-xs font-semibold text-[var(--_fg)]">💰 Expense Breakup</span>
+        <span className="text-xs font-semibold text-[var(--_fg)]">💰 Estimated Expenses</span>
         <span className="text-[var(--_muted-fg)] text-xs">{open ? '▲' : '▼'}</span>
       </button>
 
