@@ -240,3 +240,21 @@ A read-only `ui-ux-pro-max` audit covering landing, auth, wizard, dashboard, iti
 ### Regression + performance verification
 - **Backend untouched:** `git diff apps/api` empty across the entire pass; full pytest suite **917 passed / 6 skipped**; itinerary-timing instrumentation suite re-verified **22/22**.
 - **Frontend:** `tsc --noEmit` clean; `vitest run` **126 passed** (10 files, incl. 2 new test files); real before/after `next build` bundle comparison: client JS **+0.6%** raw and gzip (+18KB / +5.6KB), fully attributable to the added a11y code, zero new npm dependencies.
+
+
+## 🧩 Component Updates (July 30, 2026) — In-app feedback capture (issue #64)
+
+New consumer-facing feedback surface, built entirely on existing design tokens — no new colors, fonts, or primitives introduced.
+
+### Itinerary-level "missed the mark" flag — `ItineraryFeedbackFlag.tsx` ⭐ NEW
+- One-shot per mount, no modal: idle text link → optional inline `<textarea>` for a reason → submit. Uses `--_border`/`--_card`/`--_primary`/`--_muted-fg` exactly as `AgentHandoffCard.tsx` does, for visual consistency with the existing sidebar cards.
+- Wired into `Column3Sidebar.tsx` alongside `BookingLinksSection`/`AgentHandoffCard`, gated on an active day existing.
+
+### Day/place-level thumbs-up/down — `ItineraryTimeline.tsx`
+- Compact 👍/👎 buttons added to each `ActivityCard`'s metadata row (previously only shown when tags/video/booking links were present — the row is now always rendered since the reaction buttons are always there).
+- Active state uses `--_success` (thumbs-up) and the existing `red-*`/`red-950` scale already used elsewhere for negative/destructive states (thumbs-down) — matches the emerald-for-positive / red-for-negative convention this doc's own v10.48.0 entry established for the voice mic states.
+- Votes are changeable (click the other thumb to flip via `PATCH`), not one-shot — a deliberate UX choice for a low-friction reaction control, distinct from the itinerary-level flag's one-shot design.
+
+### Regression + performance verification
+- **Backend:** full pytest suite **1006 passed / 6 skipped**, 0 failed.
+- **Frontend:** existing Playwright e2e suite (`apps/web/e2e/wizard.spec.ts`) **5/6 passed** — the one failure is a pre-existing, unrelated flake on the landing page (anonymous `/api/auth/me` 401 tripping a "no console errors" assertion), not touched by this change since the new components only render inside the itinerary view.
