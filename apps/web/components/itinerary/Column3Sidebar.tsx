@@ -11,6 +11,7 @@ import { MapWrapper } from '@/components/map/MapWrapper'
 import { BestTimeWidget } from '@/components/dashboard/BestTimeWidget'
 import { AgentHandoffCard } from '@/components/itinerary/AgentHandoffCard'
 import { BookingLinksSection } from '@/components/itinerary/BookingLinksSection'
+import { ItineraryFeedbackFlag } from '@/components/itinerary/ItineraryFeedbackFlag'
 
 export function Column3Sidebar() {
   const days = useItineraryStore((state) => state.days)
@@ -80,6 +81,7 @@ export function Column3Sidebar() {
         <div className="space-y-3 border-t border-[var(--_border)] pt-2">
           <BookingLinksSection />
           <AgentHandoffCard />
+          {day && <ItineraryFeedbackFlag />}
         </div>
       )}
 

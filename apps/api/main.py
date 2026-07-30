@@ -37,6 +37,7 @@ from routers import (
     feasibility,
     geocode,
     itinerary,
+    itinerary_feedback,
     recommend_cities,
     reddit_highlights,
     search,
@@ -125,6 +126,7 @@ app.include_router(wizard_chat.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(agent_leads.router, prefix="/api")
+app.include_router(itinerary_feedback.router, prefix="/api")
 app.include_router(analytics.router, prefix="/api")
 
 

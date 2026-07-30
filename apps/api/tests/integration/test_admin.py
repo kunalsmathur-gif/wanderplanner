@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import func, select
 
 from core.analytics import log_event
-from db_models import AgentLead, RefreshToken, User
+from db_models import AgentLead, ItineraryFeedback, RefreshToken, User
 from routers.admin import _PURGE_ALL_CONFIRMATION_PHRASE
 
 pytestmark = pytest.mark.asyncio
@@ -45,6 +45,27 @@ async def _create_lead(
         await session.commit()
         await session.refresh(lead)
         return lead
+
+
+async def _create_feedback(
+    db_session_maker,
+    *,
+    destination: str,
+    sentiment: str,
+    scope: str = "itinerary",
+    created_at: datetime | None = None,
+):
+    async with db_session_maker() as session:
+        feedback = ItineraryFeedback(
+            trip_config_snapshot={"destination": {"city": destination}},
+            scope=scope,
+            sentiment=sentiment,
+            created_at=created_at or datetime.now(UTC),
+        )
+        session.add(feedback)
+        await session.commit()
+        await session.refresh(feedback)
+        return feedback
 
 
 @pytest.mark.parametrize(
@@ -226,6 +247,59 @@ async def test_admin_agent_lead_metrics_and_timeseries_include_summary_math(
     timeseries = timeseries_response.json()["series"]
     assert timeseries[now.date().isoformat()]["agent_lead_created"] == 1
     assert timeseries[response_day_key]["agent_lead_response_avg_hours"] == pytest.approx(3.0)
+
+
+async def test_admin_metrics_summary_defaults_itinerary_feedback_to_zero_when_empty(
+    client,
+    user_factory,
+):
+    """FEEDBACK-007."""
+    await user_factory(email="admin@example.com", password="Password123!", is_admin=True)
+    await _login(client, "admin@example.com", "Password123!")
+
+    response = await client.get("/api/admin/metrics/summary")
+
+    assert response.status_code == 200
+    assert response.json()["itinerary_feedback"] == {
+        "total": 0,
+        "negative_total": 0,
+        "negative_rate": None,
+        "by_destination": [],
+    }
+
+
+async def test_admin_metrics_reports_negative_feedback_rate_by_destination(
+    client,
+    db_session_maker,
+    user_factory,
+):
+    """FEEDBACK-006."""
+    await user_factory(email="admin@example.com", password="Password123!", is_admin=True)
+    await _login(client, "admin@example.com", "Password123!")
+
+    await _create_feedback(db_session_maker, destination="Kyoto", sentiment="missed_the_mark")
+    await _create_feedback(db_session_maker, destination="Kyoto", sentiment="thumbs_down", scope="place")
+    await _create_feedback(db_session_maker, destination="Kyoto", sentiment="thumbs_up", scope="place")
+    await _create_feedback(db_session_maker, destination="Bali", sentiment="thumbs_up", scope="day")
+    await _create_feedback(db_session_maker, destination="Bali", sentiment="thumbs_up", scope="day")
+
+    response = await client.get("/api/admin/metrics/summary")
+    assert response.status_code == 200
+
+    summary = response.json()["itinerary_feedback"]
+    assert summary["total"] == 5
+    assert summary["negative_total"] == 2
+    assert summary["negative_rate"] == pytest.approx(0.4)
+
+    by_destination = {row["destination"]: row for row in summary["by_destination"]}
+    assert by_destination["Kyoto"]["total"] == 3
+    assert by_destination["Kyoto"]["negative_total"] == 2
+    # The API rounds to 4 decimals (0.6667), which differs from the raw
+    # fraction (0.666666...) by more than pytest.approx's default tolerance.
+    assert by_destination["Kyoto"]["negative_rate"] == pytest.approx(2 / 3, abs=1e-4)
+    assert by_destination["Bali"]["total"] == 2
+    assert by_destination["Bali"]["negative_total"] == 0
+    assert by_destination["Bali"]["negative_rate"] == 0.0
 
 
 async def test_admin_can_list_and_mark_leads_booked_idempotently(

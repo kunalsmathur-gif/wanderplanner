@@ -1253,9 +1253,9 @@ instead:
 
 ---
 
-## Section 12 — User Feedback Capture (⏳ PLANNED — implement alongside issue #64, not yet built)
+## Section 12 — User Feedback Capture (✅ BUILT — issue #64)
 
-**Why this exists:** the PRD's Deploy-section feedback plan committed to a low-friction "this itinerary missed the mark" flag plus a day/place-level reaction, tied to the exact request that produced it — consumer-side only (the agent/B2B side stays deliberately manual, per the same PRD answer). Confirmed by code search: no feedback-capture UI, endpoint, or table exists yet. Write these as real `pytest` cases (payload validation per scope, DB write, admin-metrics aggregation) as part of building issue #64.
+**Why this exists:** the PRD's Deploy-section feedback plan committed to a low-friction "this itinerary missed the mark" flag plus a day/place-level reaction, tied to the exact request that produced it — consumer-side only (the agent/B2B side stays deliberately manual, per the same PRD answer). Implemented as real `pytest` cases (payload validation per scope, DB write, admin-metrics aggregation) in `apps/api/tests/integration/test_itinerary_feedback.py` and `apps/api/tests/integration/test_admin.py`.
 
 | ID | Scenario | Setup | Expected | Priority |
 |---|---|---|---|---|
@@ -1267,14 +1267,14 @@ instead:
 | FEEDBACK-006 | Admin metrics: negative-feedback rate by destination | 5 feedback rows across 2 destinations, 3 negative for destination A | `GET /api/admin/metrics/summary` reports per-destination negative-feedback rate correctly for destination A vs. B | P1 |
 | FEEDBACK-007 | Admin metrics: empty table doesn't error | No rows in `itinerary_feedback` yet | Summary endpoint returns zeros, not a 500 | P1 |
 
-### 12A — Where this is implemented (once built)
+### 12A — Where this is implemented
 
 | Step | File |
 |---|---|
-| Data model | new `itinerary_feedback` table, Alembic migration (pattern: `0004_destination_ingestion_state`) |
-| Itinerary-level flag UI | new component alongside `BookingLinksSection.tsx`/`AgentHandoffCard.tsx` |
-| Day/place-level reaction UI | `apps/web/components/itinerary/ItineraryTimeline.tsx` |
-| Endpoint | `POST /api/itinerary-feedback` |
+| Data model | `itinerary_feedback` table, Alembic migration `0007_itinerary_feedback.py` |
+| Itinerary-level flag UI | `apps/web/components/itinerary/ItineraryFeedbackFlag.tsx`, wired into `Column3Sidebar.tsx` |
+| Day/place-level reaction UI | `apps/web/components/itinerary/ItineraryTimeline.tsx` (`useItemFeedback` hook + thumbs buttons on `ActivityCard`) |
+| Endpoint | `POST /api/itinerary-feedback` + `PATCH /api/itinerary-feedback/{id}` (`apps/api/routers/itinerary_feedback.py`) |
 | Admin metrics | `GET /api/admin/metrics/summary`, extending the `agent_lead`-pattern metrics from issue #63 |
 | Design doc | `docs/system-design.md` §9C |
 

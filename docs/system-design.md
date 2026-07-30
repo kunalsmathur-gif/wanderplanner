@@ -1246,22 +1246,22 @@ However, **Gemini token/cost event instrumentation is still in progress** in the
 
 ---
 
-## 9C. User Feedback Capture (⏳ PLANNED — not yet built, issue #64)
+## 9C. User Feedback Capture (✅ BUILT — issue #64)
 
-**Why this exists:** the PRD's Deploy-section feedback plan committed to "a simple in-app way for someone to flag 'this itinerary missed the mark' or react to a specific day or place, tied to the exact request that produced it." Confirmed by code search: no feedback-capture UI, endpoint, or table exists yet. **Consumer-side only** — the agent/B2B side of the feedback loop stays deliberately manual (hand-onboard a small number of real agents, talk to them directly, automate only once a few are willing to pay), per the same PRD answer.
+**Why this exists:** the PRD's Deploy-section feedback plan committed to "a simple in-app way for someone to flag 'this itinerary missed the mark' or react to a specific day or place, tied to the exact request that produced it." **Consumer-side only** — the agent/B2B side of the feedback loop stays deliberately manual (hand-onboard a small number of real agents, talk to them directly, automate only once a few are willing to pay), per the same PRD answer.
 
-**Data model (new, issue #64):** `itinerary_feedback` table — `id`, `user_id`, `itinerary_id`/generation reference, `trip_config_snapshot` (JSON — the originating destination/dates/budget/pace/themes/pinned POIs, so the request context survives even if the live trip config later changes), `scope` (`itinerary` | `day` | `place`), `day_index` (nullable), `place_ref` (nullable), `sentiment` (`missed_the_mark` | `thumbs_up` | `thumbs_down`), `note` (nullable free text), `created_at`.
+**Data model:** `itinerary_feedback` table (`apps/api/db_models/itinerary_feedback.py`, migration `0007_itinerary_feedback.py`) — `id`, `user_id` (nullable FK), `trip_config_snapshot` (JSON — the full `TripConfig` as submitted at feedback time: destination, dates, budget, pace, themes, pinned POIs, so the request context survives even if the live trip config later changes), `scope` (`itinerary` | `day` | `place`), `day_index` (nullable, required for `day`/`place`), `place_ref` (nullable, required for `place`), `sentiment` (`missed_the_mark` | `thumbs_up` | `thumbs_down`), `note` (nullable free text), `created_at`. No itinerary ID is stored — none is persisted client-side today, so the snapshot itself is the durable reference back to the generating request, per the issue's own acceptance criteria.
 
 **Flow:**
-1. Itinerary-level "This itinerary missed the mark" action alongside `BookingLinksSection.tsx`/`AgentHandoffCard.tsx` (same visual pattern, low-friction — no modal).
-2. Day/place-level thumbs-up/down affordance in `ItineraryTimeline.tsx`, so a specific bad recommendation is traceable to the specific place/day.
-3. `POST /api/itinerary-feedback` persists the row with the `trip_config_snapshot`, not just a bare itinerary ID — this is what makes "Bali keeps getting flagged for touristy output" a queryable pattern later, not an anecdote.
+1. Itinerary-level "This itinerary missed the mark" flag: `apps/web/components/itinerary/ItineraryFeedbackFlag.tsx`, placed alongside `BookingLinksSection.tsx`/`AgentHandoffCard.tsx` in `Column3Sidebar.tsx` (same visual pattern, low-friction — one button, an optional inline reason, no modal).
+2. Day/place-level thumbs-up/down: `ItineraryTimeline.tsx`'s `ActivityCard`, via the `useItemFeedback` hook — fire-and-forget on first click (`POST /api/itinerary-feedback`, `scope: "place"`); clicking the other thumb afterwards calls `PATCH /api/itinerary-feedback/{id}` to flip `sentiment` in place rather than creating a duplicate row, so a vote is changeable without polluting the negative-rate math.
+3. `POST /api/itinerary-feedback` (`apps/api/routers/itinerary_feedback.py`) validates scope-specific required fields via a Pydantic `model_validator` (`apps/api/models/itinerary_feedback.py`), returning 422 naming the missing field rather than silently defaulting.
 
-**Admin visibility:** extends the same `GET /api/admin/metrics/summary` work as §9B/issue #63 — feedback volume and negative-feedback rate, broken down by destination, so "which destinations and data we improve next" (the PRD's own framing) is a concrete number, not a vibe.
+**Admin visibility:** `GET /api/admin/metrics/summary` (`apps/api/routers/admin.py`) exposes an `itinerary_feedback` block — `total`, `negative_total`, `negative_rate`, and `by_destination` (each with its own `total`/`negative_total`/`negative_rate`) — defaulting to zero/empty on an empty table, same "prepared, always-populated" convention as §9A/§9B.
 
 **Explicitly not in scope:** any agent-side/B2B automated feedback tooling, and any ML/automated re-ranking driven by the feedback signal — this is capture + visibility only.
 
-**Eval cases:** planned in `docs/eval-set.md` under "User Feedback Capture" — to be implemented as real automated checks as part of issue #64.
+**Eval cases:** implemented in `apps/api/tests/integration/test_itinerary_feedback.py` (FEEDBACK-001..005, plus the vote-change/PATCH flow) and `apps/api/tests/integration/test_admin.py` (FEEDBACK-006/007) — see `docs/eval-set.md` §12.
 
 ---
 

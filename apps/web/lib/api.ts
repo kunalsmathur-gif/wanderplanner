@@ -170,6 +170,44 @@ export async function createAgentLead(payload: {
   return data as { id: string }
 }
 
+// ── Itinerary feedback ───────────────────────────────────────────────────
+export type FeedbackScope = 'itinerary' | 'day' | 'place'
+export type FeedbackSentiment = 'missed_the_mark' | 'thumbs_up' | 'thumbs_down'
+
+export interface ItineraryFeedbackPayload {
+  trip_config_snapshot: Record<string, unknown>
+  scope: FeedbackScope
+  day_index?: number
+  place_ref?: string
+  sentiment: FeedbackSentiment
+  note?: string
+}
+
+export interface ItineraryFeedbackResult {
+  id: string
+  scope: FeedbackScope
+  day_index: number | null
+  place_ref: string | null
+  sentiment: FeedbackSentiment
+  note: string | null
+  created_at: string
+}
+
+export async function createItineraryFeedback(
+  payload: ItineraryFeedbackPayload,
+): Promise<ItineraryFeedbackResult> {
+  const { data } = await api.post('/api/itinerary-feedback', payload)
+  return data as ItineraryFeedbackResult
+}
+
+export async function updateItineraryFeedback(
+  id: string,
+  sentiment: FeedbackSentiment,
+): Promise<ItineraryFeedbackResult> {
+  const { data } = await api.patch(`/api/itinerary-feedback/${id}`, { sentiment })
+  return data as ItineraryFeedbackResult
+}
+
 // ── Itinerary (streaming SSE) ─────────────────────────────────────────────
 export function streamItinerary(
   tripConfig: TripConfig,

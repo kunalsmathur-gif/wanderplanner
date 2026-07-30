@@ -2,12 +2,14 @@
 
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useAppStore } from '@/store/appStore'
+import { useTripConfigStore } from '@/store/tripConfigStore'
 import { PolaroidCard } from '@/components/itinerary/PolaroidCard'
 import type { ItineraryItem } from '@/types'
 import { useEffect, useState } from 'react'
 import { isSafeExternalUrl } from '@/lib/url-safety'
 import { formatDayDate } from '@/lib/format'
 import { logClientEvent } from '@/lib/analyticsBeacon'
+import { createItineraryFeedback, updateItineraryFeedback, type FeedbackSentiment } from '@/lib/api'
 
 const thumbnailCache = new Map<string, string | null>()
 const videoIdCache   = new Map<string, string | null>()
@@ -73,9 +75,50 @@ function useThumbnail(query?: string, fallbackVideoId?: string) {
   return { thumbnailUrl, videoId }
 }
 
-function ActivityCard({ item, isActive, onHover, onSelect }: {
+// A place-level thumbs-up/down reaction. Fire-and-forget on first click
+// (creates a feedback row scoped to this day/place); clicking the other
+// thumb afterwards PATCHes the same row's sentiment rather than creating a
+// duplicate. Clicking the currently-active thumb again is a no-op — this is
+// a reaction, not a toggle-off control, keeping the flow single-purpose.
+function useItemFeedback(dayIndex: number, item: ItineraryItem) {
+  const config = useTripConfigStore((s) => s.config)
+  const [feedbackId, setFeedbackId] = useState<string | null>(null)
+  const [vote, setVote] = useState<FeedbackSentiment | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  async function react(sentiment: 'thumbs_up' | 'thumbs_down') {
+    if (submitting || vote === sentiment) return
+    setSubmitting(true)
+    try {
+      if (feedbackId) {
+        await updateItineraryFeedback(feedbackId, sentiment)
+        setVote(sentiment)
+      } else {
+        const result = await createItineraryFeedback({
+          trip_config_snapshot: config as unknown as Record<string, unknown>,
+          scope: 'place',
+          day_index: dayIndex,
+          place_ref: item.title,
+          sentiment,
+        })
+        setFeedbackId(result.id)
+        setVote(sentiment)
+      }
+    } catch {
+      // Silently ignored — a failed reaction isn't worth surfacing an error
+      // for on what's meant to be a low-friction, ambient control.
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return { vote, react }
+}
+
+function ActivityCard({ item, isActive, dayIndex, onHover, onSelect }: {
   item: ItineraryItem
   isActive: boolean
+  dayIndex: number
   onHover: (id: string | null) => void
   onSelect: (id: string) => void
 }) {
@@ -83,6 +126,7 @@ function ActivityCard({ item, isActive, onHover, onSelect }: {
     item.youtube_search_query,
     item.youtube_video_id || undefined,
   )
+  const { vote, react } = useItemFeedback(dayIndex, item)
 
   const videoHref = videoId
     ? `https://youtube.com/watch?v=${videoId}`
@@ -94,7 +138,6 @@ function ActivityCard({ item, isActive, onHover, onSelect }: {
   const category = item.tags[0]?.replace(/_/g, ' ') ?? undefined
   const extraTags = item.tags.slice(1)
   const bookingHref = isSafeExternalUrl(item.booking_url) ? item.booking_url : null
-  const hasMetadataRow = extraTags.length > 0 || Boolean(videoHref) || Boolean(bookingHref)
 
   return (
     <div
@@ -111,44 +154,70 @@ function ActivityCard({ item, isActive, onHover, onSelect }: {
         isActive={isActive}
         onClick={() => onSelect(item.id)}
       />
-      {hasMetadataRow && (
-        <div className="-mt-1 mb-2 flex flex-wrap gap-1 px-1">
-          {extraTags.map((tag) => (
-            <span
-              key={tag}
-              className={
-                tag === 'hidden_gem'
-                  ? 'rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-900 dark:text-violet-300'
-                  : tag === 'pinned'
-                  ? 'rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-300'
-                  : 'rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400'
-              }
-            >
-              {tag === 'instaworthy' ? '📸 ' : tag === 'hidden_gem' ? '💎 ' : tag === 'pinned' ? '📌 ' : ''}{tag.replace(/_/g, ' ')}
-            </span>
-          ))}
-          {videoHref && (
-            <a
-              href={videoHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded bg-[var(--_muted)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--_muted-fg)] hover:underline"
-            >
-              Watch →
-            </a>
-          )}
-          {bookingHref && (
-            <a
-              href={bookingHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded bg-[var(--_primary)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--_primary)] hover:underline"
-            >
-              Book →
-            </a>
-          )}
-        </div>
-      )}
+      <div className="-mt-1 mb-2 flex flex-wrap gap-1 px-1">
+        {extraTags.map((tag) => (
+          <span
+            key={tag}
+            className={
+              tag === 'hidden_gem'
+                ? 'rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-900 dark:text-violet-300'
+                : tag === 'pinned'
+                ? 'rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-300'
+                : 'rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-400'
+            }
+          >
+            {tag === 'instaworthy' ? '📸 ' : tag === 'hidden_gem' ? '💎 ' : tag === 'pinned' ? '📌 ' : ''}{tag.replace(/_/g, ' ')}
+          </span>
+        ))}
+        {videoHref && (
+          <a
+            href={videoHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded bg-[var(--_muted)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--_muted-fg)] hover:underline"
+          >
+            Watch →
+          </a>
+        )}
+        {bookingHref && (
+          <a
+            href={bookingHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded bg-[var(--_primary)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--_primary)] hover:underline"
+          >
+            Book →
+          </a>
+        )}
+        <span className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); react('thumbs_up') }}
+            aria-label="This was a good recommendation"
+            aria-pressed={vote === 'thumbs_up'}
+            className={
+              vote === 'thumbs_up'
+                ? 'rounded bg-[var(--_success)]/15 px-1.5 py-0.5 text-[11px] text-[var(--_success)]'
+                : 'rounded px-1.5 py-0.5 text-[11px] text-[var(--_muted-fg)] hover:bg-[var(--_muted)]'
+            }
+          >
+            👍
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); react('thumbs_down') }}
+            aria-label="This missed the mark"
+            aria-pressed={vote === 'thumbs_down'}
+            className={
+              vote === 'thumbs_down'
+                ? 'rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-600 dark:bg-red-950/40 dark:text-red-400'
+                : 'rounded px-1.5 py-0.5 text-[11px] text-[var(--_muted-fg)] hover:bg-[var(--_muted)]'
+            }
+          >
+            👎
+          </button>
+        </span>
+      </div>
     </div>
   )
 }
@@ -210,6 +279,7 @@ export function ItineraryTimeline() {
               key={item.id}
               item={item}
               isActive={item.id === hoveredItemId}
+              dayIndex={activeDay}
               onHover={setHoveredItem}
               onSelect={handleSelectItem}
             />

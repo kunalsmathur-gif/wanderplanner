@@ -19,7 +19,7 @@ from core.auth_dependency import get_current_admin_user, get_current_user
 from core.config import settings
 from core.email import send_admin_request_decision_email, send_admin_request_notification
 from db import get_db
-from db_models import AdminRequest, AgentLead, Event, User
+from db_models import AdminRequest, AgentLead, Event, ItineraryFeedback, User
 from models.agent_leads import AgentLeadAdminResponse
 from models.auth import AdminAccessRequestCreate, AdminRequestResponse
 
@@ -148,6 +148,36 @@ async def metrics_summary(
         )
     ).all()
 
+    # Feedback volume + negative-feedback rate by destination — the concrete
+    # "which destinations/data to improve next" signal, per the PRD's user-
+    # feedback plan (issue #64). Aggregated in Python, same as the leads
+    # block above: trip_config_snapshot is a JSON blob and destination
+    # extraction needs to be JSON-shape-tolerant (dict, or already a bare
+    # string) rather than relying on a DB-specific JSON path operator.
+    recent_feedback = (
+        await db.execute(select(ItineraryFeedback).where(ItineraryFeedback.created_at >= d30))
+    ).scalars().all()
+
+    def _feedback_destination(feedback: ItineraryFeedback) -> str:
+        snapshot = feedback.trip_config_snapshot or {}
+        destination = snapshot.get("destination")
+        if isinstance(destination, dict):
+            return destination.get("city") or "Unknown"
+        return destination or "Unknown"
+
+    _NEGATIVE_SENTIMENTS = {"missed_the_mark", "thumbs_down"}
+
+    feedback_total = len(recent_feedback)
+    feedback_negative_total = sum(1 for f in recent_feedback if f.sentiment in _NEGATIVE_SENTIMENTS)
+
+    feedback_by_destination: dict[str, dict[str, int]] = {}
+    for f in recent_feedback:
+        dest = _feedback_destination(f)
+        bucket = feedback_by_destination.setdefault(dest, {"total": 0, "negative": 0})
+        bucket["total"] += 1
+        if f.sentiment in _NEGATIVE_SENTIMENTS:
+            bucket["negative"] += 1
+
     # Qdrant Cloud free-tier RAM headroom — same estimate core/scheduler.py's
     # periodic job logs a WARNING/ERROR for; surfaced here too so an admin can
     # see current usage without digging through logs. Best-effort: a Qdrant
@@ -228,6 +258,22 @@ async def metrics_summary(
             "top_destinations": [
                 {"destination": destination, "count": count}
                 for destination, count in top_destinations_rows
+            ],
+        },
+        "itinerary_feedback": {
+            "total": feedback_total,
+            "negative_total": feedback_negative_total,
+            "negative_rate": round(feedback_negative_total / feedback_total, 4) if feedback_total else None,
+            "by_destination": [
+                {
+                    "destination": dest,
+                    "total": bucket["total"],
+                    "negative_total": bucket["negative"],
+                    "negative_rate": round(bucket["negative"] / bucket["total"], 4) if bucket["total"] else None,
+                }
+                for dest, bucket in sorted(
+                    feedback_by_destination.items(), key=lambda kv: kv[1]["total"], reverse=True
+                )
             ],
         },
         "qdrant_storage": qdrant_storage,
