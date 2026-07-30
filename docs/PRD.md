@@ -547,6 +547,28 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 
 ---
 
+### **Clarification #19 — Quote-Request Escalation: Response SLA & Unreachable-Builder Fallback ⏳ PLANNED (not yet built)**
+
+| Question | Decision |
+|---|---|
+| Faculty Deploy-section feedback: as sole builder, every escalation (including "request a quotation") routes only to Kunal personally with no routing built — what is the hard response commitment, and what happens when he's unreachable? | **Email-only for this stage** (deliberately not phone/WhatsApp sign-in — see rationale below). Every quote-request lead gets an immediate confirmation email (Resend, already integrated for password-reset) stating an explicit **24-hour response SLA**. A background job (reusing the existing APScheduler runner) checks unanswered leads hourly: unanswered at **24h** → escalate to the admin by email; still unanswered at **48h** → auto-send the *user* a reassurance email, so a pilot user is never left in silence even if the builder is personally unreachable. |
+| Why not unify email + phone/WhatsApp sign-in, since quotes eventually move to WhatsApp? | **Deferred, explicitly evaluated.** No OTP provider has a genuinely free tier (SMS is billed per message everywhere); phone-number storage would need application-level encryption (Fernet/AES) plus a separate hashed lookup column — real new infrastructure for a problem email-only already solves at this pilot's scale. Real two-way WhatsApp conversations need the paid, approval-gated WhatsApp Business API; the free `wa.me/` deep-link (issue #48) is a routing convenience, not an auth mechanism, and doesn't require any of this. |
+| Fix | Not yet built — tracked as **GitHub issue #62** (SLA + escalation) and **#63** (admin dashboard visibility into SLA-breach rate and response time, so a slipping response time is visible before it becomes a lost user). |
+| Where documented | This entry; `docs/system-design.md` (new §9B, planned); `docs/itinerary-generation-flow.md`; `docs/eval-set.md` ("Agent-Lead SLA & Escalation" planned cases); `docs/GTM_STRATEGY.md` (agent-onboarding roadmap metrics). |
+
+---
+
+### **Clarification #20 — User Feedback Capture: In-App Flagging Tied to the Generating Request ⏳ PLANNED (not yet built)**
+
+| Question | Decision |
+|---|---|
+| The Deploy-section feedback plan describes flagging "this itinerary missed the mark" or reacting to a specific day/place, tied to the exact request that produced it — is this built? | **No, not yet.** Confirmed by code search — no feedback-capture UI, endpoint, or table exists in the codebase today. This is a **consumer-side-only** commitment; the agent/B2B side of feedback stays deliberately manual (hand-onboard a small number of real agents for free, talk to them directly, automate only once a few are willing to pay) — see the original Deploy-section answer for the reasoning. |
+| What does "tied to the exact request that produced it" mean concretely? | Every feedback row references the originating `TripConfig`/generation request (destination, dates, budget, pace, themes, pinned POIs) as a snapshot, not just a bare itinerary ID — so a pattern (e.g. "Bali keeps getting flagged for touristy output") is queryable later, not just anecdotal. Two granularities: an itinerary-level "missed the mark" flag, and a day/place-level thumbs-up/down in `ItineraryTimeline.tsx`. |
+| Fix | Not yet built — tracked as **GitHub issue #64**. |
+| Where documented | This entry; `docs/system-design.md` (new §9C, planned); `docs/itinerary-generation-flow.md`; `docs/eval-set.md` ("User Feedback Capture" planned cases); `docs/GTM_STRATEGY.md` §1 (closes the "make the intelligence real" feedback loop). |
+
+---
+
 ## **Rev 5 — Phase 1B Requirements** *(Updated: 2026-06-15)*
 
 ---

@@ -1219,6 +1219,60 @@ instead:
   means "unavailable" (no API key, parse failure) — aggregation must
   exclude it from the mean, not count it as a failing score.
 
+## Section 11 — Agent-Lead SLA & Escalation (⏳ PLANNED — implement alongside issues #62/#63, not yet built)
+
+**Why this exists:** faculty Deploy-section PRD feedback — an unanswered "request a quotation" click is "the one failure that turns a pilot user into a lost user," and the fix (issue #62: immediate Resend confirmation with an explicit 24h SLA; hourly `core/scheduler.py` job escalating to the admin at 24h and reassuring the user at 48h) needs its own automated regression cases, not just a described policy. These are **not implemented yet** — write them as real `pytest` cases (mocked clock / time-travelled `created_at`, mocked Resend call) as part of building issue #62, and wire the metrics cases as part of issue #63.
+
+| ID | Scenario | Setup | Expected | Priority |
+|---|---|---|---|---|
+| LEAD-001 | Lead created → immediate confirmation | `POST /api/agent-leads` succeeds | A confirmation email is sent (mocked Resend call asserted) containing an explicit "24 hour" / "24-hour" SLA string, not vague language | P0 |
+| LEAD-002 | Escalation fires exactly once at 24h | Lead with `created_at` = now − 25h, `responded_at` = null, `escalated_at` = null; scheduler job runs | Admin escalation email sent once; `escalated_at` set; running the job again does **not** send a second escalation email | P0 |
+| LEAD-003 | No escalation before 24h | Lead with `created_at` = now − 10h, `responded_at` = null; scheduler job runs | No escalation email sent; `escalated_at` stays null | P0 |
+| LEAD-004 | Responding before 24h suppresses escalation | Lead with `created_at` = now − 25h, `responded_at` = now − 1h; scheduler job runs | No escalation email sent (already responded); `escalated_at` stays null | P0 |
+| LEAD-005 | Reassurance fires exactly once at 48h, only if still unanswered | Lead with `created_at` = now − 49h, `responded_at` = null, `escalated_at` = now − 25h (already escalated), `reassurance_sent_at` = null; scheduler job runs | User reassurance email sent once; `reassurance_sent_at` set; a lead with `responded_at` set before the 48h mark never triggers this email even if `escalated_at` was already set | P1 |
+| LEAD-006 | Admin metrics: `agent_lead_sla_breach_rate` math | 10 leads created in range, 3 escalated | `GET /api/admin/metrics/summary` reports `agent_lead_sla_breach_rate == 0.3`, `agent_lead_created_total == 10`, `agent_lead_escalated_total == 3` | P1 |
+| LEAD-007 | Admin metrics: empty table doesn't error | No rows in `agent_leads` yet | Summary endpoint returns zeros/nulls for all `agent_lead_*` fields, not a 500 | P1 |
+
+### 11A — Where this is implemented (once built)
+
+| Step | File |
+|---|---|
+| Data model | new `agent_leads` table, Alembic migration (pattern: `0004_destination_ingestion_state`) |
+| Confirmation/escalation/reassurance email | `core/email.py` (Resend, reused from password-reset) |
+| Scheduled job | `core/scheduler.py` (hourly `IntervalTrigger`, pattern: `_refresh_reddit`/`_refresh_visa_info`) |
+| Admin metrics | `GET /api/admin/metrics/summary` / `.../timeseries`, new `agent_lead` event family |
+| Design doc | `docs/system-design.md` §9B |
+
+---
+
+## Section 12 — User Feedback Capture (⏳ PLANNED — implement alongside issue #64, not yet built)
+
+**Why this exists:** the PRD's Deploy-section feedback plan committed to a low-friction "this itinerary missed the mark" flag plus a day/place-level reaction, tied to the exact request that produced it — consumer-side only (the agent/B2B side stays deliberately manual, per the same PRD answer). Confirmed by code search: no feedback-capture UI, endpoint, or table exists yet. Write these as real `pytest` cases (payload validation per scope, DB write, admin-metrics aggregation) as part of building issue #64.
+
+| ID | Scenario | Setup | Expected | Priority |
+|---|---|---|---|---|
+| FEEDBACK-001 | Itinerary-level "missed the mark" flag persists with request context | `POST /api/itinerary-feedback` with `scope="itinerary"`, no `day_index`/`place_ref` | Row persisted with `sentiment="missed_the_mark"` and a non-null `trip_config_snapshot` matching the itinerary's originating destination/dates/budget/pace/themes/pinned POIs — not just an itinerary ID | P0 |
+| FEEDBACK-002 | Day-level reaction requires `day_index` | `POST /api/itinerary-feedback` with `scope="day"`, `day_index` omitted | 422 naming the missing field, not a silent default | P0 |
+| FEEDBACK-003 | Place-level reaction requires `place_ref` | `POST /api/itinerary-feedback` with `scope="place"`, `place_ref` omitted | 422 naming the missing field | P0 |
+| FEEDBACK-004 | Valid day-level thumbs-down persists correctly | `POST /api/itinerary-feedback` with `scope="day"`, `day_index=3`, `sentiment="thumbs_down"` | Row persisted with all three fields set correctly, `trip_config_snapshot` populated | P0 |
+| FEEDBACK-005 | Trip-config snapshot survives a later trip-config change | Feedback submitted for a generated itinerary; the live `TripConfig` is later edited/regenerated | The feedback row's `trip_config_snapshot` still reflects the *original* request, not the edited one — proving the snapshot isn't a live reference | P1 |
+| FEEDBACK-006 | Admin metrics: negative-feedback rate by destination | 5 feedback rows across 2 destinations, 3 negative for destination A | `GET /api/admin/metrics/summary` reports per-destination negative-feedback rate correctly for destination A vs. B | P1 |
+| FEEDBACK-007 | Admin metrics: empty table doesn't error | No rows in `itinerary_feedback` yet | Summary endpoint returns zeros, not a 500 | P1 |
+
+### 12A — Where this is implemented (once built)
+
+| Step | File |
+|---|---|
+| Data model | new `itinerary_feedback` table, Alembic migration (pattern: `0004_destination_ingestion_state`) |
+| Itinerary-level flag UI | new component alongside `BookingLinksSection.tsx`/`AgentHandoffCard.tsx` |
+| Day/place-level reaction UI | `apps/web/components/itinerary/ItineraryTimeline.tsx` |
+| Endpoint | `POST /api/itinerary-feedback` |
+| Admin metrics | `GET /api/admin/metrics/summary`, extending the `agent_lead`-pattern metrics from issue #63 |
+| Design doc | `docs/system-design.md` §9C |
+
+---
+
+
 ### 7C — Where this is implemented
 
 | Flywheel step | File |

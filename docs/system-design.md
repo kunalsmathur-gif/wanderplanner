@@ -1225,6 +1225,44 @@ However, **Gemini token/cost event instrumentation is still in progress** in the
 
 ---
 
+## 9B. Agent-Lead SLA & Escalation (⏳ PLANNED — not yet built, issues #62/#63)
+
+**Why this exists:** faculty Deploy-review feedback flagged that as sole builder, every "request a quotation" escalation routes only to Kunal personally with no routing built, and asked for a hard response-time commitment plus a defined fallback for when he's unreachable. Scoped as email-only (no phone/WhatsApp auth — see `docs/PRD.md` Clarification #19 for the full rationale on why that was deferred).
+
+**Data model (new, issue #62):** `agent_leads` table — `id`, `user_id`/`email`, `trip_config_summary`, `created_at`, `responded_at` (nullable), `escalated_at` (nullable), `reassurance_sent_at` (nullable). Same migration pattern as `0004_destination_ingestion_state`.
+
+**Flow:**
+1. Lead created (via `POST /api/agent-leads`, issue #48) → immediate confirmation email to the user via `core/email.py` (Resend), stating an explicit **24-hour** response SLA.
+2. New hourly job in `core/scheduler.py` (same `IntervalTrigger` pattern as `_refresh_reddit`/`_refresh_visa_info`):
+   - Unanswered at 24h, not yet escalated → email the admin, set `escalated_at`. Idempotent (checked via `escalated_at IS NULL`, never re-fires).
+   - Unanswered at 48h, not yet reassured → auto-email the *user* a reassurance message, set `reassurance_sent_at`. Idempotent.
+   - `responded_at` set before either threshold short-circuits both — no escalation/reassurance email sent for that lead.
+
+**Admin visibility (issue #63):** `GET /api/admin/metrics/summary` gains an `agent_lead` event family — created/responded/escalated/reassurance-sent counts, response-time avg/p50/p90, and an `agent_lead_sla_breach_rate` (`escalated_total / created_total`) — the single number meant to catch a slipping solo-builder response time before it costs a pilot user. A manual "mark as booked" toggle on each lead row in `/admin` gives a lead → booked-trip conversion signal despite no real booking-completion webhook existing yet.
+
+**Eval cases:** planned in `docs/eval-set.md` under "Agent-Lead SLA & Escalation" (LEAD-001–005) — to be implemented as real automated checks as part of issue #62, not left as prose.
+
+---
+
+## 9C. User Feedback Capture (⏳ PLANNED — not yet built, issue #64)
+
+**Why this exists:** the PRD's Deploy-section feedback plan committed to "a simple in-app way for someone to flag 'this itinerary missed the mark' or react to a specific day or place, tied to the exact request that produced it." Confirmed by code search: no feedback-capture UI, endpoint, or table exists yet. **Consumer-side only** — the agent/B2B side of the feedback loop stays deliberately manual (hand-onboard a small number of real agents, talk to them directly, automate only once a few are willing to pay), per the same PRD answer.
+
+**Data model (new, issue #64):** `itinerary_feedback` table — `id`, `user_id`, `itinerary_id`/generation reference, `trip_config_snapshot` (JSON — the originating destination/dates/budget/pace/themes/pinned POIs, so the request context survives even if the live trip config later changes), `scope` (`itinerary` | `day` | `place`), `day_index` (nullable), `place_ref` (nullable), `sentiment` (`missed_the_mark` | `thumbs_up` | `thumbs_down`), `note` (nullable free text), `created_at`.
+
+**Flow:**
+1. Itinerary-level "This itinerary missed the mark" action alongside `BookingLinksSection.tsx`/`AgentHandoffCard.tsx` (same visual pattern, low-friction — no modal).
+2. Day/place-level thumbs-up/down affordance in `ItineraryTimeline.tsx`, so a specific bad recommendation is traceable to the specific place/day.
+3. `POST /api/itinerary-feedback` persists the row with the `trip_config_snapshot`, not just a bare itinerary ID — this is what makes "Bali keeps getting flagged for touristy output" a queryable pattern later, not an anecdote.
+
+**Admin visibility:** extends the same `GET /api/admin/metrics/summary` work as §9B/issue #63 — feedback volume and negative-feedback rate, broken down by destination, so "which destinations and data we improve next" (the PRD's own framing) is a concrete number, not a vibe.
+
+**Explicitly not in scope:** any agent-side/B2B automated feedback tooling, and any ML/automated re-ranking driven by the feedback signal — this is capture + visibility only.
+
+**Eval cases:** planned in `docs/eval-set.md` under "User Feedback Capture" — to be implemented as real automated checks as part of issue #64.
+
+---
+
 ## 10. Gemini Prompt Design & Temperature Settings
 
 ### Model & Temperature Reference
