@@ -34,6 +34,11 @@ class AgentLead(Base):
         JSONB().with_variant(JSON(), "sqlite"),
         nullable=False,
     )
+    # Optional free-text ask from the traveler (max 100 words, enforced in
+    # models/agent_leads.py). Not the itinerary/PDF itself — those are only
+    # emailed to the agent, not persisted, to avoid duplicating the
+    # itinerary store and bloating this table.
+    custom_notes: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -165,6 +165,9 @@ export async function createAgentLead(payload: {
   email: string
   destination: string
   trip_config_summary: Record<string, unknown>
+  custom_notes?: string | null
+  itinerary_html?: string | null
+  pdf_base64?: string | null
 }): Promise<{ id: string }> {
   const { data } = await api.post('/api/agent-leads', payload)
   return data as { id: string }

@@ -6,6 +6,8 @@ import {
   AlertTriangle,
   Check,
   Database,
+  Hash,
+  Image as ImageIcon,
   IndianRupee,
   Loader2,
   LogIn,
@@ -33,6 +35,7 @@ import {
   getAdminTimeseries,
   listAdminRequests,
   markLeadBooked,
+  markLeadResponded,
   purgeAllUsers,
   rejectAdminRequest,
   type AdminLead,
@@ -153,7 +156,7 @@ export default function AdminDashboardPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [leadsError, setLeadsError] = useState<string | null>(null)
-  const [markingLeadId, setMarkingLeadId] = useState<string | null>(null)
+  const [markingLead, setMarkingLead] = useState<{ id: string; action: 'responded' | 'booked' } | null>(null)
 
   const [showPurgeConfirm, setShowPurgeConfirm] = useState(false)
   const [purgeText, setPurgeText] = useState('')
@@ -241,8 +244,22 @@ export default function AdminDashboardPage() {
     }
   }
 
+  async function handleMarkResponded(leadId: string) {
+    setMarkingLead({ id: leadId, action: 'responded' })
+    setLeadsError(null)
+    try {
+      const updatedLead = await markLeadResponded(leadId)
+      setLeads((prev) => prev.map((lead) => (lead.id === leadId ? updatedLead : lead)))
+      setSummary(await getAdminSummary())
+    } catch {
+      setLeadsError('Failed to mark lead as responded.')
+    } finally {
+      setMarkingLead(null)
+    }
+  }
+
   async function handleMarkBooked(leadId: string) {
-    setMarkingLeadId(leadId)
+    setMarkingLead({ id: leadId, action: 'booked' })
     setLeadsError(null)
     try {
       const updatedLead = await markLeadBooked(leadId)
@@ -251,7 +268,7 @@ export default function AdminDashboardPage() {
     } catch {
       setLeadsError('Failed to mark lead as booked.')
     } finally {
-      setMarkingLeadId(null)
+      setMarkingLead(null)
     }
   }
 
@@ -574,16 +591,30 @@ export default function AdminDashboardPage() {
                             {lead.response_time_hours != null ? `${lead.response_time_hours.toFixed(1)}h` : '—'}
                           </td>
                           <td className="px-4 py-3">
-                            <button
-                              type="button"
-                              disabled={Boolean(lead.marked_booked_at) || markingLeadId === lead.id}
-                              onClick={() => handleMarkBooked(lead.id)}
-                              className="btn btn-outline rounded-xl px-3 py-1.5 text-xs disabled:opacity-50"
-                            >
-                              {markingLeadId === lead.id ? (
-                                <><Loader2 size={13} className="animate-spin" /> Marking…</>
-                              ) : lead.marked_booked_at ? 'Booked' : 'Mark booked'}
-                            </button>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                disabled={Boolean(lead.responded_at) || markingLead?.id === lead.id}
+                                onClick={() => handleMarkResponded(lead.id)}
+                                title="Confirms you replied to the traveler — stops the 24h SLA clock"
+                                className="btn btn-outline rounded-xl px-3 py-1.5 text-xs disabled:opacity-50"
+                              >
+                                {markingLead?.id === lead.id && markingLead.action === 'responded' ? (
+                                  <><Loader2 size={13} className="animate-spin" /> Marking…</>
+                                ) : lead.responded_at ? 'Responded' : 'Mark responded'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={Boolean(lead.marked_booked_at) || markingLead?.id === lead.id}
+                                onClick={() => handleMarkBooked(lead.id)}
+                                title="Confirms the trip was booked — counts toward revenue/conversion metrics"
+                                className="btn btn-outline rounded-xl px-3 py-1.5 text-xs disabled:opacity-50"
+                              >
+                                {markingLead?.id === lead.id && markingLead.action === 'booked' ? (
+                                  <><Loader2 size={13} className="animate-spin" /> Marking…</>
+                                ) : lead.marked_booked_at ? 'Booked' : 'Mark booked'}
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -597,10 +628,10 @@ export default function AdminDashboardPage() {
               <h2 className="font-display text-xl font-bold text-[var(--_fg)]">Usage &amp; Cost</h2>
               <p className="mt-1 text-sm text-[var(--_muted-fg)]">External API demand and spend approximations.</p>
               <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
-                <StatCard icon={<IndianRupee size={16} />} label="Gemini requests (30d)" value={summary.cost_usage.gemini_requests_30d} />
-                <StatCard icon={<IndianRupee size={16} />} label="Gemini tokens (30d)" value={summary.cost_usage.gemini_tokens_30d.toLocaleString()} />
+                <StatCard icon={<Hash size={16} />} label="Gemini requests (30d)" value={summary.cost_usage.gemini_requests_30d} />
+                <StatCard icon={<Sparkles size={16} />} label="Gemini tokens (30d)" value={summary.cost_usage.gemini_tokens_30d.toLocaleString()} />
                 <StatCard icon={<IndianRupee size={16} />} label="Est. Gemini cost (30d)" value={`₹${summary.cost_usage.gemini_estimated_cost_inr_30d.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} sub="Approximate — monitoring only" />
-                <StatCard icon={<IndianRupee size={16} />} label="Pexels calls (30d)" value={summary.cost_usage.pexels_calls_30d} sub="Free tier: 200 req/hour" />
+                <StatCard icon={<ImageIcon size={16} />} label="Pexels calls (30d)" value={summary.cost_usage.pexels_calls_30d} sub="Free tier: 200 req/hour" />
               </div>
             </section>
 

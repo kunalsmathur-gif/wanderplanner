@@ -1225,7 +1225,7 @@ instead:
   means "unavailable" (no API key, parse failure) — aggregation must
   exclude it from the mean, not count it as a failing score.
 
-## Section 11 — Agent-Lead SLA & Escalation (✅ BUILT)
+## Section 11 — Agent-Lead SLA & Escalation (✅ BUILT; extended 2026-07-31)
 
 **Why this exists:** faculty Deploy-section PRD feedback — an unanswered "request a quotation" click is "the one failure that turns a pilot user into a lost user," so the lead-capture/SLA/escalation path now has real automated coverage instead of prose-only intent.
 
@@ -1238,17 +1238,24 @@ instead:
 | LEAD-005 | Reassurance fires exactly once at 48h, only if still unanswered | Lead with `created_at` = now − 49h, `responded_at` = null, `reassurance_sent_at` = null; scheduler job runs twice | Covered by `apps/api/tests/unit/test_agent_lead_sla.py::test_due_lead_sends_reassurance_once` | P1 |
 | LEAD-006 | Admin metrics: SLA-breach math + response-time summary | Mixed responded/escalated/reassured/booked leads | Covered by `apps/api/tests/integration/test_admin.py::test_admin_agent_lead_metrics_and_timeseries_include_summary_math` | P1 |
 | LEAD-007 | Admin metrics: empty table doesn't error | No rows in `agent_leads` yet | Covered by `apps/api/tests/integration/test_admin.py::test_admin_metrics_summary_defaults_agent_leads_to_zero_when_empty` | P1 |
+| LEAD-008 | Custom notes (≤100 words) persist and reach the agent email | `POST /api/agent-leads` with `custom_notes` + `itinerary_html` set | Covered by `apps/api/tests/integration/test_agent_leads.py::test_create_agent_lead_persists_custom_notes_and_notifies_agent` (DB write + `send_agent_lead_request_email` kwargs asserted) | P0 |
+| LEAD-009 | Custom notes over 100 words are rejected | `POST /api/agent-leads` with a 101-word `custom_notes` | Covered by `apps/api/tests/integration/test_agent_leads.py::test_create_agent_lead_rejects_custom_notes_over_100_words` (422) | P1 |
+| LEAD-010 | Agent-side notification: sole-builder fallback | Empty `agent_recipients.json`, two admins + one non-admin user | Covered by `apps/api/tests/unit/test_agent_recipients.py::test_falls_back_to_admin_emails_when_config_file_empty` | P0 |
+| LEAD-011 | Agent-side notification: configured roster overrides admins | `agent_recipients.json` populated with a real agent address | Covered by `apps/api/tests/unit/test_agent_recipients.py::test_uses_configured_emails_once_roster_is_populated` | P0 |
+| LEAD-012 | Agent-side notification: missing config file doesn't error | `agent_recipients.json` path doesn't exist | Covered by `apps/api/tests/unit/test_agent_recipients.py::test_missing_config_file_falls_back_to_admin_emails` | P1 |
+| LEAD-013 | "Mark responded" is idempotent and independent of "mark booked" | Lead marked responded twice; `marked_booked_at` never touched | Covered by `apps/api/tests/integration/test_admin.py::test_admin_can_mark_lead_responded_idempotently_and_independently_of_booked` | P0 |
 
 ### 11A — Where this is implemented
 
 | Step | File |
 |---|---|
-| Data model | `apps/api/db_models/agent_lead.py`, migration `apps/api/migrations/versions/0006_agent_leads.py` |
+| Data model | `apps/api/db_models/agent_lead.py`, migrations `apps/api/migrations/versions/0006_agent_leads.py` + `0008_agent_lead_custom_notes.py` |
 | Lead-create API | `apps/api/routers/agent_leads.py` |
-| Confirmation/escalation/reassurance email | `apps/api/core/email.py` |
+| Confirmation / immediate agent notification / escalation / reassurance email | `apps/api/core/email.py` |
+| Agent-recipient resolution (sole-builder ↔ scaled roster) | `apps/api/core/agent_recipients.py`, `apps/api/config/agent_recipients.json` |
 | Scheduled job | `apps/api/core/scheduler.py::_check_agent_lead_sla` |
-| Admin metrics + queue actions | `apps/api/routers/admin.py` |
-| Frontend CTA + admin UI | `apps/web/components/itinerary/AgentHandoffCard.tsx`, `apps/web/app/admin/page.tsx`, `apps/web/lib/adminApi.ts` |
+| Admin metrics + queue actions (`mark-responded`, `mark-booked`) | `apps/api/routers/admin.py` |
+| Frontend CTA (email, notes, PDF attach) + admin UI (two CTAs) | `apps/web/components/itinerary/AgentHandoffCard.tsx`, `apps/web/app/admin/page.tsx`, `apps/web/lib/adminApi.ts` |
 | Design doc | `docs/system-design.md` §9B |
 
 ---

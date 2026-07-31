@@ -568,6 +568,20 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 
 ---
 
+### **Clarification #21 — Quote-Request Notification: Immediate Agent Alert, PDF/Notes Attachment, Two-CTA SLA Tracking ✅ BUILT (2026-07-31)**
+
+| Question | Decision |
+|---|---|
+| Who actually receives the "request a quotation" email today, and when? | **Two separate emails now.** The traveler still gets the existing 24h-SLA confirmation. Separately — and new as of this change — the agent/admin side now gets an **immediate** "New quotation request" email the moment the lead is created (`core/email.py::send_agent_lead_request_email`), instead of only hearing about it 24h later via the unanswered-lead escalation path. |
+| Who is "the agent side," concretely, for a sole builder? | **Every user with `is_admin = true`**, by default. As soon as a real agent/ops team exists, add their addresses to `apps/api/config/agent_recipients.json` (`agent_emails: [...]`) and both the immediate notification and the 24h escalation email switch to that roster instead — no redeploy, resolved fresh on every send by `core/agent_recipients.py::get_quotation_recipient_emails`. |
+| Can the traveler attach the itinerary and any special requests to the quote request? | **Yes.** `AgentHandoffCard.tsx` now has an optional free-text note field ("Anything specific to tell the specialist?"), hard-capped at **100 words** (enforced client-side with a live counter and server-side via a Pydantic validator), and client-side-renders the same PDF used by "Download Itinerary PDF" and attaches it to the request instead of triggering a download. |
+| What does the agent actually see in the email? | The full trip-config inputs (destination, dates, pax, budget tier), the traveler's custom notes (if any), an HTML rendering of the AI-generated day-by-day itinerary, and the itinerary PDF as an attachment (when one exists). |
+| How does the system know an agent actually replied to the traveler, so the SLA is satisfied? | **Previously: it didn't** — nothing in the codebase ever set `responded_at`, so the escalation job would in principle re-escalate leads forever regardless of real-world replies. Fixed by adding a second, independent CTA in the admin console: **"Mark responded"** (`POST /api/admin/leads/{lead_id}/mark-responded`) sets `responded_at` and is the only thing that stops the SLA clock / feeds response-time metrics. **"Mark booked"** (unchanged) stays a separate CTA for revenue/conversion tracking — marking one does not set the other. |
+| Fix | **Built.** `apps/api/config/agent_recipients.json` + `apps/api/core/agent_recipients.py`; `core/email.py::send_agent_lead_request_email` (+ Resend attachment support in `_send_resend_email`); `custom_notes` column + migration `0008_agent_lead_custom_notes.py`; `routers/agent_leads.py`; `routers/admin.py::mark_agent_lead_responded`; `apps/web/components/itinerary/AgentHandoffCard.tsx` (notes field + client-side PDF-to-base64); `apps/web/app/admin/page.tsx` + `lib/adminApi.ts` (second CTA). Also fixed a pre-existing bug in `_send_resend_email` where the Resend `Authorization` header was hardcoded to a literal `"******"` instead of a real bearer token — every transactional email was silently failing before this fix. |
+| Where documented | This entry; `docs/system-design.md` §9B (updated); `docs/eval-set.md` Section 11 (updated with new automated cases); `docs/GTM_STRATEGY.md` (agent-onboarding roadmap). |
+
+---
+
 ## **Rev 5 — Phase 1B Requirements** *(Updated: 2026-06-15)*
 
 ---

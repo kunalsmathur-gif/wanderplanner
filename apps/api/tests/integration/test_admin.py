@@ -327,6 +327,32 @@ async def test_admin_can_list_and_mark_leads_booked_idempotently(
     assert second_mark.json()["marked_booked_at"] == first_mark.json()["marked_booked_at"]
 
 
+async def test_admin_can_mark_lead_responded_idempotently_and_independently_of_booked(
+    client,
+    db_session_maker,
+    user_factory,
+):
+    """Two distinct CTAs: "responded" tracks SLA (stops the escalation clock),
+    "booked" tracks revenue/conversion \u2014 marking one must not set the other."""
+    await user_factory(email="admin@example.com", password="Password123!", is_admin=True)
+    lead = await _create_lead(
+        db_session_maker,
+        destination="Lisbon",
+        created_at=datetime.now(UTC) - timedelta(hours=2),
+    )
+    await _login(client, "admin@example.com", "Password123!")
+
+    first_mark = await client.post(f"/api/admin/leads/{lead.id}/mark-responded")
+    second_mark = await client.post(f"/api/admin/leads/{lead.id}/mark-responded")
+
+    assert first_mark.status_code == 200
+    assert second_mark.status_code == 200
+    assert first_mark.json()["responded_at"] is not None
+    assert first_mark.json()["status"] == "responded"
+    assert second_mark.json()["responded_at"] == first_mark.json()["responded_at"]
+    assert first_mark.json()["marked_booked_at"] is None
+
+
 async def test_admin_delete_user_prevents_self_delete_and_cascades_refresh_tokens(
     client,
     db_session_maker,

@@ -6,11 +6,34 @@ import { createAgentLead } from '@/lib/api'
 import { formatCurrency } from '@/lib/format'
 import { useAuthStore } from '@/store/authStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
+import { useItineraryStore } from '@/store/itineraryStore'
 import { useFeedbackPromptStore } from '@/store/feedbackPromptStore'
 
 const CONCIERGE_WHATSAPP_NUMBER = process.env.NEXT_PUBLIC_AGENT_CONCIERGE_WHATSAPP ?? ''
+const MAX_NOTES_WORDS = 100
 
 type SubmitState = 'idle' | 'loading' | 'success' | 'error'
+
+function countWords(text: string): number {
+  const trimmed = text.trim()
+  return trimmed ? trimmed.split(/\s+/).length : 0
+}
+
+/** Truncates to at most `MAX_NOTES_WORDS` words rather than blocking further
+ * typing outright — friendlier than a hard-disabled textarea once the limit
+ * is hit. */
+function clampToWordLimit(text: string): string {
+  const words = text.split(/\s+/)
+  if (words.length <= MAX_NOTES_WORDS) return text
+  return words.slice(0, MAX_NOTES_WORDS).join(' ')
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
 
 function getBudgetTier(amount: number): string {
   if (amount <= 0) return 'Flexible'
@@ -23,11 +46,16 @@ export function AgentHandoffCard() {
   const pathname = usePathname()
   const userEmail = useAuthStore((s) => s.user?.email ?? '')
   const config = useTripConfigStore((s) => s.config)
+  const days = useItineraryStore((s) => s.days)
+  const expenseBreakdown = useItineraryStore((s) => s.expenseBreakdown)
 
   const [email, setEmail] = useState(userEmail)
+  const [notes, setNotes] = useState('')
   const [state, setState] = useState<SubmitState>('idle')
   const [error, setError] = useState<string | null>(null)
   const [whatsAppUrl, setWhatsAppUrl] = useState<string | null>(null)
+
+  const notesWordCount = countWords(notes)
 
   useEffect(() => {
     if (userEmail) setEmail(userEmail)
@@ -71,15 +99,68 @@ export function AgentHandoffCard() {
     return `https://wa.me/${CONCIERGE_WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`
   }
 
+  // A simple HTML rendering of the AI-generated itinerary, embedded directly
+  // in the agent-facing email body (in addition to the PDF attachment) so
+  // the agent doesn't have to open an attachment just to see the plan.
+  function buildItineraryHtml(): string | null {
+    if (!days.length) return null
+
+    const dayBlocks = days.map((day) => {
+      const items = day.items
+        .map((item) => `<li>${escapeHtml(item.time_start)}–${escapeHtml(item.time_end)} · <strong>${escapeHtml(item.title)}</strong>${item.description ? `: ${escapeHtml(item.description)}` : ''}</li>`)
+        .join('')
+      return `<h4>Day ${day.day_number}: ${escapeHtml(day.theme)}${day.date ? ` · ${escapeHtml(day.date)}` : ''}</h4><ul>${items}</ul>`
+    }).join('')
+
+    const total = expenseBreakdown?.total_inr
+      ? `<p><strong>Estimated total cost:</strong> ₹${expenseBreakdown.total_inr.toLocaleString('en-IN')} for ${expenseBreakdown.num_people} traveler(s)</p>`
+      : ''
+
+    return `${dayBlocks}${total}`
+  }
+
+  // Renders the same PDF as the "Download Itinerary PDF" button, but keeps
+  // it as a base64 string in memory to attach to the quotation-request
+  // email instead of triggering a browser download.
+  async function buildItineraryPdfBase64(): Promise<string | null> {
+    if (!days.length) return null
+    try {
+      const [{ pdf }, { ItineraryDocument }] = await Promise.all([
+        import('@react-pdf/renderer'),
+        import('@/components/pdf/ItineraryDocument'),
+      ])
+      const blob = await pdf(
+        <ItineraryDocument days={days} config={config} expenseBreakdown={expenseBreakdown} />,
+      ).toBlob()
+      const buffer = await blob.arrayBuffer()
+      let binary = ''
+      const bytes = new Uint8Array(buffer)
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+      return btoa(binary)
+    } catch {
+      // Best-effort — a PDF-generation failure shouldn't block the lead
+      // itself from going out; the agent still gets the HTML summary.
+      return null
+    }
+  }
+
   async function handleSubmit() {
     setState('loading')
     setError(null)
 
     try {
+      const [itineraryHtml, pdfBase64] = await Promise.all([
+        Promise.resolve(buildItineraryHtml()),
+        buildItineraryPdfBase64(),
+      ])
+
       await createAgentLead({
         email,
         destination: tripSummary.destination,
         trip_config_summary: tripSummary,
+        custom_notes: notes.trim() || null,
+        itinerary_html: itineraryHtml,
+        pdf_base64: pdfBase64,
       })
 
       const nextUrl = buildWhatsAppUrl()
@@ -143,6 +224,23 @@ export function AgentHandoffCard() {
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
               className="input"
+              disabled={state === 'loading'}
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 flex items-center justify-between text-xs font-medium uppercase tracking-wide text-[var(--_muted-fg)]">
+              <span>Anything specific to tell the specialist? (optional)</span>
+              <span className={notesWordCount >= MAX_NOTES_WORDS ? 'text-[var(--_destructive)]' : ''}>
+                {notesWordCount}/{MAX_NOTES_WORDS} words
+              </span>
+            </span>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(clampToWordLimit(e.target.value))}
+              placeholder="e.g. Prefer boutique hotels, celebrating an anniversary, need a wheelchair-accessible stay…"
+              rows={3}
+              className="input resize-none"
               disabled={state === 'loading'}
             />
           </label>

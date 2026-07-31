@@ -1227,22 +1227,34 @@ However, **Gemini token/cost event instrumentation is still in progress** in the
 
 ---
 
-## 9B. Agent-Lead SLA & Escalation (✅ BUILT — issues #48/#62/#63)
+## 9B. Agent-Lead SLA & Escalation (✅ BUILT — issues #48/#62/#63; extended 2026-07-31)
 
 **Why this exists:** faculty Deploy-review feedback flagged that as sole builder, every "request a quotation" escalation routes only to Kunal personally with no routing built, and asked for a hard response-time commitment plus a defined fallback for when he's unreachable. Scoped as email-only (no phone/WhatsApp auth — see `docs/PRD.md` Clarification #19 for the full rationale on why that was deferred).
 
-**Data model:** `agent_leads` table (`apps/api/db_models/agent_lead.py`, migration `0006_agent_leads.py`) — `id`, `user_id` (nullable FK), `email`, `destination`, `trip_config_summary`, `created_at`, `responded_at`, `escalated_at`, `reassurance_sent_at`, `marked_booked_at`.
+**Data model:** `agent_leads` table (`apps/api/db_models/agent_lead.py`, migrations `0006_agent_leads.py` + `0008_agent_lead_custom_notes.py`) — `id`, `user_id` (nullable FK), `email`, `destination`, `trip_config_summary`, `custom_notes` (nullable, ≤100 words — see below), `created_at`, `responded_at`, `escalated_at`, `reassurance_sent_at`, `marked_booked_at`.
 
 **Flow:**
-1. Lead created (via `POST /api/agent-leads`) → immediate confirmation email to the user via `core/email.py::send_agent_lead_confirmation_email`, stating an explicit **24-hour** response SLA. The consumer UI is `apps/web/components/itinerary/AgentHandoffCard.tsx`, placed alongside `BookingLinksSection.tsx`; it persists the lead first, then opens a `wa.me/` deep link.
-2. Hourly job in `core/scheduler.py::_check_agent_lead_sla` (`IntervalTrigger(hours=settings.agent_lead_sla_check_hours)`):
-   - Unanswered at 24h, not yet escalated → email the admin, set `escalated_at`. Idempotent (checked via `escalated_at IS NULL`, never re-fires).
+1. Lead created (via `POST /api/agent-leads`) →
+   - Immediate confirmation email to the **user** via `core/email.py::send_agent_lead_confirmation_email`, stating an explicit **24-hour** response SLA.
+   - **Immediate quotation-request email to the agent/admin side** via `core/email.py::send_agent_lead_request_email` — this is the actual notification that a quote was requested (previously the agent side only heard about a lead 24h later, via the escalation email below). It includes the trip-config inputs, the traveler's optional custom notes, an HTML rendering of the AI-generated itinerary, and — if the traveler had already generated one — the itinerary PDF as an email attachment.
+   - The consumer UI is `apps/web/components/itinerary/AgentHandoffCard.tsx`, placed alongside `BookingLinksSection.tsx`. It now also collects an **optional, 100-word-capped free-text note** ("Anything specific to tell the specialist?") and client-side-renders the same `@react-pdf/renderer` document used by the "Download Itinerary PDF" button, base64-encoding it for the request instead of triggering a download. It persists the lead first, then opens a `wa.me/` deep link.
+2. **Who receives the agent-side notification** is resolved by `core/agent_recipients.py::get_quotation_recipient_emails`, re-reading `apps/api/config/agent_recipients.json` on every call:
+   - **Sole-builder mode (default):** `agent_emails` is empty → every user with `is_admin = true` is notified. Nothing to configure.
+   - **Scaled mode:** once `agent_emails` lists real agent addresses, notifications go to exactly those instead — no redeploy needed, the file is just edited.
+3. Hourly job in `core/scheduler.py::_check_agent_lead_sla` (`IntervalTrigger(hours=settings.agent_lead_sla_check_hours)`), using the **same** `get_quotation_recipient_emails` resolver as step 2:
+   - Unanswered at 24h, not yet escalated → email the resolved roster, set `escalated_at`. Idempotent (checked via `escalated_at IS NULL`, never re-fires).
    - Unanswered at 48h, not yet reassured → auto-email the *user* a reassurance message, set `reassurance_sent_at`. Idempotent.
    - `responded_at` set before either threshold short-circuits both — no escalation/reassurance email sent for that lead.
 
-**Admin visibility:** `GET /api/admin/metrics/summary` now exposes an `agent_leads` block with `created_total`, `responded_total`, `escalated_total`, `reassurance_sent_total`, `response_time_avg_hours`, `response_time_p50_hours`, `response_time_p90_hours`, `sla_breach_rate`, `marked_booked_total`, and `top_destinations`. `GET /api/admin/metrics/timeseries` now carries `agent_lead_created` counts plus `agent_lead_response_avg_hours` per day. `GET /api/admin/leads` returns the latest lead rows, and `POST /api/admin/leads/{lead_id}/mark-booked` is the manual conversion toggle used by the admin console.
+**Closing the "was this ever actually answered?" gap:** until 2026-07-31, nothing in the codebase ever set `responded_at` — the SLA escalation job could check for it, but no code path wrote it, so leads escalated indefinitely regardless of whether an agent had actually replied out-of-band. The admin console now has **two distinct, independent CTAs** per lead:
+- **"Mark responded"** → `POST /api/admin/leads/{lead_id}/mark-responded`, sets `responded_at` — the only thing that stops the SLA clock and feeds the response-time metrics below.
+- **"Mark booked"** → `POST /api/admin/leads/{lead_id}/mark-booked` (unchanged) — the manual revenue/conversion toggle. Marking one does not set the other.
 
-**Eval cases / automated checks:** implemented in `apps/api/tests/integration/test_agent_leads.py`, `apps/api/tests/unit/test_agent_lead_sla.py`, and `apps/api/tests/integration/test_admin.py`; see `docs/eval-set.md` Section 11.
+**Admin visibility:** `GET /api/admin/metrics/summary` exposes an `agent_leads` block with `created_total`, `responded_total`, `escalated_total`, `reassurance_sent_total`, `response_time_avg_hours`, `response_time_p50_hours`, `response_time_p90_hours`, `sla_breach_rate`, `marked_booked_total`, and `top_destinations`. `GET /api/admin/metrics/timeseries` carries `agent_lead_created` counts plus `agent_lead_response_avg_hours` per day. `GET /api/admin/leads` returns the latest lead rows (including `custom_notes`), with `mark-responded` and `mark-booked` as the two queue actions in the admin console.
+
+**Also fixed 2026-07-31:** `core/email.py::_send_resend_email` was sending a literal `"Authorization": "******"` header instead of `f"Bearer {settings.resend_api_key}"` — every transactional email (password reset, admin-request, agent-lead) was silently failing to authenticate with Resend. Fixed as part of this change since it directly blocked the new agent-notification email.
+
+**Eval cases / automated checks:** `apps/api/tests/integration/test_agent_leads.py`, `apps/api/tests/unit/test_agent_lead_sla.py`, `apps/api/tests/unit/test_agent_recipients.py`, and `apps/api/tests/integration/test_admin.py`; see `docs/eval-set.md` Section 11.
 
 ---
 

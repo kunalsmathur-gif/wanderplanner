@@ -59,6 +59,7 @@ export interface AdminLead {
   email: string
   destination: string
   trip_config_summary: Record<string, unknown>
+  custom_notes: string | null
   created_at: string
   responded_at: string | null
   escalated_at: string | null
@@ -85,6 +86,11 @@ export async function getAdminLeads(limit = 50): Promise<AdminLead[]> {
 
 export async function markLeadBooked(id: string): Promise<AdminLead> {
   const { data } = await adminApi.post(`/api/admin/leads/${id}/mark-booked`)
+  return data as AdminLead
+}
+
+export async function markLeadResponded(id: string): Promise<AdminLead> {
+  const { data } = await adminApi.post(`/api/admin/leads/${id}/mark-responded`)
   return data as AdminLead
 }
 

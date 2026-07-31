@@ -321,9 +321,10 @@ async def _check_agent_lead_sla(*, now: datetime | None = None):
 
     from sqlalchemy import select
 
+    from core.agent_recipients import get_quotation_recipient_emails
     from core.email import send_agent_lead_escalation_email, send_agent_lead_reassurance_email
     from db import AsyncSessionLocal
-    from db_models import AgentLead, User
+    from db_models import AgentLead
 
     now = now or datetime.now(UTC)
     escalation_cutoff = now - timedelta(hours=24)
@@ -349,20 +350,16 @@ async def _check_agent_lead_sla(*, now: datetime | None = None):
             )
         ).scalars().all()
 
-        admin_emails: list[str] = []
+        # Same resolver as the immediate quotation-request notification —
+        # admin roster in sole-builder mode, or config/agent_recipients.json
+        # once a real agent/ops team exists (see core/agent_recipients.py).
+        recipient_emails: list[str] = []
         if leads_to_escalate:
-            admin_emails = [
-                row[0]
-                for row in (
-                    await db.execute(
-                        select(User.email).where(User.is_admin.is_(True), User.email.is_not(None))
-                    )
-                ).all()
-            ]
+            recipient_emails = await get_quotation_recipient_emails(db)
 
         for lead in leads_to_escalate:
             await send_agent_lead_escalation_email(
-                admin_emails=admin_emails,
+                admin_emails=recipient_emails,
                 lead_id=str(lead.id),
                 destination=lead.destination,
                 lead_email=lead.email,

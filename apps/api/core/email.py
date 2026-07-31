@@ -4,7 +4,10 @@ httpx-based external API clients, e.g. services/pexels.py).
 """
 from __future__ import annotations
 
+import base64
+import json
 import logging
+from html import escape
 
 import httpx
 
@@ -15,18 +18,30 @@ _log = logging.getLogger("wanderplanner.email")
 _RESEND_URL = "https://api.resend.com/emails"
 
 
-async def _send_resend_email(*, to: list[str], subject: str, html: str) -> bool:
+async def _send_resend_email(
+    *,
+    to: list[str],
+    subject: str,
+    html: str,
+    attachments: list[dict[str, str]] | None = None,
+) -> bool:
+    """`attachments` (optional) is Resend's own shape: a list of
+    `{"filename": ..., "content": <base64-encoded bytes, no data: prefix>}`."""
     try:
+        payload = {
+            "from": settings.email_from_address,
+            "to": to,
+            "subject": subject,
+            "html": html,
+        }
+        if attachments:
+            payload["attachments"] = attachments
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 _RESEND_URL,
-                headers={"Authorization": "******"},
-                json={
-                    "from": settings.email_from_address,
-                    "to": to,
-                    "subject": subject,
-                    "html": html,
-                },
+                headers={"Authorization": f"Bearer {settings.resend_api_key}"},
+                json=payload,
             )
             resp.raise_for_status()
             return True
@@ -148,6 +163,70 @@ async def send_agent_lead_confirmation_email(
         to=[to_email],
         subject="Your Wanderplanner local-expert request is in — reply within 24 hours",
         html=html,
+    )
+    return ok
+
+
+async def send_agent_lead_request_email(
+    *,
+    to_emails: list[str],
+    lead_id: str,
+    lead_email: str,
+    destination: str,
+    trip_config_summary: dict,
+    custom_notes: str | None,
+    itinerary_html: str | None,
+    pdf_attachment: bytes | None = None,
+    pdf_filename: str = "itinerary.pdf",
+) -> bool:
+    """Fires the moment a user requests a quotation — this is the actual
+    "quote request" notification (as opposed to `send_agent_lead_escalation_email`,
+    which only fires if 24h pass with no response). Recipients come from
+    `core.agent_recipients.get_quotation_recipient_emails` — every admin in
+    sole-builder mode, or the configured agent roster once one exists."""
+    if not to_emails:
+        return False
+
+    if not settings.resend_api_key:
+        _log.warning(
+            "RESEND_API_KEY not configured — quotation-request email not sent for lead %s",
+            lead_id,
+        )
+        return False
+
+    notes_html = (
+        f"<p><strong>Traveler's notes:</strong><br>{escape(custom_notes)}</p>"
+        if custom_notes
+        else ""
+    )
+    itinerary_section = (
+        f"<h3>AI-generated itinerary</h3>{itinerary_html}"
+        if itinerary_html
+        else "<p><em>No itinerary preview was attached — see the PDF, if attached, for the full plan.</em></p>"
+    )
+
+    html = f"""
+    <p><strong>New quotation request — {escape(destination)}</strong></p>
+    <p>Reply to the traveler at: <a href="mailto:{escape(lead_email)}">{escape(lead_email)}</a></p>
+    <p>Reply within 24 hours to stay inside the promised SLA.</p>
+    {notes_html}
+    <h3>Trip inputs</h3>
+    <pre>{escape(json.dumps(trip_config_summary, indent=2, default=str))}</pre>
+    {itinerary_section}
+    """
+
+    attachments = None
+    if pdf_attachment:
+        attachments = [{
+            "filename": pdf_filename,
+            "content": base64.b64encode(pdf_attachment).decode("ascii"),
+        }]
+
+    ok = await _send_resend_email(
+        to=to_emails,
+        subject=f"New quotation request — {destination}",
+        html=html,
+        attachments=attachments,
     )
     return ok
 

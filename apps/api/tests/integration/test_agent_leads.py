@@ -57,6 +57,57 @@ async def test_create_agent_lead_persists_row_and_attempts_confirmation_email(
     )
 
 
+@patch("routers.agent_leads.send_agent_lead_confirmation_email", new_callable=AsyncMock)
+@patch("routers.agent_leads.send_agent_lead_request_email", new_callable=AsyncMock)
+async def test_create_agent_lead_persists_custom_notes_and_notifies_agent(
+    mock_send_request_email,
+    mock_send_confirmation,
+    client,
+    db_session_maker,
+):
+    mock_send_confirmation.return_value = True
+    mock_send_request_email.return_value = True
+
+    payload = {
+        "email": "traveler@example.com",
+        "destination": "Kyoto",
+        "trip_config_summary": {"pax": 2},
+        "custom_notes": "Prefer boutique hotels near the old town, celebrating an anniversary.",
+        "itinerary_html": "<h4>Day 1</h4>",
+        "pdf_base64": None,
+    }
+
+    response = await client.post("/api/agent-leads", json=payload)
+    assert response.status_code == 200
+    lead_id = uuid.UUID(response.json()["id"])
+
+    async with db_session_maker() as session:
+        lead = (await session.execute(select(AgentLead).where(AgentLead.id == lead_id))).scalar_one()
+        assert lead.custom_notes == payload["custom_notes"]
+
+    # The quotation-request notification (distinct from the traveler-facing
+    # confirmation) must fire immediately, carrying the notes + itinerary html.
+    mock_send_request_email.assert_awaited_once()
+    _, kwargs = mock_send_request_email.await_args
+    assert kwargs["custom_notes"] == payload["custom_notes"]
+    assert kwargs["itinerary_html"] == payload["itinerary_html"]
+    assert kwargs["lead_email"] == "traveler@example.com"
+
+
+async def test_create_agent_lead_rejects_custom_notes_over_100_words(client):
+    notes = " ".join(["word"] * 101)
+    response = await client.post(
+        "/api/agent-leads",
+        json={
+            "email": "traveler@example.com",
+            "destination": "Kyoto",
+            "trip_config_summary": {"pax": 2},
+            "custom_notes": notes,
+        },
+    )
+    assert response.status_code == 422
+
+
 async def test_create_agent_lead_rejects_invalid_email(client):
     response = await client.post(
         "/api/agent-leads",

@@ -70,6 +70,7 @@ def _lead_to_response(lead: AgentLead) -> AgentLeadAdminResponse:
         email=lead.email,
         destination=lead.destination,
         trip_config_summary=lead.trip_config_summary,
+        custom_notes=lead.custom_notes,
         created_at=lead.created_at.isoformat(),
         responded_at=lead.responded_at.isoformat() if lead.responded_at else None,
         escalated_at=lead.escalated_at.isoformat() if lead.escalated_at else None,
@@ -404,6 +405,34 @@ async def list_agent_leads(
         )
     ).scalars().all()
     return [_lead_to_response(lead) for lead in leads]
+
+
+@router.post("/admin/leads/{lead_id}/mark-responded", response_model=AgentLeadAdminResponse)
+async def mark_agent_lead_responded(
+    lead_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin_user),
+) -> AgentLeadAdminResponse:
+    """The "responded" CTA — this is the only place `responded_at` gets set,
+    i.e. the SLA clock (see core/scheduler._check_agent_lead_sla) only stops
+    once an admin/agent explicitly confirms they replied to the traveler.
+    Distinct from `mark-booked`, which tracks revenue/conversion instead."""
+    lead = (await db.execute(select(AgentLead).where(AgentLead.id == lead_id))).scalar_one_or_none()
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    if lead.responded_at is None:
+        lead.responded_at = datetime.now(UTC)
+        await db.commit()
+        await db.refresh(lead)
+        await log_event(
+            db,
+            "agent_lead_marked_responded",
+            user_id=admin.id,
+            metadata={"lead_id": str(lead.id), "destination": lead.destination},
+        )
+
+    return _lead_to_response(lead)
 
 
 @router.post("/admin/leads/{lead_id}/mark-booked", response_model=AgentLeadAdminResponse)
