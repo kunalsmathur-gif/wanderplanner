@@ -54,9 +54,20 @@ import unicodedata
 from datetime import date
 from typing import Annotated, Any, Literal
 
+from better_profanity import profanity
 from pydantic import BeforeValidator, Field
 
 logger = logging.getLogger(__name__)
+
+# Same word list `scrapers/reddit.py` uses to keep profanity out of *scraped*
+# content shown to users. Loaded once, here, so it's also available to gate
+# profanity *in* -- specifically chat messages sent to Anya, where a user is
+# addressing the model directly rather than pasting third-party text (a blog
+# post, Reddit thread, or a user's own notes may legitimately contain a swear
+# word quoted from the source; rejecting `FreeFormTripText` for that would
+# break the "start from a blog/Reddit post" feature, so the profanity gate is
+# opt-in per field via `require_no_profanity`, not global).
+profanity.load_censor_words()
 
 # --- Length caps -----------------------------------------------------------
 # Sized against the longest real values, with headroom: the longest official
@@ -164,6 +175,7 @@ def text_validator(
     required: bool = False,
     allow_newlines: bool = False,
     require_alphanumeric: bool = False,
+    require_no_profanity: bool = False,
 ):
     """Build a Pydantic `BeforeValidator` callable enforcing one field's rules.
 
@@ -191,6 +203,12 @@ def text_validator(
             return cleaned
         if require_alphanumeric and not has_alphanumeric(cleaned):
             raise ValueError(f"{field} must contain at least one letter or number")
+        # Checked last, and only for fields that opt in: this runs a
+        # substring scan over the (already length-capped) cleaned text, so it
+        # costs nothing on the fields that don't need it and never runs on
+        # something that is about to be rejected for a cheaper reason anyway.
+        if require_no_profanity and profanity.contains_profanity(cleaned):
+            raise ValueError(f"{field} must not contain profanity")
         return cleaned
 
     return _validate
@@ -360,7 +378,12 @@ FreeFormTripText = Annotated[
 ChatMessageText = Annotated[
     str,
     BeforeValidator(
-        text_validator(max_length=MAX_CHAT_MESSAGE_LEN, field="content", allow_newlines=True)
+        text_validator(
+            max_length=MAX_CHAT_MESSAGE_LEN,
+            field="content",
+            allow_newlines=True,
+            require_no_profanity=True,
+        )
     ),
 ]
 

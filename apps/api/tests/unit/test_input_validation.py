@@ -311,6 +311,30 @@ def test_chat_messages_keep_their_paragraphs():
     assert request.messages[0].content == "line one\nline two"
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param("You're a fucking idiot bot", id="profanity-plain"),
+        pytest.param("what the actual shit is this itinerary", id="profanity-mid-sentence"),
+        pytest.param("F u c k this app", id="profanity-spaced-out"),
+    ],
+)
+def test_chat_message_profanity_is_rejected(content: str):
+    """Chat is the one field where the user is addressing Anya directly, not
+    pasting third-party text — see `core/validation.py`'s note on why
+    `FreeFormTripText` (the "start from a blog/Reddit post" box) deliberately
+    does *not* get this same check."""
+    with pytest.raises(ValidationError):
+        ChatRequest(messages=[{"role": "user", "content": content}])
+
+
+def test_chat_message_without_profanity_is_accepted():
+    request = ChatRequest(
+        messages=[{"role": "user", "content": "Can you make day 2 less packed?"}]
+    )
+    assert request.messages[0].content == "Can you make day 2 less packed?"
+
+
 def test_trip_context_is_bounded_by_serialised_size():
     with pytest.raises(ValidationError):
         ChatRequest(messages=[], trip_context={"notes": "x" * 50_000})
