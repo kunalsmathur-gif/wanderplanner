@@ -289,3 +289,19 @@ Two back-to-back review passes on the itinerary dashboard's left/right panels, b
 - **Frontend:** `tsc --noEmit` clean across both rounds; `next build` clean (all 14 routes compiled) after each round.
 - **Backend:** untouched — no `apps/api` changes in either round.
 - Live-tested on `localhost:3000` (`next dev`) before commit, per explicit request.
+
+## 🧩 Component Updates (July 31, 2026) — Mobile landing UX: inspiration above the fold, nav decluttered (v10.53.0)
+
+Prompted by a live mobile screenshot review, evaluated with the `ui-ux-pro-max` skill. Full detail: `TECHNICAL_DOCUMENTATION.md` §14 v10.53.0.
+
+### Inspiration surfaced sooner on mobile
+- **Reordered `LandingHero.tsx`** so the Inspiration gallery renders immediately after the hero CTA, ahead of the Features/"How it works" strip — previously four stacked feature blocks pushed Inspiration below the fold on mobile.
+- **Features condensed for mobile**: horizontally-scrollable chip row with smaller icons; descriptions moved to `sr-only` (still available to screen readers) and restored visually from `sm:` up, keeping the full descriptive grid on desktop.
+
+### Nav decluttered
+- **Removed the "Plan a trip" plane-icon button** from the sticky header — it duplicated the hero's "Start planning with Anya" CTA and added visual clutter as a second entry point for the same action.
+- **Inspiration/FAQ anchor links made visible on mobile** (previously `hidden sm:block`, desktop-only) using the freed-up space, so mobile users can jump directly to either section instead of scrolling.
+
+### Regression + performance verification
+- **Frontend:** `tsc --noEmit` clean.
+- **Backend:** untouched — no `apps/api` changes in this pass.

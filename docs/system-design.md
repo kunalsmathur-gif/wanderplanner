@@ -1769,6 +1769,24 @@ instead of the agent) that govern how these tools are meant to be used.
 
 ## 16. Change Log
 
+### v10.53 (July 2026) — Mobile landing UX (inspiration above the fold) + chat profanity gate
+
+- **Landing page, mobile-first fix**: reordered `LandingHero.tsx` so the
+  Inspiration gallery appears right after the hero CTA, ahead of the
+  Features strip (previously pushed below the fold on mobile); Features
+  condensed to a horizontally-scrollable chip row on mobile with `sr-only`
+  descriptions; redundant "Plan a trip" plane-icon nav button removed,
+  freeing nav space to make Inspiration/FAQ anchor links visible on mobile
+  (previously `hidden sm:block`). No backend changes; `tsc --noEmit` clean.
+- **New `require_no_profanity` option on `core/validation.py`'s
+  `text_validator`**, enabled only on `ChatMessageText` — closes a
+  negative-testing gap where profane chat input had no check, despite
+  `better-profanity` already being a declared dependency (used only for
+  filtering scraped Reddit content until now). Deliberately not applied to
+  `FreeFormTripText`, which may legitimately contain pasted third-party text
+  quoting a swear word. New tests added; full suite **1024 passed / 6
+  skipped**.
+
 ### v10.49 (July 2026) — Local venv/httpx pin fixed, Qdrant headroom monitored, share links + travel tips moved off in-process dicts onto Redis
 
 - **`.venv`/httpx mismatch, live-reproduced this session.** `apps/api/.venv` had silently drifted to Python 3.9 (`python3 -m venv .venv` picking up the macOS Command Line Tools stub on `$PATH`), which fails hard on `datetime.UTC` (added in 3.11) deep inside `core/scheduler.py` — a cryptic `ImportError` rather than an actionable one. Fixed three ways: a `sys.version_info < (3, 11)` guard at the very top of `main.py` (before any other import) that raises a clear, remediation-bearing `RuntimeError`; README's setup instructions now explicitly warn about this `python3` resolution trap; `requirements-dev.txt`'s `httpx==0.27.0` bumped to `0.28.1` to match `requirements.txt` (was silently divergent). `.venv` rebuilt clean with `python3.12`; full suite re-verified: **883 passed / 6 skipped** at that point.

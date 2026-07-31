@@ -1509,7 +1509,42 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.53.0 Changes (July 2026) — Mobile landing UX (inspiration above the fold, nav decluttered) + chat profanity gate
+
+**Landing page mobile UX**, prompted by a live screenshot review with the
+`ui-ux-pro-max` skill: the Features/"How it works" strip in `LandingHero.tsx`
+pushed the Inspiration gallery below the fold on mobile, and a redundant
+"Plan a trip" plane-icon nav button (a second entry point for the same hero
+CTA) added clutter while the Inspiration/FAQ anchor links stayed
+`hidden sm:block` — invisible on the exact viewport that most needed a
+shortcut to them.
+- Reordered sections so **Inspiration renders immediately after the hero
+  CTA**, ahead of Features.
+- **Features compressed on mobile** into a horizontally-scrollable chip row
+  (smaller icons, descriptions moved to `sr-only` and restored visually from
+  `sm:` up) instead of a tall stacked grid.
+- **Removed the "Plan a trip" plane-icon nav button** and used the freed
+  space to make **Inspiration/FAQ anchor links visible on mobile**
+  (previously desktop-only).
+- `tsc --noEmit` clean; no backend changes.
+
+**Chat profanity gate.** A review of negative-testing coverage
+(`core/validation.py`'s existing junk/oversized-paste/paragraph tests) found
+garbage-input handling well covered but no check for profane language typed
+directly into chat — `better-profanity` (already a declared dependency, used
+only for scraped Reddit content in `scrapers/reddit.py`) was not wired into
+any user-facing input path.
+- Added an opt-in `require_no_profanity` flag to `text_validator`, enabled
+  **only** on `ChatMessageText` (the field where a user addresses Anya
+  directly).
+- Deliberately **not** applied to `FreeFormTripText` (the "start from a
+  blog/Reddit post" box) — pasted third-party content can legitimately quote
+  a swear word, and rejecting it would break that feature.
+- New tests: plain/mid-sentence/spaced-out profanity rejected with a 422;
+  clean chat text still accepted. Full suite **1024 passed / 6 skipped**, up
+  from v10.49.0's 917.
 
 ### v10.52.0 Changes (July 2026) — entry/visa corpus from free sources (#37)
 
