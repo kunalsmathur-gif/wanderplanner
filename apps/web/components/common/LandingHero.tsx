@@ -170,30 +170,23 @@ export function LandingHero() {
           <span className="hidden sm:inline-flex">
             <WanderplannerLogo size="md" wordmark />
           </span>
-          <nav className="flex min-w-0 items-center gap-1 sm:gap-4" aria-label="Site navigation">
+          <nav className="flex min-w-0 items-center gap-3 sm:gap-4" aria-label="Site navigation">
+            {/* Visible on mobile too — direct jump links so inspiration/FAQ
+                don't require scrolling past hero + features to discover. */}
             <a
               href="#inspiration"
-              className="hidden text-sm font-medium text-[var(--_muted-fg)] transition-colors hover:text-[var(--_primary)] sm:block"
+              className="text-sm font-medium text-[var(--_muted-fg)] transition-colors hover:text-[var(--_primary)]"
             >
               Inspiration
             </a>
             <a
               href="#faq"
-              className="hidden text-sm font-medium text-[var(--_muted-fg)] transition-colors hover:text-[var(--_primary)] sm:block"
+              className="text-sm font-medium text-[var(--_muted-fg)] transition-colors hover:text-[var(--_primary)]"
             >
               FAQ
             </a>
             <span className="hidden h-4 w-px bg-[var(--_border)] sm:block" aria-hidden="true" />
             <ThemeToggle />
-            <button
-              type="button"
-              onClick={openWizard}
-              aria-label="Plan a trip"
-              className="btn btn-primary gap-2 rounded-xl px-3 py-2 sm:px-4"
-            >
-              <Plane size={14} aria-hidden="true" />
-              <span className="hidden sm:inline">Plan a trip</span>
-            </button>
             <span className="hidden h-4 w-px bg-[var(--_border)] sm:block" aria-hidden="true" />
             <UserMenu />
           </nav>
@@ -282,37 +275,15 @@ export function LandingHero() {
           </div>
         </section>
 
-        {/* ── How it works / trust ─────────────────────────────────── */}
-        {/* Reuses FEATURES — previously defined but never rendered anywhere
-            in this file, so these four selling points never actually
-            reached a visitor before deciding whether to sign up. */}
-        <section
-          aria-labelledby="how-it-works-heading"
-          className="border-t border-[var(--_border)] bg-[var(--_bg)] px-6 py-12"
-        >
-          <div className="mx-auto max-w-6xl">
-            <h2 id="how-it-works-heading" className="sr-only">
-              Why plan with Wanderplanner
-            </h2>
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-              {FEATURES.map(({ icon: Icon, title, desc }) => (
-                <div key={title} className="flex flex-col items-center text-center sm:items-start sm:text-left">
-                  <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-[var(--_muted)] text-[var(--_primary)]">
-                    <Icon size={18} aria-hidden="true" />
-                  </span>
-                  <p className="text-sm font-bold text-[var(--_fg)]">{title}</p>
-                  <p className="mt-1 text-xs leading-relaxed text-[var(--_muted-fg)]">{desc}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
         {/* ── Inspiration gallery ──────────────────────────────────── */}
+        {/* Placed directly after the hero (ahead of the Features strip) so
+            mobile visitors reach the visual, high-conversion trip gallery
+            with minimal scrolling instead of it being pushed below four
+            stacked feature blocks. */}
         <section
           id="inspiration"
           aria-labelledby="inspiration-heading"
-          className="border-t border-[var(--_border)] bg-[var(--_bg)] px-6 py-14 scroll-mt-16"
+          className="border-t border-[var(--_border)] bg-[var(--_bg)] px-6 py-10 scroll-mt-16 sm:py-14"
         >
           <div className="mx-auto max-w-6xl">
             <div className="mb-6 flex items-end justify-between">
@@ -339,6 +310,37 @@ export function LandingHero() {
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               {FEATURED_TRIPS.map((t) => (
                 <InspirationCard key={t.dest} trip={t} onPlan={openWizardWithPreload} />
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ── How it works / trust ─────────────────────────────────── */}
+        {/* Below Inspiration now (was above it, pushing the gallery past the
+            mobile fold). Rendered as a single horizontally-scrollable row of
+            compact chips on mobile — full descriptive grid from sm+ — so it
+            still reinforces trust without adding scroll height on phones. */}
+        <section
+          aria-labelledby="how-it-works-heading"
+          className="border-t border-[var(--_border)] bg-[var(--_bg)] px-6 py-8 sm:py-12"
+        >
+          <div className="mx-auto max-w-6xl">
+            <h2 id="how-it-works-heading" className="sr-only">
+              Why plan with Wanderplanner
+            </h2>
+            <div className="flex gap-4 overflow-x-auto pb-1 sm:grid sm:grid-cols-2 sm:gap-6 sm:overflow-visible sm:pb-0 lg:grid-cols-4">
+              {FEATURES.map(({ icon: Icon, title, desc }) => (
+                <div
+                  key={title}
+                  className="flex min-w-[168px] shrink-0 flex-col items-start text-left sm:min-w-0 sm:shrink"
+                >
+                  <span className="mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-[var(--_muted)] text-[var(--_primary)] sm:mb-3 sm:h-10 sm:w-10">
+                    <Icon size={16} aria-hidden="true" className="sm:hidden" />
+                    <Icon size={18} aria-hidden="true" className="hidden sm:block" />
+                  </span>
+                  <p className="text-sm font-bold text-[var(--_fg)]">{title}</p>
+                  <p className="mt-1 sr-only text-xs leading-relaxed text-[var(--_muted-fg)] sm:not-sr-only">{desc}</p>
+                </div>
               ))}
             </div>
           </div>
