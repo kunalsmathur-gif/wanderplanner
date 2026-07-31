@@ -170,23 +170,17 @@ export function LandingHero() {
           <span className="hidden sm:inline-flex">
             <WanderplannerLogo size="md" wordmark />
           </span>
-          <nav className="flex min-w-0 items-center gap-3 sm:gap-4" aria-label="Site navigation">
-            {/* Visible on mobile too — direct jump links so inspiration/FAQ
-                don't require scrolling past hero + features to discover. */}
-            <a
-              href="#inspiration"
-              className="text-sm font-medium text-[var(--_muted-fg)] transition-colors hover:text-[var(--_primary)]"
-            >
-              Inspiration
-            </a>
-            <a
-              href="#faq"
-              className="text-sm font-medium text-[var(--_muted-fg)] transition-colors hover:text-[var(--_primary)]"
-            >
-              FAQ
-            </a>
-            <span className="hidden h-4 w-px bg-[var(--_border)] sm:block" aria-hidden="true" />
+          <nav className="flex min-w-0 items-center gap-1 sm:gap-4" aria-label="Site navigation">
             <ThemeToggle />
+            <button
+              type="button"
+              onClick={openWizard}
+              aria-label="Plan a trip"
+              className="btn btn-primary gap-2 rounded-xl px-3 py-2 sm:px-4"
+            >
+              <Plane size={14} aria-hidden="true" />
+              <span className="hidden sm:inline">Plan a trip</span>
+            </button>
             <span className="hidden h-4 w-px bg-[var(--_border)] sm:block" aria-hidden="true" />
             <UserMenu />
           </nav>
