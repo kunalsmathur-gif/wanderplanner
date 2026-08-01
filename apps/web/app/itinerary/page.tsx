@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ThreeColumnLayout } from '@/components/layout/ThreeColumnLayout'
 import { LLMWizard } from '@/components/wizard/LLMWizard'
@@ -23,24 +23,49 @@ export default function ItineraryPage() {
   const router = useRouter()
   const wizardOpen = useAppStore((state) => state.wizardOpen)
   const days = useItineraryStore((state) => state.days)
-  const hasHydrated = useItineraryStore.persist.hasHydrated()
   const hasItinerary = days.length > 0
+
+  // 🔴 Hydration state is read in an effect, never during render, and through
+  // optional chaining. zustand's `persist` middleware **returns early without
+  // attaching the `.persist` API at all** when its storage is unavailable —
+  // which is exactly the case while Next prerenders this page at build time,
+  // since `sessionStorage` does not exist on the server. Touching
+  // `useItineraryStore.persist.hasHydrated()` in the render body therefore
+  // threw `Cannot read properties of undefined` and failed the production
+  // build. `next dev` never caught it because it does not prerender.
+  const [hydrated, setHydrated] = useState(false)
+
+  useEffect(() => {
+    const store = useItineraryStore.persist
+    // No persistence available (server, or a browser refusing storage) means
+    // there is nothing to wait for — treat it as hydrated and let the empty
+    // check below do its job.
+    if (!store) {
+      setHydrated(true)
+      return
+    }
+    if (store.hasHydrated()) {
+      setHydrated(true)
+      return
+    }
+    return store.onFinishHydration(() => setHydrated(true))
+  }, [])
 
   useEffect(() => {
     // Wait for the sessionStorage rehydration to finish before deciding the
     // page is empty — on the first client render `days` is always [], so
     // redirecting eagerly would bounce every refresh back to the landing page,
     // which is the exact failure this route was added to avoid.
-    if (hasHydrated && !hasItinerary) {
+    if (hydrated && !hasItinerary) {
       router.replace('/')
     }
-  }, [hasHydrated, hasItinerary, router])
+  }, [hydrated, hasItinerary, router])
 
   if (!hasItinerary) {
     return (
       <div className="flex h-screen items-center justify-center" aria-live="polite">
         <span className="text-sm text-[var(--_muted-fg)]">
-          {hasHydrated ? 'No itinerary yet — taking you back…' : 'Loading your itinerary…'}
+          {hydrated ? 'No itinerary yet — taking you back…' : 'Loading your itinerary…'}
         </span>
       </div>
     )

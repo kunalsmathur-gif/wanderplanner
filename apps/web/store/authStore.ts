@@ -63,8 +63,11 @@ export const useAuthStore = create<AuthStore>((set) => ({
     useItineraryStore.getState().reset()
     useTripConfigStore.getState().resetConfig()
     useChatStore.getState().clearHistory()
-    useItineraryStore.persist.clearStorage()
-    useTripConfigStore.persist.clearStorage()
+    // Optional chaining: zustand omits the `.persist` API entirely when its
+    // storage is unavailable (server render, or a browser blocking storage),
+    // and logging out must not throw in that case.
+    useItineraryStore.persist?.clearStorage()
+    useTripConfigStore.persist?.clearStorage()
     set({ user: null, status: 'unauthenticated' })
   },
 
