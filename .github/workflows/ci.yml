@@ -139,6 +139,18 @@ jobs:
       - name: Unit & component tests (Vitest)
         run: npm run test -- --run
 
+      # Build here, not only in the e2e job. A Next production build is the
+      # only thing that prerenders pages, so it catches a whole class of bug
+      # that `next dev`, tsc and vitest all miss — v10.55.0 shipped a page
+      # that dereferenced a client-only API during prerender and broke the
+      # Vercel deploy while every other check was green. The e2e job also
+      # builds, but it `needs` the backend job, so a backend failure silently
+      # takes the build check down with it.
+      - name: Build (production, catches prerender errors)
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+
   # ─── E2E (runs on merge to main only) ──────────────────────────────────
   e2e:
     name: E2E Tests (Playwright)
