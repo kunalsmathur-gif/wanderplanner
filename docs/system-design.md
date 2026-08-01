@@ -1781,6 +1781,32 @@ instead of the agent) that govern how these tools are meant to be used.
 
 ## 16. Change Log
 
+### v10.54 (August 2026) — `visa_info` corpus ingested for the first time (#59), and the title bug it exposed
+
+- **First `visa_info` data run.** The collection shipped fully wired in v10.52
+  but empty, and an empty corpus makes `retrieve_visa_note()` return `""` — so
+  the wizard stayed silent and the feature looked healthy. **1,291 chunks
+  across 73/73 seed countries** now live on the cluster, verified against
+  Qdrant rather than the run log (point count, distinct countries, attributed
+  retrieval with a negative control, zero surviving `[ edit ]` markers, full
+  v10.50 unified metadata on every point). New resumable
+  `scripts/ingest_visa_info_full.py`; zero quota cost (free Wikimedia
+  `action=parse`, one article per country).
+- 🔴 **`scrapers/visa_info.py` now falls back to the `"<Name> (country)"`
+  title** when the bare country name yields no entry rules. Found by the run:
+  "Georgia" came back empty because `/wiki/Georgia` is a **disambiguation
+  page** answering 200 OK, while `Georgia (country)` holds 17 entry-rule
+  chunks — the New York failure shape (real page, wrong article), invisible to
+  any status-code check. The fallback fires only on the empty path, so 72 of
+  73 countries pay nothing for it, and the country is stored under its **plain
+  name** so `retrieve_visa_note("Georgia")`, which filters on an exact
+  `destination` match, still finds it.
+- ⚠️ **The silently-wrong-article case was audited, not assumed**: all 73
+  titles checked against MediaWiki for redirects, `pageprops.disambiguation`
+  and category membership. Only Georgia was flagged; the rest are genuine
+  country articles. A point count cannot catch this class, which is why it was
+  measured directly — re-run the audit if `VISA_SEED_COUNTRIES` grows.
+
 ### v10.53 (July 2026) — Mobile landing UX (inspiration above the fold) + chat profanity gate
 
 - **Landing page, mobile-first fix**: reordered `LandingHero.tsx` so the

@@ -1509,7 +1509,58 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.54.0 Changes (August 2026) — first `visa_info` data run (#59) + a disambiguation-title fallback found by it
+
+Suite **1032 passed / 6 skipped** (`pytest tests/unit`), up 5 from v10.53.0's 1027; the
+new scraper/script files are ruff + mypy clean.
+
+**The data run.** `visa_info` shipped fully wired in v10.52.0 but had never been
+ingested, so the collection was empty. Because `services/visa.py::retrieve_visa_note()`
+degrades to `""` on an empty corpus, the wizard correctly said nothing and the feature
+looked *fine* — a silent no-op rather than a visible failure, which is exactly why it
+needed an explicit run rather than waiting to be noticed. Waiting for the scheduler was
+not an option either: `visa_info_refresh` uses an `IntervalTrigger`, and APScheduler
+schedules the **first** fire at now+interval, so a fresh deploy ingests nothing for 30
+days.
+
+New `apps/api/scripts/ingest_visa_info_full.py` — resumable (one JSON line per country),
+`--fresh` to restart, politeness-paced for Wikimedia. No quota cost: this is the free
+`action=parse` API, one article per country, no key. Done-rule follows
+`ingest_youtube_full.py`: **done means chunks were actually ingested**, with a 3-attempt
+cap, so a transient failure stays pending instead of being recorded as an empty success.
+
+**Result, verified against the live cluster rather than the run log: 1,291 points across
+73/73 seed countries** (USA 77, Cambodia 53, India 47, Canada/UK 43). Also verified on
+real stored payloads: `retrieve_visa_note()` returns attributed notes carrying
+`source_url` and `""` for a country outside the seed list; **zero `[ edit ]` markers**
+survived in 1,291 payloads; every point carries the full v10.50.0 unified metadata.
+
+🔴 **The run found a real bug — 72/73 on the first pass.** "Georgia" returned zero
+chunks. `/wiki/Georgia` redirects to a **disambiguation page** while the country guide
+lives at `Georgia (country)` and holds 17 entry-rule chunks. The bare title answers
+**200 OK**, so no status-based check could ever have seen this — the same failure shape
+as `scrapers/wikivoyage.py`'s New York case (a real but structurally different article,
+not a 404).
+
+`scrape_visa_info()` now retries with the `"<Name> (country)"` suffix **only when the
+bare title yielded no entry rules at all**. A suffix retry rather than a hand-pinned
+title map (the `WIKIVOYAGE_TITLE_OVERRIDES` approach) because it encodes Wikivoyage's
+own naming convention instead of one fact, costs nothing on the happy path, and still
+returns `[]` when the variant does not exist either. **The country is stored under its
+plain name** — the suffix belongs to the wiki's title, not to our key — and a test pins
+that specifically, since storing `"Georgia (country)"` would have silently broken
+`retrieve_visa_note("Georgia")`, which filters on an exact `destination` match.
+
+⚠️ **The inverse case was audited, not assumed.** A zero is visible; the dangerous
+version is a bare title resolving to a real but *wrong* article that still yields plenty
+of chunks — which a point count structurally cannot catch, the same shape as the
+2026-07-24 mis-geocoded destinations. All 73 titles were queried against MediaWiki for
+redirects, `pageprops.disambiguation` and category membership: **only Georgia was
+flagged**, the other 72 resolve to genuine country articles, and
+`United States of America → United States` is a correct redirect. Re-run that audit if
+`VISA_SEED_COUNTRIES` grows.
 
 ### v10.53.0 Changes (July 2026) — Mobile landing UX (inspiration above the fold, nav decluttered) + chat profanity gate
 

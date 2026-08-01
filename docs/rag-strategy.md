@@ -110,7 +110,7 @@ Now returns properly destination-tagged posts thanks to the fixed `_extract_dest
 ### What's Still Missing from the Pipeline
 1. **No Wikivoyage Qdrant cache for best-time** — still live-scraped on every request
 2. **No Anya wizard RAG** — city suggestions rely on Gemini parametric memory alone
-3. **No visa/entry-rules collection** — not yet ingested
+3. ~~**No visa/entry-rules collection** — not yet ingested~~ ✅ **Done** — collection + retrieval built v10.52.0 (#37), corpus ingested v10.54.0 (#59): 1,291 chunks across all 73 seed countries
 4. **No `itinerary_corpus` / `generated_itineraries` learning flywheel** — described in §9/§10 below, not yet built
 
 **v10.7 update:** persona/occasion-filtered retrieval (§9's "Mechanism A" from the budget/curation design memo) is now implemented — `services/search.py::retrieve_context()` biases its 3 query variants with persona/purpose keyword expansions (e.g. `digital_nomad` → "coworking wifi cafe remote work", `honeymoon` → "romantic scenic couples sunset") over the *existing* `wiki`/`reddit` collections. This is a zero-infra query-construction improvement, not the full §11 unified metadata/payload-filtering schema — that remains unbuilt. `itinerary_corpus` and `generated_itineraries` (§9/§10 proper) also remain unbuilt.
@@ -491,7 +491,7 @@ Wikivoyage ──▶ Scrape sections ──▶ Sentence-boundary chunks (~500 ch
 Reddit     ──▶ Top posts (6hr)  ──▶ Paragraph chunks (≥80 chars, title prefix) ──▶ Embed ──▶ Qdrant [reddit]
 OSM POIs   ──▶ Overpass API (weekly) ──▶ {name,type,coords} ✅ DONE ──▶ Qdrant [osm_pois]
 Itinerary  ──▶ Post-generation  ──▶ Cache trips on success ✅ DONE ──▶ Qdrant [itinerary_cache]
-Visa/Entry ──▶ Static JSON      ──▶ Per country rules    ⚠️ NOT YET BUILT ──▶ Qdrant [visa_info]
+Visa/Entry ──▶ Wikivoyage "Get in" ──▶ Per-country rules (73) ✅ DONE ──▶ Qdrant [visa_info]
 
 
 RETRIEVAL PIPELINE (per request) — as of v5.3
@@ -577,7 +577,7 @@ User trip config
 | P1 | Hybrid BM25 + semantic search | ✅ Done | Better handling of proper nouns/specific terms |
 | P2 | `itinerary_cache` collection + cache hit logic | ✅ Done | Fallback + free repeat visits |
 | P2 | Golden dataset + automated eval (`run_rag_eval.py`) | ✅ Done | Recall@10=0.95, MRR≈0.46, nDCG@10≈0.58 — measured through the real `retrieve_context()` production path (issue #50); see §"Golden dataset" note below for why these are lower than the old isolated-path numbers |
-| P2 | Visa info collection + wizard injection | ❌ Pending | Practical user value |
+| P2 | Visa info collection + wizard injection | ✅ Done | Built v10.52.0 (#37); corpus ingested v10.54.0 (#59) — 1,291 chunks, 73/73 seed countries |
 | P2 | HyDE query augmentation | ✅ Done | Better recall for niche personas (template-based) |
 | P3 | Cross-encoder reranker | ✅ Done | Scoped to itinerary generation only (latency-gated) |
 
@@ -1112,7 +1112,7 @@ More context signal, fewer tokens, better output.
 | P2 | Extraction LLM chain → structured `ItineraryCorpusDoc` + `itinerary_corpus` Qdrant collection (config+content dual embedding, quality scoring, monthly scheduler job) | 1 day | ✅ Done (v10.12) — `chains/itinerary_corpus_extraction_chain.py`; retrieval (wiring into the generation prompt) is the separate `itinerary-corpus-retrieval` roadmap item |
 | P2 | Unified metadata schema normalisation across all scrapers | 3 hrs | ❌ Pending — consistent filters; `attraction_type` precision retrieval |
 | P2 | Quality score background task (session signals) | 4 hrs | ❌ Pending — enables persona-based re-ranking |
-| P2 | Visa info collection | 3 hrs | ❌ Pending — entry requirements surfaced in wizard |
+| P2 | Visa info collection | 3 hrs | ✅ Done (v10.52, #37) — `scrapers/visa_info.py` + `services/visa.py`, entry requirements surfaced in the wizard. Corpus ingested v10.54.0 (#59): 1,291 chunks, 73/73 seed countries |
 | P2 | Time-decay scoring in reranker | 2 hrs | ✅ Done — 18-month half-life, floor 40% |
 | P2 | Semantic chunking (by section headers / Reddit comments) | 3 hrs | ✅ Done |
 | P3 | Wikimedia API ingestion (replace Wikivoyage scraper) | 2 hrs | ✅ Done (v10.11, scoped to itinerary corpus) — `scrapers/itinerary_corpus.py::scrape_wikivoyage_itinerary` uses the official `action=parse` Wikimedia API for a curated list of dedicated Wikivoyage itinerary articles (Golden Triangle, Grand Tour of Europe, Trans-Siberian Railway, etc.); the original `scrapers/wikivoyage.py` (general destination guide sections) is unchanged |

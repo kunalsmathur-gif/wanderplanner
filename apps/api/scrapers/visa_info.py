@@ -72,6 +72,22 @@ _VISA_KEYWORDS = frozenset({
 _MAX_FETCH_ATTEMPTS = 3
 _RETRY_BASE_DELAY_S = 5.0
 
+# Wikivoyage's convention for a country whose bare name is ambiguous: the
+# country guide lives at "<Name> (country)" while the bare title is a
+# disambiguation page. Found 2026-08-01 on the first full ingestion run
+# (issue #59) — "Georgia" was the one country of 73 to return zero chunks, and
+# `/wiki/Georgia` redirects to "Georgia (disambiguation)" while
+# "Georgia (country)" holds 17 entry-rule chunks. Same failure shape as
+# `scrapers/wikivoyage.py`'s New York case: a 200 OK on a real but structurally
+# different article, not a 404.
+#
+# A suffix retry rather than a hand-pinned title map (the
+# `WIKIVOYAGE_TITLE_OVERRIDES` approach) because this encodes the wiki's own
+# naming convention instead of one fact, and it costs nothing on the happy
+# path — it fires only when the bare title yielded no entry rules at all. If
+# the variant does not exist either, the result is [] exactly as before.
+_COUNTRY_TITLE_SUFFIX = " (country)"
+
 # MediaWiki renders a per-heading "[edit]" link, and `get_text()` on a section
 # that includes its subsection headings pulls those in as literal "[ edit ]"
 # runs. Caught 2026-07-29 by reading the scraped France/UAE text rather than
@@ -167,31 +183,60 @@ def _parse_entry_sections(html: str, country: str, url: str) -> list[dict]:
     return docs
 
 
+async def _fetch_entry_sections(
+    client: httpx.AsyncClient, title: str, country: str
+) -> list[dict]:
+    """Fetch one article title and parse its entry-rule chunks, with retries.
+
+    Returns [] on a persistent fetch failure — a caller distinguishing "wrong
+    title" from "site down" would be reading a distinction the parse cannot
+    make anyway, since both surface as no chunks.
+    """
+    url = BASE_URL.format(title=title)
+    for attempt in range(1, _MAX_FETCH_ATTEMPTS + 1):
+        try:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return _parse_entry_sections(resp.text, country, url)
+        except Exception as e:
+            if attempt == _MAX_FETCH_ATTEMPTS:
+                logger.warning(
+                    "Visa info fetch failed for %r after %d attempts: %s",
+                    title, attempt, e,
+                )
+                return []
+            await asyncio.sleep(_RETRY_BASE_DELAY_S * attempt)
+    return []
+
+
 async def scrape_visa_info(country: str) -> list[dict]:
     """Fetch a Wikivoyage *country* article and return its entry-rule chunks.
+
+    Falls back to the "<Name> (country)" title when the bare name turns out to
+    be a disambiguation page — see `_COUNTRY_TITLE_SUFFIX`.
 
     Best-effort: returns [] rather than raising, matching every other scraper
     in this package.
     """
-    title = country.strip().replace(" ", "_")
-    url = BASE_URL.format(title=title)
+    country = country.strip()
     headers = {"User-Agent": settings.nominatim_user_agent}
 
     async with httpx.AsyncClient(timeout=20, headers=headers, follow_redirects=True) as client:
-        for attempt in range(1, _MAX_FETCH_ATTEMPTS + 1):
-            try:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                return _parse_entry_sections(resp.text, country.strip(), url)
-            except Exception as e:
-                if attempt == _MAX_FETCH_ATTEMPTS:
-                    logger.warning(
-                        "Visa info fetch failed for %r after %d attempts: %s",
-                        country, attempt, e,
-                    )
-                    return []
-                await asyncio.sleep(_RETRY_BASE_DELAY_S * attempt)
-    return []
+        docs = await _fetch_entry_sections(client, country.replace(" ", "_"), country)
+        if docs:
+            return docs
+
+        # `country` is stored as the payload's `destination`/`country` either
+        # way — the suffix belongs to the wiki's title, not to our key, so
+        # retrieval still finds it under the plain name.
+        fallback_title = f"{country}{_COUNTRY_TITLE_SUFFIX}".replace(" ", "_")
+        docs = await _fetch_entry_sections(client, fallback_title, country)
+        if docs:
+            logger.info(
+                "visa_info %r: bare title had no entry rules, %r yielded %d chunks",
+                country, fallback_title, len(docs),
+            )
+        return docs
 
 
 async def ingest_visa_info(country: str) -> int:

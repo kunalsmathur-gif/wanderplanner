@@ -100,6 +100,94 @@ class TestSeedCountries:
         assert len(VISA_SEED_COUNTRIES) == len(set(VISA_SEED_COUNTRIES))
 
 
+class TestDisambiguationFallback:
+    """The "<Name> (country)" retry (issue #59).
+
+    Found on the first full ingestion run: "Georgia" was the only one of 73
+    seed countries to yield zero chunks, because `/wiki/Georgia` is a
+    disambiguation page while `Georgia (country)` holds the real guide. The
+    bare title returns 200 OK, so this is invisible to any check that only
+    looks at HTTP status.
+    """
+
+    def _client(self, pages: dict[str, str]):
+        """An httpx client stub serving `pages` by title, 404-ing anything else."""
+        requested: list[str] = []
+
+        async def _get(url: str):
+            title = url.rsplit("/", 1)[-1]
+            requested.append(title)
+            resp = MagicMock()
+            resp.text = pages.get(title, "<html><body></body></html>")
+            resp.raise_for_status = MagicMock()
+            return resp
+
+        client = MagicMock()
+        client.get = AsyncMock(side_effect=_get)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        return client, requested
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_country_suffix_when_bare_title_is_a_disambiguation(self):
+        from scrapers import visa_info
+
+        client, requested = self._client({"Georgia_(country)": COUNTRY_MARKUP})
+        with patch.object(visa_info.httpx, "AsyncClient", return_value=client):
+            docs = await visa_info.scrape_visa_info("Georgia")
+
+        assert docs, "expected the (country) variant to supply the entry rules"
+        assert requested == ["Georgia", "Georgia_(country)"]
+
+    @pytest.mark.asyncio
+    async def test_stores_the_plain_country_name_not_the_wiki_title(self):
+        """The suffix belongs to the wiki's title, not to our key — storing
+        "Georgia (country)" would make `retrieve_visa_note("Georgia")` miss,
+        since it filters on an exact `destination` match."""
+        from scrapers import visa_info
+
+        client, _ = self._client({"Georgia_(country)": COUNTRY_MARKUP})
+        with patch.object(visa_info.httpx, "AsyncClient", return_value=client):
+            docs = await visa_info.scrape_visa_info("Georgia")
+
+        assert {d["destination"] for d in docs} == {"Georgia"}
+        assert {d["country"] for d in docs} == {"Georgia"}
+
+    @pytest.mark.asyncio
+    async def test_no_second_fetch_when_the_bare_title_works(self):
+        """The fallback must stay off the happy path — 72 of 73 countries
+        resolve on the bare title and must not pay an extra request."""
+        from scrapers import visa_info
+
+        client, requested = self._client({"Japan": COUNTRY_MARKUP})
+        with patch.object(visa_info.httpx, "AsyncClient", return_value=client):
+            docs = await visa_info.scrape_visa_info("Japan")
+
+        assert docs
+        assert requested == ["Japan"]
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_neither_title_has_entry_rules(self):
+        from scrapers import visa_info
+
+        client, requested = self._client({})
+        with patch.object(visa_info.httpx, "AsyncClient", return_value=client):
+            docs = await visa_info.scrape_visa_info("Atlantis")
+
+        assert docs == []
+        assert requested == ["Atlantis", "Atlantis_(country)"]
+
+    @pytest.mark.asyncio
+    async def test_multiword_country_keeps_underscores_in_both_titles(self):
+        from scrapers import visa_info
+
+        client, requested = self._client({})
+        with patch.object(visa_info.httpx, "AsyncClient", return_value=client):
+            await visa_info.scrape_visa_info("Costa Rica")
+
+        assert requested == ["Costa_Rica", "Costa_Rica_(country)"]
+
+
 def _hit(text: str, score: float, url: str = "https://en.wikivoyage.org/wiki/Thailand"):
     h = MagicMock()
     h.score = score
