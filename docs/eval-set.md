@@ -832,6 +832,18 @@ keyboard cover a field, or a bottom sheet sit under a notch.
 | MOB-008 | Quote modal on a phone | Tap the quotation CTA in the expert card | Opens as a **bottom sheet**; focus lands on the first field, not Close; Escape dismisses | Fields sit above the keyboard; background does not scroll behind it | P0 |
 | MOB-009 | Desktop mirrors the mobile grouping | ≥ 1024px | The same three groupings in the same order across the three columns | No section appears in a different group than it does on mobile | P1 |
 | MOB-010 | Before a trip exists | Mobile, "Booking & Expenses" tab, no destination yet | Only "my bookings" renders; expenses/expert/booking links are hidden rather than empty | No cards with nothing to price or link to | P2 |
+| MOB-011 | Anya orb never covers a control | Scroll each of the 3 tabs to the very bottom, mobile **and** ≥1024px | The floating orb overlaps no button, link or field | Orb's bounding rect intersects zero interactive elements | P0 |
+
+⚠️ **MOB-011 needs a browser, not jsdom.** It was a real defect (reported
+2026-08-01): the orb is `fixed` and the scroll container reserved no space for
+it, so it sat on top of the "Get Quotation" CTA — and since the orb wins the
+tap, aiming at that button opened the chat instead. jsdom has no layout engine,
+so every element has a zero rect and an overlap assertion there would pass
+regardless. The check that actually works is comparing
+`getBoundingClientRect()` of the orb against every `button, a, input, textarea,
+select` after scrolling each tab to the bottom, in a real browser. Repeat on
+desktop separately: the orb moves to `lg:bottom-6` and `right-6` puts it over
+the **right sidebar**, so that column needs the clearance, not the centre one.
 
 ### 7D — Theme Toggle (`ThemeToggle.tsx`)
 

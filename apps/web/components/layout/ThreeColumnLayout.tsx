@@ -161,7 +161,16 @@ export function ThreeColumnLayout() {
     <div className="flex h-full flex-col overflow-hidden bg-[var(--_bg)] lg:hidden">
       <TitleBar destination={destination} days={days.length} />
 
-      <div className="flex-1 overflow-y-auto">
+      {/* pb-36 reserves the band the floating Anya orb occupies. It is
+          `fixed bottom-24 right-6` and ~98px tall (72px orb + label), so it
+          covers roughly 96–194px above the viewport bottom — which, measured
+          from this container's own bottom edge (it sits above the ~58px tab
+          bar), is about 136px. Without this the orb sits *on top of* whatever
+          has scrolled into that band: it was covering the "Get Quotation" CTA,
+          and since the orb wins the tap, aiming at that button opened the chat
+          instead. Reserved in the layout rather than nudged per-card, because
+          any content can end up there. */}
+      <div className="flex-1 overflow-y-auto pb-36">
         {mobileTab === 'itinerary' && (
           <div className="space-y-4 px-4 py-4">
             {step3View === 'comparison' ? (
@@ -229,9 +238,11 @@ export function ThreeColumnLayout() {
         </div>
       </section>
 
-      {/* Right sidebar — map + tips */}
+      {/* Right sidebar — map + tips. Same orb reservation as mobile: on desktop
+          it moves to `lg:bottom-6`, and `right-6` puts it over *this* column,
+          so its content needs the clearance rather than the centre one. */}
       <aside
-        className="w-[25%] min-w-[280px] shrink-0 overflow-y-auto bg-[var(--_card)]"
+        className="w-[25%] min-w-[280px] shrink-0 overflow-y-auto bg-[var(--_card)] pb-32"
         style={{ boxShadow: 'inset 1px 0 0 var(--_border)' }}
       >
         <div className="flex items-center justify-between border-b border-[var(--_border)] px-4 py-2">
