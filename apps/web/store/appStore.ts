@@ -1,7 +1,9 @@
 import { create } from 'zustand'
 
 export type Step3View = 'itinerary' | 'comparison' | 'map-full'
-export type MobileTab = 'itinerary' | 'overview' | 'map'
+// 'bookings' was 'overview' until v10.56.0 — the tab holds expenses, the
+// expert handoff and booking links, none of which is an "overview".
+export type MobileTab = 'itinerary' | 'bookings' | 'map'
 
 export type AppStep = 1 | 2 | 3
 type LegacyStep = AppStep

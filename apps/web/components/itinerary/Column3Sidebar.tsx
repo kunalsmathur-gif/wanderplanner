@@ -8,8 +8,6 @@ import { getTravelTips, type TravelTip } from '@/lib/api'
 import { logClientEvent } from '@/lib/analyticsBeacon'
 import { MapWrapper } from '@/components/map/MapWrapper'
 import { BestTimeWidget } from '@/components/dashboard/BestTimeWidget'
-import { BookingLinksSection } from '@/components/itinerary/BookingLinksSection'
-import { BookingHub } from '@/components/dashboard/BookingHub'
 
 export function Column3Sidebar() {
   const collectedLabels = useWizardChatStore((state) => state.collectedLabels)
@@ -71,17 +69,13 @@ export function Column3Sidebar() {
         </div>
       )}
 
-      {destination && (
-        <div className="border-t border-[var(--_border)] pt-2">
-          <BookingLinksSection />
-        </div>
-      )}
+      {/* "Book This Trip" and "My Bookings" moved to the Booking & Expenses
+          panel in v10.56.0 — they are purchase actions, not orientation
+          material, and grouping them with expenses matches how users move
+          through the plan. This section is now map + when-to-go + what-locals-
+          say only. */}
 
       <div className="border-t border-[var(--_border)] pt-2">
-        <BookingHub />
-      </div>
-
-      <div>
         <h4 className="mb-2 text-xs font-semibold uppercase tracking-widest text-[var(--_muted-fg)]">
           Travel Tips &amp; Community
         </h4>

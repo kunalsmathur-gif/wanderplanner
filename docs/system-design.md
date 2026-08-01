@@ -1268,7 +1268,7 @@ However, **Gemini token/cost event instrumentation is still in progress** in the
 **Flow (⭐ REVISED 2026-07-30 — per-item reactions replaced with one itinerary-wide vote):** the original design (below, kept in git history) shipped a day/place-level thumbs-up/down on every single `ActivityCard`, which in practice asked for a reaction far too often and felt broken rather than lightweight. Replaced with a single itinerary-wide vote, `scope: "itinerary"` only — the `day`/`place` scopes remain supported server-side (`itinerary_feedback` table/model unchanged) for backward compatibility with existing rows, but the frontend no longer submits them.
 1. `apps/web/store/itineraryFeedbackStore.ts` is the single source of truth for the vote/submission state (`idle` → `awaiting_note` on thumbs-down → `loading` → `sent`/`error`), shared by both surfaces below so a vote given in one isn't re-asked in the other; `apps/web/store/feedbackPromptStore.ts` separately tracks whether the dismissible popup has already been shown/interacted-with this itinerary session (latches after the first submit or dismiss). Both reset whenever `itineraryStore.ts`'s `setDays` fires (a freshly generated itinerary gets its own clean feedback state).
 2. **Inline widget** — `ItineraryFeedbackWidget.tsx`, persistently rendered at the bottom of the centre itinerary section ("Was this itinerary helpful?" + 👍/👎).
-3. **Dismissible popup** — `TripFeedbackPopup.tsx`, rendered globally in `ThreeColumnLayout.tsx`, fixed bottom-right. Triggered at most once per itinerary session (`feedbackPromptStore.request(trigger)`) from four "leaving/acting on this plan" moments: Edit Trip (`Column1Metrics.tsx`, the closest UI analog to "back" — there's no literal back button), Generate/regenerate an existing itinerary (`LLMWizard.tsx::handleGenerate`, gated so a first-ever generation with nothing to react to yet doesn't prompt), Get Quotation via the local expert (`AgentHandoffCard.tsx::handleSubmit`), and Share (`ShareButton.tsx::handleShare`). Thumbs-down on either surface asks an optional "what went wrong?" note before submitting.
+3. **Dismissible popup** — `TripFeedbackPopup.tsx`, rendered globally in `ThreeColumnLayout.tsx`, fixed bottom-right. Triggered at most once per itinerary session (`feedbackPromptStore.request(trigger)`) from four "leaving/acting on this plan" moments: Edit Trip (`TripSummaryHeader.tsx` since v10.56.0, `Column1Metrics.tsx` before it — the closest UI analog to "back", since there's no literal back button), Generate/regenerate an existing itinerary (`LLMWizard.tsx::handleGenerate`, gated so a first-ever generation with nothing to react to yet doesn't prompt), Get Quotation via the local expert (`AgentHandoffCard.tsx::handleSubmit`), and Share (`ShareButton.tsx::handleShare`). Thumbs-down on either surface asks an optional "what went wrong?" note before submitting.
 4. `POST /api/itinerary-feedback` (`apps/api/routers/itinerary_feedback.py`) validates scope-specific required fields via a Pydantic `model_validator` (`apps/api/models/itinerary_feedback.py`), returning 422 naming the missing field rather than silently defaulting — unchanged by this revision.
 
 <details>
@@ -1793,6 +1793,33 @@ instead of the agent) that govern how these tools are meant to be used.
 ---
 
 ## 16. Change Log
+
+### v10.56 (August 2026) — dashboard regrouped by intent; expert card down to a CTA
+
+Prompted by a live mobile review. The three panels had drifted into holding
+whatever was added last, so the tab names stopped describing their contents.
+
+- **Grouped by what the user is doing**, with desktop mirroring mobile exactly
+  — one information architecture, not two:
+  - **Itinerary** — trip metrics, Edit Trip and Download PDF now sit *above*
+    the day-by-day breakdown (new `TripSummaryHeader.tsx`). They describe the
+    itinerary, yet were parked behind a separate tab.
+  - **Booking & Expenses** (renamed from "Overview") — estimated expenses
+    (collapsed), local expert, book this trip, my bookings, currency.
+    `Column1Metrics` → `BookingExpensesPanel`; the old name had become
+    misleading once the metrics left it.
+  - **Maps & Tips** — map, best time, travel tips & community. The booking
+    links and saved bookings moved out: they are purchase actions, not
+    orientation material.
+- **The local-expert card is now a pitch and one button.** Its email field,
+  100-word textarea and word counter rendered inline, pushing the CTA most of a
+  phone screen down and making one offer look like a form. `AgentQuoteModal.tsx`
+  collects those after the user opts in; submit logic is unchanged.
+- 🔴 **Modal gotcha worth carrying:** `onClose` must not be an effect
+  dependency. Callers pass an inline arrow, so the effect re-runs on every
+  parent render — re-adding listeners, re-applying the scroll lock, and
+  re-capturing the focus-restore target from a field *inside* the dialog
+  instead of the element that opened it. Keep it in a ref and depend on `open`.
 
 ### v10.55 (August 2026) — the itinerary gets a URL, and logout actually logs you out
 

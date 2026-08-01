@@ -8,6 +8,7 @@ import { useAuthStore } from '@/store/authStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useFeedbackPromptStore } from '@/store/feedbackPromptStore'
+import { AgentQuoteModal } from '@/components/itinerary/AgentQuoteModal'
 
 const CONCIERGE_WHATSAPP_NUMBER = process.env.NEXT_PUBLIC_AGENT_CONCIERGE_WHATSAPP ?? ''
 const MAX_NOTES_WORDS = 100
@@ -54,6 +55,7 @@ export function AgentHandoffCard() {
   const [state, setState] = useState<SubmitState>('idle')
   const [error, setError] = useState<string | null>(null)
   const [whatsAppUrl, setWhatsAppUrl] = useState<string | null>(null)
+  const [modalOpen, setModalOpen] = useState(false)
 
   const notesWordCount = countWords(notes)
 
@@ -166,6 +168,10 @@ export function AgentHandoffCard() {
       const nextUrl = buildWhatsAppUrl()
       setWhatsAppUrl(nextUrl)
       setState('success')
+      // Close on success so the confirmation (and the WhatsApp follow-up) is
+      // read on the card itself rather than behind a dialog the user still
+      // has to dismiss.
+      setModalOpen(false)
       if (nextUrl) {
         window.open(nextUrl, '_blank', 'noopener,noreferrer')
       }
@@ -178,27 +184,25 @@ export function AgentHandoffCard() {
     }
   }
 
+  const sent = state === 'success'
+
   return (
     <section className="rounded-2xl border-2 border-[var(--_accent)]/40 bg-gradient-to-br from-[var(--_accent)]/8 to-[var(--_card)] p-4 shadow-md shadow-[var(--_accent)]/10">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-[var(--_muted-fg)]">
-            🧭 Local Expert Help
-          </p>
-          <h3 className="mt-1 text-lg font-bold text-[var(--_fg)] [font-family:var(--font-display)]">
-            Get This Itinerary Booked by a Local Expert
-          </h3>
-          <p className="mt-2 text-sm leading-relaxed text-[var(--_muted-fg)]">
-            A destination specialist reviews your plan and gets back to you personally — no bots, no generic replies.
-          </p>
-        </div>
-        <span className="rounded-full border border-[var(--_accent)]/20 bg-[var(--_accent)]/10 px-3 py-1 text-xs font-semibold text-[var(--_accent)]">
-          Replies within 24 hours, guaranteed
-        </span>
-      </div>
+      {/* Deliberately minimal: one line of pitch, one proof point, one action.
+          Everything that needs typing lives in the modal — see
+          AgentQuoteModal for why. */}
+      <p className="text-xs font-semibold uppercase tracking-wide text-[var(--_muted-fg)]">
+        🧭 Local Expert Help
+      </p>
+      <h3 className="mt-1 text-base font-bold leading-snug text-[var(--_fg)] [font-family:var(--font-display)]">
+        Get this itinerary booked by a local expert
+      </h3>
+      <p className="mt-1.5 text-sm leading-relaxed text-[var(--_muted-fg)]">
+        A destination specialist reviews your plan and replies personally.
+      </p>
 
-      {state === 'success' ? (
-        <div className="mt-4 rounded-xl border border-[var(--_success)]/25 bg-[var(--_success)]/10 p-4">
+      {sent ? (
+        <div className="mt-3 rounded-xl border border-[var(--_success)]/25 bg-[var(--_success)]/10 p-3">
           <p className="text-sm font-medium text-[var(--_fg)]">
             ✅ Request sent — expect a reply within 24 hours
           </p>
@@ -213,7 +217,30 @@ export function AgentHandoffCard() {
           </button>
         </div>
       ) : (
-        <div className="mt-4 space-y-3">
+        <>
+          <button
+            type="button"
+            onClick={() => setModalOpen(true)}
+            className="btn btn-accent mt-3 h-11 w-full rounded-xl text-sm shadow-md shadow-[var(--_accent)]/20"
+          >
+            Get Quotation
+          </button>
+          <p className="mt-2 text-center text-xs font-medium text-[var(--_accent)]">
+            Replies within 24 hours, guaranteed
+          </p>
+        </>
+      )}
+
+      <AgentQuoteModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        titleId="agent-quote-modal-title"
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-[var(--_muted-fg)]">
+            We&apos;ll send your {tripSummary.destination} plan to a destination specialist.
+          </p>
+
           <label className="block">
             <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-[var(--_muted-fg)]">
               Email for the specialist reply
@@ -229,16 +256,16 @@ export function AgentHandoffCard() {
           </label>
 
           <label className="block">
-            <span className="mb-1.5 flex items-center justify-between text-xs font-medium uppercase tracking-wide text-[var(--_muted-fg)]">
-              <span>Anything specific to tell the specialist? (optional)</span>
+            <span className="mb-1.5 flex items-center justify-between gap-2 text-xs font-medium uppercase tracking-wide text-[var(--_muted-fg)]">
+              <span>Anything specific? (optional)</span>
               <span className={notesWordCount >= MAX_NOTES_WORDS ? 'text-[var(--_destructive)]' : ''}>
-                {notesWordCount}/{MAX_NOTES_WORDS} words
+                {notesWordCount}/{MAX_NOTES_WORDS}
               </span>
             </span>
             <textarea
               value={notes}
               onChange={(e) => setNotes(clampToWordLimit(e.target.value))}
-              placeholder="e.g. Prefer boutique hotels, celebrating an anniversary, need a wheelchair-accessible stay…"
+              placeholder="e.g. Prefer boutique hotels, celebrating an anniversary…"
               rows={3}
               className="input resize-none"
               disabled={state === 'loading'}
@@ -257,20 +284,14 @@ export function AgentHandoffCard() {
             disabled={state === 'loading' || !email.trim()}
             className="btn btn-accent h-11 w-full rounded-xl text-sm shadow-md shadow-[var(--_accent)]/20"
           >
-            {state === 'loading' ? 'Sending…' : 'Get Quotation'}
+            {state === 'loading' ? 'Sending…' : 'Send request'}
           </button>
 
-          {state === 'error' && (
-            <button
-              type="button"
-              onClick={handleSubmit}
-              className="text-sm font-medium text-[var(--_primary)] hover:underline"
-            >
-              Retry
-            </button>
-          )}
+          <p className="text-center text-xs text-[var(--_muted-fg)]">
+            Replies within 24 hours, guaranteed
+          </p>
         </div>
-      )}
+      </AgentQuoteModal>
     </section>
   )
 }

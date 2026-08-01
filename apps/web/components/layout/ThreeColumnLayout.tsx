@@ -1,11 +1,12 @@
 'use client'
 
-import { LayoutList, BarChart2, Map } from 'lucide-react'
+import { LayoutList, Wallet, Map } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
 import type { MobileTab } from '@/store/appStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
-import { Column1Metrics } from '@/components/dashboard/Column1Metrics'
+import { BookingExpensesPanel } from '@/components/dashboard/BookingExpensesPanel'
+import { TripSummaryHeader } from '@/components/itinerary/TripSummaryHeader'
 import { ItineraryTimeline } from '@/components/itinerary/ItineraryTimeline'
 import { Column3Sidebar } from '@/components/itinerary/Column3Sidebar'
 import { ComparisonPanel } from '@/components/comparison/ComparisonPanel'
@@ -64,8 +65,10 @@ function TitleBar({ destination, days }: { destination: { city: string; country:
 function MobileTabBar({ active, onChange }: { active: MobileTab; onChange: (tab: MobileTab) => void }) {
   const tabs: { id: MobileTab; label: string; Icon: typeof LayoutList }[] = [
     { id: 'itinerary', label: 'Itinerary', Icon: LayoutList },
-    { id: 'overview', label: 'Overview',  Icon: BarChart2 },
-    { id: 'map',      label: 'Map & Tips', Icon: Map },
+    // Two words at 10px in a third of a phone screen — kept short enough not
+    // to wrap or truncate on a 320px viewport.
+    { id: 'bookings', label: 'Booking & Expenses', Icon: Wallet },
+    { id: 'map',      label: 'Maps & Tips', Icon: Map },
   ]
   return (
     <nav
@@ -160,15 +163,18 @@ export function ThreeColumnLayout() {
 
       <div className="flex-1 overflow-y-auto">
         {mobileTab === 'itinerary' && (
-          <div className="px-4 py-4">
+          <div className="space-y-4 px-4 py-4">
             {step3View === 'comparison' ? (
               <ComparisonPanel onClose={() => setStep3View('itinerary')} />
             ) : (
-              <ItineraryTimeline />
+              <>
+                <TripSummaryHeader />
+                <ItineraryTimeline />
+              </>
             )}
           </div>
         )}
-        {mobileTab === 'overview' && <Column1Metrics />}
+        {mobileTab === 'bookings' && <BookingExpensesPanel />}
         {mobileTab === 'map' && (
           <div>
             {/* Compact inline map */}
@@ -201,18 +207,24 @@ export function ThreeColumnLayout() {
       <aside
         className="w-[25%] min-w-[280px] shrink-0 overflow-y-auto bg-[var(--_card)]"
         style={{ boxShadow: 'inset -1px 0 0 var(--_border)' }}
+        aria-label="Booking and expenses"
       >
-        <Column1Metrics />
+        <BookingExpensesPanel />
       </aside>
 
-      {/* Center — itinerary / comparison */}
+      {/* Center — itinerary / comparison. Desktop mirrors the mobile grouping
+          on purpose: the same three sections in the same order, so the two
+          layouts stay one information architecture rather than two. */}
       <section className="flex flex-1 flex-col overflow-hidden bg-[var(--_bg)]">
         <TitleBar destination={destination} days={days.length} />
-        <div className="flex-1 overflow-hidden px-8 py-4">
+        <div className="flex-1 overflow-y-auto px-8 py-4">
           {step3View === 'comparison' ? (
             <ComparisonPanel onClose={() => setStep3View('itinerary')} />
           ) : (
-            <ItineraryTimeline />
+            <div className="space-y-4">
+              <TripSummaryHeader />
+              <ItineraryTimeline />
+            </div>
           )}
         </div>
       </section>

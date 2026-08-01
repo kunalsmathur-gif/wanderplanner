@@ -164,7 +164,9 @@ apps/web/
 │   │   ├── WanderplannerLogo.tsx  — SVG geometric gold W
 │   │   └── ThemeToggle.tsx     — Dark/light toggle
 │   ├── dashboard/
-│   │   ├── Column1Metrics.tsx  — Left sidebar: metrics, expenses, currency, booking hub
+│   │   ├── BookingExpensesPanel.tsx — "Booking & Expenses": expenses, expert,
+│   │   │                             booking links, saved bookings, currency
+│   │   │                             (was Column1Metrics until v10.56.0)
 │   │   ├── BookingHub.tsx      — Collapsible booking tracker (F7)
 │   │   ├── CurrencyWidget.tsx
 │   │   └── ExpenseBreakupCard.tsx
@@ -211,6 +213,24 @@ the URL never changed and why logout could not navigate away from a trip.
   ├── <FloatingAnyaButton />    when wizard closed
   ├── <ChatPanel />             hidden until opened
   └── <LLMWizard />             when wizardOpen
+```
+
+**Inside `ThreeColumnLayout` (v10.56.0)** — mobile tabs and desktop columns
+render the *same* three groups in the same order:
+
+```
+1. Itinerary          <TripSummaryHeader />   metrics + Edit Trip + PDF
+                      <ItineraryTimeline />   day-by-day
+
+2. Booking & Expenses <BookingExpensesPanel />
+                        <ExpenseBreakupCard />   collapsed by default
+                        <AgentHandoffCard />     pitch + CTA → AgentQuoteModal
+                        <BookingLinksSection />
+                        <BookingHub />
+                        <CurrencyWidget />
+
+3. Maps & Tips        <Column3Sidebar />
+                        <MapWrapper /> · <BestTimeWidget /> · tips & community
 ```
 
 Navigation into `/itinerary` happens on generation success
@@ -1313,10 +1333,11 @@ Shared auth status control, rendered in `LandingHero`'s nav, `ThreeColumnLayout`
 ### `ThreeColumnLayout.tsx`
 Three-column dashboard + full-screen map mode. **Now mobile-responsive.**
 
-Layout (desktop `lg+`):
-- **Left (25%)**: `Column1Metrics` → metrics, expenses, currency, `BookingHub` (falls back to `destination_country` and shows "City +N" when a trip resolves to a country/multi-hop rather than one fixed city — ⭐ v10.2)
-- **Center (flex-1)**: top-bar with destination, `ThemeToggle` (⭐ v10.2 — previously only present on the shared `/t/[slug]` page), and `ShareButton`, then `ItineraryTimeline` or `ComparisonPanel`
-- **Right (25%)**: map + "⤢ Full screen" toggle, then `Column3Sidebar` (same `destination_country` fallback for travel tips/booking links — ⭐ v10.2)
+Layout (desktop `lg+`) — regrouped in ⭐ v10.56.0 so each column matches its
+mobile tab exactly:
+- **Left (25%)**: `BookingExpensesPanel` → expenses (collapsed), local expert, booking links, `BookingHub`, currency (falls back to `destination_country` when a trip resolves to a country rather than one fixed city — ⭐ v10.2)
+- **Center (flex-1)**: top-bar with destination, `ThemeToggle` (⭐ v10.2 — previously only present on the shared `/t/[slug]` page), and `ShareButton`, then `TripSummaryHeader` (metrics, Edit Trip, PDF — shows "City +N" for multi-hop trips) above `ItineraryTimeline`, or `ComparisonPanel`
+- **Right (25%)**: map + "⤢ Full screen" toggle, then `Column3Sidebar` → best time + travel tips & community (same `destination_country` fallback — ⭐ v10.2)
 
 Layout (mobile `< lg`):
 - **Bottom tab bar** with 3 tabs: Itinerary · Overview · Map & Tips
@@ -1530,7 +1551,67 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.56.0 Changes (August 2026) — dashboard regrouped around user intent, and the expert card decluttered
+
+Frontend **129 passed**, `tsc --noEmit` clean, production build clean. From a
+live mobile review: the three panels had drifted into holding whatever was
+added last, so the mobile tab names no longer described their contents.
+
+**The three sections are now grouped by what the user is trying to do**, and
+desktop mirrors mobile exactly — the same three groups in the same order, so
+the two layouts stay one information architecture instead of two.
+
+| Tab | Before | Now |
+|---|---|---|
+| **Itinerary** | day-by-day only | **trip metrics + Edit Trip + Download PDF**, then the day-by-day |
+| **Booking & Expenses** (was "Overview") | trip metrics, actions, expenses, expert card | **estimated expenses (collapsed)**, local expert, book this trip, my bookings, currency |
+| **Maps & Tips** (was "Map & Tips") | map, best time, booking links, my bookings, tips | **map, best time, travel tips & community** |
+
+- New `components/itinerary/TripSummaryHeader.tsx` — metrics + the two
+  whole-trip actions, extracted from the old `Column1Metrics`. These describe
+  the itinerary, and on mobile they were parked behind a tab whose own content
+  is consulted far less often.
+- `Column1Metrics.tsx` → **`components/dashboard/BookingExpensesPanel.tsx`**.
+  The old name had become actively misleading — a "metrics" panel with no
+  metrics left in it. Ordered along the decision sequence: what will it cost →
+  who can help → where do I book → what have I already booked.
+- `Column3Sidebar.tsx` loses `BookingLinksSection` and `BookingHub`. Those are
+  purchase actions, not orientation material.
+- `MobileTab` type: `'overview'` → `'bookings'`.
+- ⚠️ **`ExpenseBreakupCard` was already collapsed by default** (`useState(false)`)
+  and needed no change — recorded so nobody "fixes" it again.
+
+**Local expert card: the form moved into a modal.** On a phone the card
+rendered an email field, a 100-word textarea and a live word counter inline,
+pushing the actual CTA most of a screen down and making a single offer look
+like a form to fill in. The card now carries the pitch, the 24-hour proof
+point and one button; new `AgentQuoteModal.tsx` collects email + notes after
+the user has opted in. All submit logic (PDF attachment, itinerary HTML, lead
+creation, feedback prompt) is unchanged.
+
+The modal meets the v10.48.0 accessibility bar: labelled dialog, Escape to
+close, Tab trapped inside, background scroll locked, focus restored to the
+trigger. Two details worth keeping:
+
+- 🔴 **`onClose` must not be an effect dependency.** Callers pass an inline
+  arrow, so depending on it re-runs the whole effect on every parent render —
+  tearing down and re-adding the keydown listener, re-applying the scroll
+  lock, and re-capturing the focus-restore target from whatever is focused
+  *then* (a field inside the dialog) rather than the element that opened it.
+  Held in a ref; the effect depends on `open` alone.
+- **Focus goes to the first form field, not the first focusable.** The close
+  button precedes the fields in DOM order, so a plain focusable query lands
+  the user on "dismiss" — the one control they did not open the dialog to use.
+
+**Verified in the browser at a 375×812 mobile viewport**, not asserted: the tab
+labels read Itinerary / Booking & Expenses / Maps & Tips; the itinerary tab
+opens with TRIP METRICS → Edit Trip → Download PDF → Day 1; the booking tab
+renders expenses (collapsed) → expert → book this trip → my bookings in that
+DOM order; the maps tab no longer contains either booking section; the modal
+opens labelled with focus on the email field, closes on Escape, restores focus
+to the trigger and unlocks scrolling.
 
 ### v10.55.0 Changes (August 2026) — three live-reported auth/routing bugs, one shared root cause
 

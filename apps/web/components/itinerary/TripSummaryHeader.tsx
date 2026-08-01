@@ -5,11 +5,8 @@ import { Edit2, MapPin, Wallet, CalendarDays } from 'lucide-react'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useAppStore } from '@/store/appStore'
-import { CurrencyWidget } from '@/components/dashboard/CurrencyWidget'
-import { formatCurrency } from '@/lib/format'
-import { ExpenseBreakupCard } from '@/components/dashboard/ExpenseBreakupCard'
-import { AgentHandoffCard } from '@/components/itinerary/AgentHandoffCard'
 import { useFeedbackPromptStore } from '@/store/feedbackPromptStore'
+import { formatCurrency } from '@/lib/format'
 
 const PdfDownloadButton = dynamic(
   () => import('@/components/pdf/PdfDownloadButton').then((m) => ({ default: m.PdfDownloadButton })),
@@ -30,7 +27,16 @@ function MetricCell({ icon, label, value }: { icon: React.ReactNode; label: stri
   )
 }
 
-export function Column1Metrics() {
+/**
+ * Trip metrics + the two whole-trip actions (Edit Trip, Download PDF), shown
+ * directly above the day-by-day breakdown.
+ *
+ * Moved out of the left/"Overview" panel in v10.56.0: on mobile these are the
+ * first things a user looks for after generating a plan, and they were parked
+ * behind a separate tab while that tab's own content (expenses, bookings) is
+ * consulted far less often. They describe the itinerary, so they sit with it.
+ */
+export function TripSummaryHeader() {
   const budget = useTripConfigStore((state) => state.config.budget)
   const destination = useTripConfigStore((state) => state.config.destination)
   const destinationCountry = useTripConfigStore((state) => state.config.destination_country)
@@ -38,9 +44,6 @@ export function Column1Metrics() {
   const days = useItineraryStore((state) => state.days)
   const openWizard = useAppStore((state) => state.openWizard)
   const requestFeedbackPrompt = useFeedbackPromptStore((state) => state.request)
-
-  const totalActivities = days.reduce((sum, day) => sum + day.items.length, 0)
-  void totalActivities // used only for potential future re-add
 
   // "Edit Trip" is the closest real analog to "navigating back" in this UI
   // (there's no literal back button) — reopening the wizard means leaving
@@ -59,10 +62,9 @@ export function Column1Metrics() {
       ? `${destination.city} +${hops.length}`
       : destination.city
     : (destinationCountry ?? '—')
-  const hasDestination = Boolean(destination?.city || destinationCountry)
 
   return (
-    <div className="space-y-4 p-4">
+    <section aria-label="Trip summary" className="space-y-3">
       <h3 className="text-xs font-semibold uppercase tracking-widest text-[var(--_muted-fg)]">
         Trip Metrics
       </h3>
@@ -73,27 +75,15 @@ export function Column1Metrics() {
         <MetricCell icon={<CalendarDays size={14} />} label="Days"        value={String(days.length)} />
       </div>
 
-      <div className="space-y-2 pt-1">
+      {/* Side by side from `sm` up so the pair costs one row, not two, on the
+          narrow viewports where this header competes with the timeline. */}
+      <div className="flex flex-col gap-2 sm:flex-row [&>*]:flex-1">
         <button onClick={handleEditTrip} type="button" className="btn btn-ghost w-full">
           <Edit2 size={14} />
           Edit Trip
         </button>
         <PdfDownloadButton />
       </div>
-
-      {hasDestination && (
-        <>
-          <div className="border-t border-[var(--_border)] pt-3">
-            <AgentHandoffCard />
-          </div>
-          <div className="border-t border-[var(--_border)] pt-3">
-            <ExpenseBreakupCard />
-          </div>
-          <div className="border-t border-[var(--_border)] pt-3">
-            <CurrencyWidget baseCurrency={budget.currency} />
-          </div>
-        </>
-      )}
-    </div>
+    </section>
   )
 }
