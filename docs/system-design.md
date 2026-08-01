@@ -680,7 +680,8 @@ itinerary_chain.py
          │
          ▼
 itineraryStore.setDays(days, score, breakdown)
-closeWizard() → render ThreeColumnLayout
+closeWizard() → router.push('/itinerary')   ← a navigation since v10.55.0,
+                                              not just a state change
 ```
 
 ---
@@ -1404,7 +1405,7 @@ Temperature: 0.1 (deterministic) · Max tokens: 512
 appStore
   └── wizardPreload → consumed by LLMWizard on open
 
-tripConfigStore
+tripConfigStore (persisted — sessionStorage)
   └── config → consumed by: LLMWizard (on generate), itinerary chain, chat-refine, shareTrip, ShareButton
 
 wizardChatStore
@@ -1414,7 +1415,7 @@ wizardChatStore
      readyToGenerate in the live wizard is derived from backend `summary` state,
      not a frontend required-field counter, so Stage-2 follow-up turns stay interactive
 
-itineraryStore
+itineraryStore (persisted — sessionStorage)
   ├── days → consumed by: ThreeColumnLayout, ItineraryTimeline, MapWrapper, ShareButton
   ├── activeDay → drives day-tab selection, map center
   └── expenseBreakdown → ExpenseBreakupCard
@@ -1423,32 +1424,44 @@ chatStore
   ├── isOpen → ChatPanel visibility
   └── messages → ChatPanel message history
 
-bookingStore (persisted)
+bookingStore (persisted — localStorage)
   └── bookings → BookingHub display + localStorage
 ```
+
+**Persistence rules (v10.55.0).** `itineraryStore` and `tripConfigStore` persist
+to **sessionStorage**, not localStorage: the `/itinerary` route has to survive a
+refresh, but a generated trip must not outlive the tab on a shared machine.
+`bookingStore` keeps localStorage — saved bookings are meant to persist across
+sessions. `authStore.logout()` clears both session-scoped stores *and* their
+stored copies; `status`/`progress`/`error` are excluded from persistence via
+`partialize`, since restoring an in-flight generation would show a permanently
+"loading" screen.
 
 ### Key State Transitions
 
 ```
-Landing page (no itinerary):
+"/" — Landing page (app/page.tsx):
   LandingHero shown
   FloatingAnyaButton: hidden
   ChatPanel: hidden
 
-Wizard open (no itinerary):
+"/" — Wizard open:
   LandingHero blurred/dimmed
   LLMWizard overlay shown (LLM-powered Anya)
   FloatingAnyaButton: hidden
 
-Itinerary exists, wizard closed:
+"/itinerary" — wizard closed (app/itinerary/page.tsx):
   ThreeColumnLayout shown
   FloatingAnyaButton: visible → click → chatStore.open()
   ChatPanel: visible when chatStore.isOpen
 
-Itinerary exists, wizard open (edit flow):
+"/itinerary" — wizard open (edit flow):
   ThreeColumnLayout blurred/dimmed
   LLMWizard overlay shown
   ChatPanel: hidden (wizard takes precedence)
+
+"/itinerary" — no itinerary in store:
+  waits for persist.hasHydrated(), then router.replace('/')
 
 Full-screen map (step3View = 'map-full'):
   ThreeColumnLayout renders full-height MapWrapper

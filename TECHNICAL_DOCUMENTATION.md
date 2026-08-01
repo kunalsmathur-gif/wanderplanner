@@ -137,7 +137,10 @@ Geometric gold **W** with diamond intersection nodes at `(27,27)` and `(41,27)`,
 apps/web/
 ├── app/
 │   ├── layout.tsx          — Root layout, font loading, theme script
-│   ├── page.tsx            — Root page: LandingHero or ThreeColumnLayout + overlays
+│   ├── page.tsx            — Landing page (LandingHero + wizard overlay) only
+│   ├── itinerary/page.tsx  — Generated trip: ThreeColumnLayout + Anya + overlays.
+│   │                         Redirects to / when there is no itinerary (waits
+│   │                         on sessionStorage rehydration first)
 │   ├── signup/page.tsx     — Email/password signup + consent + Google SSO
 │   ├── login/page.tsx      — Login + Google SSO
 │   ├── forgot-password/page.tsx — Forgot-password request page
@@ -188,24 +191,42 @@ apps/web/
     └── index.ts            — TripConfig, ItineraryDay, ItineraryItem, etc.
 ```
 
-### Page Layout (`page.tsx`)
+### Page Layout — two routes, not one (v10.55.0)
+
+These used to be a single `/` page switching on `days.length > 0`, which is why
+the URL never changed and why logout could not navigate away from a trip.
 
 ```
+/  (app/page.tsx)
 <div h-screen flex flex-col>
   ├── [Content area] — blurred/dimmed when wizard open
-  │    ├── <LandingHero />          when no itinerary
-  │    └── <ThreeColumnLayout />    when itinerary exists
-  │
-  ├── <FloatingAnyaButton />        when itinerary exists + wizard closed
-  ├── <ChatPanel />                 when itinerary exists (hidden until opened)
+  │    └── <LandingHero />
   └── <LLMWizard />             when wizardOpen (fixed overlay, LLM-powered)
+
+/itinerary  (app/itinerary/page.tsx)
+<div h-screen flex flex-col>
+  ├── [Content area] — blurred/dimmed when wizard open
+  │    └── <main><ThreeColumnLayout /></main>
+  │
+  ├── <FloatingAnyaButton />    when wizard closed
+  ├── <ChatPanel />             hidden until opened
+  └── <LLMWizard />             when wizardOpen
 ```
+
+Navigation into `/itinerary` happens on generation success
+(`LLMWizard.tsx`); the route redirects to `/` when there is no itinerary, but
+only **after** `useItineraryStore.persist.hasHydrated()` — `days` is `[]` on
+the first client render, so an eager redirect would bounce every refresh.
 
 ---
 
 ## 5. State Management (Zustand)
 
-Six stores, all in `apps/web/store/`:
+Ten stores, all in `apps/web/store/`. Three are persisted: `itineraryStore` and
+`tripConfigStore` to **sessionStorage** (tab-scoped, so `/itinerary` survives a
+refresh without a trip outliving the tab — both cleared by
+`authStore.logout()`), and `bookingStore` to **localStorage** (saved bookings
+are meant to last across sessions):
 
 ### `appStore.ts`
 Controls wizard open state, preload, and step3View.

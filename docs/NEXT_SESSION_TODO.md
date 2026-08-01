@@ -2,6 +2,58 @@
 
 ---
 
+## 📌 SESSION OF 2026-08-01 — what shipped, and what it changed
+
+Three releases. Read this before picking anything below.
+
+**v10.54.0 — first `visa_info` ingestion (#59, closed).** 1,291 chunks across
+**73/73** seed countries, verified against the live cluster (point count,
+distinct countries, attributed `retrieve_visa_note()` with a negative control,
+zero `[ edit ]` markers, full v10.50 metadata). 📦 **`scripts/ingest_visa_info_full.py`
+is committed — don't rebuild it** (resumable, `--fresh`, free Wikimedia API).
+🔴 It also found a bug: `/wiki/Georgia` is a **disambiguation page** answering
+200 OK while the real guide sits at `Georgia (country)`. `scrape_visa_info()`
+now retries with the `"<Name> (country)"` suffix, on the empty path only.
+⚠️ **All 73 titles were audited for the silently-wrong-article case** — a
+real-but-wrong page still returns chunks, which a point count structurally
+cannot catch. Only Georgia was affected. **Re-run that audit if
+`VISA_SEED_COUNTRIES` grows.**
+
+**v10.54.1 — CI was red on `main`, now green.** 1 ruff + 8 mypy errors that
+arrived with the 19 commits pulled at the start of the session; confirmed
+pre-existing against a pristine worktree at `9e876ba`. ⚠️ `routers/admin.py`'s
+`datetime | None` access was **not** a latent `AttributeError` — the query
+filters `responded_at.is_not(None)`.
+
+**v10.55.0 — three live-reported auth/routing bugs, one root cause: the
+itinerary had no route of its own.** It now lives at **`/itinerary`** and `/`
+is the landing page only. Logout appeared dead there because
+`router.push('/')` is a no-op on the page you are already on, and `logout()`
+cleared only `user`. Separately `_clear_session_cookies()` emitted
+`SameSite=lax` with no `Secure` while issuance used `Secure; SameSite=none`, so
+**the browser ignored the deletion and the session survived logout** — the
+DB-side revocation had always worked, which is exactly why no existing test
+caught it. Issuance and deletion now share one `_cookie_kwargs()`.
+🔴 **Still unconfirmed on the deployed site:** that cookie fix only changes
+behaviour cross-site, so it needs a Railway redeploy plus one manual
+logout-then-revisit check against `wanderplanner.org`.
+
+**Issue tracker: 20 → 17 open.** Closed #59, #49 (wikidata prominence shipped
+in v10.40.0) and #46 (`youtube_narration` verified at 172 destinations,
+identical to `youtube_comments`, zero missing). ⚠️ **#47 was left open
+deliberately** — the code is done, but **only 1 of the 9 Wikivoyage seed titles
+has ever produced a document in `itinerary_corpus`** (`Buddhist Circuit`), so
+the India-thinness the issue exists to fix is untouched and the cause for the
+other 7 is unmeasured. Read closed issue **#60** before touching it: that run
+already diagnosed `Grand Trunk Road`.
+
+**Found, not fixed:** `Skeleton Test City` is test-fixture data sitting in the
+**production** Qdrant cluster (8 points in `youtube_narration`, also present in
+`youtube_comments`). It inflates destination counts and consumes free-tier
+headroom.
+
+---
+
 ## 🔥 QUEUE AGREED WITH THE USER 2026-07-27 (do these in order)
 
 **1. ✅ DONE — hidden-gem re-audit (shipped as v10.42.0).** Full write-up in

@@ -105,7 +105,7 @@ flowchart TD
 
     Z4 --> C3["emit status: 'Finalising your\nschedule...' (4/4)"]
     C3 --> C4["emit data: ItineraryResponse\n(SSE 'data' event)"]
-    C4 --> B2["Frontend: onData(result)\nrender itinerary UI"]
+    C4 --> B2["Frontend: onData(result)\nsetDays + router.push('/itinerary')"]
 
     U -.->|"asyncio.wait_for timeout\n(llm_timeout_seconds)"| ERR["emit error: LLM_TIMEOUT\n(retryable: true)\nmessage sanitized via\nsanitize_error() ⭐ NEW v10.0"]
     D -.->|"unhandled exception"| ERR2["emit error: GENERATION_FAILED\n(retryable: true)\nmessage sanitized via\nsanitize_error() ⭐ NEW v10.0"]
