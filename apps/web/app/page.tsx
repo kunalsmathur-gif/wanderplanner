@@ -1,20 +1,16 @@
 'use client'
 
-import { ThreeColumnLayout } from '@/components/layout/ThreeColumnLayout'
 import { LLMWizard } from '@/components/wizard/LLMWizard'
-import { FloatingAnyaButton } from '@/components/common/FloatingAnyaButton'
 import { LandingHero } from '@/components/common/LandingHero'
-import { ChatPanel } from '@/components/chat/ChatPanel'
 import { useAppStore } from '@/store/appStore'
-import { useItineraryStore } from '@/store/itineraryStore'
 
+/**
+ * The landing page, and only the landing page. A generated itinerary now
+ * lives at `/itinerary` — this route used to render both off
+ * `days.length > 0`, which is why the URL never changed between them.
+ */
 export default function Home() {
   const wizardOpen = useAppStore((state) => state.wizardOpen)
-  const days = useItineraryStore((state) => state.days)
-  const hasItinerary = days.length > 0
-
-  // Content behind any wizard overlay
-  const content = hasItinerary ? <ThreeColumnLayout /> : <LandingHero />
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
@@ -25,24 +21,11 @@ export default function Home() {
           : 'flex-1 overflow-hidden'}
         aria-hidden={wizardOpen}
       >
-        {hasItinerary
-          ? (
-          <main id="main-content" aria-label="Wanderplanner itinerary dashboard" className="h-full">
-              <ThreeColumnLayout />
-            </main>
-          )
-          : content}
+        <LandingHero />
       </div>
-
-      {/* Anya orb — only shown when itinerary exists and wizard is closed */}
-      {hasItinerary && <FloatingAnyaButton />}
-
-      {/* Anya persistent chat panel */}
-      {hasItinerary && <ChatPanel />}
 
       {/* Wizard modal */}
       {wizardOpen && <LLMWizard />}
     </div>
   )
 }
-

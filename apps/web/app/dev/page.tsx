@@ -45,7 +45,9 @@ export default function DevPage() {
       closeWizard()
       setStep3View('itinerary')
     }
-    router.push('/')
+    // The itinerary lives at its own route now; `/` is the landing page only,
+    // so sending the preview there would show the hero, not the mock trip.
+    router.push('/itinerary')
   }
 
   return (

@@ -103,7 +103,24 @@ async def _issue_session(response: Response, db: AsyncSession, user: User, reque
     user.last_login_at = datetime.now(UTC)
     await db.commit()
 
-    cookie_kwargs: _CookieKwargs = {
+    response.set_cookie(ACCESS_TOKEN_COOKIE, access_token, max_age=settings.access_token_ttl_minutes * 60, **_cookie_kwargs())
+    response.set_cookie(REFRESH_TOKEN_COOKIE, raw_refresh, max_age=settings.refresh_token_ttl_days * 86400, **_cookie_kwargs())
+
+
+def _cookie_kwargs() -> _CookieKwargs:
+    """The cookie attributes, shared by issuance *and* deletion.
+
+    🔴 One function on purpose. These used to be written twice, and the
+    deletion copy fell back to Starlette's defaults (`secure=False`,
+    `samesite="lax"`, no `httponly`) while issuance used
+    `Secure; SameSite=none`. A `Set-Cookie` is only honoured in a cross-site
+    response when it carries `SameSite=None; Secure`, and this deployment is
+    cross-site — that is exactly why `COOKIE_SAMESITE=none` is required in
+    production (see the v10.26 session-drop fix). So the browser ignored the
+    deletion, kept both cookies, and `/auth/me` went on answering 200 until
+    the access token aged out: the user logged out and stayed logged in.
+    """
+    return {
         "httponly": True,
         "secure": settings.cookie_secure,
         # `cookie_samesite` is a plain `str` in config — the production
@@ -116,13 +133,14 @@ async def _issue_session(response: Response, db: AsyncSession, user: User, reque
         "domain": settings.cookie_domain or None,
         "path": "/",
     }
-    response.set_cookie(ACCESS_TOKEN_COOKIE, access_token, max_age=settings.access_token_ttl_minutes * 60, **cookie_kwargs)
-    response.set_cookie(REFRESH_TOKEN_COOKIE, raw_refresh, max_age=settings.refresh_token_ttl_days * 86400, **cookie_kwargs)
 
 
 def _clear_session_cookies(response: Response) -> None:
+    # `delete_cookie` is `set_cookie` with an empty value and Max-Age=0, so it
+    # must carry the *same* attributes or the browser will not match and drop
+    # the cookie. See _cookie_kwargs().
     for name in (ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE):
-        response.delete_cookie(name, domain=settings.cookie_domain or None, path="/")
+        response.delete_cookie(name, **_cookie_kwargs())
 
 
 @router.get("/auth/config")

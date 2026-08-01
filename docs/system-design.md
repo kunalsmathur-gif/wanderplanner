@@ -1781,6 +1781,33 @@ instead of the agent) that govern how these tools are meant to be used.
 
 ## 16. Change Log
 
+### v10.55 (August 2026) — the itinerary gets a URL, and logout actually logs you out
+
+Three live-reported bugs, one shared root cause: the itinerary had no route.
+
+- **Routing.** `/` rendered either the landing hero or the whole itinerary
+  dashboard off `days.length > 0`, so the URL never changed. The trip now
+  lives at **`/itinerary`**; `/` is the landing page only.
+- 🔴 **Logout did nothing on the itinerary page.** `router.push('/')` is a
+  no-op when you are already on `/`, and `logout()` cleared only `user` — so
+  the dashboard stayed on screen. Logout now clears the itinerary, trip-config
+  and chat stores plus their persisted copies, and uses `router.replace('/')`.
+  It also no longer propagates a failed API call, which previously aborted the
+  local clear entirely (a rate-limited logout silently did nothing).
+- 🔴 **Session cookies survived logout.** `_clear_session_cookies()` inherited
+  Starlette's `delete_cookie` defaults and emitted `SameSite=lax` with no
+  `Secure`, while issuance used `Secure; SameSite=none`. A `Set-Cookie` is only
+  honoured cross-site with `SameSite=None; Secure`, and this deployment is
+  cross-site (that is why `COOKIE_SAMESITE=none` exists — see v10.26), so the
+  browser ignored the deletion and `/auth/me` kept answering 200 for the
+  access token's remaining TTL. Issuance and deletion now share one
+  `_cookie_kwargs()`. **The DB-side revocation had always worked — the bug was
+  in the cookie attributes, which is why no existing test caught it.**
+- **Persistence:** itinerary + trip config persist to **sessionStorage** (tab-
+  scoped, dies with the tab) so a refresh or deep link restores the trip
+  instead of bouncing to `/`. The route guard waits on `persist.hasHydrated()`
+  before redirecting, since `days` is `[]` on the first client render.
+
 ### v10.54 (August 2026) — `visa_info` corpus ingested for the first time (#59), and the title bug it exposed
 
 - **First `visa_info` data run.** The collection shipped fully wired in v10.52

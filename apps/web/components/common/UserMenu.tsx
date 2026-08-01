@@ -119,7 +119,11 @@ export function UserMenu({ inverted = false }: { inverted?: boolean }) {
   async function handleLogout() {
     closeMenu()
     await logout()
-    router.push('/')
+    // `replace`, not `push`: after logging out, Back should not return to the
+    // itinerary URL. (The route guard would bounce it to `/` anyway now that
+    // logout clears the trip, but leaving a dead entry in history is worse
+    // than not creating one.)
+    router.replace('/')
   }
 
   return (

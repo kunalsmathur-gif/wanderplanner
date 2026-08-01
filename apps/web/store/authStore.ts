@@ -1,5 +1,8 @@
 import { create } from 'zustand'
 import { fetchCurrentUser, login as apiLogin, logout as apiLogout, refreshSession, signup as apiSignup, type AuthUser } from '@/lib/authApi'
+import { useChatStore } from '@/store/chatStore'
+import { useItineraryStore } from '@/store/itineraryStore'
+import { useTripConfigStore } from '@/store/tripConfigStore'
 
 interface AuthStore {
   user: AuthUser | null
@@ -45,7 +48,23 @@ export const useAuthStore = create<AuthStore>((set) => ({
   },
 
   logout: async () => {
-    await apiLogout()
+    // Best-effort: a failed or rate-limited call to the API must not leave the
+    // browser believing it is still signed in. The server-side revocation is
+    // the authoritative half, but the local session has to end either way —
+    // otherwise a network blip makes "Log out" silently do nothing.
+    try {
+      await apiLogout()
+    } catch {
+      // deliberately swallowed — see above
+    }
+    // Clear the trip out of memory *and* sessionStorage. Without this a
+    // generated itinerary stayed on screen after logging out, and remained
+    // restorable by anyone using the same tab afterwards.
+    useItineraryStore.getState().reset()
+    useTripConfigStore.getState().resetConfig()
+    useChatStore.getState().clearHistory()
+    useItineraryStore.persist.clearStorage()
+    useTripConfigStore.persist.clearStorage()
     set({ user: null, status: 'unauthenticated' })
   },
 

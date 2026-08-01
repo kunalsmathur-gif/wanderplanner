@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { createJSONStorage, persist } from 'zustand/middleware'
 import type { ItineraryDay, ExpenseBreakdown, GenerationTier } from '@/types'
 import { useItineraryFeedbackStore } from '@/store/itineraryFeedbackStore'
 import { useFeedbackPromptStore } from '@/store/feedbackPromptStore'
@@ -42,7 +43,21 @@ interface ItineraryStore {
   reset: () => void
 }
 
-export const useItineraryStore = create<ItineraryStore>((set) => ({
+/**
+ * Persisted to **sessionStorage**, not localStorage, and deliberately so.
+ *
+ * The itinerary now lives at its own `/itinerary` route, so a refresh or a
+ * direct link has to be able to restore it — without persistence the route
+ * would bounce to the landing page every time, which is worse than no route
+ * at all. sessionStorage scopes that to the one tab and clears itself when
+ * the tab closes, so a generated trip does not outlive the browsing session
+ * on a shared machine. `useAuthStore.logout()` clears it explicitly too.
+ *
+ * Only the itinerary content is persisted — `status`, `progress` and `error`
+ * describe an in-flight generation and would otherwise be restored as a
+ * permanently "loading" or "failed" screen after a refresh.
+ */
+export const useItineraryStore = create<ItineraryStore>()(persist((set) => ({
   days: [],
   activeDay: 0,
   hoveredItemId: null,
@@ -77,5 +92,18 @@ export const useItineraryStore = create<ItineraryStore>((set) => ({
     days: [], activeDay: 0, hoveredItemId: null,
     status: 'idle', progress: { message: '', step: 0, total: 4 },
     error: null, alignmentScore: 0, expenseBreakdown: null, generationTier: 'live',
+  }),
+}), {
+  name: 'wanderplanner-itinerary',
+  storage: createJSONStorage(() => sessionStorage),
+  partialize: (state) => ({
+    days: state.days,
+    activeDay: state.activeDay,
+    alignmentScore: state.alignmentScore,
+    expenseBreakdown: state.expenseBreakdown,
+    generationTier: state.generationTier,
+    // A restored itinerary is a finished one; without this the route guard
+    // would see days but a stale 'idle' status.
+    status: 'success' as const,
   }),
 }))

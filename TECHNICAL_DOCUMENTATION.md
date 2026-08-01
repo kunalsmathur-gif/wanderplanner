@@ -1509,7 +1509,73 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.55.0 Changes (August 2026) — three live-reported auth/routing bugs, one shared root cause
+
+Backend **1091 passed / 6 skipped** (+2), ruff + mypy clean (205 files); frontend
+**129 passed** (+3), `tsc --noEmit` clean. All three reports traced back to the
+itinerary having no route of its own.
+
+**1. 🔴 The itinerary had no URL.** `app/page.tsx` rendered either `LandingHero`
+or the full `ThreeColumnLayout` off `days.length > 0`, both at `/`. So the
+address bar never changed, back/forward did nothing meaningful, and a trip
+could not be linked to. Now `/` is the landing page only and the trip lives at
+**`/itinerary`**, with `LLMWizard` navigating there on generation success.
+
+**2. 🔴 Logout appeared to do nothing on the itinerary page — and the cause was
+the missing route.** `UserMenu.handleLogout()` ended with `router.push('/')`,
+which is a **no-op when you are already on `/`**. `authStore.logout()` cleared
+only `user`, so `days` stayed populated and the dashboard kept rendering: the
+user pressed Log out and watched their itinerary sit there. Fixed on both
+sides — logout now clears the itinerary, trip-config and chat stores (plus
+their persisted copies) and `router.replace('/')` leaves no dead history entry.
+`logout()` also **swallows a failed API call** rather than propagating it: the
+old code awaited `apiLogout()` with no catch, so a rate-limited or offline
+logout aborted before the local session was cleared and silently did nothing.
+`app/account/page.tsx` had always guarded this with `.catch(() => {})`; the
+menu had not.
+
+**3. 🔴 Logging out left you logged in — the deletion header was ignored.**
+`_clear_session_cookies()` called `response.delete_cookie(name, domain, path)`
+and inherited Starlette's defaults, emitting:
+
+```
+wp_access_token=""; Max-Age=0; Path=/; SameSite=lax
+```
+
+while `_issue_session()` set the cookie with `Secure; SameSite=none; HttpOnly`.
+A `Set-Cookie` is only honoured in a **cross-site** response when it carries
+`SameSite=None; Secure` — and this deployment *is* cross-site, which is exactly
+why `COOKIE_SAMESITE=none` is required in production (the v10.26 session-drop
+fix). The browser therefore ignored the deletion, kept both cookies, and
+`/api/auth/me` went on answering 200 until the 15-minute access token expired.
+The DB-side refresh-token revocation had always worked, which is why this never
+showed up in a test: **the cookie attributes, not the revocation, were the
+bug.** Issuance and deletion now share one `_cookie_kwargs()` so they cannot
+drift again, covered by a test asserting the deletion carries `Secure`,
+`SameSite=none` and `HttpOnly`.
+
+**Persistence, and why sessionStorage.** A route with no persisted state would
+bounce to the landing page on every refresh — worse than no route at all. The
+itinerary and trip-config stores now persist, deliberately to **sessionStorage,
+not localStorage**: it is scoped to the one tab and dies with it, so a
+generated trip does not outlive the browsing session on a shared machine.
+Logout clears it explicitly on top of that. `status`/`progress`/`error` are
+excluded via `partialize` — they describe an in-flight generation and would
+restore as a permanently "loading" screen.
+
+⚠️ **The route guard waits for `persist.hasHydrated()` before redirecting.** On
+the first client render `days` is always `[]`, so an eager redirect would send
+every refresh back to the landing page — the exact failure the route was added
+to prevent.
+
+**Verified in the browser, not just asserted:** `/dev` → itinerary lands on
+`/itinerary` with the dashboard rendered and both stores in sessionStorage; a
+reload restores Tokyo / ₹1,50,000 / 3 days at the same URL; clearing storage
+and hitting `/itinerary` directly redirects to `/`. No hydration errors from
+the persist middleware (the pre-existing `<script>` console warnings come from
+`app/layout.tsx`'s theme + JSON-LD tags and are untouched here).
 
 ### v10.54.1 Changes (August 2026) — CI restored to green (1 ruff + 8 mypy errors)
 

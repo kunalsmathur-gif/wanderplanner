@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { createJSONStorage, persist } from 'zustand/middleware'
 import type { TripConfig, GroupComposition, AccommodationPrefs, Budget, TripDates, OriginInput, DestinationInput } from '@/types'
 
 const DEFAULT_GROUP: GroupComposition = {
@@ -50,7 +51,13 @@ interface TripConfigStore {
   effectivePace: () => TripConfig['pace']
 }
 
-export const useTripConfigStore = create<TripConfigStore>((set, get) => ({
+/**
+ * Persisted alongside the itinerary (see store/itineraryStore.ts for why
+ * sessionStorage rather than localStorage). The dashboard renders the trip's
+ * destination, dates and budget from here, so restoring the itinerary without
+ * its config would bring back a plan whose header and cost panels are empty.
+ */
+export const useTripConfigStore = create<TripConfigStore>()(persist((set, get) => ({
   config: DEFAULT_CONFIG,
 
   updateConfig: (partial) =>
@@ -96,4 +103,8 @@ export const useTripConfigStore = create<TripConfigStore>((set, get) => ({
     if (hasYoungKid) return 'relaxed'
     return config.pace
   },
+}), {
+  name: 'wanderplanner-trip-config',
+  storage: createJSONStorage(() => sessionStorage),
+  partialize: (state) => ({ config: state.config }),
 }))
