@@ -409,6 +409,7 @@ class TestSummariseContext:
 # ---------------------------------------------------------------------------
 # §2 – Query variant construction (RAG-055–057)
 # ---------------------------------------------------------------------------
+@pytest.mark.usefixtures("stub_embedding_models")
 class TestQueryVariantConstruction:
     """retrieve_context() must fire exactly 3 distinct semantic_search calls."""
 
@@ -565,6 +566,7 @@ class TestWikivoyagePointIdUniqueness:
 import pytest
 
 
+@pytest.mark.usefixtures("stub_embedding_models")
 def test_fallback_tier1_cache_hit():
     """On LLM failure, system returns cached itinerary JSON if cosine >= threshold."""
     import asyncio
@@ -591,6 +593,7 @@ def test_fallback_tier1_cache_hit():
     assert result["_from_fallback"] == "cache"
 
 
+@pytest.mark.usefixtures("stub_embedding_models")
 def test_fallback_tier1_cache_miss_for_unrelated_destination():
     """A cache entry for one destination must not be returned for an unrelated one."""
     import asyncio
@@ -603,6 +606,7 @@ def test_fallback_tier1_cache_miss_for_unrelated_destination():
     assert result is None
 
 
+@pytest.mark.usefixtures("stub_embedding_models")
 def test_fallback_tier2_rag_skeleton_builds_from_osm_pois():
     """If cache misses, system returns a RAG-skeleton itinerary from real OSM POI data."""
     import asyncio
