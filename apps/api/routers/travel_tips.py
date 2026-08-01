@@ -205,7 +205,10 @@ async def travel_tips(
         cache_key = _TIPS_CACHE_PREFIX + destination.strip().lower()
 
         cached_raw = await get_cache().get_json(cache_key)
-        if cached_raw is not None:
+        # `get_json` returns `object | None` by design (the cache round-trips
+        # arbitrary JSON); narrow at the call site, which also skips a
+        # malformed or legacy entry instead of raising on it.
+        if isinstance(cached_raw, list):
             cached = [TravelTip(**t) for t in cached_raw]
             return TravelTipsResponse(tips=cached[:limit], destination=destination)
 

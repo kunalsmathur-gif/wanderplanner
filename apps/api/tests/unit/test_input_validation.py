@@ -325,12 +325,15 @@ def test_chat_message_profanity_is_rejected(content: str):
     `FreeFormTripText` (the "start from a blog/Reddit post" box) deliberately
     does *not* get this same check."""
     with pytest.raises(ValidationError):
-        ChatRequest(messages=[{"role": "user", "content": content}])
+        # model_validate rather than the constructor: the point is to validate
+        # a raw client payload through ChatRequest, and passing dicts straight
+        # to the constructor is a type error against `list[ChatMessage]`.
+        ChatRequest.model_validate({"messages": [{"role": "user", "content": content}]})
 
 
 def test_chat_message_without_profanity_is_accepted():
-    request = ChatRequest(
-        messages=[{"role": "user", "content": "Can you make day 2 less packed?"}]
+    request = ChatRequest.model_validate(
+        {"messages": [{"role": "user", "content": "Can you make day 2 less packed?"}]}
     )
     assert request.messages[0].content == "Can you make day 2 less packed?"
 

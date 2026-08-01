@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import cast
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -11,6 +12,8 @@ from core.auth_dependency import get_optional_user
 from db import get_db
 from db_models import ItineraryFeedback, User
 from models.itinerary_feedback import (
+    FeedbackScope,
+    FeedbackSentiment,
     ItineraryFeedbackCreateRequest,
     ItineraryFeedbackResponse,
     ItineraryFeedbackUpdateRequest,
@@ -20,12 +23,17 @@ router = APIRouter()
 
 
 def _to_response(feedback: ItineraryFeedback) -> ItineraryFeedbackResponse:
+    # `scope`/`sentiment` are plain `String` columns, so the DB layer cannot
+    # carry the Literal constraint the API layer does — every write goes
+    # through ItineraryFeedbackCreateRequest/UpdateRequest, which validate
+    # against exactly these sets. Same shape as routers/auth.py's cast of
+    # `settings.cookie_samesite`.
     return ItineraryFeedbackResponse(
         id=str(feedback.id),
-        scope=feedback.scope,
+        scope=cast(FeedbackScope, feedback.scope),
         day_index=feedback.day_index,
         place_ref=feedback.place_ref,
-        sentiment=feedback.sentiment,
+        sentiment=cast(FeedbackSentiment, feedback.sentiment),
         note=feedback.note,
         created_at=feedback.created_at.isoformat(),
     )

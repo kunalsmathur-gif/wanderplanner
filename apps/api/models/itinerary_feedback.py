@@ -17,7 +17,7 @@ class ItineraryFeedbackCreateRequest(BaseModel):
     note: str | None = Field(default=None, max_length=1000)
 
     @model_validator(mode="after")
-    def _require_scope_fields(self) -> "ItineraryFeedbackCreateRequest":
+    def _require_scope_fields(self) -> ItineraryFeedbackCreateRequest:
         # "day" and "place" scope reactions are tied to a specific day, and
         # "place" additionally needs the item they reacted to — reject rather
         # than silently defaulting, so a client bug never gets recorded as

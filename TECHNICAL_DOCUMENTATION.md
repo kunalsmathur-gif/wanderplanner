@@ -1511,6 +1511,42 @@ curl http://localhost:8000/health
 
 ## 14. Recent Changes (v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
 
+### v10.54.1 Changes (August 2026) — CI restored to green (1 ruff + 8 mypy errors)
+
+`ruff check .` and `mypy .` were both failing at `9e876ba`, so CI was red on
+`main`. Confirmed pre-existing against a pristine worktree at that commit
+before changing anything — none of it came from v10.54.0. Full suite
+**1089 passed / 6 skipped** (`pytest tests/`), ruff + mypy clean (204 files).
+
+- **`models/itinerary_feedback.py`** — UP037, quoted return annotation that
+  `from __future__ import annotations` already makes unnecessary.
+- **`routers/itinerary_feedback.py`** — `scope`/`sentiment` come back from
+  plain `String` columns but the response model declares `Literal`s. Cast at
+  the boundary with the reason stated: every write goes through the
+  create/update request models, which validate against exactly those sets.
+  Same shape as `routers/auth.py`'s existing cast of `cookie_samesite`.
+- **`core/email.py`** — the `payload` literal inferred as
+  `dict[str, Sequence[str]]` (a bare `str` satisfies `Sequence[str]`), so
+  attaching `list[dict[str, str]]` did not fit. Annotated `dict[str, object]`.
+- **`routers/admin.py`** — ⚠️ **not the latent `AttributeError` it looked
+  like**: the query filters `responded_at.is_not(None)`, so the value is never
+  None at runtime; the column is merely nullable. Narrowed with a `continue`
+  rather than an assert, since a bookkeeping metric should not 500 on an
+  unexpected row. Separately, the `series` dict was typed `int` while the
+  `agent_lead_response_avg_hours` entry is a rounded average — widened to
+  `float`.
+- **`routers/share.py` / `routers/travel_tips.py`** — `Cache.get_json()`
+  returns `object | None` **by design** (it round-trips arbitrary JSON), so
+  both call sites narrow with `isinstance` instead of the Protocol being
+  widened to `Any`, which would have silenced the error everywhere and lost
+  the safety. Both now also skip a malformed or legacy cache entry rather than
+  raising on it.
+- **`tests/unit/test_input_validation.py`** — `ChatRequest(messages=[{...}])`
+  passes dicts where `list[ChatMessage]` is declared. Switched to
+  `ChatRequest.model_validate({...})`, which keeps the test validating a raw
+  client payload through `ChatRequest` — constructing `ChatMessage` objects
+  directly would have moved the assertion to a different boundary.
+
 ### v10.54.0 Changes (August 2026) — first `visa_info` data run (#59) + a disambiguation-title fallback found by it
 
 Suite **1032 passed / 6 skipped** (`pytest tests/unit`), up 5 from v10.53.0's 1027; the

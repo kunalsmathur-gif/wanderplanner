@@ -28,7 +28,10 @@ async def _send_resend_email(
     """`attachments` (optional) is Resend's own shape: a list of
     `{"filename": ..., "content": <base64-encoded bytes, no data: prefix>}`."""
     try:
-        payload = {
+        # Annotated because the values are heterogeneous: without it the
+        # literal infers as dict[str, Sequence[str]] (a bare `str` satisfies
+        # Sequence[str]) and the attachment list below no longer fits.
+        payload: dict[str, object] = {
             "from": settings.email_from_address,
             "to": to,
             "subject": subject,

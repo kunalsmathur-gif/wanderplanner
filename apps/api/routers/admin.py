@@ -303,7 +303,9 @@ async def metrics_timeseries(
     )
     rows = (await db.execute(stmt)).all()
 
-    series: dict[str, dict[str, int]] = {}
+    # float, not int: event counts are integers but the
+    # "agent_lead_response_avg_hours" series added below is a rounded average.
+    series: dict[str, dict[str, float]] = {}
     for day, event_type, count in rows:
         # SQLite's date() returns a str already; Postgres' date() returns a
         # date object — normalize both to an ISO "YYYY-MM-DD" string.
@@ -320,6 +322,11 @@ async def metrics_timeseries(
     ).scalars().all()
     response_times_by_day: dict[str, list[float]] = {}
     for lead in responded_leads:
+        if lead.responded_at is None:
+            # Unreachable via the query above (it filters `is_not(None)`), but
+            # the column is nullable, so narrow rather than assert — a
+            # bookkeeping metric must not 500 on an unexpected row.
+            continue
         key = lead.responded_at.date().isoformat()
         response_time = _lead_response_time_hours(lead)
         if response_time is not None:

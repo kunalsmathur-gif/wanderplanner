@@ -57,7 +57,10 @@ async def create_share(request: Request, body: ShareRequest) -> ShareResponse:
 @limiter.limit(DEFAULT_RATE_LIMIT)
 async def get_share(request: Request, slug: str) -> dict:
     data = await get_cache().get_json(_share_key(slug))
-    if not data:
+    # The cache Protocol returns `object | None` on purpose — it round-trips
+    # arbitrary JSON — so the shape is narrowed here rather than widened
+    # there. Doubles as a guard against a malformed or legacy cache entry.
+    if not isinstance(data, dict) or not data:
         raise HTTPException(status_code=404, detail="Trip not found or expired")
     return data
 
