@@ -808,13 +808,30 @@ Nominatim is free but has a **hard limit of 1 req/sec** and requires a valid `Us
 
 ### 7C — Mobile Layout (`ThreeColumnLayout.tsx`)
 
+⭐ **Updated for the v10.56.0 regrouping.** The three sections were regrouped by
+what the user is trying to do, and "Overview" was renamed — the word described
+where content sat rather than what it was for, and that panel no longer holds
+trip metrics at all. MOB-001/002/003 below are the corrected versions;
+MOB-006 to MOB-010 cover the move.
+
+Automated coverage for the structural half now lives in
+`apps/web/__tests__/components/` (`ThreeColumnLayoutTabs`, `TripSummaryHeader`,
+`BookingExpensesPanel`, `AgentQuoteModal`). The cases below are deliberately
+the ones that still need a **real phone**: jsdom cannot see a tab label wrap, a
+keyboard cover a field, or a bottom sheet sit under a notch.
+
 | ID | Test | Viewport | Expected | Pass criteria | Priority |
 |---|---|---|---|---|---|
-| MOB-001 | Mobile bottom tab bar | < 1024px wide | 3 tabs visible at bottom: "Itinerary", "Overview", "Map & Tips" | All 3 tabs clickable and switch content | P0 |
-| MOB-002 | Itinerary tab content | Mobile, "Itinerary" tab active | `ItineraryTimeline` visible; no 3-column layout | Single scrollable column | P0 |
-| MOB-003 | Map tab renders | Mobile, "Map & Tips" tab active | Leaflet map visible + Column3 tips | No blank map tile | P1 |
-| MOB-004 | Full-screen map on mobile | Tap "⤢ Full screen" in Map tab | Map expands full-screen with day-tab toolbar | Toolbar + close button visible | P1 |
+| MOB-001 | Mobile bottom tab bar | < 1024px wide | 3 tabs visible at bottom: "Itinerary", "Booking & Expenses", "Maps & Tips" | All 3 tabs clickable and switch content | P0 |
+| MOB-002 | Itinerary tab content | Mobile, "Itinerary" tab active | `TripSummaryHeader` (Trip Metrics + Edit Trip + Download PDF) renders **above** the day-by-day timeline; no 3-column layout | Metrics visible without scrolling; single scrollable column | P0 |
+| MOB-003 | Maps & Tips tab renders | Mobile, "Maps & Tips" tab active | Leaflet map + best time to visit + travel tips & community | No blank map tile | P1 |
+| MOB-004 | Full-screen map on mobile | Tap "⤢ Full screen" in Maps & Tips tab | Map expands full-screen with day-tab toolbar | Toolbar + close button visible | P1 |
 | MOB-005 | Wizard full-screen on mobile | Open wizard on mobile | LLMWizard fills entire screen (no 3-column visible) | No horizontal scroll; input above keyboard | P0 |
+| MOB-006 | Tab label fits the narrowest phone | 320px wide (iPhone SE) | "Booking & Expenses" neither wraps to a second line nor truncates mid-word | Tab bar stays one row; all 3 labels legible | P1 |
+| MOB-007 | Booking & Expenses grouping | Mobile, "Booking & Expenses" tab active | Estimated expenses (**collapsed**), local expert help, book this trip, my bookings — in that order | Expenses collapsed on first open; all 4 present | P0 |
+| MOB-008 | Quote modal on a phone | Tap the quotation CTA in the expert card | Opens as a **bottom sheet**; focus lands on the first field, not Close; Escape dismisses | Fields sit above the keyboard; background does not scroll behind it | P0 |
+| MOB-009 | Desktop mirrors the mobile grouping | ≥ 1024px | The same three groupings in the same order across the three columns | No section appears in a different group than it does on mobile | P1 |
+| MOB-010 | Before a trip exists | Mobile, "Booking & Expenses" tab, no destination yet | Only "my bookings" renders; expenses/expert/booking links are hidden rather than empty | No cards with nothing to price or link to | P2 |
 
 ### 7D — Theme Toggle (`ThemeToggle.tsx`)
 

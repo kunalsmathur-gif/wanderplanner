@@ -305,3 +305,67 @@ Prompted by a live mobile screenshot review, evaluated with the `ui-ux-pro-max` 
 ### Regression + performance verification
 - **Frontend:** `tsc --noEmit` clean.
 - **Backend:** untouched — no `apps/api` changes in this pass.
+
+---
+
+## 🧩 Component Updates (August 1, 2026) — Dashboard regrouped by intent; "Overview" renamed (v10.56.0)
+
+Prompted by a live mobile review of the three-tab dashboard. Full detail:
+`TECHNICAL_DOCUMENTATION.md` §14 v10.56.0 and `docs/system-design.md` §16 v10.56.
+
+**The problem was naming and grouping, not styling.** The middle tab was called
+"Overview" — a word that describes *where content sits* rather than *what it is
+for* — and its contents had drifted: it held trip metrics, the whole-trip
+actions, expenses **and** the expert handoff, while the actual booking links and
+saved bookings sat two tabs away under the map. A user asking "what will this
+cost and how do I book it" had to visit two tabs; a user asking "how many days
+is this" had to leave the itinerary.
+
+### The three sections, regrouped by what the user is doing
+
+| Tab | Contents |
+|---|---|
+| **Itinerary** | Trip metrics, Edit Trip, Download PDF (new `TripSummaryHeader`) — then the day-by-day breakdown |
+| **Booking & Expenses** (was "Overview") | Estimated expenses (collapsed), local expert help, book this trip, my bookings, currency |
+| **Maps & Tips** | Map, best time to visit, travel tips & community |
+
+- **`TripSummaryHeader.tsx` (new)** — trip metrics and the two whole-trip
+  actions moved out of the left panel to sit directly above the timeline. They
+  *describe the itinerary*, so they belong with it; on mobile they were the
+  first thing users looked for and were parked behind a tab whose own content
+  is consulted far less often.
+- **`BookingExpensesPanel.tsx` (new, replaces `Column1Metrics`)** — ordered by
+  the decision sequence: what will it cost → who can help me → where do I book
+  → what have I already booked. Expenses stay **collapsed** by default; it is
+  the tallest thing on the panel and most users only want the total.
+- **`Column3Sidebar.tsx`** — booking sections moved out to the panel above,
+  leaving it a coherent "where and when" section.
+- **Desktop mirrors mobile deliberately** — the same three groupings in the
+  same order across the three columns, so the two layouts stay one information
+  architecture rather than two that drift apart.
+
+### Expert card cut to a CTA + `AgentQuoteModal.tsx` (new)
+The handoff card rendered an email field, a 100-word notes textarea and a word
+counter inline. On a phone that pushed the actual CTA most of a screen down and
+made a single "talk to an expert" offer read as a form to fill in. The card now
+carries the pitch and one button; everything requiring typing happens in a
+modal **after the user opts in** — a bottom sheet on phones (a centred box puts
+the fields under the keyboard), centred from `sm` up.
+
+Accessibility follows the v10.48.0 audit: labelled dialog, focus moved in on
+open and restored on close, Escape to dismiss, Tab trapped inside, background
+scroll locked. ⚠️ **Focus lands on the first form field, not the first
+focusable** — the close button precedes the fields in DOM order, so the obvious
+implementation lands the user on "dismiss", the one control they did not open
+the dialog to press.
+
+### Regression verification
+- **Frontend:** `tsc --noEmit` clean; **24 new tests** covering the structural
+  half of this change — `ThreeColumnLayoutTabs` (tab names, ordering, active
+  state), `TripSummaryHeader` (metrics, destination fallback chain, the
+  Edit-Trip feedback moment), `BookingExpensesPanel` (grouping, order, the
+  no-destination branch) and `AgentQuoteModal` (the full focus contract).
+- **Backend:** untouched — no `apps/api` changes in this pass.
+- ⚠️ **Still needs a real device.** jsdom cannot see a tab label wrap at 320px,
+  a keyboard cover a field, or a bottom sheet sit under a notch — those are
+  MOB-006 to MOB-010 in `docs/eval-set.md` §7C.
