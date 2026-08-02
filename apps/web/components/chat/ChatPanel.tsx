@@ -178,7 +178,7 @@ export function ChatPanel() {
                 so once either was open nothing distinguished them. The split
                 that matters is who asks: the wizard questions you through a
                 setup, here you question it about the plan on screen. */}
-            <p className="text-xs text-white/70">Ask about this plan</p>
+            <p className="text-xs text-white/70">Ask &amp; adjust</p>
           </div>
         </div>
         <div className="flex items-center gap-1">

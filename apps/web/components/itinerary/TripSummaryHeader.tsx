@@ -78,16 +78,14 @@ export function TripSummaryHeader() {
       {/* Side by side from `sm` up so the pair costs one row, not two, on the
           narrow viewports where this header competes with the timeline. */}
       <div className="flex flex-col gap-2 sm:flex-row [&>*]:flex-1">
-        {/* The label already names a job, which is more than the orb managed
-            before — but it does not say that this is the *guided* route, and
-            the orb reaches the same assistant a different way. The title spells
-            out the difference at the point of choosing, so the user is not
-            deciding between two identical-looking doors. */}
+        {/* Echoes the wizard header this opens ("Guided changes"), so the
+            title says where you land rather than restating the label. Against
+            the orb's "Ask Anya", the pair reads as ask vs edit. */}
         <button
           onClick={handleEditTrip}
           type="button"
           className="btn btn-ghost w-full"
-          title="Change destination, dates, budget or themes — Anya walks you through it step by step"
+          title="Guided changes with Anya"
         >
           <Edit2 size={14} />
           Edit Trip

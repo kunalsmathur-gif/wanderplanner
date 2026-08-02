@@ -1566,11 +1566,18 @@ the user which one they had opened or what it was good for.
 
 | Surface | Was | Now |
 |---|---|---|
-| `LLMWizard` header | "AI travel concierge" | "Guided — setting up your trip" / "Guided — changing your trip" |
-| `ChatPanel` header | "Your AI travel concierge" | "Ask about this plan" |
-| Orb tooltip | "Chat with Anya" | "Ask Anya about this plan" |
-| Orb `aria-label` | "Open Anya — Wanderplanner concierge" | "Ask Anya about this plan" |
-| Edit Trip | label only | + title: "…Anya walks you through it step by step" |
+| `LLMWizard` header | "AI travel concierge" | **"Guided setup"** / **"Guided changes"** |
+| `ChatPanel` header | "Your AI travel concierge" | **"Ask & adjust"** |
+| Orb tooltip + `aria-label` | "Chat with Anya" / "Open Anya — Wanderplanner concierge" | **"Ask Anya"** |
+| Edit Trip | label only | + title: **"Guided changes with Anya"** |
+
+**Kept to two words each, and parallel on purpose.** The first pass spelled the
+job out in full ("Guided — setting up your trip", "Ask Anya about this plan")
+and read as long in a narrow header bar sitting under "Anya". The contrast does
+not need a sentence: *Guided* against *Ask* is the entire distinction — Anya
+questions you, or you question Anya. Edit Trip's title echoes the header it
+opens rather than restating its own label, so the pair reads as **ask vs
+edit** at the point of choosing.
 
 - **The wizard subtitle is mode-aware.** New `isEditingTrip` state, set from
   the bootstrap effect's existing `isEditMode` branch. Held as state rather

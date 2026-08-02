@@ -53,8 +53,8 @@ describe('FloatingAnyaButton', () => {
     // place a user can tell them apart *before* committing to one.
     render(<FloatingAnyaButton />)
 
-    expect(screen.getByRole('button', { name: /Ask Anya about this plan/i })).toBeInTheDocument()
-    expect(screen.getByText(/Ask Anya about this plan/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Ask Anya/i })).toBeInTheDocument()
+    expect(screen.getByText(/Ask Anya/i)).toBeInTheDocument()
     expect(screen.queryByText(/Chat with Anya/i)).not.toBeInTheDocument()
   })
 

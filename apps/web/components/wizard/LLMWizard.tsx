@@ -767,7 +767,7 @@ export function LLMWizard() {
                   indistinguishable once open. Here Anya asks and you answer;
                   in the chat you ask. */}
               <p className="text-xs text-white/70">
-                {isEditingTrip ? 'Guided — changing your trip' : 'Guided — setting up your trip'}
+                {isEditingTrip ? 'Guided changes' : 'Guided setup'}
               </p>
             </div>
           </div>

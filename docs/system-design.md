@@ -1810,14 +1810,18 @@ instead of the agent) that govern how these tools are meant to be used.
   "Anya / AI travel concierge"; the orb chat's read "Anya / Your AI travel
   concierge". Two surfaces that both change the trip, and nothing on screen
   said which one you were in or what it was for.
-- **Headers now name the job, not the persona** — wizard: "Guided — setting up
-  your trip", or "Guided — changing your trip" when reopened from Edit Trip
-  (new `isEditingTrip` state mirroring the bootstrap effect's `isEditMode`);
-  chat: "Ask about this plan".
+- **Headers now name the job, not the persona** — wizard: **"Guided setup"**,
+  or **"Guided changes"** when reopened from Edit Trip (new `isEditingTrip`
+  state mirroring the bootstrap effect's `isEditMode`); chat:
+  **"Ask & adjust"**.
 - **Entry points too**, since that is where the choice is actually made: the
-  orb is "Ask Anya about this plan" (tooltip and `aria-label`, replacing "Chat
-  with Anya" / "Open Anya"), and Edit Trip gains a title saying Anya walks you
-  through it step by step.
+  orb is **"Ask Anya"** (tooltip and `aria-label`, replacing "Chat with Anya" /
+  "Open Anya"), and Edit Trip gains the title **"Guided changes with Anya"**,
+  echoing the header it opens rather than restating its own label.
+- **Two words each, and parallel on purpose.** The first pass spelled the job
+  out in full and read long in a narrow header bar under "Anya". The contrast
+  does not need a sentence: *Guided* against *Ask* carries all of it, and the
+  entry points read as **ask vs edit**.
 - **The distinction is who asks.** The wizard questions you through a setup;
   the chat is questioned about the plan on screen.
 - ⭐ **Decision: chips are not coming to the orb chat.** A chip answers a

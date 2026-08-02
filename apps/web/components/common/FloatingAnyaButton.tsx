@@ -43,7 +43,7 @@ export function FloatingAnyaButton() {
         // The name lives in the hover tooltip and the aria-label, so nothing
         // is lost to assistive tech.
         className="group flex items-center justify-center transition-transform hover:scale-105"
-        aria-label="Ask Anya about this plan"
+        aria-label="Ask Anya"
         type="button"
       >
         <div className="relative">
@@ -52,10 +52,10 @@ export function FloatingAnyaButton() {
             className="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-[var(--_card-elevated)] px-3 py-1.5 text-xs font-medium text-[var(--_fg)] shadow-lg opacity-0 transition-opacity group-hover:opacity-100"
             style={{ border: '1px solid var(--_border)' }}
           >
-            {/* Names the job, not the persona. "Chat with Anya" said nothing
-                about how this differs from "Edit Trip", which also reaches
-                Anya — via the guided wizard that replaces the dashboard. */}
-            Ask Anya about this plan
+            {/* Verb-first, so it reads against "Edit Trip" — which reaches the
+                same assistant the other way, via the guided wizard. Ask vs
+                edit is the whole distinction, and two words carry it. */}
+            Ask Anya
           </div>
           {/* 44px on a phone (a full touch target at its smallest), the
               original 72px from lg up. The footprint was the complaint: at
