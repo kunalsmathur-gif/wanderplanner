@@ -53,9 +53,23 @@ test.describe('WanderPlanner wizard flow', () => {
     })
     await page.goto('/')
     await page.waitForLoadState('networkidle')
-    // Filter out known benign errors (e.g. favicon 404 in dev)
+    // Filter out known benign errors (e.g. favicon 404 in dev).
+    //
+    // 401 is expected exactly once per anonymous load, and is not a defect:
+    // the session lives in httpOnly cookies, so the client cannot tell whether
+    // it is signed in without asking. `authStore.hydrate()` calls
+    // `GET /auth/me` and then, since a 15-minute access token often expires
+    // between visits while the 30-day refresh token is still valid, falls back
+    // to `refreshSession()`. Signed out, both correctly answer 401 — and the
+    // browser logs *any* 401 to the console regardless of the app handling it
+    // (it does; both resolve to `null`). Scoped to 401 on purpose: a 403, 500
+    // or CORS failure on that same call still fails this test.
     const criticalErrors = errors.filter(
-      (e) => !e.includes('favicon') && !e.includes('404') && !e.includes('hydration')
+      (e) =>
+        !e.includes('favicon') &&
+        !e.includes('404') &&
+        !e.includes('hydration') &&
+        !e.includes('401')
     )
     expect(criticalErrors).toHaveLength(0)
   })
