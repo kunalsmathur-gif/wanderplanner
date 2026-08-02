@@ -171,12 +171,45 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
+      # requirements-dev.txt too, matching the backend test job. `db.py`
+      # builds the async engine at import time from `settings.database_url`,
+      # which defaults to `sqlite+aiosqlite:///./dev.db` — and **aiosqlite is
+      # a dev dependency**, because prod runs Postgres on asyncpg. Installing
+      # only requirements.txt therefore makes `import main` raise
+      # ModuleNotFoundError before uvicorn can bind a port. Do not "fix" this
+      # by moving aiosqlite into requirements.txt: that ships a driver to
+      # production that production must never use.
       - name: Install backend dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt
         working-directory: apps/api
 
+      # 🔴 A backgrounded `run:` step reports success no matter what happens to
+      # the process. `uvicorn main:app &` returns the shell's exit code, not
+      # the server's, so a hard import-time crash left a green checkmark on
+      # this step and surfaced 30s later as a `wait-on` timeout in a different
+      # step — which reads as a flaky/slow service, not a broken build. That
+      # misdirection is why the E2E job sat red for 8 consecutive runs on main.
+      # Anything started with `&` must therefore be waited for *here*, and must
+      # print its own log and fail this step when it does not come up.
       - name: Start backend
-        run: uvicorn main:app --host 0.0.0.0 --port 8000 &
+        run: |
+          uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/api.log 2>&1 &
+          api_pid=$!
+          for _ in $(seq 1 60); do
+            if curl -fsS http://localhost:8000/health > /dev/null 2>&1; then
+              echo "Backend healthy (pid $api_pid)."
+              exit 0
+            fi
+            if ! kill -0 "$api_pid" 2>/dev/null; then
+              echo "::error::Backend process died during startup — log follows."
+              cat /tmp/api.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::Backend did not answer /health within 60s — log follows."
+          cat /tmp/api.log
+          exit 1
         working-directory: apps/api
         env:
           QDRANT_URL: http://localhost:6333
@@ -206,12 +239,29 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000
 
+      # Same contract as "Start backend" above — background it, then block
+      # here until it answers, and surface its own log on failure. Replaces
+      # the old shared `wait-on` step, which could only report *that* a
+      # service was unreachable, never which one or why.
       - name: Start frontend
-        run: npm run start &
-        working-directory: apps/web
-
-      - name: Wait for services
-        run: npx wait-on http://localhost:3000 http://localhost:8000/health --timeout 30000
+        run: |
+          npm run start > /tmp/web.log 2>&1 &
+          web_pid=$!
+          for _ in $(seq 1 60); do
+            if curl -fsS http://localhost:3000 > /dev/null 2>&1; then
+              echo "Frontend healthy (pid $web_pid)."
+              exit 0
+            fi
+            if ! kill -0 "$web_pid" 2>/dev/null; then
+              echo "::error::Frontend process died during startup — log follows."
+              cat /tmp/web.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::Frontend did not answer on :3000 within 60s — log follows."
+          cat /tmp/web.log
+          exit 1
         working-directory: apps/web
 
       - name: Run Playwright E2E tests
