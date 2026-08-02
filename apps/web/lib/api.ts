@@ -360,3 +360,31 @@ export async function getRedditHighlights(destination: string, limit = 5): Promi
   })
   return (data as { posts: RedditPost[] }).posts
 }
+
+// ── Day hero photos (PDF export only) ─────────────────────────────────────
+export interface DayPhoto {
+  url: string
+  photographer: string
+  photographer_url: string
+}
+
+/**
+ * Fetch one hero photo per day, on demand.
+ *
+ * These used to arrive attached to the itinerary, which meant every
+ * generation awaited a metered Pexels batch (6s timeout) for images only the
+ * PDF renders — the dashboard uses YouTube thumbnails. Now the PDF button
+ * asks for them at download time.
+ *
+ * Best-effort by contract: the backend returns blank entries rather than
+ * failing when a photo is unavailable, and callers should treat a rejected
+ * promise the same way — a PDF without images beats no PDF.
+ */
+export async function getDayPhotos(queries: string[]): Promise<DayPhoto[]> {
+  // Overrides the client's 25s default. This call sits between the user
+  // pressing Download and their file, so a slow or hanging Pexels must not
+  // hold the PDF hostage — it is the same 6s ceiling generation used to
+  // apply, and timing out here simply means a PDF without hero images.
+  const { data } = await api.post('/api/day-photos', { queries }, { timeout: 6_000 })
+  return data as DayPhoto[]
+}

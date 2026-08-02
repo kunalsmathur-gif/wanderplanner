@@ -203,7 +203,10 @@ class Settings(BaseSettings):
     nominatim_user_agent: str = "WanderPlannerBot/1.0 (https://github.com/kunalsmathur-gif/wanderplanner)"
     nominatim_rate_limit: int = 1
 
-    # Pexels — hero photos for itinerary day cards / PDF
+    # Pexels — hero photos for the PDF export only, fetched on demand via
+    # POST /api/day-photos when the user presses Download. NOT used by the
+    # dashboard day cards (those render YouTube thumbnails) and no longer
+    # touched during generation — see docs/itinerary-generation-flow.md.
     pexels_api_key: str = ""
 
     # Ingestion

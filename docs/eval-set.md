@@ -783,6 +783,25 @@ Nominatim is free but has a **hard limit of 1 req/sec** and requires a valid `Us
 | COST-022 | Pexels cache hits do **not** increment call count | Repeat the same day-photo query within one process after the first successful fetch | Second call returns from `_cache` and records no additional `pexels_usage` event/call-count increment | P0 |
 | COST-023 | Real Pexels network calls increment usage exactly once per uncached query | Call `get_day_photo()` with a fresh query and valid API key | One provider call records one `pexels` usage item; after `flush_llm_usage()` the resulting `pexels_usage.event_metadata.call_count` reflects only uncached network attempts | P0 |
 | COST-024 | YouTube thumbnail lookup beacon fires on real frontend fetches | Load itinerary cards/tips that require `/api/youtube-thumbnail` lookups | Real fetch path logs `youtube_thumbnail_call`; retry failures log `youtube_thumbnail_failed`; cached hits in `ItineraryTimeline` short-circuit without emitting duplicate beacons | P1 |
+| COST-025 | Generating an itinerary makes **zero** Pexels calls | Generate an itinerary end-to-end with `PEXELS_API_KEY` set; do not export a PDF | No `pexels_usage` call-count increment attributable to the generation; `image_url` empty on every day of the SSE `data` payload | P0 |
+| COST-026 | Downloading the PDF makes exactly one Pexels call per uncached day | Press "Download Itinerary PDF" on an N-day trip with a fresh destination | N uncached network calls; pressing Download a second time in the same process adds none (per-query `_cache` in `services/pexels.py`) | P0 |
+| COST-027 | The download-time query matches the old generation format | Inspect the `POST /api/day-photos` body | Each query is `"{destination.city or destination_country or 'travel'} {day.theme}"` — drift silently doubles Pexels calls for identical photos | P1 |
+
+⚠️ **COST-025 is the one that proves the v10.59.0 change landed.** The photos
+were previously fetched during generation for images only the PDF renders; if
+this case ever fails, the call has crept back onto the critical path.
+
+**PDF export — Pexels failure modes (§7E).** All P0, all verified by
+`__tests__/components/PdfDownloadButton.test.tsx` in jsdom; the browser row is
+the one jsdom cannot answer.
+
+| ID | Test | Expected |
+|---|---|---|
+| PDF-001 | Endpoint unreachable (stop the API, or block `api.pexels.com`) | PDF still downloads, without hero images; no error shown |
+| PDF-002 | Some queries return no photo | Those days render plain, the rest keep their images |
+| PDF-003 | 401 (expired session) or 429 (rate limit) on `/api/day-photos` | Treated the same as any other failure — PDF without images |
+| PDF-004 | Photo URL resolves but dies at render (point one at a 404, or throttle to force a timeout) | 🔴 **Browser only.** `@react-pdf` fetches `<Image src>` during render, so this throws out of `.toBlob()`. Expect one silent retry with images stripped, then a successful download |
+| PDF-005 | Pexels slower than 6s | Client aborts, PDF downloads without images rather than hanging behind the 25s default |
 
 ---
 

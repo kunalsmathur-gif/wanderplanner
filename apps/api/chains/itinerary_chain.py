@@ -24,7 +24,6 @@ from models.itinerary import (
 )
 from models.trip import TripConfig
 from services.itinerary_cache import get_cached_itinerary, store_itinerary
-from services.pexels import get_day_photos
 from services.rag_fallback import rag_skeleton_itinerary
 from services.search import retrieve_context, retrieve_itinerary_examples, summarise_context
 
@@ -774,29 +773,14 @@ async def _generate_itinerary_inner(
             day.items = scored_items
             scored_days.append(day)
 
-    # Best-effort: attach one relevant hero photo per day (destination + theme).
-    # Never blocks/fails itinerary generation if Pexels is unavailable.
-    dest_label = (
-        trip_config.destination.city if trip_config.destination and trip_config.destination.city
-        else (trip_config.destination_country or "travel")
-    )
-    # Timed because it is the clearest candidate for moving off the critical
-    # path: a purely cosmetic enhancement with a 6s timeout, awaited on every
-    # response. Whether that is worth doing is a question about its real p95,
-    # which nothing could answer before this.
-    with timing.stage("photos"):
-        try:
-            photos = await asyncio.wait_for(
-                get_day_photos([f"{dest_label} {d.theme}" for d in scored_days]),
-                timeout=6.0,
-            )
-            for day, photo in zip(scored_days, photos):
-                if photo:
-                    day.image_url = photo["url"]
-                    day.image_photographer = photo["photographer"]
-                    day.image_photographer_url = photo["photographer_url"]
-        except Exception as exc:
-            logging.getLogger(__name__).warning("Day-photo fetch skipped: %s", exc)
+    # ⭐ Day hero photos are NOT fetched here any more. v10.47's instrumentation
+    # flagged this batch as the clearest candidate for moving off the critical
+    # path, and the answer turned out to be simpler than tuning it: the photos
+    # are only ever rendered by the PDF export (`ItineraryDocument.tsx`) — the
+    # dashboard shows YouTube thumbnails — so every generation was awaiting a
+    # metered third-party call, with a 6s timeout, for images most users never
+    # see. `POST /api/day-photos` now serves them when the user presses
+    # Download, and `ItineraryDay.image_*` simply stays empty until then.
 
     overall_score = (
         sum(i.alignment_score for d in scored_days for i in d.items)

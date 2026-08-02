@@ -1551,7 +1551,92 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.59.0 Changes (August 2026) — day photos move off the generation path to the Download button
+
+Backend **1098 passed / 6 skipped** (+5); frontend **187 passed** (+10); ruff,
+mypy (207 files), `tsc --noEmit` and the production build clean.
+
+**🔴 Every itinerary awaited a metered third-party call for images most users
+never saw.** `chains/itinerary_chain.py` fetched one Pexels hero photo per day
+after scoring, `await`ed under a 6s timeout, before the SSE `data` event could
+be sent. v10.47's timing instrumentation had already named this the clearest
+candidate for moving off the critical path, but framed it as a question about
+its p95. The cheaper question was who consumes the output:
+
+| Surface | Image source |
+|---|---|
+| PDF export (`ItineraryDocument.tsx`) | **Pexels** `day.image_url`, credited "Photo by … on Pexels" |
+| Dashboard day cards (`PolaroidCard` via `ItineraryTimeline`) | YouTube thumbnails, `/api/youtube-thumbnail` |
+| Travel tips (`Column3Sidebar`) | YouTube thumbnails |
+
+Grepping `image_url` across `apps/web` returns the type declaration in
+`types/index.ts` and `components/pdf/` — **nothing** in
+`components/itinerary/`. So the field was fetched on every generation and
+rendered only if the user exported a PDF.
+
+**New `POST /api/day-photos`** (`routers/itinerary.py`) serves them at download
+time. `DayPhotosRequest`/`DayPhoto` in `models/itinerary.py`.
+
+- **Authenticated** (`get_current_user`) and **rate-limited**
+  (`DEFAULT_RATE_LIMIT`) — it proxies a keyed third-party API, so
+  unauthenticated it would be an open image-search proxy burning our Pexels
+  quota for anyone who finds the route.
+- **Bounded at `MAX_TRIP_DAYS` queries**, the same reasoning as
+  `CompareDestinationsRequest`'s destination cap: one Pexels call per query
+  makes list length a direct cost multiplier.
+- **Returns blank entries, never a short list.** `get_day_photos` yields
+  `None` per query for a missing key, network error or empty result; those
+  become `DayPhoto()` so positional alignment with `days[]` holds. The client
+  indexes by position, so a compacted list would silently attach day 3's photo
+  to day 2.
+
+**`generate_itinerary()` no longer touches Pexels** — the `timing.stage("photos")`
+block and the `services.pexels` import are gone. `ItineraryDay.image_*` fields
+remain on the model, simply empty until the PDF asks.
+
+**Frontend** — `getDayPhotos()` in `lib/api.ts` with a **6s timeout override**
+(the client default is 25s; this call sits between pressing Download and
+getting a file, so a hanging Pexels must not hold the PDF hostage — same
+ceiling generation used to apply). `PdfDownloadButton.tsx` fetches in parallel
+with the renderer's dynamic imports, merges, then renders.
+
+⚠️ **The query string is a cache key.** `services/pexels.py` caches per query,
+so the button rebuilds `"{city or country} {theme}"` with the same fallback
+chain (`destination.city` → `destination_country` → `"travel"`) the backend
+used. Drifting from that format doubles the Pexels calls for identical photos.
+
+🔴 **Fetching the URL is not the last thing that can fail.** `@react-pdf`
+resolves every `<Image src>` over the network **at render time**, so a URL that
+came back fine from Pexels but 404s, hangs, or serves a format the renderer
+rejects throws out of `.toBlob()` and takes the entire document with it — the
+user loses their PDF over a decoration. `handleDownload` retries once with the
+photos stripped, guarded on `photosAttached`: when no photos were attached
+there is nothing to strip, so a retry would fail identically and merely double
+the wait before the error surfaces.
+
+**Failure matrix, all covered by test:**
+
+| Failure | Outcome |
+|---|---|
+| Endpoint 500 / Pexels down / 429 / 401 / offline / >6s | PDF renders, no hero images |
+| Some queries return blank | Those days plain, the rest illustrated |
+| Response shorter than `days[]` | Positional guard; no misalignment |
+| Photo URL kills `.toBlob()` | One retry without images |
+| Retry also fails | "Could not generate the PDF" surfaced |
+| No photos attached and render fails | Error surfaced, **no** second attempt |
+
+**Tests** — `tests/integration/test_day_photos.py` (+5: auth gate, one entry
+per query, blank-not-short, empty list, over-limit 422) and
+`__tests__/components/PdfDownloadButton.test.tsx` (+10, the matrix above plus
+"does not fetch until the user asks", the query format, and the country
+fallback).
+
+⚠️ **Not exercised against live Pexels.** `PEXELS_API_KEY` is unset locally, so
+a local call only reaches the no-key short-circuit; the key is set on Railway.
+Every failure mode above is tested with the client stubbed, not against a real
+outage.
 
 ### v10.58.0 Changes (August 2026) — the mobile tab bar is frozen, and the Anya orb leaves the phone
 

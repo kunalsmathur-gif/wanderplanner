@@ -12,11 +12,12 @@ from core.auth_dependency import get_current_user
 from core.config import settings
 from core.errors import sanitize_error
 from core.llm_usage import reset_usage
-from core.rate_limit import LLM_RATE_LIMIT, limiter
+from core.rate_limit import DEFAULT_RATE_LIMIT, LLM_RATE_LIMIT, limiter
 from db import get_db
 from db_models import User
-from models.itinerary import GenerateItineraryRequest
+from models.itinerary import DayPhoto, DayPhotosRequest, GenerateItineraryRequest
 from models.trip import TripConfig
+from services.pexels import get_day_photos
 
 router = APIRouter()
 
@@ -133,3 +134,28 @@ async def generate_itinerary_endpoint(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/day-photos")
+@limiter.limit(DEFAULT_RATE_LIMIT)
+async def day_photos_endpoint(
+    request: Request,
+    body: DayPhotosRequest,
+    user: User = Depends(get_current_user),
+) -> list[DayPhoto]:
+    """Hero photos for the PDF export, fetched when the user presses Download.
+
+    Previously `generate_itinerary()` awaited this batch inline, so every
+    generation paid a metered third-party call (6s timeout) for images only
+    the PDF ever displays — the dashboard renders YouTube thumbnails instead.
+
+    Best-effort by contract, exactly as before: `get_day_photos` returns None
+    per query rather than raising on a missing key, a network error or an
+    empty result, and those become blank entries here so the client can render
+    a PDF without images rather than failing the download.
+
+    Authenticated and rate-limited because it proxies a keyed third-party API:
+    unauthenticated it would be an open image-search proxy burning our quota.
+    """
+    photos = await get_day_photos(list(body.queries))
+    return [DayPhoto(**photo) if photo else DayPhoto() for photo in photos]

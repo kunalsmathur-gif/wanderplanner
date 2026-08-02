@@ -280,11 +280,19 @@ Three of the four bullets originally filed here turned out to be wrong, and the 
   load**, isolated by measuring retrieval alone: cold process 20.0s → warm 1.4s → Paris 2.2s →
   Jaipur again 1.45s. So **the first request after every deploy pays ~18.6s**, and Railway redeploys
   on every push. Nobody had named that.
-- ⚠️ **The Pexels bullet is still unanswered, and the 0.3ms measurement is not evidence.**
-  `PEXELS_API_KEY` is **absent from local `.env`** — so `get_day_photo()` returns at its no-key
-  guard. **Correct the claim in item 3 below: the key is set on Railway but NOT locally.** In
-  production the 6s awaited timeout really does fire. Deploying this instrumentation answers it; do
-  not move the fetch off the critical path until it has.
+- ✅ **RESOLVED 2026-08-02 (v10.59.0) — but not the way this bullet expected, and its standing
+  instruction was deliberately overridden.** The original text ended *"do not move the fetch off the
+  critical path until [the instrumentation] has [answered its p95]"*. That was right while the open
+  question was "how slow is this?", and it stopped being the question once the *consumers* were
+  checked: `image_url` is read by `ItineraryDocument.tsx` and nothing else — the dashboard day
+  cards render YouTube thumbnails, and no file under `components/itinerary/` touches the field. So
+  every generation was awaiting a metered call for images only PDF-exporting users ever see, and no
+  p95 could change that verdict; a fast unnecessary call is still unnecessary. Moved to
+  `POST /api/day-photos`, fetched when the user presses Download.
+  ⚠️ The measurement gap itself is **not** closed. `PEXELS_API_KEY` is still absent from local
+  `.env`, so `get_day_photo()` still returns at its no-key guard locally and the 0.3ms figure is
+  still not evidence (the key is set on Railway, not locally — that correction stands). It now only
+  matters for costing the PDF path, not generation.
 - 🔴 **The retry-cascade bullet understated it — this is the real finding.** It said "no cap on
   worst-case wall-clock"; there *is* a cap, and that is the problem. The backoff is 5+10+20+40 =
   **75s of sleeping per model** (225s for all three), while `routers/itinerary.py` caps the whole

@@ -1804,6 +1804,46 @@ instead of the agent) that govern how these tools are meant to be used.
 
 ## 16. Change Log
 
+### v10.59 (August 2026) — day photos move off the generation path to the Download button
+
+- 🔴 **Every itinerary was awaiting a metered Pexels batch for images most
+  users never saw.** `generate_itinerary()` fetched one hero photo per day
+  under a 6s timeout, synchronously, before the client got anything. v10.47's
+  instrumentation had already flagged it as the clearest candidate for moving
+  off the critical path; what that framing missed is *who the photos are for*.
+  Grepping the consumers answers it: only `ItineraryDocument.tsx` renders
+  `image_url`. The dashboard shows YouTube thumbnails, and nothing in
+  `components/itinerary/` reads the field at all. So the cost was paid on
+  every generation for an artifact only some users export.
+- **New `POST /api/day-photos`** serves them at Download time.
+  Authenticated and rate-limited (`DEFAULT_RATE_LIMIT`) because it proxies a
+  keyed third-party API — unauthenticated it is an open image-search proxy on
+  our quota — and bounded at `MAX_TRIP_DAYS` queries, since each query is one
+  Pexels call and list length is therefore a direct cost multiplier.
+- **`ItineraryDay.image_*` fields stay**, just empty until the PDF asks. The
+  client merges photos in immediately before rendering.
+- ⚠️ **The query string is a cache key, not just a search term.**
+  `services/pexels.py` caches per query, so `PdfDownloadButton` rebuilds
+  `"{city or country} {theme}"` with the same fallback chain the backend used.
+  Drifting from it would silently double the Pexels calls for identical
+  photos.
+- ⚠️ **Fetching the URL successfully is not the last thing that can fail.**
+  `@react-pdf` resolves every `<Image src>` over the network *at render time*,
+  so a dead or slow CDN URL throws out of `.toBlob()` and takes the whole
+  document down — the user would lose the PDF over a decoration. The download
+  retries once with photos stripped, and only when photos were actually
+  attached, so an unrelated render failure is not run twice.
+- Best-effort is unchanged, only relocated: a Pexels outage now costs hero
+  images in one PDF instead of latency on every itinerary.
+- Backend **1098 passed / 6 skipped** (+5); frontend **187 passed** (+10);
+  ruff, mypy (207 files), `tsc --noEmit` and the production build all clean.
+  See `TECHNICAL_DOCUMENTATION.md` §14 v10.59.0 and
+  `docs/itinerary-generation-flow.md`.
+- ⚠️ **Not exercised against live Pexels.** `PEXELS_API_KEY` is unset locally,
+  so a local call only reaches `get_day_photo()`'s no-key short-circuit; the
+  key is set on Railway. Every failure mode above is covered by tests with the
+  client stubbed, not by a real outage.
+
 ### v10.58 (August 2026) — the mobile tab bar is frozen, and the Anya orb leaves the phone
 
 Two live mobile complaints, and fixing the first surfaced a viewport bug that

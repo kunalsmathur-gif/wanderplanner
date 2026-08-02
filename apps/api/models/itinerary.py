@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from core.validation import MAX_COMPARED_DESTINATIONS
+from core.validation import MAX_COMPARED_DESTINATIONS, MAX_TRIP_DAYS, ShortLabel
 from models.trip import DestinationInput, TripConfig
 
 
@@ -75,6 +75,27 @@ class ItineraryResponse(BaseModel):
 
 class GenerateItineraryRequest(BaseModel):
     trip_config: TripConfig
+
+
+class DayPhotosRequest(BaseModel):
+    """Hero photos for the PDF export, fetched on demand.
+
+    These used to be attached during generation, which put a metered
+    third-party call on the critical path of every itinerary for images the
+    dashboard never rendered — only the PDF uses them. Now the client asks for
+    them when the user actually presses Download.
+
+    One Pexels call per query, so length is a direct cost multiplier: bounded
+    by `MAX_TRIP_DAYS` for the same reason `CompareDestinationsRequest` bounds
+    its destination list.
+    """
+    queries: list[ShortLabel] = Field(default_factory=list, max_length=MAX_TRIP_DAYS)
+
+
+class DayPhoto(BaseModel):
+    url: str = ""
+    photographer: str = ""
+    photographer_url: str = ""
 
 
 class CompareDestinationsRequest(BaseModel):
