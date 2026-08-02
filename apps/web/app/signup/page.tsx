@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import { AuthLayout } from '@/components/common/AuthLayout'
+import { AuthSwitch } from '@/components/common/AuthSwitch'
 import { GoogleSsoSection } from '@/components/common/GoogleSsoSection'
 import { useAuthStore } from '@/store/authStore'
 import { authErrorMessage } from '@/lib/authApi'
@@ -64,20 +65,13 @@ function SignupForm() {
     <AuthLayout
       title="Create your free account"
       subtitle="Free sign-up in seconds — no credit card required."
-      footer={
-        <>
-          Already have an account?{' '}
-          <Link href={`/login?returnTo=${encodeURIComponent(returnTo)}`} className="font-semibold text-[var(--_primary)] hover:underline">
-            Log in
-          </Link>
-        </>
-      }
+      switcher={<AuthSwitch active="signup" returnTo={returnTo} />}
     >
       <GoogleSsoSection returnTo={returnTo} />
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-3">
         <div>
-          <label htmlFor="display_name" className="mb-1.5 block text-sm font-medium text-[var(--_fg)]">
+          <label htmlFor="display_name" className="mb-1 block text-sm font-medium text-[var(--_fg)]">
             Name
           </label>
           <input
@@ -92,7 +86,7 @@ function SignupForm() {
         </div>
 
         <div>
-          <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-[var(--_fg)]">
+          <label htmlFor="email" className="mb-1 block text-sm font-medium text-[var(--_fg)]">
             Email
           </label>
           <input
@@ -110,7 +104,7 @@ function SignupForm() {
         </div>
 
         <div>
-          <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-[var(--_fg)]">
+          <label htmlFor="password" className="mb-1 block text-sm font-medium text-[var(--_fg)]">
             Password
           </label>
           <div className="relative">

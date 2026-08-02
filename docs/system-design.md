@@ -1794,6 +1794,45 @@ instead of the agent) that govern how these tools are meant to be used.
 
 ## 16. Change Log
 
+### v10.57 (August 2026) — the auth card puts both routes at the top
+
+Reported from a live look at `/signup`: the card read heavy, and a returning
+user's way out of it was the *last* thing on the page.
+
+- **New `components/common/AuthSwitch.tsx`** — a segmented Sign up / Log in
+  control, rendered inside the card above the heading via a new optional
+  `switcher` slot on `AuthLayout`. The old affordance was a muted line below
+  the card, after the entire form; the sibling route is now one of two tabs at
+  eye level, before the first field.
+- ⚠️ **Both labels sit at full `--_fg`, and the active one is marked by the
+  pill, not by colour.** The obvious styling — active `--_fg`, inactive
+  `--_muted-fg` — puts the inactive label at **~4.05:1 on the light-mode
+  track** (`#64748B` on `#F0F9FF`), and 14px semibold does not qualify as WCAG
+  large text, so it fails AA. Since the whole point is that the inactive route
+  be *easy to see*, colour is the wrong channel to carry active state here;
+  `--_card-elevated` + ring carries it instead, which also reads in dark mode
+  where a `--_card` pill on a `--_bg` track is nearly invisible.
+- ⚠️ **The switcher must pass `returnTo` through, and this is the part that
+  silently breaks.** `LLMWizard.tsx` and `ChatPanel.tsx` push
+  `/signup?returnTo=…`; `/account` and `/admin` push `/login?returnTo=…`.
+  Dropping it on the tab hop lands the user on `/` after authenticating rather
+  than back at the gate that stopped them — no error, just the wrong page.
+  Pinned by test at every one of those entry points.
+- **Compaction is the smaller half of the change, and the switcher eats into
+  it**: card padding 32→20, form row gaps 16→12, label gaps 6→4, logo margin
+  32→24, and the now-duplicated footer line deleted. Measured live at 696×825,
+  logo top to last element: **618px → 580px** (−6%). The card itself grew
+  500→513px because it absorbed the 70px control — the surrounding trim pays
+  for that and 38px more.
+- `AuthLayout`'s `switcher` is optional, so `/forgot-password` and
+  `/reset-password` are unchanged.
+- Frontend **168 passed** (+15, `__tests__/components/AuthSwitch.test.tsx` and
+  `AuthPages.test.tsx`); `tsc --noEmit` clean. Backend untouched.
+- ⚠️ **Not verified on a real device or by screenshot** — the browser pane
+  would not composite frames during this session, so every measurement above is
+  DOM geometry and computed style, not pixels. Light and dark tokens were read
+  from `getComputedStyle`, not seen.
+
 ### v10.56 (August 2026) — dashboard regrouped by intent; expert card down to a CTA
 
 Prompted by a live mobile review. The three panels had drifted into holding

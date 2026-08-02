@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import { AuthLayout } from '@/components/common/AuthLayout'
+import { AuthSwitch } from '@/components/common/AuthSwitch'
 import { GoogleSsoSection } from '@/components/common/GoogleSsoSection'
 import { useAuthStore } from '@/store/authStore'
 import { authErrorMessage } from '@/lib/authApi'
@@ -52,20 +53,13 @@ function LoginForm() {
     <AuthLayout
       title="Welcome back"
       subtitle="Log in to continue planning your trip."
-      footer={
-        <>
-          Don't have an account?{' '}
-          <Link href={`/signup?returnTo=${encodeURIComponent(returnTo)}`} className="font-semibold text-[var(--_primary)] hover:underline">
-            Sign up free
-          </Link>
-        </>
-      }
+      switcher={<AuthSwitch active="login" returnTo={returnTo} />}
     >
       <GoogleSsoSection returnTo={returnTo} />
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-3">
         <div>
-          <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-[var(--_fg)]">
+          <label htmlFor="email" className="mb-1 block text-sm font-medium text-[var(--_fg)]">
             Email
           </label>
           <input

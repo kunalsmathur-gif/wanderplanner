@@ -369,3 +369,62 @@ the dialog to press.
 - ⚠️ **Still needs a real device.** jsdom cannot see a tab label wrap at 320px,
   a keyboard cover a field, or a bottom sheet sit under a notch — those are
   MOB-006 to MOB-010 in `docs/eval-set.md` §7C.
+
+---
+
+## 🧩 Component Updates (August 2, 2026) — Auth card compacted; log-in promoted out of the footer (v10.57.0)
+
+Prompted by a live look at `/signup`. Full detail: `docs/system-design.md` §16
+v10.57.
+
+**Two complaints, and they pull against each other.** The card read heavy, and
+the way *out* of it — "Already have an account? Log in" — sat below the card,
+after every field, in muted grey. Making that link prominent costs vertical
+space; the compaction has to pay for it.
+
+### `AuthSwitch.tsx` (new) — both routes, at the top
+
+A segmented **Sign up / Log in** control rendered inside the card above the
+heading, via a new optional `switcher` slot on `AuthLayout`. Mirrored on
+`/login` so the pair stays symmetric. `/forgot-password` and `/reset-password`
+pass no switcher and are untouched.
+
+- ⚠️ **Active state is carried by the pill, not by colour.** The obvious
+  treatment — active `--_fg`, inactive `--_muted-fg` — leaves the inactive
+  label at **~4.05:1** on the light-mode track (`#64748B` on `#F0F9FF`), and
+  14px semibold is not WCAG large text, so it fails AA. Both labels therefore
+  render at full `--_fg`; `--_card-elevated` + a `--_border` ring marks the
+  current route. That also fixes dark mode, where a `--_card` pill on a `--_bg`
+  track is nearly invisible — `#0D2236` on `#040D14` is not.
+- Tabs are 44px (`min-h-11`), matching the touch-target standard the rest of
+  the auth surfaces already use.
+- ⚠️ **`returnTo` has to survive the tab hop.** The wizard and chat panel deep-
+  link into `/signup?returnTo=…`; `/account` and `/admin` into
+  `/login?returnTo=…`. Losing it returns the user to `/` after authenticating
+  instead of to the gate they were stopped at — a silent wrong-page bug, not a
+  visible failure. Tested at each entry point.
+
+### Compaction — measured, not eyeballed
+
+Card padding 32→20, form row gaps 16→12, label gaps 6→4, logo margin 32→24, and
+the duplicated footer line removed.
+
+| Measured at 696×825 | Before | After |
+|---|---|---|
+| Logo top → last element | 618px | **580px** (−6%) |
+| Card | 500px | 513px |
+| Log-in affordance | below card, muted `--_muted-fg` | tab 1 of 2, top of card |
+
+The card *grew* 13px because it absorbed the 70px switcher — the surrounding
+trim covers that and 38px besides. No page scroll at 696×825 or 375×812.
+
+### Regression verification
+- **Frontend:** `tsc --noEmit` clean; **15 new tests** — `AuthSwitch`
+  (both routes present, `aria-current` on the live route only, `returnTo`
+  encoded into both hrefs) and `AuthPages` (switcher renders ahead of the form,
+  no duplicated footer link, and `returnTo` preserved across the switch for
+  each of the four real deep-link origins). 168 passed total.
+- **Backend:** untouched — no `apps/api` changes in this pass.
+- ⚠️ **No screenshot and no real device.** The browser pane would not composite
+  frames this session, so every number above is DOM geometry and computed
+  style. Contrast ratios are arithmetic on token values, not measured pixels.
