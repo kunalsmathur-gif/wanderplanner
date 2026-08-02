@@ -7,7 +7,9 @@ from models.trip import TripConfig
 
 class CostBreakdown(BaseModel):
     flights_inr: int = 0           # Return flights per person × num people
-    visa_inr: int = 0              # Total visa fees
+    # None = we could not look it up; 0 = checked, genuinely free. See the
+    # matching note on `models/itinerary.py::ExpenseBreakdown.visa_inr`.
+    visa_inr: int | None = None    # Total visa/entry fees; None = unknown
     accommodation_inr: int = 0     # Nightly rate × nights × rooms
     daily_expenses_inr: int = 0    # Food + activities + local transport × days × people
     total_estimated_inr: int = 0

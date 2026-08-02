@@ -47,7 +47,13 @@ class ItineraryDay(BaseModel):
 class ExpenseBreakdown(BaseModel):
     """Estimated cost breakdown for the full trip, in INR."""
     flights_inr: int = 0           # Round-trip flights for all passengers
-    visa_inr: int = 0              # Total visa/entry fees
+    # ⚠️ `None` means "we could not look this up", NOT "free". 0 means we
+    # checked and entry genuinely costs nothing. Collapsing the two is exactly
+    # how a 5-day Bhutan trip came to show ₹41,000 of "visa" — an ungrounded
+    # guess is indistinguishable from a real figure once it is an int. The
+    # frontend renders None as "not available" so the traveller knows to look
+    # it up rather than reading silence as free entry.
+    visa_inr: int | None = None    # Total visa/entry fees; None = unknown
     accommodation_inr: int = 0     # Accommodation for all nights
     activities_inr: int = 0        # Entry passes & tickets for itinerary activities
     food_inr: int = 0              # Food & dining for full trip

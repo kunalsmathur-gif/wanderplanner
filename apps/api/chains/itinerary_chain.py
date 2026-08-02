@@ -26,7 +26,7 @@ from models.trip import TripConfig
 from services.itinerary_cache import get_cached_itinerary, store_itinerary
 from services.rag_fallback import rag_skeleton_itinerary
 from services.search import retrieve_context, retrieve_itinerary_examples, summarise_context
-from services.visa import entry_cost_prompt_hint
+from services.visa import ensure_entry_info, entry_cost_grounding
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +46,12 @@ async def _budget_guidance_block(trip_config: TripConfig) -> str:
         or ""
     )
     try:
-        flight_hint, accommodation_hint, entry_hint = await asyncio.gather(
+        flight_hint, accommodation_hint, entry = await asyncio.gather(
             flight_cost_grounding_hint(trip_config),
             accommodation_cost_grounding_hint(trip_config),
-            entry_cost_prompt_hint(entry_country),
+            entry_cost_grounding(entry_country),
         )
+        entry_hint = entry[0]
     except Exception:
         flight_hint, accommodation_hint, entry_hint = "", "", ""
     parts = [tier_hint] + [h for h in (flight_hint, accommodation_hint, entry_hint) if h]
@@ -186,14 +187,15 @@ RULES:
 - Each day must have 3-6 activity items with realistic time allocations.
 - Pace guide: relaxed=3-4 items/day, moderate=4-5, packed=5-6.
 - Total activity costs must not exceed the stated budget.
-- ENTRY COSTS: always set `visa_inr` to 0. Visa fees, permits and per-night
-  tourism levies are deliberately EXCLUDED from this estimate, because no
-  reliable fee source backs them — a confident wrong number is worse for the
-  traveller than an absent one. Do not fold them into another field to
-  compensate. If entry costs are material for this destination (a visa fee, a
-  permit, or a per-night levy such as Bhutan's Sustainable Development Fee),
-  say so in the itinerary's prose so the traveller knows to check the official
-  figure — but leave the number out.
+- ENTRY COSTS (`visa_inr`) — the traveller holds an INDIAN passport. Include
+  every MANDATORY per-person cost of entry: visa/e-visa fees, permits, and
+  compulsory per-night tourism levies — not only "the visa fee". Use the rate
+  for INDIAN nationals, which is often far lower than the general
+  international rate and is frequently zero; Bhutan charges most visitors USD
+  100/night but Indians ₹1,200/night with no visa. Multiply per-night levies
+  by nights and by the people who actually pay them. Base this on the
+  ENTRY-COST GROUNDING above; when that block is absent your figure is
+  discarded server-side, so do not pad it with a guess.
 - If kids are present: exclude bars, nightclubs, and extreme sports venues.
 - If persona includes digital_nomad: add one 2-hour Work Block per day at a wifi cafe or coworking space.
 - If persona includes sports_fitness: add one Training Window per day at a gym, trail or sports venue.
@@ -439,7 +441,9 @@ def _mock_itinerary(trip_config: TripConfig, tip_texts: list[str] | None = None)
     }
 
 
-def _parse_expense_breakdown(raw: dict, trip_config: TripConfig) -> ExpenseBreakdown:
+def _parse_expense_breakdown(
+    raw: dict, trip_config: TripConfig, *, entry_grounded: bool = False
+) -> ExpenseBreakdown:
     group = trip_config.group
     if hasattr(group, 'adults'):
         people = group.adults + group.seniors + len(group.kids if group.kids else [])
@@ -449,32 +453,33 @@ def _parse_expense_breakdown(raw: dict, trip_config: TripConfig) -> ExpenseBreak
     people = max(people, 1)
 
     flights = int(raw.get("flights_inr", 0))
-    # 🔴 Entry/visa cost is ALWAYS excluded — deliberately, and enforced here
-    # rather than asked of the model.
+    # 🔴 A visa figure is allowed through ONLY when the corpus actually covered
+    # this country — `entry_grounded` is the result of a real lookup, not the
+    # model's opinion of its own confidence.
     #
-    # There is no reliable fee source behind this field. The visa corpus is
-    # Wikivoyage entry *rules*, which rarely state fees and can lag a change,
-    # so any number here came from the model's recollection. Bhutan showed
-    # what that is worth: ₹41,000 of "visa" for a 5-day trip, which is the
-    # international Sustainable Development Fee (USD 100/night) converted to
-    # INR — while Indian nationals need no visa and pay ₹1,200/night. Wrong
-    # rate, wrong label, presented with the same confidence as a real figure.
+    # Ungrounded, the number came from parametric memory: Bhutan produced
+    # ₹41,000 for a 5-day trip, which is the international Sustainable
+    # Development Fee (USD 100/night) in INR, for a traveller who needs no visa
+    # and pays ₹1,200/night. Wrong rate, wrong label, indistinguishable from a
+    # real figure once it is an int.
     #
-    # Product call: a missing line the traveller knows to check beats a
-    # confident wrong number they budget against. A prompt rule cannot deliver
-    # that — LLMs have no calibrated sense of when they are guessing — so the
-    # zero is applied deterministically and the prompt is merely told to match.
-    #
-    # ⚠️ This means the total UNDERSTATES trips with a real entry cost. That is
-    # the accepted trade-off, and it is why the surface must say "not
-    # included" rather than letting a zero read as "free".
-    visa = 0
+    # None, not 0, when ungrounded — "we could not look this up" and "entry is
+    # free" are different claims and the UI renders them differently. A prompt
+    # rule cannot enforce this: an LLM has no calibrated sense of when it is
+    # guessing, so the gate has to be structural.
+    visa = int(raw.get("visa_inr", 0)) if entry_grounded else None
     accommodation = int(raw.get("accommodation_inr", 0))
     activities = int(raw.get("activities_inr", 0))
     food = int(raw.get("food_inr", 0))
     local_transport = int(raw.get("local_transport_inr", 0))
     shopping = int(raw.get("shopping_inr", 0))
-    subtotal = flights + visa + accommodation + activities + food + local_transport + shopping
+    # An unknown entry cost contributes nothing to the total — the alternative
+    # is inventing a placeholder, which is the bug this gate exists to stop.
+    # ⚠️ The total therefore UNDERSTATES a trip with a real but unlooked-up
+    # entry cost; the "not available" label is what stops that reading as free.
+    subtotal = (
+        flights + (visa or 0) + accommodation + activities + food + local_transport + shopping
+    )
     buffer = int(raw.get("emergency_buffer_inr", round(subtotal * 0.10)))
     total = int(raw.get("total_inr", subtotal + buffer)) or (subtotal + buffer)
 
@@ -826,10 +831,25 @@ async def _generate_itinerary_inner(
 
     timings.label("generation_tier", str(raw.get("_from_fallback", "live")))
     timings.increment("days", len(scored_days))
+
+    # Re-asked rather than threaded down from `_budget_guidance_block` through
+    # three call frames and two generation paths (Gemini, LangChain) plus the
+    # fallback. `ensure_entry_info` memoises per country for the life of the
+    # process, so this is a dict hit — and on the fallback paths, where no
+    # guidance block ran, it is the only thing that establishes coverage at all.
+    entry_country = (
+        (trip_config.destination.country if trip_config.destination else None)
+        or trip_config.destination_country
+        or ""
+    )
+    entry_grounded = await ensure_entry_info(entry_country)
+
     return ItineraryResponse(
         days=scored_days,
         alignment_score=round(overall_score, 2),
-        expense_breakdown=_parse_expense_breakdown(raw.get("expense_breakdown", {}), trip_config),
+        expense_breakdown=_parse_expense_breakdown(
+            raw.get("expense_breakdown", {}), trip_config, entry_grounded=entry_grounded
+        ),
         generation_tier=raw.get("_from_fallback", "live"),
     )
 

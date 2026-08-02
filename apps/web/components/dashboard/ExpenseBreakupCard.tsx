@@ -70,7 +70,23 @@ export function ExpenseBreakupCard() {
           {/* Category rows */}
           <div className="space-y-0">
             {CATEGORIES.map(({ key, icon, label }) => {
-              const raw = breakdown[key as CategoryKey] as number
+              const raw = breakdown[key as CategoryKey] as number | null
+              // ⚠️ null and 0 are different claims — "we could not look this
+              // up" versus "it really is free". Only `visa_inr` is ever null
+              // (see ExpenseBreakdown), and it has to say so: dropping the row
+              // silently lets a missing entry cost read as no entry cost, and
+              // the Total below genuinely excludes it.
+              if (raw == null) {
+                return key !== 'visa_inr' ? null : (
+                  <div
+                    key={key}
+                    className="flex items-center justify-between py-1.5 border-b border-[var(--_border)]/50 last:border-0"
+                  >
+                    <span className="text-xs text-[var(--_muted-fg)]">{icon} {label}</span>
+                    <span className="text-xs font-medium text-[var(--_muted-fg)]">Not available</span>
+                  </div>
+                )
+              }
               if (!raw) return null
               return (
                 <div

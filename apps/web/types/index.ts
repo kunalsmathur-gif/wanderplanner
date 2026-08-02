@@ -141,7 +141,7 @@ export type GenerationTier = 'live' | 'cache' | 'rag_skeleton' | 'enhanced_mock'
 // Expense breakdown types
 export interface ExpenseBreakdown {
   flights_inr: number
-  visa_inr: number
+  visa_inr: number | null   // null = could not look it up; 0 = genuinely free
   accommodation_inr: number
   activities_inr: number
   food_inr: number
@@ -157,7 +157,7 @@ export interface ExpenseBreakdown {
 // Feasibility types
 export interface CostBreakdown {
   flights_inr: number
-  visa_inr: number
+  visa_inr: number | null   // null = could not look it up; 0 = genuinely free
   accommodation_inr: number
   daily_expenses_inr: number
   total_estimated_inr: number

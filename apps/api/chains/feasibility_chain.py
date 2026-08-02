@@ -12,7 +12,7 @@ from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize
 from models.feasibility import AlternativeDestination, CostBreakdown, FeasibilityResponse
 from models.trip import TripConfig
-from services.visa import entry_cost_prompt_hint
+from services.visa import entry_cost_grounding
 
 FEASIBILITY_PROMPT = """\
 You are a travel cost expert. Estimate the realistic total cost (in Indian Rupees) for the
@@ -54,13 +54,19 @@ RULES:
 - If budget is sufficient, still suggest 1-2 alternative destinations for variety.
 - Keep alternatives realistic for Indian passport holders.
 
-ENTRY COSTS — always set `visa_inr` to 0:
-- Visa fees, permits and per-night tourism levies are deliberately EXCLUDED
-  from this estimate. No reliable fee source backs them, and a confident wrong
-  number is worse for the traveller than an absent one.
-- Do not fold them into `daily_expenses_inr` or any other field to compensate.
-- If entry costs are material for this destination, mention it in `verdict` so
-  the traveller knows to check the official figure — but leave the number out.
+ENTRY COSTS (`visa_inr`) — the traveller holds an INDIAN passport:
+- Include every MANDATORY per-person cost of entry: visa or e-visa fees,
+  permits, and compulsory per-night tourism levies. Not only "the visa fee".
+- Use the rate for INDIAN nationals, which is frequently far lower than the
+  rate for other passports and is often zero. Bhutan charges most visitors USD
+  100 per night but Indian nationals ₹1,200 per night with no visa — quoting
+  the international rate is a sevenfold error.
+- Multiply per-night levies by nights AND by the people who pay them; check
+  whether children are exempt before charging them in full.
+- Base this on the ENTRY-COST GROUNDING above. When that block is absent your
+  figure is discarded server-side and shown as "not available", so do not fill
+  the gap with a guess.
+- Do not fold entry costs into `daily_expenses_inr` to compensate.
 
 - Return ONLY valid JSON matching the schema above.
 """
@@ -140,13 +146,15 @@ async def check_feasibility(trip_config: TripConfig) -> FeasibilityResponse:
         or ""
     )
     try:
-        flight_hint, accommodation_hint, entry_hint = await asyncio.gather(
+        flight_hint, accommodation_hint, entry = await asyncio.gather(
             flight_cost_grounding_hint(trip_config),
             accommodation_cost_grounding_hint(trip_config),
-            entry_cost_prompt_hint(entry_country),
+            entry_cost_grounding(entry_country),
         )
+        entry_hint, entry_grounded = entry
     except Exception:
         flight_hint, accommodation_hint, entry_hint = "", "", ""
+        entry_grounded = False
     cost_grounding_hint = "\n\n".join(
         h for h in (flight_hint, accommodation_hint, entry_hint) if h
     )
@@ -182,7 +190,9 @@ async def check_feasibility(trip_config: TripConfig) -> FeasibilityResponse:
 
     data = json.loads(cleaned)
     bare_minimum = await _safe_bare_minimum(trip_config)
-    return _build_response(data, budget_inr, bare_minimum, trip_config)
+    return _build_response(
+        data, budget_inr, bare_minimum, trip_config, entry_grounded=entry_grounded
+    )
 
 
 def _traveller_level_hint_text(trip_config: TripConfig) -> str:
@@ -213,6 +223,8 @@ def _build_response(
     budget_inr: int,
     bare_minimum: dict | None = None,
     trip_config: TripConfig | None = None,
+    *,
+    entry_grounded: bool = False,
 ) -> FeasibilityResponse:
     llm_flights = int(data.get("flights_inr", 0))
     llm_accommodation = int(data.get("accommodation_inr", 0))
@@ -245,15 +257,15 @@ def _build_response(
 
     breakdown = CostBreakdown(
         flights_inr=llm_flights,
-        # 🔴 Always 0 — entry/visa cost is deliberately excluded, enforced here
-        # rather than trusted to the prompt. See the identical gate in
-        # `chains/itinerary_chain.py::_parse_expense_breakdown` for the full
-        # reasoning: no reliable fee source exists, and Bhutan surfaced the
-        # cost of pretending otherwise (₹41,000 of "visa" on a 5-day trip —
-        # the international USD 100/night levy, for a traveller who needs no
-        # visa and pays ₹1,200/night). A model cannot tell us when it is
-        # guessing, so the exclusion has to be structural.
-        visa_inr=0,
+        # 🔴 The model's figure is kept only when the visa corpus actually
+        # covered this country; otherwise None, meaning "not available" — never
+        # 0, which would claim entry is free. Same structural gate as
+        # `chains/itinerary_chain.py::_parse_expense_breakdown`, for the same
+        # reason: Bhutan produced ₹41,000 of ungrounded "visa" on a 5-day trip
+        # (the international USD 100/night levy, for a traveller who needs no
+        # visa and pays ₹1,200/night), and a model cannot tell us when it is
+        # guessing.
+        visa_inr=int(data.get("visa_inr", 0)) if entry_grounded else None,
         accommodation_inr=llm_accommodation,
         daily_expenses_inr=int(data.get("daily_expenses_inr", 0)),
         total_estimated_inr=total,
@@ -298,13 +310,14 @@ def _mock_feasibility(trip_summary: dict, budget_inr: int) -> FeasibilityRespons
     people = trip_summary.get("total_people", 2)
 
     flights = 35000 * people
-    # 0, matching the live path: entry/visa cost is excluded everywhere, so the
-    # mock must not be the one surface that shows a figure — a dev or eval run
-    # would then be validating a number production never produces.
-    visa = 0
+    # None, matching what the live path produces for an uncovered country: the
+    # mock runs with no corpus behind it, so a flat ₹6,500/person here would be
+    # the one surface showing a figure production would have suppressed — dev
+    # and eval runs would validate behaviour that never ships.
+    visa = None
     accommodation = 4500 * nights
     daily = 3000 * nights * people
-    total = flights + visa + accommodation + daily
+    total = flights + (visa or 0) + accommodation + daily
 
     alternatives = [
         AlternativeDestination(

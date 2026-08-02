@@ -89,32 +89,121 @@ async def retrieve_visa_note(country: str, query: str = "") -> str:
 _ENTRY_COST_QUERY = "visa fee cost permit entry requirements for Indian citizens"
 
 
-async def entry_cost_prompt_hint(country: str) -> str:
-    """Grounding for what the plan *says* about entry rules — not for a number.
+# On-demand fetch budget. Measured, not guessed: scraping entry rules for an
+# off-list country costs 0.6–1.3s (Uzbekistan 1.25s/18 chunks, Rwanda 0.59s/10,
+# Bolivia 1.11s/7) and embedding those chunks is 0.04s on a warm process. The
+# embedding model's 12s cold load is the only real risk, and by the time this
+# runs the RAG retrieval upstream has already warmed it. 4s therefore clears
+# the realistic case with headroom while capping the pathological one — and
+# this call rides an existing `asyncio.gather`, so it overlaps work that takes
+# longer anyway.
+_ENTRY_FETCH_TIMEOUT_S = 4.0
 
-    ⚠️ `visa_inr` is forced to 0 in both chains, so this block must never be
-    framed as "use this to price the visa". It exists because the prose is now
-    the only channel for entry-cost information, and prose that names a real
-    permit or levy is worth far more than prose hedging in the abstract.
+# Per-process memo of "does the corpus have this country". Lets the guidance
+# block and the expense parser each ask independently without a second lookup
+# or an awkward flag threaded through four call frames. Deliberately not
+# time-expiring: within one process the answer only changes when *we* ingest,
+# and we update it when we do.
+_COVERAGE: dict[str, bool] = {}
 
-    ⚠️ **Coverage is a fixed list of 73 seed countries and there is no
-    real-time fetch.** `_refresh_visa_info` walks `VISA_SEED_COUNTRIES` on a
-    schedule; the cold-start path in `services/destination_ingestion.py`
-    ingests OSM, Wikivoyage and YouTube for an unseen destination but **not**
-    visa rules. So an off-list country (Uzbekistan, Rwanda, Bolivia…) yields ""
-    here, permanently, and the model falls back to describing entry
-    requirements from its own recollection. That is tolerable only because the
-    fee itself is excluded — the failure mode is vaguer prose, not a wrong
-    number.
 
-    Best-effort throughout: `retrieve_visa_note` never raises, and an empty
-    corpus yields "" rather than blocking a generation.
+async def _corpus_has_country(country: str) -> bool:
+    """Cheap existence check — a count, not a search: no embedding required."""
+    try:
+        client = get_qdrant()
+        result = await asyncio.to_thread(
+            lambda: client.count(
+                collection_name=settings.qdrant_collection_visa_info,
+                count_filter=Filter(must=[
+                    FieldCondition(key="destination", match=MatchValue(value=country))
+                ]),
+                exact=False,
+            )
+        )
+        return bool(result.count)
+    except Exception as e:
+        logger.warning("visa coverage check failed for %r: %s", country, e)
+        return False
+
+
+async def ensure_entry_info(country: str) -> bool:
+    """True when the corpus can speak to `country`'s entry rules.
+
+    Fetches on demand when it cannot. The scheduler only walks
+    `VISA_SEED_COUNTRIES` (73 countries), and the cold-start path in
+    `services/destination_ingestion.py` ingests OSM, Wikivoyage and YouTube for
+    an unseen destination but **not** visa rules — so without this an off-list
+    country would never be covered, no matter how many times it was requested.
+
+    ⚠️ The return value gates whether a visa figure is shown at all. False must
+    mean "we do not know", never "it is free" — the caller renders those
+    differently, and conflating them is the whole bug this came from.
+
+    Never raises, and never blocks past `_ENTRY_FETCH_TIMEOUT_S`: a slow or
+    failed fetch degrades to False, which surfaces as "not available".
     """
+    country = (country or "").strip()
+    if not settings.visa_info_retrieval_enabled or not country:
+        return False
+    if country in _COVERAGE:
+        return _COVERAGE[country]
+
+    if await _corpus_has_country(country):
+        _COVERAGE[country] = True
+        return True
+
+    # Not covered — try to fetch it now rather than leave the traveller with
+    # nothing until the next scheduled sweep, which may never include them.
+    try:
+        from scrapers.visa_info import ingest_visa_info
+
+        chunks = await asyncio.wait_for(
+            ingest_visa_info(country), timeout=_ENTRY_FETCH_TIMEOUT_S
+        )
+        covered = bool(chunks)
+        logger.info(
+            "visa_info on-demand fetch for %r: %d chunks", country, chunks or 0
+        )
+    except TimeoutError:
+        # Deliberately not cached: this says the fetch was slow *this time*,
+        # not that the country is unknowable. A later request on a warmer
+        # process should get another go.
+        logger.warning(
+            "visa_info on-demand fetch for %r exceeded %.1fs — skipping",
+            country, _ENTRY_FETCH_TIMEOUT_S,
+        )
+        return False
+    except Exception as e:
+        logger.warning("visa_info on-demand fetch for %r failed: %s", country, e)
+        return False
+
+    _COVERAGE[country] = covered
+    return covered
+
+
+async def entry_cost_grounding(country: str) -> tuple[str, bool]:
+    """`(prompt_block, is_covered)` for a destination's entry costs.
+
+    `is_covered` is what decides whether a visa figure may be shown at all;
+    the block is what the model prices against when it may. Wikivoyage can lag
+    a rule change, and that is accepted — a dated real figure beats both a
+    hallucinated one and a blank where a cost exists.
+    """
+    covered = await ensure_entry_info(country)
+    if not covered:
+        return "", False
+
     note = await retrieve_visa_note(country, query=_ENTRY_COST_QUERY)
     if not note:
-        return ""
+        # Chunks exist but none clear the relevance floor — we have nothing
+        # useful to price against, so treat it as uncovered rather than let
+        # the model fill the silence.
+        return "", False
+
     return (
-        "ENTRY-REQUIREMENT GROUNDING (for what you say about permits/levies in "
-        "prose — do NOT turn this into a cost figure; `visa_inr` stays 0):\n"
-        f"{note}"
+        "ENTRY-COST GROUNDING — prefer this over your own recollection when "
+        "setting `visa_inr`. It may be out of date; say so rather than "
+        "dropping the figure:\n"
+        f"{note}",
+        True,
     )

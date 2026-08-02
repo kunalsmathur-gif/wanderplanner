@@ -582,12 +582,18 @@ export function LLMWizard() {
       const b = result.breakdown
       const breakdownText = [
         b.flights_inr > 0 ? `flights ₹${b.flights_inr.toLocaleString('en-IN')}` : null,
-        // Entry/visa cost is excluded from the estimate by design (the backend
-        // forces it to 0 — see chains/feasibility_chain.py). Say so, rather
-        // than letting an omitted line imply entry is free: the total really
-        // does understate a Bhutan or a Schengen trip, and the traveller needs
-        // to know to look it up.
-        b.visa_inr > 0 ? `visa ₹${b.visa_inr.toLocaleString('en-IN')}` : 'visa/entry costs not included',
+        // Three states, deliberately distinct (see CostBreakdown.visa_inr):
+        //   null -> we could not look it up; say so, because an omitted line
+        //           reads as "free" and the total genuinely understates the
+        //           trip, which is how ₹41,000 of invented Bhutan visa got
+        //           taken seriously in the first place;
+        //   0    -> looked it up, entry really is free — worth stating;
+        //   > 0  -> a real, grounded figure.
+        b.visa_inr == null
+          ? 'visa/entry cost not available — check officially'
+          : b.visa_inr > 0
+            ? `visa/entry ₹${b.visa_inr.toLocaleString('en-IN')}`
+            : 'no visa/entry fee',
         b.accommodation_inr > 0 ? `stay ₹${b.accommodation_inr.toLocaleString('en-IN')}` : null,
         b.daily_expenses_inr > 0 ? `food/local transport ₹${b.daily_expenses_inr.toLocaleString('en-IN')}` : null,
       ].filter(Boolean).join(', ')

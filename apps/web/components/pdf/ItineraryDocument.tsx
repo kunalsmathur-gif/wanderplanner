@@ -259,7 +259,12 @@ export function ItineraryDocument({ days, config, expenseBreakdown }: Props) {
               { label: '   Local Transport', val: expenseBreakdown.local_transport_inr },
               { label: '   Shopping & Souvenirs', val: expenseBreakdown.shopping_inr },
               { label: '   Emergency Buffer (10%)', val: expenseBreakdown.emergency_buffer_inr },
-            ].filter((r) => r.val > 0).map((row) => (
+            // `val > 0` already drops a null, but only by accident of JS
+            // comparison — narrow explicitly so the intent survives a refactor.
+            // A null visa cost is deliberately NOT rendered as a ₹0 row here;
+            // the "not available" line below carries that instead, because a
+            // ₹0 row in a printed breakdown reads as "entry is free".
+            ].filter((r): r is { label: string; val: number } => r.val != null && r.val > 0).map((row) => (
               <View key={row.label} style={styles.expRow}>
                 <Text style={styles.expLabel}>{row.label}</Text>
                 <View style={{ flexDirection: 'row', gap: 16 }}>
@@ -272,6 +277,19 @@ export function ItineraryDocument({ days, config, expenseBreakdown }: Props) {
                 </View>
               </View>
             ))}
+
+            {/* The traveller is carrying this document to budget against, so
+                an entry cost we could not verify has to be stated, not left
+                to be inferred from a missing row. The total above excludes
+                it. */}
+            {expenseBreakdown.visa_inr == null && (
+              <View style={styles.expRow}>
+                <Text style={styles.expLabel}>   Visa &amp; Entry fees</Text>
+                <Text style={{ ...styles.expValue, color: colors.mid, textAlign: 'right' }}>
+                  not available — check officially
+                </Text>
+              </View>
+            )}
 
             <View style={{ ...styles.expTotal, borderTopColor: PALETTE[2].accent }}>
               <Text style={{ ...styles.expTotalLabel, color: PALETTE[2].accent }}>TOTAL ESTIMATE</Text>
