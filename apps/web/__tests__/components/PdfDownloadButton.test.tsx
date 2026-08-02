@@ -2,7 +2,7 @@ import * as React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { PdfDownloadButton } from '@/components/pdf/PdfDownloadButton'
+import { PdfDownloadButton, withDeadline } from '@/components/pdf/PdfDownloadButton'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 
@@ -200,5 +200,36 @@ describe('PdfDownloadButton — day photos are fetched at download time', () => 
       )
       expect(toBlob).toHaveBeenCalledTimes(2)
     })
+  })
+})
+
+describe('withDeadline', () => {
+  // 🔴 The reported production symptom was the button stuck on "Preparing
+  // PDF…" indefinitely. @react-pdf resolves every <Image src> over the network
+  // at render time and applies no timeout of its own, so a hanging CDN URL
+  // leaves .toBlob() unsettled — `catch` never fires, `finally` never fires,
+  // and there is no way out but a page reload. A try/catch cannot see a hang;
+  // only a deadline can, which is what turns it into the retry path.
+  it('rejects a promise that never settles', async () => {
+    await expect(withDeadline(new Promise(() => {}), 10)).rejects.toThrow(/timed out/i)
+  })
+
+  it('passes a value through untouched when it settles in time', async () => {
+    await expect(withDeadline(Promise.resolve('pdf'), 1000)).resolves.toBe('pdf')
+  })
+
+  it('preserves the original rejection rather than masking it as a timeout', async () => {
+    // The image-free retry keys off *why* it failed, so a genuine render error
+    // must not be relabelled.
+    await expect(
+      withDeadline(Promise.reject(new Error('renderer exploded')), 1000)
+    ).rejects.toThrow('renderer exploded')
+  })
+
+  it('clears its timer so a fast render leaves nothing pending', async () => {
+    const clearSpy = vi.spyOn(global, 'clearTimeout')
+    await withDeadline(Promise.resolve('pdf'), 60_000)
+    expect(clearSpy).toHaveBeenCalled()
+    clearSpy.mockRestore()
   })
 })

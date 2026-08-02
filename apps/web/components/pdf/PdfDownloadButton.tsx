@@ -7,6 +7,30 @@ import { useTripConfigStore } from '@/store/tripConfigStore'
 import type { ItineraryDay } from '@/types'
 
 /**
+ * Ceiling on a single `.toBlob()` attempt. Generous — a long illustrated
+ * itinerary genuinely takes seconds to lay out — but finite, because the
+ * alternative to finite is a button that never comes back.
+ */
+const RENDER_TIMEOUT_MS = 20_000
+
+/** Reject if `promise` has not settled within `ms`.
+ *
+ * ⚠️ The loser of the race is not cancellable: `@react-pdf` exposes no abort,
+ * so a hung render keeps running in the background until its image fetch
+ * finally gives up. This bounds what the *user* waits for, not what the tab
+ * does. Acceptable here — the retry renders without images, so the abandoned
+ * attempt is not competing for the same resource. */
+export function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('PDF render timed out')), ms)
+    }),
+  ]).finally(() => clearTimeout(timer)) as Promise<T>
+}
+
+/**
  * Attach one hero photo per day, at download time.
  *
  * The query must stay identical to the one generation used to build
@@ -91,18 +115,24 @@ export function PdfDownloadButton() {
 
       let blob: Blob
       try {
-        blob = await render(photoResult.days)
-      } catch (err) {
         // 🔴 The photo can pass the fetch above and still sink the download.
         // @react-pdf resolves every `<Image src>` over the network *at render
-        // time*, so a Pexels CDN URL that 404s, hangs, or serves a format the
-        // renderer rejects throws out of `.toBlob()` and takes the whole
-        // document with it — the user loses the PDF over a decoration.
-        // Retry once with the photos stripped. Only when photos were actually
-        // attached: otherwise this is an unrelated render failure and
-        // re-running it would just fail twice and double the wait.
+        // time*, and **it applies no timeout of its own**. A Pexels CDN URL
+        // that 404s or serves a format the renderer rejects throws out of
+        // `.toBlob()`; one that simply hangs is worse — the promise never
+        // settles, so `catch` never runs, `finally` never runs, and the button
+        // sits on "Preparing PDF…" forever with no error and no way out but a
+        // reload. That is the reported symptom, and a plain try/catch cannot
+        // see it. Racing a deadline turns the hang into a rejection, which the
+        // existing image-free retry below already knows how to handle.
+        blob = await withDeadline(render(photoResult.days), RENDER_TIMEOUT_MS)
+      } catch (err) {
+        // Retry once with the photos stripped — but only when photos were
+        // actually attached. Otherwise this is an unrelated render failure and
+        // re-running it would fail identically, doubling the user's wait
+        // before the error appears.
         if (!photoResult.photosAttached) throw err
-        blob = await render(days)
+        blob = await withDeadline(render(days), RENDER_TIMEOUT_MS)
       }
 
       const url = URL.createObjectURL(blob)
