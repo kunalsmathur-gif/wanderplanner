@@ -1551,7 +1551,81 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.58.0 Changes (August 2026) — the mobile tab bar is frozen, and the Anya orb leaves the phone
+
+Frontend **177 passed** (+9), `tsc --noEmit` clean, production build clean.
+Two live mobile complaints; the first one turned out to be a viewport bug that
+had been mis-shaping the entire dashboard.
+
+**1. The bottom tab bar is frozen.** `components/layout/ThreeColumnLayout.tsx`
+→ `MobileTabBar` is now `fixed inset-x-0 bottom-0 z-30 … lg:hidden` instead of
+being the last child of the scroll flow.
+
+- `z-30` is deliberate and ordered against what already exists: Anya orb
+  `z-40`, `TripFeedbackPopup` `z-50`, `ChatPanel` `z-[9998]`. All three are
+  meant to sit over the whole page, this one included.
+- No extra `lg:hidden` was strictly needed — the parent `mobileContent` div is
+  already `lg:hidden`, and a `fixed` child of a `display:none` parent does not
+  render — but it is stated on the element anyway so reparenting cannot
+  silently leak a phone tab bar onto desktop.
+
+**2. 🔴 `h-screen` → `h-dvh` in `app/itinerary/page.tsx` — this, not the bar's
+position, is why the tabs were only reachable by scrolling.** On mobile
+`100vh` resolves to the *large* viewport, which includes the strip behind the
+collapsing URL bar. The `h-screen` column was therefore taller than the
+visible screen, the document scrolled to reveal the remainder, and the column's
+last child sat below the fold. `100dvh` tracks the visible viewport. Note the
+ordering dependency: had only the `fixed` change landed, `bottom-0` would have
+pinned to the bottom of a viewport the user could not see.
+
+**3. ⚠️ `pb-safe` never existed.** The old
+`<div className="shrink-0 pb-safe" />` spacer referenced a utility defined
+neither in `globals.css` nor the theme, so it emitted nothing and notched
+phones drew the tab labels under the home indicator. Replaced with a real
+`pb-[env(safe-area-inset-bottom)]` on the bar itself; the dead spacer is gone.
+
+**4. The floating Anya orb is desktop-only.** `FloatingAnyaButton.tsx` goes
+from `fixed bottom-24 right-6 z-40 lg:bottom-6` to
+`fixed bottom-6 right-6 z-40 hidden lg:block`. The `bottom-24` offset existed
+only to clear the mobile tab bar and is now dead. On a phone the orb was ~98px
+of permanent floating chrome over a narrow column, and being `fixed` it sat on
+top of whatever scrolled beneath it.
+
+⚠️ **It is the only trigger for the persistent chat**, so hiding it outright
+would have removed `ChatPanel` from mobile. New `AnyaTitleBarButton` in
+`ThreeColumnLayout.tsx::TitleBar` (`lg:hidden`, `Sparkles`, sized to match
+`ThemeToggle`/`ShareButton`/`UserMenu` beside it) restores the entry point at
+zero vertical cost, since the title bar is already frozen.
+
+⚠️ **"Edit Trip" is not the same entry point, despite also reaching Anya.**
+`TripSummaryHeader.tsx::handleEditTrip` calls `appStore.openWizard()` — a
+full-screen `LLMWizard` that blurs the dashboard and fires the `'back'`
+feedback prompt, because it exists to change trip config. The orb and the
+title-bar button call `chatStore.open()` — refine-in-place chat over the
+itinerary. Two surfaces, and one does not substitute for the other.
+
+**5. The scroll reservation shrank, and getting this wrong has bitten before.**
+`pb-36` was sized for the orb's ~194px band (the v10.56.1 fix, after the orb
+covered the "Get Quotation" CTA and won the tap). With the orb off mobile the
+reservation covers only the frozen bar:
+`pb-[calc(4.5rem+env(safe-area-inset-bottom))]` — ~51px of bar (18px icon +
+4px gap + 12px label + 16px padding + 1px border) plus slack and the home
+indicator. **If the orb ever returns to mobile, this must grow again.**
+
+**Tests** (+9): `ThreeColumnLayoutTabs.test.tsx` gains the frozen-position
+contract (`fixed`/`bottom-0`/`inset-x-0`), the `z-30` layering, the safe-area
+inset, the scroll reservation, and the title-bar Anya button opening
+`chatStore` on mobile. New `FloatingAnyaButton.test.tsx` covers
+`hidden lg:block`, the removal of `bottom-24`, opening the chat rather than the
+wizard, and the existing hide-while-wizard-or-chat-open behaviour.
+
+⚠️ **Not verified on a real device.** jsdom cannot resolve `100dvh` against a
+collapsing URL bar, cannot render a home indicator, and cannot show a `fixed`
+bar staying put while a list scrolls under it — which is the entire change.
+Class contracts are asserted instead. `docs/eval-set.md` §7C MOB-012 to
+MOB-014 cover what only a phone can answer.
 
 ### v10.57.0 Changes (August 2026) — the auth card puts both routes at the top
 

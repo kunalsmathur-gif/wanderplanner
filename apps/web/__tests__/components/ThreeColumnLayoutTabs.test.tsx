@@ -4,6 +4,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ThreeColumnLayout } from '@/components/layout/ThreeColumnLayout'
 import { useAppStore } from '@/store/appStore'
+import { useChatStore } from '@/store/chatStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 
 // The panels have their own tests; this file is about the mobile information
@@ -36,6 +37,7 @@ describe('ThreeColumnLayout — mobile tabs', () => {
     useItineraryStore.getState().reset()
     useItineraryStore.getState().setDays([day(1)] as never, 80)
     useAppStore.setState({ mobileTab: 'itinerary', step3View: 'itinerary', wizardOpen: false } as never)
+    useChatStore.setState({ isOpen: false } as never)
   })
 
   it('names the three sections Itinerary, Booking & Expenses, and Maps & Tips', () => {
@@ -68,6 +70,59 @@ describe('ThreeColumnLayout — mobile tabs', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /Maps & Tips/i }))
     expect(useAppStore.getState().mobileTab).toBe('map')
+  })
+
+  // The bar used to sit at the end of the scroll flow, so on a phone you only
+  // reached it by scrolling to the very bottom of the panel. It is now frozen
+  // to the viewport bottom.
+  it('freezes the tab bar to the bottom of the viewport', () => {
+    render(<ThreeColumnLayout />)
+
+    const tabs = screen.getByRole('navigation', { name: 'Dashboard sections' })
+    expect(tabs).toHaveClass('fixed', 'bottom-0', 'inset-x-0')
+  })
+
+  it('keeps the tab bar under the orb, popup and chat panel', () => {
+    // z-30 is deliberate: the Anya orb (z-40), feedback popup (z-50) and chat
+    // panel (z-9998) are all meant to sit over the whole page, including this.
+    render(<ThreeColumnLayout />)
+
+    expect(screen.getByRole('navigation', { name: 'Dashboard sections' })).toHaveClass('z-30')
+  })
+
+  it('reserves scroll-container space for the frozen tab bar', () => {
+    // `fixed` takes the bar out of the flow, so without a reservation the last
+    // card sits underneath it. Sized for the bar alone — the Anya orb, which
+    // the old pb-36 also covered, is desktop-only now.
+    const { container } = render(<ThreeColumnLayout />)
+    const scroller = container.querySelector('.overflow-y-auto')
+
+    expect(scroller?.className).toMatch(/pb-\[calc\(4\.5rem\+env\(safe-area-inset-bottom\)\)\]/)
+  })
+
+  it('clears the home indicator on notched phones', () => {
+    // The previous `pb-safe` spacer was a no-op — no such utility exists in
+    // globals.css or the theme, so the labels sat under the home indicator.
+    render(<ThreeColumnLayout />)
+
+    expect(screen.getByRole('navigation', { name: 'Dashboard sections' })).toHaveClass(
+      'pb-[env(safe-area-inset-bottom)]'
+    )
+  })
+
+  describe('Anya entry point', () => {
+    it('offers Anya from the title bar on mobile', async () => {
+      // The floating orb is desktop-only now; without this the persistent chat
+      // would be unreachable on a phone. "Edit Trip" is not a substitute — it
+      // opens the wizard, a different surface.
+      render(<ThreeColumnLayout />)
+
+      const anya = screen.getAllByRole('button', { name: /Open Anya/i })[0]
+      expect(anya).toHaveClass('lg:hidden')
+
+      await userEvent.click(anya)
+      expect(useChatStore.getState().isOpen).toBe(true)
+    })
   })
 
   it('marks the active tab for assistive technology', async () => {

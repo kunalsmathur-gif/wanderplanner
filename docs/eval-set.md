@@ -832,18 +832,31 @@ keyboard cover a field, or a bottom sheet sit under a notch.
 | MOB-008 | Quote modal on a phone | Tap the quotation CTA in the expert card | Opens as a **bottom sheet**; focus lands on the first field, not Close; Escape dismisses | Fields sit above the keyboard; background does not scroll behind it | P0 |
 | MOB-009 | Desktop mirrors the mobile grouping | ≥ 1024px | The same three groupings in the same order across the three columns | No section appears in a different group than it does on mobile | P1 |
 | MOB-010 | Before a trip exists | Mobile, "Booking & Expenses" tab, no destination yet | Only "my bookings" renders; expenses/expert/booking links are hidden rather than empty | No cards with nothing to price or link to | P2 |
-| MOB-011 | Anya orb never covers a control | Scroll each of the 3 tabs to the very bottom, mobile **and** ≥1024px | The floating orb overlaps no button, link or field | Orb's bounding rect intersects zero interactive elements | P0 |
+| MOB-011 | Anya orb never covers a control | Scroll each of the 3 tabs to the very bottom, **≥1024px only** | The floating orb overlaps no button, link or field | Orb's bounding rect intersects zero interactive elements | P0 |
+| MOB-012 | Tab bar is frozen, not scrolled to | Mobile; scroll each tab from top to bottom | The bar stays flush to the bottom of the **visible** screen the whole way, including at first paint before any scroll | Bar's rect never moves; visible without scrolling on a fresh load | P0 |
+| MOB-013 | Tab bar clears the home indicator | Notched phone (iPhone 14/15, Android gesture nav) | Labels sit above the home indicator, not under it | `env(safe-area-inset-bottom)` applied; no label clipped | P1 |
+| MOB-014 | Anya is reachable on mobile | Mobile, itinerary open | No floating orb anywhere; the title bar has an Anya button that opens the **persistent chat panel** | Orb absent < 1024px; title-bar button opens ChatPanel, not the wizard | P0 |
 
-⚠️ **MOB-011 needs a browser, not jsdom.** It was a real defect (reported
-2026-08-01): the orb is `fixed` and the scroll container reserved no space for
-it, so it sat on top of the "Get Quotation" CTA — and since the orb wins the
-tap, aiming at that button opened the chat instead. jsdom has no layout engine,
-so every element has a zero rect and an overlap assertion there would pass
-regardless. The check that actually works is comparing
-`getBoundingClientRect()` of the orb against every `button, a, input, textarea,
-select` after scrolling each tab to the bottom, in a real browser. Repeat on
-desktop separately: the orb moves to `lg:bottom-6` and `right-6` puts it over
-the **right sidebar**, so that column needs the clearance, not the centre one.
+⚠️ **MOB-011 is desktop-only from v10.58** — the orb no longer renders below
+`lg`, so the mobile half of this case is now MOB-014 (the orb must be *absent*)
+rather than an overlap check. It was a real defect (reported 2026-08-01): the
+orb is `fixed` and the scroll container reserved no space for it, so it sat on
+top of the "Get Quotation" CTA — and since the orb wins the tap, aiming at that
+button opened the chat instead. jsdom has no layout engine, so every element
+has a zero rect and an overlap assertion there would pass regardless. The check
+that actually works is comparing `getBoundingClientRect()` of the orb against
+every `button, a, input, textarea, select` after scrolling each tab to the
+bottom, in a real browser. On desktop `right-6` puts the orb over the **right
+sidebar**, so that column needs the clearance, not the centre one.
+
+⚠️ **MOB-012 to MOB-014 need a real phone, not a resized desktop window.**
+MOB-012's root cause was `h-screen`: `100vh` on mobile is the *large* viewport,
+including the strip behind the collapsing URL bar, so the column ran past the
+bottom of the screen and the bar started below the fold. A desktop browser at
+375px wide has no collapsing URL bar and will pass this case whether or not the
+bug is present — the regression is only visible where the chrome actually
+collapses. MOB-013 likewise needs real safe-area insets, which are zero
+everywhere else.
 
 ### 7D — Theme Toggle (`ThemeToggle.tsx`)
 

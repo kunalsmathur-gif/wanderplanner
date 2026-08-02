@@ -199,6 +199,8 @@ The Anya chat modal's backdrop was a flat, bland solid overlay (`bg-black/50` in
 ### Floating Anya button overlapping bottom mobile nav — `FloatingAnyaButton.tsx`
 On the itinerary dashboard, the floating chat-launcher button sat at a fixed `bottom-6`, which overlapped the mobile bottom tab bar (Timeline/Map/Tips). Repositioned to `bottom-24` on mobile, keeping `lg:bottom-6` unchanged on desktop where there's no bottom nav to collide with.
 
+> **Superseded in v10.58.0** — the orb no longer renders below `lg` at all, so there is nothing left to collide with and the `bottom-24` offset has been removed. See the v10.58.0 section at the end of this document.
+
 ### Full Map View "✕ Close" button unreachable — `ThreeColumnLayout.tsx`
 The Full Map View toolbar packed the "Day view" label, a scrollable row of day-tabs, and the "✕ Close" button into a single row — with enough day-tabs (multi-day trips), Close could be pushed off-screen with no way to scroll back to it, trapping the user in full-screen map view. Restructured into two rows: label + Close always visible on the first row; day-tabs independently horizontally scrollable on the second.
 
@@ -428,3 +430,60 @@ trim covers that and 38px besides. No page scroll at 696×825 or 375×812.
 - ⚠️ **No screenshot and no real device.** The browser pane would not composite
   frames this session, so every number above is DOM geometry and computed
   style. Contrast ratios are arithmetic on token values, not measured pixels.
+
+---
+
+## 🧩 Component Updates (August 2, 2026) — Mobile tab bar frozen; Anya orb off the phone (v10.58.0)
+
+Two live mobile complaints. Full detail: `TECHNICAL_DOCUMENTATION.md` §14
+v10.58.0 and `docs/system-design.md` §16 v10.58.
+
+### The tab bar is frozen — but the bug was the viewport, not the bar
+
+The three section tabs only appeared once you scrolled to the very bottom.
+Making them `fixed` is the fix that was asked for; it is not the whole fix.
+
+- **`MobileTabBar` → `fixed inset-x-0 bottom-0 z-30 … lg:hidden`.** `z-30`
+  sits under the Anya orb (`z-40`), feedback popup (`z-50`) and chat panel
+  (`z-9998`), all of which are meant to cover the page.
+- 🔴 **`h-screen` → `h-dvh` on `/itinerary` is the actual root cause.** On
+  mobile `100vh` is the *large* viewport — it includes the strip behind the
+  collapsing URL bar — so the column was taller than the visible screen and
+  its last child began below the fold. Without this, `bottom-0` would have
+  pinned the bar to the bottom of a viewport the user cannot see.
+- ⚠️ **`pb-safe` was a no-op** — no such utility exists in `globals.css` or
+  the theme, so notched phones drew the labels under the home indicator. Now
+  a real `pb-[env(safe-area-inset-bottom)]` on the bar; the dead spacer div
+  is gone.
+
+### The Anya orb is desktop-only
+
+~98px of permanent floating chrome over a phone-width column, and being
+`fixed` it sat on top of whatever scrolled beneath it.
+
+- **`FloatingAnyaButton`: `bottom-24 … lg:bottom-6` → `bottom-6 hidden lg:block`.**
+  The `bottom-24` offset existed only to clear the mobile tab bar and is dead.
+- ⚠️ **The orb is the only trigger for the persistent chat**, so hiding it
+  outright would have removed `ChatPanel` from mobile entirely. New
+  `AnyaTitleBarButton` (`lg:hidden`, `Sparkles`) sits in the already-frozen
+  title bar next to Theme/Share/Account — same entry point, zero vertical cost.
+- ⚠️ **"Edit Trip" is not the same entry point.** It reaches Anya, but through
+  `openWizard()` — a full-screen config edit that blurs the dashboard and fires
+  the `'back'` feedback prompt. The orb and title-bar button open the
+  refine-in-place chat. Two surfaces; neither substitutes for the other.
+- **Scroll reservation shrank** from `pb-36` (sized for the orb's ~194px band)
+  to `pb-[calc(4.5rem+env(safe-area-inset-bottom))]` — the frozen bar alone.
+  🔴 **If the orb ever returns to mobile this must grow again**, or it will
+  cover the "Get Quotation" CTA and win the tap, exactly as before v10.56.1.
+
+### Regression verification
+- **Frontend:** `tsc --noEmit` clean, production build clean; **9 new tests** —
+  frozen position, `z-30` layering, safe-area inset, scroll reservation, and
+  the title-bar Anya button opening the chat store (`ThreeColumnLayoutTabs`),
+  plus a new `FloatingAnyaButton` suite covering `hidden lg:block`, the dropped
+  `bottom-24`, chat-not-wizard, and hide-while-open. **177 passed** total.
+- **Backend:** untouched — no `apps/api` changes in this pass.
+- ⚠️ **Needs a real phone, and a resized desktop window will not do.** jsdom
+  cannot resolve `100dvh` against a collapsing URL bar and a desktop browser at
+  375px has no collapsing URL bar to begin with — it passes whether or not the
+  bug is there. `docs/eval-set.md` §7C MOB-012 to MOB-014.

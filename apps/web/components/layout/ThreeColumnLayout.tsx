@@ -1,8 +1,9 @@
 'use client'
 
-import { LayoutList, Wallet, Map } from 'lucide-react'
+import { LayoutList, Wallet, Map, Sparkles } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
 import type { MobileTab } from '@/store/appStore'
+import { useChatStore } from '@/store/chatStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { BookingExpensesPanel } from '@/components/dashboard/BookingExpensesPanel'
@@ -42,6 +43,21 @@ function GenerationTierBanner() {
   )
 }
 
+// ── Anya entry point for mobile (the floating orb is desktop-only) ───────────
+function AnyaTitleBarButton() {
+  const openChat = useChatStore((state) => state.open)
+  return (
+    <button
+      type="button"
+      onClick={() => openChat()}
+      aria-label="Open Anya — Wanderplanner concierge"
+      className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--_border)] text-[var(--_fg)] transition-colors hover:border-[var(--_primary)] hover:text-[var(--_primary)] lg:hidden"
+    >
+      <Sparkles size={15} aria-hidden="true" />
+    </button>
+  )
+}
+
 // ── Shared title bar ──────────────────────────────────────────────────────────
 function TitleBar({ destination, days }: { destination: { city: string; country: string } | null; days: number }) {
   return (
@@ -51,6 +67,14 @@ function TitleBar({ destination, days }: { destination: { city: string; country:
           {destination ? `${destination.city}, ${destination.country}` : 'Your Itinerary'} · {days} days
         </p>
         <div className="flex items-center gap-2">
+          {/* Mobile-only Anya entry point, because the floating orb is now
+              desktop-only. Without it the *persistent chat* would be
+              unreachable on a phone: "Edit Trip" reaches Anya too, but via
+              `openWizard()` — a full-screen config edit that fires the 'back'
+              feedback prompt — not the refine-in-place chat this opens.
+              Sized to match its neighbours here rather than to the 44px
+              target used on the auth forms. */}
+          <AnyaTitleBarButton />
           <ThemeToggle className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--_border)] text-[var(--_fg)] transition-colors hover:border-[var(--_primary)] hover:text-[var(--_primary)]" />
           <ShareButton />
           <UserMenu />
@@ -73,7 +97,13 @@ function MobileTabBar({ active, onChange }: { active: MobileTab; onChange: (tab:
   return (
     <nav
       aria-label="Dashboard sections"
-      className="flex shrink-0 border-t border-[var(--_border)] bg-[var(--_card)]"
+      // Frozen to the viewport bottom rather than sitting at the end of the
+      // scroll flow. `z-30` keeps it under the Anya orb (z-40), the feedback
+      // popup (z-50) and the chat panel (z-9998), all of which are meant to
+      // sit over the whole page. The safe-area inset keeps the labels off the
+      // home indicator on notched phones — the previous `pb-safe` spacer was a
+      // no-op, since no such utility is defined in globals.css or the theme.
+      className="fixed inset-x-0 bottom-0 z-30 flex border-t border-[var(--_border)] bg-[var(--_card)] pb-[env(safe-area-inset-bottom)] lg:hidden"
     >
       {tabs.map(({ id, label, Icon }) => (
         <button
@@ -161,16 +191,17 @@ export function ThreeColumnLayout() {
     <div className="flex h-full flex-col overflow-hidden bg-[var(--_bg)] lg:hidden">
       <TitleBar destination={destination} days={days.length} />
 
-      {/* pb-36 reserves the band the floating Anya orb occupies. It is
-          `fixed bottom-24 right-6` and ~98px tall (72px orb + label), so it
-          covers roughly 96–194px above the viewport bottom — which, measured
-          from this container's own bottom edge (it sits above the ~58px tab
-          bar), is about 136px. Without this the orb sits *on top of* whatever
-          has scrolled into that band: it was covering the "Get Quotation" CTA,
-          and since the orb wins the tap, aiming at that button opened the chat
-          instead. Reserved in the layout rather than nudged per-card, because
-          any content can end up there. */}
-      <div className="flex-1 overflow-y-auto pb-36">
+      {/* Reserves the frozen tab bar's height, since `fixed` takes it out of
+          the scroll flow and the last card would otherwise sit under it.
+          4.5rem covers the bar (~51px: 18px icon + 4px gap + 12px label +
+          16px padding + 1px border) with a little slack, plus the home-
+          indicator inset on notched phones.
+
+          This used to be pb-36, reserving the floating Anya orb's ~194px band
+          as well — the orb covered the "Get Quotation" CTA and won the tap.
+          The orb is desktop-only now, so mobile only pays for the tab bar. If
+          it ever returns to mobile, this has to grow again. */}
+      <div className="flex-1 overflow-y-auto pb-[calc(4.5rem+env(safe-area-inset-bottom))]">
         {mobileTab === 'itinerary' && (
           <div className="space-y-4 px-4 py-4">
             {step3View === 'comparison' ? (
@@ -201,9 +232,6 @@ export function ThreeColumnLayout() {
           </div>
         )}
       </div>
-
-      {/* Extra bottom padding so content isn't hidden behind the tab bar */}
-      <div className="shrink-0 pb-safe" aria-hidden="true" />
 
       <MobileTabBar active={mobileTab} onChange={setMobileTab} />
     </div>

@@ -1452,7 +1452,10 @@ stored copies; `status`/`progress`/`error` are excluded from persistence via
 
 "/itinerary" — wizard closed (app/itinerary/page.tsx):
   ThreeColumnLayout shown
-  FloatingAnyaButton: visible → click → chatStore.open()
+  FloatingAnyaButton: visible ≥ lg only → click → chatStore.open()
+  AnyaTitleBarButton: visible < lg only → click → chatStore.open()
+    (since v10.58 — exactly one of the two renders at any width; both are
+     the *persistent chat*, distinct from "Edit Trip" → appStore.openWizard())
   ChatPanel: visible when chatStore.isOpen
 
 "/itinerary" — wizard open (edit flow):
@@ -1494,10 +1497,17 @@ To override inline padding (e.g. icon-padded inputs), use `style={{ paddingLeft:
 ### Scrollable Column Chain
 For `overflow-y-auto` to activate on column children:
 ```
-div.h-screen.flex.flex-col   →  div.flex-1.overflow-hidden
+div.h-dvh.flex.flex-col   →  div.flex-1.overflow-hidden
 →  main.h-full  →  ThreeColumnLayout  →  aside.overflow-y-auto
 ```
 Breaking any link in this chain prevents scrolling. `<main className="h-full">` is critical.
+
+⚠️ **`h-dvh`, not `h-screen` (v10.58).** On mobile `100vh` is the *large*
+viewport — it includes the strip behind the collapsing URL bar — so the column
+is taller than the visible screen and its bottom edge starts below the fold.
+That is a layout bug in its own right, and it is what made the mobile tab bar
+appear only after scrolling to the very end. `100dvh` tracks the visible
+viewport. Any new full-height shell should use `h-dvh` for the same reason.
 
 ### Component Conventions
 - Design tokens via `var(--_*)` CSS custom properties — never hardcode hex colors
@@ -1793,6 +1803,43 @@ instead of the agent) that govern how these tools are meant to be used.
 ---
 
 ## 16. Change Log
+
+### v10.58 (August 2026) — the mobile tab bar is frozen, and the Anya orb leaves the phone
+
+Two live mobile complaints, and fixing the first surfaced a viewport bug that
+had been mis-shaping the whole dashboard.
+
+- **The tab bar is `fixed inset-x-0 bottom-0 z-30`** instead of sitting at the
+  end of the scroll flow. `z-30` keeps it under the orb (z-40), feedback popup
+  (z-50) and chat panel (z-9998), which are all meant to cover the page.
+- 🔴 **The real reason the tabs were only reachable by scrolling was
+  `h-screen`, not the bar's position.** On mobile `100vh` is the *large*
+  viewport — it includes the strip behind the collapsing URL bar — so the
+  `h-screen` column on `/itinerary` was taller than the visible screen and its
+  last child started below the fold. `h-dvh` tracks the visible viewport.
+  Without this fix, `bottom-0` would have been pinned to the wrong edge.
+- ⚠️ **`pb-safe` was a no-op.** The old spacer used a utility that is defined
+  nowhere in `globals.css` or the theme, so notched phones put the tab labels
+  under the home indicator. Replaced with real
+  `pb-[env(safe-area-inset-bottom)]` on the bar itself.
+- **The floating Anya orb is desktop-only.** ~98px of permanent chrome over a
+  phone-width column, and being `fixed` it sat on top of whatever scrolled
+  beneath it. ⚠️ **It is the only trigger for the persistent chat**, so mobile
+  gets `AnyaTitleBarButton` in the frozen title bar rather than losing the
+  feature. "Edit Trip" is *not* the same entry point — it calls
+  `openWizard()`, which replaces the dashboard and fires the `'back'` feedback
+  prompt, because it exists to change trip config rather than ask questions
+  about the plan in place.
+- **The scroll reservation shrank, and that is load-bearing.** It was `pb-36`,
+  sized for the orb's ~194px band; with the orb gone from mobile it is
+  `pb-[calc(4.5rem+env(safe-area-inset-bottom))]` — the frozen bar alone. If
+  the orb ever returns to mobile this has to grow again, or it will cover the
+  "Get Quotation" CTA and win the tap, exactly as it did before v10.56.1.
+- Frontend **177 passed** (+9); `tsc --noEmit` and the production build clean.
+  Backend untouched. See `TECHNICAL_DOCUMENTATION.md` §14 v10.58.0.
+- ⚠️ **Not verified on a real device.** jsdom cannot see `100dvh` resolve
+  against a collapsing URL bar or a home indicator — the exact things this
+  change is about. `docs/eval-set.md` §7C MOB-012 to MOB-014 cover it.
 
 ### v10.57 (August 2026) — the auth card puts both routes at the top
 

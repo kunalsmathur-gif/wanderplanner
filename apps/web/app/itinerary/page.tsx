@@ -63,7 +63,7 @@ export default function ItineraryPage() {
 
   if (!hasItinerary) {
     return (
-      <div className="flex h-screen items-center justify-center" aria-live="polite">
+      <div className="flex h-dvh items-center justify-center" aria-live="polite">
         <span className="text-sm text-[var(--_muted-fg)]">
           {hydrated ? 'No itinerary yet — taking you back…' : 'Loading your itinerary…'}
         </span>
@@ -71,8 +71,14 @@ export default function ItineraryPage() {
     )
   }
 
+  // 🔴 `h-dvh`, not `h-screen`. On mobile `100vh` is the *large* viewport — it
+  // includes the strip behind the collapsing URL bar — so a 100vh column is
+  // taller than what you can actually see, and its last child (the bottom tab
+  // bar) started below the fold. That is why the tabs only showed up once you
+  // scrolled all the way down. `100dvh` tracks the visible viewport, so the
+  // tab bar's `bottom-0` lands on the bottom of the screen.
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex h-dvh flex-col overflow-hidden">
       <div
         className={wizardOpen
           ? 'pointer-events-none flex-1 select-none overflow-hidden opacity-40 blur-sm transition-all'

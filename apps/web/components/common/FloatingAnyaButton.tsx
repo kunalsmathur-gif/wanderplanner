@@ -25,7 +25,19 @@ export function FloatingAnyaButton() {
   }
 
   return (
-    <div className="fixed bottom-24 right-6 z-40 lg:bottom-6">
+    // Desktop only. On a phone the orb is ~98px of permanently-floating
+    // chrome over an already tight column, and it sat directly on top of
+    // whatever scrolled beneath it — it was covering the "Get Quotation" CTA
+    // and winning the tap.
+    //
+    // ⚠️ This is the only trigger for the *persistent chat* (`useChatStore` →
+    // `ChatPanel`) on either breakpoint. "Edit Trip" is not a substitute: it
+    // calls `openWizard()`, which is a different Anya surface — it takes over
+    // the screen, blurs the dashboard and fires the 'back' feedback prompt,
+    // because it exists to change the trip config, not to ask questions about
+    // the plan in place. So mobile gets its own trigger in the title bar
+    // (`ThreeColumnLayout.tsx::AnyaTitleBarButton`); keep the two in step.
+    <div className="fixed bottom-6 right-6 z-40 hidden lg:block">
       <button
         onClick={handleClick}
         className="group flex flex-col items-center gap-1.5 transition-transform hover:scale-105"
