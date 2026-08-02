@@ -374,8 +374,8 @@ the dialog to press.
 
 ## 🧩 Component Updates (August 2, 2026) — Auth card compacted; log-in promoted out of the footer (v10.57.0)
 
-Prompted by a live look at `/signup`. Full detail: `docs/system-design.md` §16
-v10.57.
+Prompted by a live look at `/signup`. Full detail:
+`TECHNICAL_DOCUMENTATION.md` §14 v10.57.0 and `docs/system-design.md` §16 v10.57.
 
 **Two complaints, and they pull against each other.** The card read heavy, and
 the way *out* of it — "Already have an account? Log in" — sat below the card,

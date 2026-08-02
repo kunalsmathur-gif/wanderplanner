@@ -1551,7 +1551,68 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.57.0 Changes (August 2026) — the auth card puts both routes at the top
+
+Frontend **168 passed** (+15), `tsc --noEmit` clean. From a live look at
+`/signup`: the card read heavy, and a returning user's way out of it —
+"Already have an account? Log in" — was the *last* thing on the page, below the
+card, after every field, in `--_muted-fg`.
+
+**New `components/common/AuthSwitch.tsx`** — a segmented Sign up / Log in
+control rendered inside the card above the heading. `AuthLayout` gained an
+optional `switcher` slot for it; `/login` mirrors `/signup`, and
+`/forgot-password` / `/reset-password` pass none, so they are unchanged.
+
+| | Before | After |
+|---|---|---|
+| Log-in affordance | below the card, after the form, `--_muted-fg` | tab 1 of 2, above the heading |
+| Logo top → last element (696×825) | 618px | **580px** |
+| Card | 500px | 513px |
+
+- ⚠️ **Active state is carried by the pill, not by colour — this is a WCAG
+  constraint, not a preference.** The obvious styling (active `--_fg`,
+  inactive `--_muted-fg`) puts the inactive label at **~4.05:1** on the
+  light-mode track — `#64748B` on `#F0F9FF` — and 14px semibold does **not**
+  qualify as WCAG large text (that needs 18.66px bold), so it fails AA. Since
+  the entire point of the change is that the inactive route be easy to see,
+  colour is the wrong channel for active state here. Both labels render at
+  full `--_fg`; `bg-[var(--_card-elevated)]` + a `--_border` ring marks the
+  current route. That choice also fixes dark mode, where the `--_card` pill
+  first tried is nearly invisible on a `--_bg` track — `#0D2236` on `#040D14`
+  is not.
+- ⚠️ **`returnTo` must survive the tab hop, and its failure mode is silent.**
+  `LLMWizard.tsx` (2 call sites) and `ChatPanel.tsx` push
+  `/signup?returnTo=…`; `app/account/page.tsx` and `app/admin/page.tsx` link to
+  `/login?returnTo=…`. A switcher that dropped the param would return the user
+  to `/` after authenticating instead of to the gate that stopped them — no
+  error, no broken link, just the wrong page. Both hrefs are built from the
+  page's own `useSearchParams()` value and pinned by test at all four origins.
+- Tabs are `min-h-11` (44px), matching the touch-target standard already used
+  by the password-reveal button and the consent checkbox on these forms.
+- `aria-current="page"` on the active tab; the wrapper is a `<nav>` labelled
+  "Sign up or log in". Deliberately **not** `role="tablist"` — these are route
+  links, and tab semantics would promise a `tabpanel` that does not exist.
+- **Compaction** (the smaller half; the 70px control eats most of it): card
+  padding `sm:p-8` → `p-5`, form rows `space-y-4` → `space-y-3`, label gaps
+  `mb-1.5` → `mb-1`, logo margin `sm:mb-8` → `sm:mb-6`, children `sm:mt-6` →
+  `mt-4`, and the now-duplicated footer removed from both pages. No page
+  scroll at 696×825 or 375×812.
+
+**Tests** — `__tests__/components/AuthSwitch.test.tsx` (both routes present,
+`aria-current` on the live route only, `returnTo` encoded into both hrefs) and
+`__tests__/components/AuthPages.test.tsx`, parameterised over both pages: the
+switcher precedes the `<form>` in document order (the prominence claim, pinned
+so a later refactor cannot quietly demote it), no duplicated footer link, and
+`returnTo` preserved across the switch for each of the four real deep-link
+origins plus the `/` default.
+
+⚠️ **Not verified by screenshot or on a real device.** The browser pane would
+not composite frames during this session, so every measurement above is DOM
+geometry read via `getBoundingClientRect()` and computed style — the before
+numbers came from `git stash`-ing the change and re-measuring the same page.
+Contrast ratios are arithmetic on token values, not sampled pixels.
 
 ### v10.56.0 Changes (August 2026) — dashboard regrouped around user intent, and the expert card decluttered
 

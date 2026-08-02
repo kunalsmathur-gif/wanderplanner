@@ -1827,7 +1827,8 @@ user's way out of it was the *last* thing on the page.
 - `AuthLayout`'s `switcher` is optional, so `/forgot-password` and
   `/reset-password` are unchanged.
 - Frontend **168 passed** (+15, `__tests__/components/AuthSwitch.test.tsx` and
-  `AuthPages.test.tsx`); `tsc --noEmit` clean. Backend untouched.
+  `AuthPages.test.tsx`); `tsc --noEmit` clean. Backend untouched. See
+  `TECHNICAL_DOCUMENTATION.md` §14 v10.57.0.
 - ⚠️ **Not verified on a real device or by screenshot** — the browser pane
   would not composite frames during this session, so every measurement above is
   DOM geometry and computed style, not pixels. Light and dark tokens were read
