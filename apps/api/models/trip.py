@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -181,3 +182,28 @@ class TripConfig(BaseModel):
         if self.group.has_young_kids and self.pace != "packed":
             return "relaxed"
         return self.pace
+
+    def effective_duration_days(self) -> int | None:
+        """Trip length in days, or None when it genuinely isn't known yet.
+
+        `dates` is a dict and `duration_days` only appears in it when the
+        wizard captured a length explicitly ("about a week"); a trip given
+        concrete start/end dates has no such key. Reading `duration_days`
+        alone therefore returns None for most real trips — which is how the
+        `itinerary_generated` analytics event came to record `days: null`.
+
+        ⚠️ Returns None rather than a default. `chains/recommend_cities_chain.py
+        ::_calc_days` falls back to 7 for the same computation, which is right
+        for prompt-building — a plausible number beats none — and wrong for
+        analytics, where a fabricated 7 is indistinguishable from a real one.
+        """
+        explicit = self.dates.get("duration_days")
+        if explicit is not None:
+            return int(explicit)
+        start, end = self.dates.get("start"), self.dates.get("end")
+        if not start or not end:
+            return None
+        try:
+            return max(1, (date.fromisoformat(end) - date.fromisoformat(start)).days)
+        except (TypeError, ValueError):
+            return None

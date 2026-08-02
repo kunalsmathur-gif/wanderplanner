@@ -80,7 +80,27 @@ async def _stream_generation(trip_config: TripConfig, db: AsyncSession, user: Us
                 db,
                 "itinerary_generated",
                 user_id=user.id,
-                metadata={"destination": getattr(trip_config, "destination", None), "days": getattr(trip_config, "days", None)},
+                # ⚠️ Both fields were wrong, and neither failed loudly.
+                # `destination` passed the `DestinationInput` *model*, which
+                # JSONB cannot encode, so every generation's event was lost at
+                # commit. `trip_config.days` does not exist at all — duration
+                # lives on `dates.duration_days` — so `getattr(..., None)`
+                # quietly recorded null on the rare events that did survive.
+                # Kept to plain scalars: this feeds admin aggregates, not a
+                # replay log, and a dict here is how the first bug happened.
+                metadata={
+                    "destination": (
+                        trip_config.destination.city
+                        if trip_config.destination and trip_config.destination.city
+                        else trip_config.destination_country
+                    ),
+                    # Not `dates.duration_days` — `dates` is a plain dict by
+                    # design, and that key only exists when the wizard captured
+                    # a length explicitly. A trip with concrete start/end dates
+                    # has no such key, which is why this recorded null on the
+                    # events that did survive. The model method derives it.
+                    "days": trip_config.effective_duration_days(),
+                },
             )
         finally:
             # Bug fix: if the client disconnects/aborts mid-generation (e.g.

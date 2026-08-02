@@ -26,6 +26,7 @@ from models.trip import TripConfig
 from services.itinerary_cache import get_cached_itinerary, store_itinerary
 from services.rag_fallback import rag_skeleton_itinerary
 from services.search import retrieve_context, retrieve_itinerary_examples, summarise_context
+from services.visa import entry_cost_prompt_hint
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +37,23 @@ async def _budget_guidance_block(trip_config: TripConfig) -> str:
     mentions) into one prompt-ready block. Best-effort — any retrieval
     failure degrades to just the tier hint, never blocks generation."""
     tier_hint = budget_tier_prompt_hint(trip_config)
+    # The entry-cost lookup joins the existing gather, so grounding `visa_inr`
+    # against the visa corpus adds no wall-clock to a block that already runs
+    # its retrievals concurrently.
+    entry_country = (
+        (trip_config.destination.country if trip_config.destination else None)
+        or trip_config.destination_country
+        or ""
+    )
     try:
-        flight_hint, accommodation_hint = await asyncio.gather(
+        flight_hint, accommodation_hint, entry_hint = await asyncio.gather(
             flight_cost_grounding_hint(trip_config),
             accommodation_cost_grounding_hint(trip_config),
+            entry_cost_prompt_hint(entry_country),
         )
     except Exception:
-        flight_hint, accommodation_hint = "", ""
-    parts = [tier_hint] + [h for h in (flight_hint, accommodation_hint) if h]
+        flight_hint, accommodation_hint, entry_hint = "", "", ""
+    parts = [tier_hint] + [h for h in (flight_hint, accommodation_hint, entry_hint) if h]
     return "\n\n".join(parts)
 
 
@@ -176,6 +186,14 @@ RULES:
 - Each day must have 3-6 activity items with realistic time allocations.
 - Pace guide: relaxed=3-4 items/day, moderate=4-5, packed=5-6.
 - Total activity costs must not exceed the stated budget.
+- ENTRY COSTS: always set `visa_inr` to 0. Visa fees, permits and per-night
+  tourism levies are deliberately EXCLUDED from this estimate, because no
+  reliable fee source backs them — a confident wrong number is worse for the
+  traveller than an absent one. Do not fold them into another field to
+  compensate. If entry costs are material for this destination (a visa fee, a
+  permit, or a per-night levy such as Bhutan's Sustainable Development Fee),
+  say so in the itinerary's prose so the traveller knows to check the official
+  figure — but leave the number out.
 - If kids are present: exclude bars, nightclubs, and extreme sports venues.
 - If persona includes digital_nomad: add one 2-hour Work Block per day at a wifi cafe or coworking space.
 - If persona includes sports_fitness: add one Training Window per day at a gym, trail or sports venue.
@@ -239,7 +257,7 @@ OUTPUT SCHEMA:
   ],
   "expense_breakdown": {{
     "flights_inr": <round-trip economy flights, all passengers>,
-    "visa_inr": <total visa fees all passengers, 0 if visa-free for Indians>,
+    "visa_inr": <total MANDATORY entry cost all passengers — see ENTRY COSTS rule — 0 if none>,
     "accommodation_inr": <nightly rate INR × nights × rooms>,
     "activities_inr": <estimated total entry fees across all days>,
     "food_inr": <food cost per person per day × days × people>,
@@ -431,7 +449,26 @@ def _parse_expense_breakdown(raw: dict, trip_config: TripConfig) -> ExpenseBreak
     people = max(people, 1)
 
     flights = int(raw.get("flights_inr", 0))
-    visa = int(raw.get("visa_inr", 0))
+    # 🔴 Entry/visa cost is ALWAYS excluded — deliberately, and enforced here
+    # rather than asked of the model.
+    #
+    # There is no reliable fee source behind this field. The visa corpus is
+    # Wikivoyage entry *rules*, which rarely state fees and can lag a change,
+    # so any number here came from the model's recollection. Bhutan showed
+    # what that is worth: ₹41,000 of "visa" for a 5-day trip, which is the
+    # international Sustainable Development Fee (USD 100/night) converted to
+    # INR — while Indian nationals need no visa and pay ₹1,200/night. Wrong
+    # rate, wrong label, presented with the same confidence as a real figure.
+    #
+    # Product call: a missing line the traveller knows to check beats a
+    # confident wrong number they budget against. A prompt rule cannot deliver
+    # that — LLMs have no calibrated sense of when they are guessing — so the
+    # zero is applied deterministically and the prompt is merely told to match.
+    #
+    # ⚠️ This means the total UNDERSTATES trips with a real entry cost. That is
+    # the accepted trade-off, and it is why the surface must say "not
+    # included" rather than letting a zero read as "free".
+    visa = 0
     accommodation = int(raw.get("accommodation_inr", 0))
     activities = int(raw.get("activities_inr", 0))
     food = int(raw.get("food_inr", 0))

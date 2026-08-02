@@ -74,3 +74,47 @@ async def retrieve_visa_note(country: str, query: str = "") -> str:
         lines.append(f"Source: {source}")
     lines.append("Always confirm with the destination's official immigration site before booking.")
     return "\n".join(lines)
+
+
+# ── Cost-estimation grounding ────────────────────────────────────────────────
+# The `visa_inr` slot in the itinerary and feasibility prompts was a bare
+# "<total visa fees for all passengers>" with nothing behind it, so the number
+# came from the model's parametric memory while this corpus — scraped,
+# embedded, refreshed on a schedule — went unread by the two chains that
+# actually produce it. Bhutan is the case that exposed it: ₹41,000 of "visa"
+# for a 5-day trip, which is the international Sustainable Development Fee of
+# USD 100/night converted to INR. Indians need no visa for Bhutan and pay an
+# SDF of ₹1,200/night, so the estimate was wrong twice over — the wrong rate,
+# under the wrong label.
+_ENTRY_COST_QUERY = "visa fee cost permit entry requirements for Indian citizens"
+
+
+async def entry_cost_prompt_hint(country: str) -> str:
+    """Grounding for what the plan *says* about entry rules — not for a number.
+
+    ⚠️ `visa_inr` is forced to 0 in both chains, so this block must never be
+    framed as "use this to price the visa". It exists because the prose is now
+    the only channel for entry-cost information, and prose that names a real
+    permit or levy is worth far more than prose hedging in the abstract.
+
+    ⚠️ **Coverage is a fixed list of 73 seed countries and there is no
+    real-time fetch.** `_refresh_visa_info` walks `VISA_SEED_COUNTRIES` on a
+    schedule; the cold-start path in `services/destination_ingestion.py`
+    ingests OSM, Wikivoyage and YouTube for an unseen destination but **not**
+    visa rules. So an off-list country (Uzbekistan, Rwanda, Bolivia…) yields ""
+    here, permanently, and the model falls back to describing entry
+    requirements from its own recollection. That is tolerable only because the
+    fee itself is excluded — the failure mode is vaguer prose, not a wrong
+    number.
+
+    Best-effort throughout: `retrieve_visa_note` never raises, and an empty
+    corpus yields "" rather than blocking a generation.
+    """
+    note = await retrieve_visa_note(country, query=_ENTRY_COST_QUERY)
+    if not note:
+        return ""
+    return (
+        "ENTRY-REQUIREMENT GROUNDING (for what you say about permits/levies in "
+        "prose — do NOT turn this into a cost figure; `visa_inr` stays 0):\n"
+        f"{note}"
+    )

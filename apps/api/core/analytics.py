@@ -5,15 +5,56 @@ request it's attached to (auth, itinerary generation, external API calls).
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
+from typing import Any
 
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.llm_usage import get_usage
 from db_models import Event
 
 _log = logging.getLogger("wanderplanner.analytics")
+
+
+def _fallback(obj: Any) -> Any:
+    """Last-resort encoder for values `json` refuses."""
+    if isinstance(obj, BaseModel):
+        return obj.model_dump(mode="json")
+    if isinstance(obj, uuid.UUID):
+        return str(obj)
+    return str(obj)
+
+
+def _json_safe(metadata: dict | None) -> dict | None:
+    """Coerce `metadata` into something the JSONB column can actually store.
+
+    🔴 Without this a single unserialisable value silently destroys the event.
+    `event_metadata` is JSONB, so the encode happens inside `db.commit()` — the
+    `db.add()` above it succeeds, the failure surfaces as a `StatementError`
+    from the flush, and the whole event is rolled back and lost. That is not
+    hypothetical: `itinerary_generated` was passing a `DestinationInput` model
+    straight through and had been failing on **every** generation in
+    production, for every destination, which zeroed the admin dashboard's
+    generation count while looking perfectly healthy from the request's side
+    (logging is fire-and-forget, so nothing surfaced to the user).
+
+    Coercion is deliberately lossy-but-total: a wrong-shaped value should cost
+    fidelity in one field, never the entire event.
+    """
+    if metadata is None:
+        return None
+    try:
+        json.dumps(metadata)
+        return metadata
+    except (TypeError, ValueError):
+        _log.warning(
+            "Analytics metadata was not JSON-serialisable; coercing. Keys: %s",
+            sorted(metadata.keys()),
+        )
+        return json.loads(json.dumps(metadata, default=_fallback))
 
 
 async def log_event(
@@ -24,7 +65,13 @@ async def log_event(
     metadata: dict | None = None,
 ) -> None:
     try:
-        db.add(Event(event_type=event_type, user_id=user_id, event_metadata=metadata))
+        db.add(
+            Event(
+                event_type=event_type,
+                user_id=user_id,
+                event_metadata=_json_safe(metadata),
+            )
+        )
         await db.commit()
     except Exception:
         _log.exception("Failed to log analytics event %s", event_type)

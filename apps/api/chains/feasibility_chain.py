@@ -12,6 +12,7 @@ from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize
 from models.feasibility import AlternativeDestination, CostBreakdown, FeasibilityResponse
 from models.trip import TripConfig
+from services.visa import entry_cost_prompt_hint
 
 FEASIBILITY_PROMPT = """\
 You are a travel cost expert. Estimate the realistic total cost (in Indian Rupees) for the
@@ -29,7 +30,7 @@ TRIP DETAILS:
 OUTPUT SCHEMA (valid JSON only, no markdown):
 {{
   "flights_inr": <round-trip economy flight cost per person × total passengers>,
-  "visa_inr": <total visa fees for all passengers, 0 if visa-free for Indians>,
+  "visa_inr": <total MANDATORY entry cost for all passengers — see ENTRY COSTS rule — 0 if none>,
   "accommodation_inr": <avg nightly rate in INR × number of nights × number of rooms needed>,
   "daily_expenses_inr": <food + activities + local transport per person per day × days × people>,
   "total_estimated_inr": <sum of all above>,
@@ -52,6 +53,15 @@ RULES:
 - If budget is clearly insufficient, suggest 2-3 cheaper alternatives that offer similar experiences.
 - If budget is sufficient, still suggest 1-2 alternative destinations for variety.
 - Keep alternatives realistic for Indian passport holders.
+
+ENTRY COSTS — always set `visa_inr` to 0:
+- Visa fees, permits and per-night tourism levies are deliberately EXCLUDED
+  from this estimate. No reliable fee source backs them, and a confident wrong
+  number is worse for the traveller than an absent one.
+- Do not fold them into `daily_expenses_inr` or any other field to compensate.
+- If entry costs are material for this destination, mention it in `verdict` so
+  the traveller knows to check the official figure — but leave the number out.
+
 - Return ONLY valid JSON matching the schema above.
 """
 
@@ -121,14 +131,25 @@ async def check_feasibility(trip_config: TripConfig) -> FeasibilityResponse:
     # a retrieval hiccup degrades to "no extra grounding", never blocks the
     # feasibility check.
     budget_tier_hint = budget_tier_prompt_hint(trip_config)
+    # The visa lookup joins the existing gather rather than being awaited
+    # separately, so grounding the entry cost costs no extra wall-clock on a
+    # path that already runs two retrievals concurrently.
+    entry_country = (
+        (trip_config.destination.country if trip_config.destination else None)
+        or trip_config.destination_country
+        or ""
+    )
     try:
-        flight_hint, accommodation_hint = await asyncio.gather(
+        flight_hint, accommodation_hint, entry_hint = await asyncio.gather(
             flight_cost_grounding_hint(trip_config),
             accommodation_cost_grounding_hint(trip_config),
+            entry_cost_prompt_hint(entry_country),
         )
     except Exception:
-        flight_hint, accommodation_hint = "", ""
-    cost_grounding_hint = "\n\n".join(h for h in (flight_hint, accommodation_hint) if h)
+        flight_hint, accommodation_hint, entry_hint = "", "", ""
+    cost_grounding_hint = "\n\n".join(
+        h for h in (flight_hint, accommodation_hint, entry_hint) if h
+    )
 
     client = google_genai.Client(api_key=settings.gemini_api_key)
     prompt = FEASIBILITY_PROMPT.format(
@@ -224,7 +245,15 @@ def _build_response(
 
     breakdown = CostBreakdown(
         flights_inr=llm_flights,
-        visa_inr=int(data.get("visa_inr", 0)),
+        # 🔴 Always 0 — entry/visa cost is deliberately excluded, enforced here
+        # rather than trusted to the prompt. See the identical gate in
+        # `chains/itinerary_chain.py::_parse_expense_breakdown` for the full
+        # reasoning: no reliable fee source exists, and Bhutan surfaced the
+        # cost of pretending otherwise (₹41,000 of "visa" on a 5-day trip —
+        # the international USD 100/night levy, for a traveller who needs no
+        # visa and pays ₹1,200/night). A model cannot tell us when it is
+        # guessing, so the exclusion has to be structural.
+        visa_inr=0,
         accommodation_inr=llm_accommodation,
         daily_expenses_inr=int(data.get("daily_expenses_inr", 0)),
         total_estimated_inr=total,
@@ -269,7 +298,10 @@ def _mock_feasibility(trip_summary: dict, budget_inr: int) -> FeasibilityRespons
     people = trip_summary.get("total_people", 2)
 
     flights = 35000 * people
-    visa = 6500 * people
+    # 0, matching the live path: entry/visa cost is excluded everywhere, so the
+    # mock must not be the one surface that shows a figure — a dev or eval run
+    # would then be validating a number production never produces.
+    visa = 0
     accommodation = 4500 * nights
     daily = 3000 * nights * people
     total = flights + visa + accommodation + daily
