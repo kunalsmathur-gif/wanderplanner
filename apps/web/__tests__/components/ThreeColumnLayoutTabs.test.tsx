@@ -116,7 +116,7 @@ describe('ThreeColumnLayout — mobile tabs', () => {
     // a row that already holds Theme, Share and Account.
     render(<ThreeColumnLayout />)
 
-    expect(screen.queryByRole('button', { name: /Open Anya/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Ask Anya/i })).not.toBeInTheDocument()
   })
 
   it('marks the active tab for assistive technology', async () => {

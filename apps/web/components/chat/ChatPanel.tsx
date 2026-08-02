@@ -173,7 +173,12 @@ export function ChatPanel() {
           </div>
           <div>
             <p className="text-sm font-semibold text-white">Anya</p>
-            <p className="text-xs text-white/70">Your AI travel concierge</p>
+            {/* Says the job, not the persona. This was "Your AI travel
+                concierge" — word for word what the wizard's header also said,
+                so once either was open nothing distinguished them. The split
+                that matters is who asks: the wizard questions you through a
+                setup, here you question it about the plan on screen. */}
+            <p className="text-xs text-white/70">Ask about this plan</p>
           </div>
         </div>
         <div className="flex items-center gap-1">

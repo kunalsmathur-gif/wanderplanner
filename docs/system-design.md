@@ -1804,6 +1804,41 @@ instead of the agent) that govern how these tools are meant to be used.
 
 ## 16. Change Log
 
+### v10.62 (August 2026) — the two Anya surfaces say which one they are
+
+- 🔴 **Both introduced themselves with the same words.** The wizard header read
+  "Anya / AI travel concierge"; the orb chat's read "Anya / Your AI travel
+  concierge". Two surfaces that both change the trip, and nothing on screen
+  said which one you were in or what it was for.
+- **Headers now name the job, not the persona** — wizard: "Guided — setting up
+  your trip", or "Guided — changing your trip" when reopened from Edit Trip
+  (new `isEditingTrip` state mirroring the bootstrap effect's `isEditMode`);
+  chat: "Ask about this plan".
+- **Entry points too**, since that is where the choice is actually made: the
+  orb is "Ask Anya about this plan" (tooltip and `aria-label`, replacing "Chat
+  with Anya" / "Open Anya"), and Edit Trip gains a title saying Anya walks you
+  through it step by step.
+- **The distinction is who asks.** The wizard questions you through a setup;
+  the chat is questioned about the plan on screen.
+- ⭐ **Decision: chips are not coming to the orb chat.** A chip answers a
+  pending question — the wizard always has one, free chat never does.
+  Attaching them to open turns narrows what users believe they may ask and
+  forces the model to judge per-turn when chips help. Multi-select is worse
+  still: "pick several, then continue" needs a *next* question to continue to.
+  `ChatPanel` already handles its one genuinely closed-set moment — the
+  regenerate confirmation — with a purpose-built pair of buttons, which is the
+  right shape. `core/chips.py` (v10.61) stays as the single tested
+  implementation, shared-*ready* rather than currently shared; its docstring
+  carries this reasoning.
+- ⚠️ **This revises the two-entry-point question.** The earlier working
+  conclusion was that the chat could absorb Edit Trip once it had chips. With
+  chips off the table the surfaces are doing genuinely different jobs — the
+  wizard's edit checkpoint is a *menu*, which beats free text for structural
+  changes — so both stay. The problem was never duplication; it was that they
+  were indistinguishable.
+- Frontend **190 passed** (+1); `tsc --noEmit` and the production build clean.
+  Wizard header verified in the browser, not only by test. Backend untouched.
+
 ### v10.60 (August 2026) — the Anya orb returns to mobile, smaller and unlabelled
 
 Partially reverses v10.58's removal, on live feedback: taking the orb off

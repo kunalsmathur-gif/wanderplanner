@@ -1551,7 +1551,63 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.62.0 Changes (August 2026) — the two Anya surfaces say which one they are
+
+Frontend **190 passed** (+1), `tsc --noEmit` clean, production build clean.
+Backend untouched.
+
+🔴 **Both surfaces introduced themselves with identical copy.**
+`LLMWizard.tsx` header: "Anya" / "AI travel concierge". `ChatPanel.tsx` header:
+"Anya" / "Your AI travel concierge". Two surfaces that both mutate
+`tripConfigStore` and can both trigger regeneration, and nothing on screen told
+the user which one they had opened or what it was good for.
+
+| Surface | Was | Now |
+|---|---|---|
+| `LLMWizard` header | "AI travel concierge" | "Guided — setting up your trip" / "Guided — changing your trip" |
+| `ChatPanel` header | "Your AI travel concierge" | "Ask about this plan" |
+| Orb tooltip | "Chat with Anya" | "Ask Anya about this plan" |
+| Orb `aria-label` | "Open Anya — Wanderplanner concierge" | "Ask Anya about this plan" |
+| Edit Trip | label only | + title: "…Anya walks you through it step by step" |
+
+- **The wizard subtitle is mode-aware.** New `isEditingTrip` state, set from
+  the bootstrap effect's existing `isEditMode` branch. Held as state rather
+  than recomputed at render because that condition reads `tripConfigStore` and
+  `itineraryStore` *as they were at bootstrap* — after an edit-mode bootstrap
+  the same expression evaluated at render would read differently.
+- **Entry points were changed too, not just the surfaces.** The choice happens
+  before either opens; differentiating only the headers would tell the user
+  what they picked after they had already picked it.
+- **The organising idea is who asks.** The wizard questions you through a
+  setup; the chat is questioned about the plan on screen.
+
+⭐ **Decision recorded: chips are not coming to `ChatPanel`.** v10.61 extracted
+`core/chips.py` as step 1 of adding them; steps 2 and 3 were dropped. A chip is
+an answer to a *pending question* — the wizard always has one because it is
+slot-filling one field at a time, which is why chips there behave as form
+controls. Free chat has no pending question, so chips on open turns narrow what
+users believe they may ask and force the model to judge per-turn when chips
+help. Multi-select compounds it: "pick several, then continue" needs a next
+question to continue to. `ChatPanel` already handles its single closed-set
+moment — the regenerate confirmation — with a purpose-built button pair
+(`pendingAction`), which is the correct shape for that moment.
+
+⚠️ **This revises the earlier read on the two entry points.** The working
+conclusion had been that `ChatPanel` could absorb Edit Trip once it had chips.
+With chips off the table, the surfaces are doing different jobs — the wizard's
+edit checkpoint (`Change destination · Change dates · Change budget · Add/change
+themes · Regenerate as-is`) is a *menu*, and a menu beats free text for
+structural change. Both stay. The defect was never duplication; it was that
+they were indistinguishable. `core/chips.py` stays regardless: one tested
+implementation beats two untested copies, which is the v10.46
+`normalise_choice_fields` lesson.
+
+**Tests** — the orb's `aria-label` change broke two existing selectors
+(`/Open Anya/i`), caught by the suite and updated; a new case pins that the
+entry point names the job and that "Chat with Anya" is gone. The wizard header
+was additionally verified in a real browser rather than only asserted.
 
 ### v10.60.0 Changes (August 2026) — the Anya orb returns to mobile, smaller and unlabelled
 

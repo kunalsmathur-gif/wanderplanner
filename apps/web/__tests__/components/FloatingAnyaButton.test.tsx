@@ -43,7 +43,19 @@ describe('FloatingAnyaButton', () => {
     render(<FloatingAnyaButton />)
 
     expect(screen.queryByText('Anya')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Open Anya/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Ask Anya/i })).toBeInTheDocument()
+  })
+
+  it('names the job, not just the persona', () => {
+    // ⚠️ "Chat with Anya" said nothing about how this differs from "Edit
+    // Trip", which reaches the same assistant through the guided wizard. Both
+    // are Anya and both change the trip, so the entry points are the only
+    // place a user can tell them apart *before* committing to one.
+    render(<FloatingAnyaButton />)
+
+    expect(screen.getByRole('button', { name: /Ask Anya about this plan/i })).toBeInTheDocument()
+    expect(screen.getByText(/Ask Anya about this plan/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Chat with Anya/i)).not.toBeInTheDocument()
   })
 
   it('sits above the frozen tab bar on mobile, and at the corner from lg up', () => {
@@ -62,7 +74,7 @@ describe('FloatingAnyaButton', () => {
     // the dashboard and fires the 'back' feedback prompt.
     render(<FloatingAnyaButton />)
 
-    return userEvent.click(screen.getByRole('button', { name: /Open Anya/i })).then(() => {
+    return userEvent.click(screen.getByRole('button', { name: /Ask Anya/i })).then(() => {
       expect(useChatStore.getState().isOpen).toBe(true)
       expect(useAppStore.getState().wizardOpen).toBe(false)
     })

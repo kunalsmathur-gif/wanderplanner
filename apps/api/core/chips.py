@@ -5,13 +5,27 @@ Whether a group is *multi*-select — pick several, then continue — or
 single-select — one tap submits — is decided **here, server-side and
 deterministically**, and shipped to the client as a boolean.
 
-⚠️ **This module exists so that a second chat surface cannot drift from the
-first.** `wizard_chat_chain` owned this logic privately; when `chat_refine_chain`
-grew chips it would have needed the same rules, and this codebase has already
-paid for that pattern once — v10.46's `normalise_choice_fields` had to be
-applied at *two* independent patch-merge points, and fixing only one would have
-fixed nothing. Any new chain that emits chips imports from here rather than
-copying.
+⚠️ **Only `wizard_chat_chain` emits chips today, and that is deliberate.**
+This module was extracted (v10.61) while preparing to give the orb chat the
+same chip UI; that plan was then dropped, and the reasoning is worth keeping
+because it will come up again. A chip is an *answer to a pending question* —
+the wizard always has one, since it is slot-filling one field at a time, so
+chips there are effectively form controls. The orb chat has no pending
+question: the user drives, and most turns are open ("is day 3 too packed?").
+Attaching chips to open turns narrows what users believe they may ask, and
+forces the model to judge per-turn when chips help — a judgement it will get
+wrong in the user's face. Multi-select is worse: "pick several, then continue"
+needs a *next question* to continue to, which free chat does not have.
+`ChatPanel` handles its one genuinely closed-set moment — the regenerate
+confirmation — with a purpose-built pair of buttons instead, which is the
+right shape.
+
+So this module is shared-*ready* rather than currently shared. It stays here
+regardless, because the alternative to one tested implementation is two
+untested copies, and this codebase has already paid for that pattern once:
+v10.46's `normalise_choice_fields` had to be applied at *two* independent
+patch-merge points, and fixing only one would have fixed nothing. Any chain
+that does grow chips imports from here rather than copying.
 
 ⚠️ **Chip labels must stay in English even when the conversation is not.**
 Classification is keyword-based, so a translated chip fails the theme test and

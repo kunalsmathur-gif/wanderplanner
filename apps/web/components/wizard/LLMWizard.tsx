@@ -160,6 +160,14 @@ export function LLMWizard() {
   const voiceLangAskedRef = useRef(false)
   // Per-message selection set, only used for multi-select theme chip groups
   const [themeSelections, setThemeSelections] = useState<Record<string, Set<string>>>({})
+  // Header copy only. This wizard and the orb chat are both "Anya", both
+  // change the trip, and until now both introduced themselves with the same
+  // words — so nothing told the user which surface they were in or what it
+  // was for. The header is where that gets said, and reopening from "Edit
+  // Trip" is a different job from first-run setup. Mirrors the bootstrap
+  // effect's `isEditMode`; held as state because that condition reads the
+  // stores as they were at bootstrap, not at render.
+  const [isEditingTrip, setIsEditingTrip] = useState(false)
 
   // Always-current ref so sendMessage never reads stale partialConfig
   const partialConfigRef = useRef<Partial<TripConfig>>({})
@@ -301,6 +309,7 @@ export function LLMWizard() {
       && REQUIRED_LABELS.every(({ key }) => _isFieldFilled(key, existingConfig))
 
     if (isEditMode) {
+      setIsEditingTrip(true)
       setPartialConfig({ ...existingConfig, _checkpoint_asked: true } as Partial<TripConfig>)
 
       const destLabel = existingConfig.destination_mode === 'country'
@@ -753,7 +762,13 @@ export function LLMWizard() {
             <WanderplannerLogo size="sm" inverted />
             <div>
               <p className="text-sm font-bold leading-tight">Anya</p>
-              <p className="text-xs text-white/70">AI travel concierge</p>
+              {/* Says the job, not the persona — "AI travel concierge" was
+                  also the orb chat's subtitle, so the two surfaces were
+                  indistinguishable once open. Here Anya asks and you answer;
+                  in the chat you ask. */}
+              <p className="text-xs text-white/70">
+                {isEditingTrip ? 'Guided — changing your trip' : 'Guided — setting up your trip'}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
