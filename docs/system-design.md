@@ -1804,6 +1804,39 @@ instead of the agent) that govern how these tools are meant to be used.
 
 ## 16. Change Log
 
+### v10.60 (August 2026) — the Anya orb returns to mobile, smaller and unlabelled
+
+Partially reverses v10.58's removal, on live feedback: taking the orb off
+mobile and replacing it with a title-bar icon looked worse than the footprint
+it saved. The footprint was the real complaint, so the answer is size, not
+removal.
+
+- **`FloatingAnyaButton` renders at every breakpoint again** — **44px** on
+  mobile (still a full touch target at its smallest), the original 72px from
+  `lg` up.
+- **`ListeningOrb` gained `svgClassName`**, replacing its hardcoded
+  `width`/`height`. One element now scales per breakpoint through the
+  `viewBox`; the alternative — two orbs behind `lg:hidden`/`hidden lg:block` —
+  would run both breathing animations for the life of the page.
+- **The "Anya" text label is gone at every width.** It added height for no
+  affordance and, being wider than the orb, overlapped neighbouring text. The
+  name survives in the hover tooltip and the button's `aria-label`.
+- **`AnyaTitleBarButton` removed.** It was a stand-in while the orb was off
+  mobile; with the orb back it is a second trigger cluttering a row that
+  already holds Theme, Share and Account.
+- ⚠️ **The mobile offset is `bottom-[calc(3.5rem+env(safe-area-inset-bottom))]`,
+  not the pre-v10.58 `bottom-24`** — it now has to clear the *frozen* tab bar,
+  so it is expressed as that bar's height plus the home-indicator inset. A
+  magic number drifts the moment the bar changes.
+- 🔴 **The scroll reservation moved back up to
+  `pb-[calc(7rem+env(safe-area-inset-bottom))]`.** v10.58 shrank it to
+  `4.5rem` when the orb left mobile and explicitly warned it would have to
+  grow again if the orb came back; this is that. When the reservation and the
+  orb disagree, the orb sits *on* the last card's CTA and wins the tap —
+  exactly how it covered "Get Quotation" before v10.56.1.
+- Frontend **189 passed**; `tsc --noEmit` and the production build clean.
+  Backend untouched.
+
 ### v10.59 (August 2026) — day photos move off the generation path to the Download button
 
 - 🔴 **Every itinerary was awaiting a metered Pexels batch for images most

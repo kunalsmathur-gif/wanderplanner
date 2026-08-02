@@ -851,14 +851,17 @@ keyboard cover a field, or a bottom sheet sit under a notch.
 | MOB-008 | Quote modal on a phone | Tap the quotation CTA in the expert card | Opens as a **bottom sheet**; focus lands on the first field, not Close; Escape dismisses | Fields sit above the keyboard; background does not scroll behind it | P0 |
 | MOB-009 | Desktop mirrors the mobile grouping | ≥ 1024px | The same three groupings in the same order across the three columns | No section appears in a different group than it does on mobile | P1 |
 | MOB-010 | Before a trip exists | Mobile, "Booking & Expenses" tab, no destination yet | Only "my bookings" renders; expenses/expert/booking links are hidden rather than empty | No cards with nothing to price or link to | P2 |
-| MOB-011 | Anya orb never covers a control | Scroll each of the 3 tabs to the very bottom, **≥1024px only** | The floating orb overlaps no button, link or field | Orb's bounding rect intersects zero interactive elements | P0 |
+| MOB-011 | Anya orb never covers a control | Scroll each of the 3 tabs to the very bottom, mobile **and** ≥1024px | The floating orb overlaps no button, link or field | Orb's bounding rect intersects zero interactive elements | P0 |
 | MOB-012 | Tab bar is frozen, not scrolled to | Mobile; scroll each tab from top to bottom | The bar stays flush to the bottom of the **visible** screen the whole way, including at first paint before any scroll | Bar's rect never moves; visible without scrolling on a fresh load | P0 |
 | MOB-013 | Tab bar clears the home indicator | Notched phone (iPhone 14/15, Android gesture nav) | Labels sit above the home indicator, not under it | `env(safe-area-inset-bottom)` applied; no label clipped | P1 |
-| MOB-014 | Anya is reachable on mobile | Mobile, itinerary open | No floating orb anywhere; the title bar has an Anya button that opens the **persistent chat panel** | Orb absent < 1024px; title-bar button opens ChatPanel, not the wizard | P0 |
+| MOB-014 | Anya on mobile: one trigger, the small orb | Mobile, itinerary open | The 44px orb floats just above the tab bar and opens the **persistent chat panel**; no Anya button in the title bar, no "Anya" text under the orb | Orb present < 1024px and clears the tab bar; opens ChatPanel, not the wizard; title bar holds only Theme/Share/Account | P0 |
 
-⚠️ **MOB-011 is desktop-only from v10.58** — the orb no longer renders below
-`lg`, so the mobile half of this case is now MOB-014 (the orb must be *absent*)
-rather than an overlap check. It was a real defect (reported 2026-08-01): the
+⚠️ **MOB-011 covers both breakpoints again from v10.60.** v10.58 pulled the orb
+off mobile and this note briefly said "desktop-only"; v10.60 brought it back at
+44px, so the mobile overlap check is live once more — and it is the case most
+likely to catch a regression, because the reservation
+(`pb-[calc(7rem+env(safe-area-inset-bottom))]`) and the orb's size/offset have
+to stay in agreement by hand. It was a real defect (reported 2026-08-01): the
 orb is `fixed` and the scroll container reserved no space for it, so it sat on
 top of the "Get Quotation" CTA — and since the orb wins the tap, aiming at that
 button opened the chat instead. jsdom has no layout engine, so every element

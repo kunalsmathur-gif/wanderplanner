@@ -1551,7 +1551,61 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+
+### v10.60.0 Changes (August 2026) — the Anya orb returns to mobile, smaller and unlabelled
+
+Frontend **189 passed**, `tsc --noEmit` clean, production build clean. Backend
+untouched.
+
+**Partially reverses v10.58**, on live feedback. That change pulled the orb off
+mobile and substituted a `Sparkles` button in the title bar; the substitute
+looked worse than the footprint it saved. The footprint was the real complaint,
+so the fix is size, not removal.
+
+| | v10.58 | v10.60 |
+|---|---|---|
+| Mobile orb | not rendered | **44px**, `bottom-[calc(3.5rem+env(safe-area-inset-bottom))] right-4` |
+| Desktop orb | 72px, `bottom-6 right-6` | unchanged |
+| Text label | "Anya" under the orb | **removed at every width** |
+| Title-bar trigger | `AnyaTitleBarButton` (`lg:hidden`) | **removed** |
+| Scroll reservation | `4.5rem` | **`7rem`** + safe-area |
+
+- **`ListeningOrb` gained `svgClassName`** (default `h-[72px] w-[72px]`,
+  preserving every existing caller), replacing hardcoded `width`/`height`
+  attributes. Sizing through classes lets one element scale per breakpoint via
+  the `viewBox`. Rendering two orbs behind `lg:hidden`/`hidden lg:block` would
+  have worked visually but runs both breathing animations for the life of the
+  page.
+- **The label is gone at every width, not just mobile.** It added height for
+  no affordance and, being wider than the orb, overlapped whatever sat beside
+  it. The name survives in the hover tooltip and the button's `aria-label`, so
+  assistive tech loses nothing; the wrapper drops to
+  `flex items-center justify-center`.
+- ⚠️ **The mobile offset is not the pre-v10.58 `bottom-24`.** The tab bar is
+  `fixed` now, so the orb has to clear *it* — the offset is that bar's height
+  (~51px) plus the home-indicator inset, expressed as a `calc` so it tracks
+  the bar rather than drifting from it.
+- 🔴 **`pb-[calc(4.5rem+…)]` → `pb-[calc(7rem+…)]` on the mobile scroll
+  container.** v10.58 shrank this when the orb left and wrote down that it
+  would have to grow again if the orb returned — this is that follow-through.
+  Mobile geometry: bar ~51px flush to the bottom; orb bottom edge at 56px +
+  inset, 44px tall, so its top edge is ~100px up. 7rem (112px) clears both
+  with slack. When this number and the orb disagree the orb sits *on* the last
+  card's CTA and wins the tap, which is exactly how it covered "Get Quotation"
+  before v10.56.1.
+
+**Tests** — `FloatingAnyaButton.test.tsx` rewritten for the new contract
+(renders at every breakpoint, `h-11 w-11 lg:h-[72px] lg:w-[72px]`, no text
+label, the tab-bar-clearing offset); `ThreeColumnLayoutTabs.test.tsx` swaps its
+title-bar-Anya case for one asserting Anya is *absent* from the title bar, and
+its reservation assertion moves to `7rem`. The `ListeningOrb` mock now captures
+`svgClassName` so the responsive sizing is actually asserted rather than
+assumed.
+
+⚠️ **Not verified on a real device.** jsdom asserts class contracts; it cannot
+show a 44px orb against a real 375px viewport, or confirm it clears a home
+indicator. `docs/eval-set.md` §7C MOB-011 and MOB-014 cover it.
 
 ### v10.59.0 Changes (August 2026) — day photos move off the generation path to the Download button
 

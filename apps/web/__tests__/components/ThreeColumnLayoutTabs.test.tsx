@@ -90,14 +90,14 @@ describe('ThreeColumnLayout — mobile tabs', () => {
     expect(screen.getByRole('navigation', { name: 'Dashboard sections' })).toHaveClass('z-30')
   })
 
-  it('reserves scroll-container space for the frozen tab bar', () => {
-    // `fixed` takes the bar out of the flow, so without a reservation the last
-    // card sits underneath it. Sized for the bar alone — the Anya orb, which
-    // the old pb-36 also covered, is desktop-only now.
+  it('reserves scroll-container space for the frozen bar and the orb', () => {
+    // Both are `fixed`, so neither takes space in the flow. When this number
+    // and the orb disagree, the orb sits on the last card's CTA and wins the
+    // tap — which is exactly how it covered "Get Quotation" before v10.56.1.
     const { container } = render(<ThreeColumnLayout />)
     const scroller = container.querySelector('.overflow-y-auto')
 
-    expect(scroller?.className).toMatch(/pb-\[calc\(4\.5rem\+env\(safe-area-inset-bottom\)\)\]/)
+    expect(scroller?.className).toMatch(/pb-\[calc\(7rem\+env\(safe-area-inset-bottom\)\)\]/)
   })
 
   it('clears the home indicator on notched phones', () => {
@@ -110,19 +110,13 @@ describe('ThreeColumnLayout — mobile tabs', () => {
     )
   })
 
-  describe('Anya entry point', () => {
-    it('offers Anya from the title bar on mobile', async () => {
-      // The floating orb is desktop-only now; without this the persistent chat
-      // would be unreachable on a phone. "Edit Trip" is not a substitute — it
-      // opens the wizard, a different surface.
-      render(<ThreeColumnLayout />)
+  it('keeps Anya out of the title bar', () => {
+    // The v10.58 title-bar button was a stand-in while the orb was off mobile.
+    // The orb is back (smaller), so a second trigger would just be clutter in
+    // a row that already holds Theme, Share and Account.
+    render(<ThreeColumnLayout />)
 
-      const anya = screen.getAllByRole('button', { name: /Open Anya/i })[0]
-      expect(anya).toHaveClass('lg:hidden')
-
-      await userEvent.click(anya)
-      expect(useChatStore.getState().isOpen).toBe(true)
-    })
+    expect(screen.queryByRole('button', { name: /Open Anya/i })).not.toBeInTheDocument()
   })
 
   it('marks the active tab for assistive technology', async () => {

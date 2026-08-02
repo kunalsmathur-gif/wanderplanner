@@ -199,7 +199,7 @@ The Anya chat modal's backdrop was a flat, bland solid overlay (`bg-black/50` in
 ### Floating Anya button overlapping bottom mobile nav — `FloatingAnyaButton.tsx`
 On the itinerary dashboard, the floating chat-launcher button sat at a fixed `bottom-6`, which overlapped the mobile bottom tab bar (Timeline/Map/Tips). Repositioned to `bottom-24` on mobile, keeping `lg:bottom-6` unchanged on desktop where there's no bottom nav to collide with.
 
-> **Superseded in v10.58.0** — the orb no longer renders below `lg` at all, so there is nothing left to collide with and the `bottom-24` offset has been removed. See the v10.58.0 section at the end of this document.
+> **Superseded twice.** v10.58.0 stopped rendering the orb below `lg` at all, removing the `bottom-24` offset with it. v10.60.0 brought it back at 44px, because removing it looked worse than the footprint it saved — the collision is live again, but the offset is now `bottom-[calc(3.5rem+env(safe-area-inset-bottom))]`, derived from the (now frozen) tab bar's height rather than hardcoded. See the v10.60.0 section at the end of this document.
 
 ### Full Map View "✕ Close" button unreachable — `ThreeColumnLayout.tsx`
 The Full Map View toolbar packed the "Day view" label, a scrollable row of day-tabs, and the "✕ Close" button into a single row — with enough day-tabs (multi-day trips), Close could be pushed off-screen with no way to scroll back to it, trapping the user in full-screen map view. Restructured into two rows: label + Close always visible on the first row; day-tabs independently horizontally scrollable on the second.
@@ -487,3 +487,55 @@ Making them `fixed` is the fix that was asked for; it is not the whole fix.
   cannot resolve `100dvh` against a collapsing URL bar and a desktop browser at
   375px has no collapsing URL bar to begin with — it passes whether or not the
   bug is there. `docs/eval-set.md` §7C MOB-012 to MOB-014.
+
+---
+
+## 🧩 Component Updates (August 2, 2026) — Anya orb returns to mobile, smaller and unlabelled (v10.60.0)
+
+Live feedback on v10.58.0. Full detail: `TECHNICAL_DOCUMENTATION.md` §14
+v10.60.0 and `docs/system-design.md` §16 v10.60.
+
+**v10.58.0 solved the wrong half of the problem.** The orb's *footprint* on a
+phone was the complaint; removing it entirely and substituting a `Sparkles`
+icon in the title bar traded that for a worse-looking entry point in a row that
+already held Theme, Share and Account. The answer was size.
+
+| | v10.58.0 | v10.60.0 |
+|---|---|---|
+| Mobile orb | not rendered | **44px** — a full touch target at its smallest |
+| Desktop orb | 72px | unchanged |
+| "Anya" text label | under the orb | **removed at every width** |
+| Title-bar trigger | `AnyaTitleBarButton` | **removed** |
+| Mobile offset | — | `bottom-[calc(3.5rem+env(safe-area-inset-bottom))]` |
+| Scroll reservation | `4.5rem` | **`7rem`** + safe-area |
+
+- **`ListeningOrb` is now CSS-sized** via a new `svgClassName` prop (default
+  `h-[72px] w-[72px]`, so every existing caller is untouched) instead of
+  hardcoded `width`/`height`. One element scales per breakpoint through the
+  `viewBox`. Two orbs behind `lg:hidden`/`hidden lg:block` would have looked
+  identical while running both breathing animations for the life of the page.
+- **The label is gone everywhere, not just on mobile.** It added height for no
+  affordance and, being wider than the orb, overlapped neighbouring text. The
+  name survives in the hover tooltip and the `aria-label`.
+- ⚠️ **The mobile offset is derived, not hardcoded.** Pre-v10.58 it was
+  `bottom-24`; the tab bar is `fixed` now, so the orb clears *that* — its
+  height plus the home-indicator inset, as a `calc` that tracks the bar
+  instead of drifting from it.
+- 🔴 **The scroll reservation went back up.** v10.58.0 shrank it to `4.5rem`
+  when the orb left mobile and wrote down that it would need to grow again if
+  the orb returned. This is that follow-through: bar ~51px flush to the
+  bottom, orb bottom edge at 56px + inset and 44px tall, so `7rem` (112px)
+  clears both. When this number and the orb disagree, the orb sits on the last
+  card's CTA and wins the tap — precisely the "Get Quotation" defect from
+  before v10.56.1.
+
+### Regression verification
+- **Frontend:** `tsc --noEmit` clean, production build clean, **189 passed**.
+  `FloatingAnyaButton` tests rewritten for the new contract; the `ListeningOrb`
+  mock now captures `svgClassName`, so responsive sizing is asserted rather
+  than assumed. `ThreeColumnLayoutTabs` swaps its title-bar-Anya case for one
+  asserting Anya is *absent* there.
+- **Backend:** untouched — no `apps/api` changes in this pass.
+- ⚠️ **Needs a real phone.** jsdom asserts class contracts; it cannot show a
+  44px orb against a real 375px viewport or confirm it clears a home
+  indicator. `docs/eval-set.md` §7C MOB-011 and MOB-014.

@@ -25,22 +25,24 @@ export function FloatingAnyaButton() {
   }
 
   return (
-    // Desktop only. On a phone the orb is ~98px of permanently-floating
-    // chrome over an already tight column, and it sat directly on top of
-    // whatever scrolled beneath it — it was covering the "Get Quotation" CTA
-    // and winning the tap.
-    //
     // ⚠️ This is the only trigger for the *persistent chat* (`useChatStore` →
-    // `ChatPanel`) on either breakpoint. "Edit Trip" is not a substitute: it
-    // calls `openWizard()`, which is a different Anya surface — it takes over
-    // the screen, blurs the dashboard and fires the 'back' feedback prompt,
-    // because it exists to change the trip config, not to ask questions about
-    // the plan in place. So mobile gets its own trigger in the title bar
-    // (`ThreeColumnLayout.tsx::AnyaTitleBarButton`); keep the two in step.
-    <div className="fixed bottom-6 right-6 z-40 hidden lg:block">
+    // `ChatPanel`). "Edit Trip" is not a substitute: it calls `openWizard()`,
+    // a different Anya surface that takes over the screen, blurs the dashboard
+    // and fires the 'back' feedback prompt, because it exists to change trip
+    // config rather than ask about the plan in place.
+    //
+    // Mobile offset clears the frozen tab bar (~51px + the home-indicator
+    // inset) rather than the fixed `bottom-24` used before v10.58 — the bar's
+    // height is what this has to sit above, so it is expressed as that plus
+    // the safe-area rather than a magic number that drifts when the bar does.
+    <div className="fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom))] right-4 z-40 lg:bottom-6 lg:right-6">
       <button
         onClick={handleClick}
-        className="group flex flex-col items-center gap-1.5 transition-transform hover:scale-105"
+        // No text label under the orb: it added height for no affordance and,
+        // being wider than the orb itself, overlapped whatever sat beside it.
+        // The name lives in the hover tooltip and the aria-label, so nothing
+        // is lost to assistive tech.
+        className="group flex items-center justify-center transition-transform hover:scale-105"
         aria-label="Open Anya — Wanderplanner concierge"
         type="button"
       >
@@ -52,9 +54,16 @@ export function FloatingAnyaButton() {
           >
             Chat with Anya
           </div>
-          <ListeningOrb isActive={false} isRecording={false} />
+          {/* 44px on a phone (a full touch target at its smallest), the
+              original 72px from lg up. The footprint was the complaint: at
+              72px plus the label it stood ~98px tall over a phone-width
+              column. */}
+          <ListeningOrb
+            isActive={false}
+            isRecording={false}
+            svgClassName="h-11 w-11 lg:h-[72px] lg:w-[72px]"
+          />
         </div>
-        <span className="font-display text-sm font-bold text-[var(--_fg)]">Anya</span>
       </button>
     </div>
   )

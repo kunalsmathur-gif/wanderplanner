@@ -4,17 +4,29 @@ interface ListeningOrbProps {
   isActive: boolean
   isRecording: boolean
   className?: string
+  /**
+   * Tailwind width/height for the SVG. Defaults to the original fixed 72px.
+   *
+   * Sizing moved from `width`/`height` attributes to classes so a caller can
+   * scale it per breakpoint from one element — the `viewBox` does the rest.
+   * The alternative, rendering two orbs behind `lg:hidden`/`hidden lg:block`,
+   * would run both breathing animations at once for the life of the page.
+   */
+  svgClassName?: string
 }
 
-export function ListeningOrb({ isActive, isRecording, className = '' }: ListeningOrbProps) {
+export function ListeningOrb({
+  isActive,
+  isRecording,
+  className = '',
+  svgClassName = 'h-[72px] w-[72px]',
+}: ListeningOrbProps) {
   return (
     <div className={`listening-orb-container inline-flex flex-col items-center justify-center gap-2 ${className}`}>
       <div className="relative flex items-center justify-center">
         <svg
-          width="72"
-          height="72"
           viewBox="0 0 72 72"
-          className={isActive ? 'orb-active' : 'orb-idle'}
+          className={`${svgClassName} ${isActive ? 'orb-active' : 'orb-idle'}`}
         >
           {/* Main breathing circle */}
           <circle

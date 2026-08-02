@@ -7,7 +7,9 @@ import { useAppStore } from '@/store/appStore'
 import { useChatStore } from '@/store/chatStore'
 
 vi.mock('@/components/voice/ListeningOrb', () => ({
-  ListeningOrb: () => <div data-testid="orb" />,
+  ListeningOrb: ({ svgClassName }: { svgClassName?: string }) => (
+    <div data-testid="orb" data-svg-class={svgClassName} />
+  ),
 }))
 
 describe('FloatingAnyaButton', () => {
@@ -16,24 +18,42 @@ describe('FloatingAnyaButton', () => {
     useChatStore.setState({ isOpen: false } as never)
   })
 
-  // The orb is ~98px of permanently-floating chrome. On a phone it ate scarce
-  // vertical real estate and sat on top of whatever scrolled beneath it —
-  // it was covering the "Get Quotation" CTA and winning the tap.
-  it('is hidden on mobile and shown from lg up', () => {
+  // v10.58 pulled the orb off mobile because it was ~98px of permanently
+  // floating chrome; v10.60 brings it back smaller instead, since removing it
+  // left the entry point looking worse than the footprint it saved.
+  it('renders at every breakpoint', () => {
     const { container } = render(<FloatingAnyaButton />)
-    const wrapper = container.firstElementChild
 
-    expect(wrapper).toHaveClass('hidden', 'lg:block')
+    expect(container.firstElementChild).not.toHaveClass('hidden')
   })
 
-  it('no longer offsets itself above a mobile tab bar', () => {
-    // `bottom-24 lg:bottom-6` existed only to clear the mobile tab bar. Now
-    // that it never renders on mobile, the single desktop offset is correct.
+  it('shrinks to a 44px touch target on mobile and the full 72px from lg up', () => {
+    render(<FloatingAnyaButton />)
+
+    expect(screen.getByTestId('orb')).toHaveAttribute(
+      'data-svg-class',
+      'h-11 w-11 lg:h-[72px] lg:w-[72px]'
+    )
+  })
+
+  it('carries no text label, at any width', () => {
+    // The label added height for no affordance and, being wider than the orb,
+    // overlapped whatever sat beside it. The name survives in the tooltip and
+    // the aria-label.
+    render(<FloatingAnyaButton />)
+
+    expect(screen.queryByText('Anya')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Open Anya/i })).toBeInTheDocument()
+  })
+
+  it('sits above the frozen tab bar on mobile, and at the corner from lg up', () => {
+    // Expressed as the bar's height plus the home-indicator inset rather than
+    // a magic `bottom-24`, so it tracks the bar instead of drifting from it.
     const { container } = render(<FloatingAnyaButton />)
     const wrapper = container.firstElementChild
 
-    expect(wrapper).toHaveClass('bottom-6')
-    expect(wrapper).not.toHaveClass('bottom-24')
+    expect(wrapper).toHaveClass('bottom-[calc(3.5rem+env(safe-area-inset-bottom))]')
+    expect(wrapper).toHaveClass('lg:bottom-6')
   })
 
   it('opens the persistent chat, not the wizard', () => {

@@ -1,9 +1,8 @@
 'use client'
 
-import { LayoutList, Wallet, Map, Sparkles } from 'lucide-react'
+import { LayoutList, Wallet, Map } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
 import type { MobileTab } from '@/store/appStore'
-import { useChatStore } from '@/store/chatStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { BookingExpensesPanel } from '@/components/dashboard/BookingExpensesPanel'
@@ -43,21 +42,6 @@ function GenerationTierBanner() {
   )
 }
 
-// ── Anya entry point for mobile (the floating orb is desktop-only) ───────────
-function AnyaTitleBarButton() {
-  const openChat = useChatStore((state) => state.open)
-  return (
-    <button
-      type="button"
-      onClick={() => openChat()}
-      aria-label="Open Anya — Wanderplanner concierge"
-      className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--_border)] text-[var(--_fg)] transition-colors hover:border-[var(--_primary)] hover:text-[var(--_primary)] lg:hidden"
-    >
-      <Sparkles size={15} aria-hidden="true" />
-    </button>
-  )
-}
-
 // ── Shared title bar ──────────────────────────────────────────────────────────
 function TitleBar({ destination, days }: { destination: { city: string; country: string } | null; days: number }) {
   return (
@@ -67,14 +51,6 @@ function TitleBar({ destination, days }: { destination: { city: string; country:
           {destination ? `${destination.city}, ${destination.country}` : 'Your Itinerary'} · {days} days
         </p>
         <div className="flex items-center gap-2">
-          {/* Mobile-only Anya entry point, because the floating orb is now
-              desktop-only. Without it the *persistent chat* would be
-              unreachable on a phone: "Edit Trip" reaches Anya too, but via
-              `openWizard()` — a full-screen config edit that fires the 'back'
-              feedback prompt — not the refine-in-place chat this opens.
-              Sized to match its neighbours here rather than to the 44px
-              target used on the auth forms. */}
-          <AnyaTitleBarButton />
           <ThemeToggle className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--_border)] text-[var(--_fg)] transition-colors hover:border-[var(--_primary)] hover:text-[var(--_primary)]" />
           <ShareButton />
           <UserMenu />
@@ -191,17 +167,20 @@ export function ThreeColumnLayout() {
     <div className="flex h-full flex-col overflow-hidden bg-[var(--_bg)] lg:hidden">
       <TitleBar destination={destination} days={days.length} />
 
-      {/* Reserves the frozen tab bar's height, since `fixed` takes it out of
-          the scroll flow and the last card would otherwise sit under it.
-          4.5rem covers the bar (~51px: 18px icon + 4px gap + 12px label +
-          16px padding + 1px border) with a little slack, plus the home-
-          indicator inset on notched phones.
+      {/* Reserves everything floating over this container, since neither the
+          frozen tab bar nor the Anya orb takes space in the scroll flow:
 
-          This used to be pb-36, reserving the floating Anya orb's ~194px band
-          as well — the orb covered the "Get Quotation" CTA and won the tap.
-          The orb is desktop-only now, so mobile only pays for the tab bar. If
-          it ever returns to mobile, this has to grow again. */}
-      <div className="flex-1 overflow-y-auto pb-[calc(4.5rem+env(safe-area-inset-bottom))]">
+            • tab bar ~51px (18px icon + 4px gap + 12px label + 16px padding
+              + 1px border), flush to the bottom;
+            • the orb sits on top of it at `bottom-[3.5rem + safe-area]` and
+              is 44px tall on mobile, so its top edge is ~100px up.
+
+          7rem (112px) clears both with slack. ⚠️ The orb returned to mobile in
+          v10.60 at a smaller size after being pulled in v10.58, and this is
+          the number that has to move with it — when the reservation and the
+          orb disagree, the orb sits *on* the last card's CTA and wins the tap
+          (it covered "Get Quotation" exactly that way before v10.56.1). */}
+      <div className="flex-1 overflow-y-auto pb-[calc(7rem+env(safe-area-inset-bottom))]">
         {mobileTab === 'itinerary' && (
           <div className="space-y-4 px-4 py-4">
             {step3View === 'comparison' ? (
