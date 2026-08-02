@@ -11,6 +11,11 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from core.budget_estimator import budget_estimate_prompt_hint
+from core.chips import (
+    GENERIC_CHIP_KEYWORDS,
+    MULTI_SELECT_CHIP_KEYWORDS,
+    is_multi_select_chips,
+)
 from core.config import settings
 from core.currency_convert import TOP_10_CURRENCIES, currency_conversion_prompt_hint
 from core.keyword_match import has_keyword
@@ -72,38 +77,13 @@ class WizardChatResponse(BaseModel):
     multi_select: bool = False
 
 
-# Keywords that identify a multi-value field's chip options (themes today;
-# extend this list if other multi-select fields grow chip UIs later).
-_MULTI_SELECT_CHIP_KEYWORDS = [
-    "culture", "nature", "food", "adventure", "shopping", "photography",
-    "nightlife", "sports", "wellness", "religious", "vegetarian",
-]
-
-# Generic catch-all chips (e.g. "No preference") that can appear alongside a
-# theme-chip group without being a theme themselves. They must NOT break the
-# "every chip looks like a theme" check below, or the whole group silently
-# falls back to single-select — which was the actual bug: the themes prompt
-# always appends one of these, so multi-select was never detected.
-_GENERIC_CHIP_KEYWORDS = ["no preference", "none", "skip", "any", "no thanks", "not sure"]
-
-
-def _is_multi_select_chips(chips: list[str]) -> bool:
-    """True if every non-generic chip looks like a travel-theme option,
-    meaning the user should be able to select several before continuing."""
-    if len(chips) < 2:
-        return False
-    theme_chips = [
-        chip for chip in chips
-        # Word-boundary: "any" is inside "Germany"/"Tuscany"/"Albany", which
-        # were being classed as generic "no preference" chips and dropped.
-        if not has_keyword(chip, _GENERIC_CHIP_KEYWORDS)
-    ]
-    if not theme_chips:
-        return False
-    return all(
-        has_keyword(chip, _MULTI_SELECT_CHIP_KEYWORDS)
-        for chip in theme_chips
-    )
+# Chip classification moved to `core/chips.py` in v10.61 so `chat_refine_chain`
+# can share it rather than growing a second copy. Re-exported here under the
+# original private names purely so existing call sites and tests keep working;
+# new code should import from `core.chips` directly.
+_MULTI_SELECT_CHIP_KEYWORDS = MULTI_SELECT_CHIP_KEYWORDS
+_GENERIC_CHIP_KEYWORDS = GENERIC_CHIP_KEYWORDS
+_is_multi_select_chips = is_multi_select_chips
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────
