@@ -135,44 +135,41 @@ The consumer app's real job isn't just SEO/eval showcase — it's the **top of t
 - One state tourism board pilot (credibility anchor).
 - Creator-itinerary licensing into the corpus (attribution + rev-share).
 - Revisit consumer premium (₹99/mo: unlimited refinements + live budget alerts) **only after** B2B revenue exists.
-- **Give Anya a voice of her own** (see below) — **traction-gated, not scheduled.**
+- **Give Anya a voice of her own** (see below) — **in progress, behind a kill-switch; not yet live.**
 
-#### Anya's own voice — long-term, gated on traction
+#### Anya's own voice — status update: decided and being built, not merely planned
 
-**The intent.** Anya has a written personality today (`WIZARD_SYSTEM_PROMPT`: warm, Indian,
-well-travelled, speaks Hindi or English to match the user) but **no voice of her own.** Voice mode
-uses the Web Speech API, which means she is whatever voice the user's device happens to have
-installed. A branded, consistent voice — via ElevenLabs or equivalent — is the natural completion
-of the persona, and is a genuine differentiator for an India-first product where a warm Hindi voice
-is a category of its own.
+**This section previously said "traction-gated, not scheduled" with ElevenLabs floated as the
+likely provider — both are now out of date.** Production feedback (a male voice on some devices,
+an English voice reading Hindi text on others, a different Anya per device) made this a bug to fix
+rather than a nice-to-have to gate on traction, and it's now mid-build:
 
-**Why it is deferred rather than built.** Today's voice costs nothing: no key, no per-request
-spend, no added latency, works offline. Every one of those flips with a cloud TTS. That trade is
-worth making for a product with users and worth nothing for one without, so this is explicitly
-gated on traction.
+- **Provider decided by live audition, not guessed:** Google Cloud TTS **Chirp 3: HD**, voice
+  **Achernar**, chosen after synthesizing and listening to 5 candidate female voices across
+  `hi-IN`/`en-IN` on 6 real Anya-style lines (plain English, plain Hindi, Hinglish code-switching, a
+  ₹-amount line). ElevenLabs was not pursued — Chirp 3: HD's same-voice-name-across-locales design
+  and its free tier (1M characters/month) made it the stronger fit; full comparison in
+  `docs/adr/0001-anya-voice-provider.md`.
+- **The cost/latency risk this section originally worried about is now an engineered guardrail,
+  not an open question:** a hard monthly character ceiling (900k, deliberately under the 1M free
+  limit) makes "free tier" a guarantee rather than a hope; a Redis cache on Anya's highly-repetitive
+  stock lines keeps most turns near-zero latency and cost; and an HMAC signature on every
+  `/wizard-chat` reply stops the endpoint being farmed as a free public TTS API against that budget.
+- **Backend is built and tested** (provider interface, Google Chirp implementation, cache, budget
+  guard, reply signing, the `/voice/tts` endpoint) but is **shipped dark**: `TTS_PROVIDER=off` is the
+  default, an instant kill-switch with zero effect on today's device-dependent `speechSynthesis`
+  behavior until the frontend swap (replacing `speechSynthesis.speak()` with a shared `<audio>`
+  element) and a real-device verification pass are both done.
+- **The "another key to manage" risk this section flagged is real and already hit once:** Cloud TTS
+  has no API-key auth path at all — only a service-account JSON — which is a heavier credential-
+  management footprint than `YOUTUBE_API_KEY`/`RESEND_API_KEY`, both of which this codebase has
+  previously shipped silently no-op'd because the key was never set on Railway. Noted explicitly so
+  the Railway env var (`GOOGLE_TTS_CREDENTIALS_JSON`) doesn't repeat that history.
 
-**What it would actually fix** (the current state is measured, not assumed — see
-`TECHNICAL_DOCUMENTATION.md` §14 v10.45.0):
-
-- **Device fragmentation disappears.** A Hindi voice is absent on most Windows desktops and
-  unguaranteed on macOS; on Android, Google's voices expose no name or gender, so we cannot even
-  reliably pick a female one. A cloud voice is identical for every user on every device.
-- **The persona becomes ownable.** "Anya sounds like Anya" is brand; "Anya sounds like Microsoft
-  Heera, or Google's default, or nothing at all" is not.
-- **Hindi speech stops being a device lottery** — the single biggest gap in the India-first story.
-
-**What it costs, honestly.** Per-character billing on a path that currently runs free, on *every*
-wizard turn; a network round trip added to a reply that is already the latency-sensitive part of
-the product (streaming TTS mitigates but does not remove this); another production key to manage —
-and this codebase has twice shipped a feature that silently no-opped in production because its key
-was never set on Railway (`YOUTUBE_API_KEY`, `RESEND_API_KEY`). Any adoption needs a real
-per-conversation cost estimate first, and a decision on whether voice becomes a paid-tier feature
-rather than a default.
-
-**Suggested gate:** revisit once Phase 2's go-criterion is met (5 paying agents) **or** consumer
-voice-mode usage is measurably non-trivial — which is currently unknown, because nothing
-instruments it. Cheapest first step is not the integration but the measurement: record voice-mode
-activation rate before spending anything on it.
+**Remaining before this is a default rather than dark:** the frontend `<audio>` swap, an iOS gesture-
+unlock equivalent to today's `primeSynthesis()`, and re-testing on the exact devices that produced
+the original male-voice and English-reads-Hindi bugs — tracked as Phase 2/3 in the ADR, not this
+document, since that's now an execution checklist rather than a strategic bet.
 
 ---
 
