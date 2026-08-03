@@ -58,6 +58,11 @@ apps/api/scripts/out/
 # Cloud service-account credentials (never commit — e.g. Anya TTS service account JSON)
 apps/api/secrets/
 
+# Unrelated coursework artifacts that landed in the repo root (not part of WanderPlanner).
+# Leading slash so these only ever match at the root, never a same-named path nested elsewhere.
+/Agentic AI Capstone Deploy Companion v0.3_1.zip
+/Agentic AI Capstone Deploy Companion v0.3_1/
+
 # Agent/skill tooling (generic, reusable across projects — belongs in its own repo, not here)
 .agents/
 .claude/
