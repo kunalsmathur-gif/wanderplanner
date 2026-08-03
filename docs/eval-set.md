@@ -1010,10 +1010,24 @@ Built and smoke-tested against synthetic compromised/safe outputs for every
 case (canary leak, unsafe-keyword bypass, cost-abuse threshold all verified
 to trigger/not-trigger correctly) — not yet executed against a live model.
 Same prerequisites as §8D (API keys + `requirements-ml.txt`), tracked in
-`docs/NEXT_SESSION_TODO.md`. A finding worth flagging separately: there is
-currently **no unit test file for `core/prompt_guard.py` itself** (the
-regex-level neutralization logic) — this eval assumes it works but doesn't
-verify the regex in isolation; worth a follow-up `tests/unit/test_prompt_guard.py`.
+`docs/NEXT_SESSION_TODO.md`.
+
+✅ **The prompt_guard unit-test gap flagged here is closed** (issue #42,
+v10.65.0). `apps/api/tests/unit/test_prompt_guard.py` covers
+`looks_like_injection()`, `neutralize()` and `wrap_untrusted()` in isolation,
+plus two things that protect *this* eval specifically:
+
+- **The dataset's central claim is now pinned by test.** Its `description`
+  states the payloads are deliberately phrased to avoid prompt_guard's regex,
+  so this eval measures the model rather than re-proving the regex. Nothing
+  enforced that. `TestRedTeamDatasetInvariant` asserts every RT-001–RT-008
+  payload survives `neutralize()` byte-identical — if a future pattern
+  widening starts redacting them, the failure surfaces here, for free, instead
+  of silently turning a **billed** eval run into a regex test.
+- **A real fence-escape bug the test found**, fixed in v10.65.0 — see
+  `TECHNICAL_DOCUMENTATION.md` §14 v10.65.0. RT-001–RT-004, RT-007 and RT-008
+  all arrive via `wrap_untrusted()`, so the fence has to actually hold for
+  their results to mean anything.
 
 ---
 
