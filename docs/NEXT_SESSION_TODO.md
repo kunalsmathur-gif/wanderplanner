@@ -2,6 +2,52 @@
 
 ---
 
+## 📌 SESSION OF 2026-08-03 — one security fix shipped, one research issue closed
+
+**v10.65.0 — the prompt-injection fence could be closed from inside (#42, closed).**
+The issue's premise was stale: `tests/unit/test_prompt_guard.py` had existed since
+2026-07-21. The real gap was that it never touched `eval/red_team_dataset.json`.
+Writing that test surfaced an actual vulnerability: `wrap_untrusted()` fenced
+untrusted text in `<tag>…</tag>`, but `neutralize()`'s pattern list **did not
+include the guard's own tag** — the one tag an attacker can predict exactly,
+since all 8 call sites pass hardcoded literals. Scraped content containing a
+literal `</untrusted_content>` closed the fence early and the rest read as
+top-level prompt. Fixed with `_strip_fence_tags()`. 28 → **49 tests**.
+⚠️ **Two rules in that function's docstring must not be undone** — a code review
+caught both: (1) it must match `[^>]*` not `\s*` after the tag name, because
+HTML5 parses `</div foo="bar">` as an end tag; (2) both character classes must
+stay **single quantifiers** — the original `<\s*/?\s*tag\s*>` was quadratic and
+took 0.169s at the 6000-char cap (attacker-triggerable event-loop block) vs
+0.00076s now, ~220x faster. Pinned by a scaling test.
+🔵 Deliberately **not** redacted: `---`. It's a visual separator, not the
+terminator, and scraped markdown is full of horizontal rules. Pinned by test.
+
+**#55 closed — Kaggle hotel-pricing search done, answer is "nothing usable".**
+Two premises in that issue were wrong: the token flow has moved off `kaggle.json`,
+and the search never needed a human at all (`kaggle datasets list --search` hits
+the REST API; only the *website* is JS-rendered). Detail inline in Workstream B
+below. Headline: **India hotel pricing stays unresolved**, now confirmed against
+the live corpus rather than assumed, and **segment mix (2.38x) is a bigger error
+source than staleness (1.10x)** — so an inflation multiplier alone would make
+pooled Kaggle hotel data *confidently* wrong. Recorded as scope input on #53.
+
+**#57 deferred (not closed).** Hobby project, invite-only, no commercial launch —
+so the Numbeo/budgetyourtrip re-sourcing isn't a live gate yet. `ready-for-agent`
+removed; left open with re-activation triggers on the issue. ⚠️ This supersedes
+the "Numbeo premium food is top priority" note further down this doc.
+
+**Found, not fixed (carry forward):**
+- `TECHNICAL_DOCUMENTATION.md` §14 has **no entries for v10.63.0 / v10.64.0**.
+- `Skeleton Test City` fixture data is still sitting in the **production** Qdrant
+  cluster (from the 2026-08-01 session).
+- v10.55.0's cookie/logout fix is **still unverified on the deployed site** —
+  needs a Railway redeploy + manual check on wanderplanner.org.
+- `kaggle==2.2.4` was installed into `apps/api/.venv` to run the #55 searches but
+  **deliberately left out of `requirements.txt`** — whether it becomes a real
+  dependency is #52's call.
+
+---
+
 ## 📌 SESSION OF 2026-08-01 — what shipped, and what it changed
 
 Three releases. Read this before picking anything below.
@@ -1634,18 +1680,20 @@ Both are now flagged directly in `core/budget_estimator.py`'s module docstring (
 - Tests: unit tests for the new module + integration test confirming the call-out only fires for domestic routes and only above the 15% threshold.
 
 **Workstream B — Kaggle dataset integration:**
-- Runbook `docs/kaggle-data-runbook.md`: account creation → API token generation → `kaggle.json` placement (`~/.kaggle/kaggle.json`, `chmod 600`) → `pip install kaggle` → download commands.
+- Runbook `docs/kaggle-data-runbook.md`: account creation → API token generation → token placement → `pip install kaggle` → download commands. ⚠️ **Updated 2026-08-03 (#55):** `kaggle.json` is now the *legacy* path. Kaggle CLI 2.2.4 resolves auth in order: access token (`KAGGLE_API_TOKEN` env / `~/.kaggle/access_token`) → `kaggle.json` → OAuth (`kaggle auth login`) → anonymous. Token page moved to `https://www.kaggle.com/settings/api`. Lead the runbook with the access token. **Also document the corporate-TLS trap:** Netskope interception makes Python fail with `CERTIFICATE_VERIFY_FAILED` while `git`/`gh`/`curl` still work (they use the system keychain; Python uses bundled `certifi`) — needs a merged CA bundle via `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE`, rebuilt after every `certifi` upgrade.
 - **Flights (India domestic):** `shubhambathwal/flight-price-prediction` (Kaggle, 300K rows, CC0, EaseMyTrip, 6 metros, Feb–Mar 2022) as primary; MachineHack 2019 set as secondary cross-check. No dataset found for India-origin *international* flight routes — those stay on the existing manually-anchored `DISTANCE_BANDS`.
 - **Hotels (international):** **Inside Airbnb** (insideairbnb.com) — verified live this session: NOT a Kaggle dataset, a standalone free project, no account/API token needed, direct CSV download, CC BY 4.0, genuinely continuously refreshed (quarterly per-city, saw June 2026 data live) — much better freshness than any static Kaggle CSV. **Verified gap: no India coverage** (checked Mumbai and Goa directly, both 404 — Inside Airbnb only covers US/Europe/select global cities).
 - **Hotels (India domestic) — the weakest link, no clean source found:**
-  - Kaggle: could not verify live (kaggle.com search is JS-rendered, same fetch blocker hit repeatedly this session). No canonical India hotel-pricing dataset known to exist like the flight one — any India hotel Kaggle datasets are likely small individually-scraped MakeMyTrip/Goibibo snapshots of unverified freshness/quality.
+  - Kaggle: ✅ **verified live on 2026-08-03 (#55, closed)** — this line previously said "could not verify (JS-rendered search)". That was only true of the *website*; `kaggle datasets list --search` hits the REST API and reaches the same corpus. 10 queries run, every candidate with a plausible price column **downloaded and its headers verified**. The guess above was right: all India hotel data is small single-day MakeMyTrip/Goibibo/OYO scrapes. Two structural blockers, neither fixable by finding a better dataset:
+    - **No date dimension.** Every candidate but one is an undated snapshot — no check-in date, no room type, no stay length. Only `viveknakrani/goa-hotels-dataset` has a `Month` column, and it covers Feb–Jul only (misses Goa's Nov–Jan peak) with prices that aren't even rupees (median 58 — undocumented USD/EUR).
+    - **Segment mix swamps inflation.** Measured: MMT 6-metro median ₹3,812 (2023-08) vs OYO median ₹1,599 (2025-02) = **2.38x**, despite OYO being 18 months *newer*. Inflation over that gap is ~1.10x and points the other way. Segment mix is a **~2.2x larger error source than staleness**, so pooling these and applying an inflation multiplier yields a confidently wrong number — worse than the manual anchors, because it looks data-backed. Third confound: OYO prices are post-discount (its `Discount` column reads 64–65%). Full table + licences in #55.
   - India OTA aggregators checked (MakeMyTrip, Goibibo, OYO, Cleartrip, Yatra): all JS-rendered SPAs, no public/free pricing API — same blocker class as Booking.com/Skyscanner, would need paid partner/affiliate API access.
   - `data.gov.in` (Ministry of Tourism): free hotel count/star-classification datasets by state — inventory/tier-availability signal only, not per-night ₹ pricing.
   - Google Places API (paid, cheap per-call): returns a `price_level` (0–4 ordinal scale) per hotel — not exact ₹ figures, but real, India-covering, always-fresh. Flagged as the most realistic paid upgrade path specifically for this gap.
   - **Recommendation:** continue the manual Numbeo/screenshot-anchor approach (as already done for the premium tier) as the near-term fix for India hotels.
 - Ingestion script `scripts/ingest_kaggle_pricing.py`: loads raw CSV(s), groups by route/distance-band, computes median/percentile fares, applies the inflation multiplier by dataset age, emits a JSON "calibration proposal" diff for human review — does **not** auto-write into `_COST_MATRIX`/`DISTANCE_BANDS`, mirroring `recalibrate_pricing.py`'s existing "propose, don't auto-apply" convention.
 
-**Workstream C — Multiplier design:** new `core/pricing_multipliers.py`, shared by flight bands and the new domestic-transport bands — `inflation_multiplier(dataset_year, reference_year)` and `dataset_peak_multiplier(dataset, month)`, stacking multiplicatively with documented precedence rules.
+**Workstream C — Multiplier design:** new `core/pricing_multipliers.py`, shared by flight bands and the new domestic-transport bands — `inflation_multiplier(dataset_year, reference_year)` and `dataset_peak_multiplier(dataset, month)`, stacking multiplicatively with documented precedence rules. ⚠️ **Scope input from #55 (recorded on #53):** inflation alone is not sufficient. Measured segment mix (2.38x) is ~2.2x larger an error source than elapsed-time inflation (1.10x over the same span), and rack-vs-discounted rate adds a further 1.45x spread *within a single dataset* (`yashkakadiya021` Gujarat: median ₹1,733 discounted vs ₹2,519 actual). Multipliers should take a full dataset descriptor (`scrape_date`, `currency`, `segment`, `price_basis`) and **fail loudly on unknown fields** rather than silently defaulting. Note the flight dataset is now **~4.4 years stale**, putting its inflation multiplier near 1.35x at 7%/yr — large enough that the rate choice materially moves output, so source it rather than defaulting.
 
 **Workstream D — Long-term data-freshness strategy (decision doc, not code):** new `docs/data-freshness-strategy.md` comparing manual Kaggle re-download (free, low effort, matches current philosophy), scheduled re-pull (free, unpredictable cadence risk), Inside-Airbnb-style continuously-refreshed open data (free, proves the pattern works but coverage-dependent — no India), Google Places `price_level` (low-cost paid, best fit for the India-hotel gap specifically), and a full paid live-fare API (best freshness, real cost/integration effort) — final call deliberately left to the user.
 
@@ -1658,10 +1706,10 @@ Both are now flagged directly in `core/budget_estimator.py`'s module docstring (
 6. Write `docs/data-freshness-strategy.md` comparison table; get user's free-vs-paid decision recorded.
 7. Add unit tests for all new modules; extend the existing budget-comparison eval with a domestic case asserting the cheaper-alternative call-out.
 8. Update this doc to reflect execution progress once started.
-9. **User action:** once Kaggle account/token is set up, re-search Kaggle live for **both India hotel pricing and international hotel pricing** datasets (agent's fetch tool can't render Kaggle's JS search UI) — report back any candidates found (including anything better than Inside Airbnb internationally, and anything at all for India) for evaluation/ingestion.
+9. ~~**User action:** once Kaggle account/token is set up, re-search Kaggle live for **both India hotel pricing and international hotel pricing** datasets~~ — ✅ **DONE 2026-08-03 (#55, closed).** Token set up; searches run from the CLI, not the JS UI. Result: **nothing usable for India**, and **nothing beats Inside Airbnb internationally**. Note `raj713335/tbo-hotels-dataset` (MIT, 1M+ hotels) advertises *"rates, reviews, amenities"* but its real 16-column schema has **no price column** — it's a hotel directory. Don't trust Kaggle descriptions for schema; assert on real headers.
 10. Spot-check `data.gov.in` Ministry of Tourism hotel classification datasets as an auxiliary (non-pricing) signal for India hotel tier availability.
 
-**Open risks:** domestic vs. international detection needs a reliable signal (check for an existing city/country lookup before building a new one); the Kaggle flight dataset is Feb–Mar 2022 only (no full-year seasonality, limits `dataset_peak_multiplier` confidence — may need a festival/holiday-calendar fallback instead); India hotel pricing remains genuinely unresolved.
+**Open risks:** domestic vs. international detection needs a reliable signal (check for an existing city/country lookup before building a new one); the Kaggle flight dataset is Feb–Mar 2022 only (no full-year seasonality, limits `dataset_peak_multiplier` confidence — may need a festival/holiday-calendar fallback instead) **and is now ~4.4 years stale**; India hotel pricing remains genuinely unresolved — now **confirmed against the live Kaggle corpus (#55)**, not merely assumed.
 
 ---
 
