@@ -75,6 +75,12 @@ class WizardChatResponse(BaseModel):
     # Computed deterministically server-side (see `_is_multi_select_chips`)
     # instead of relying on the frontend guessing from free-text chip labels.
     multi_select: bool = False
+    # Short-lived HMAC of `reply` (core/reply_signing.py), set by the router
+    # rather than here so this chain stays provider-agnostic. `/voice/tts`
+    # requires this to match before it will speak the text — without it, TTS
+    # would be a free public speech-synthesis API anyone could farm against
+    # the monthly character budget (docs/adr/0001-anya-voice-provider.md).
+    reply_sig: str | None = None
 
 
 # Chip classification moved to `core/chips.py` in v10.61 so `chat_refine_chain`

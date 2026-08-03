@@ -118,6 +118,27 @@ class Settings(BaseSettings):
     redis_memory_warn_threshold: float = 0.7
     redis_memory_check_hours: int = 6
 
+    # TTS — Anya's server-side voice (docs/adr/0001-anya-voice-provider.md).
+    # "off" is the instant kill-switch: /voice/tts short-circuits to the
+    # text-only failure path without calling any provider. Ship dark, verify
+    # via /dev/voice, then flip to "google".
+    tts_provider: str = "off"  # "google" | "off"
+    # Cloud TTS has no API-key auth path — this is the full service-account
+    # JSON as a string, the Railway-friendly credential path (filesystem
+    # persistence isn't guaranteed there). Local dev instead sets
+    # GOOGLE_APPLICATION_CREDENTIALS to a file path, picked up by ADC.
+    google_tts_credentials_json: str = ""
+    # Deliberately under Chirp 3: HD's 1M/month free tier, so "free tier" is
+    # a guarantee, not a hope (docs/adr/0001).
+    tts_monthly_char_budget: int = 900_000
+    # Hard cap on a single /voice/tts request's input length — bounds worst-
+    # case cost per call and rejects abuse before it reaches the provider.
+    tts_max_input_chars: int = 500
+    # How long a /wizard-chat reply's HMAC signature remains valid for a
+    # follow-up /voice/tts call. Short-lived by design — this is what stops
+    # the endpoint being a free public TTS API farmed against the budget.
+    tts_reply_signing_ttl_seconds: int = 600  # 10 minutes
+
     # Embeddings
     embedding_model: str = "all-MiniLM-L6-v2"
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"

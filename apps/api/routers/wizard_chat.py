@@ -9,6 +9,7 @@ from core.auth_dependency import get_optional_user
 from core.errors import sanitize_error
 from core.llm_usage import reset_usage
 from core.rate_limit import LLM_RATE_LIMIT, limiter
+from core.reply_signing import sign_reply
 from db import get_db
 from db_models import User
 
@@ -25,7 +26,9 @@ async def wizard_chat_endpoint(
 ) -> WizardChatResponse:
     reset_usage()
     try:
-        return await wizard_chat(body)
+        response = await wizard_chat(body)
+        response.reply_sig = sign_reply(response.reply)
+        return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=sanitize_error(e, context="wizard-chat"))
     finally:

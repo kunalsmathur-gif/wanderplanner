@@ -55,6 +55,9 @@ npm-debug.log*
 apps/api/eval/out/
 apps/api/scripts/out/
 
+# Cloud service-account credentials (never commit — e.g. Anya TTS service account JSON)
+apps/api/secrets/
+
 # Agent/skill tooling (generic, reusable across projects — belongs in its own repo, not here)
 .agents/
 .claude/

@@ -43,6 +43,7 @@ from routers import (
     search,
     share,
     travel_tips,
+    voice,
     wizard_chat,
 )
 
@@ -128,6 +129,7 @@ app.include_router(admin.router, prefix="/api")
 app.include_router(agent_leads.router, prefix="/api")
 app.include_router(itinerary_feedback.router, prefix="/api")
 app.include_router(analytics.router, prefix="/api")
+app.include_router(voice.router, prefix="/api")
 
 
 @app.get("/health")
