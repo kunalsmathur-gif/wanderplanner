@@ -1551,12 +1551,63 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
 
 > ⚠️ **v10.63.0 and v10.64.0 shipped code and tests but have no entry in this
 > section** (visa cost exclusion + corpus-gated `visa_inr`, and the analytics
 > event fix). This is the known changelog-reconciliation backlog, not an
 > omission specific to v10.65.0.
+
+### v10.66.0 Changes (August 2026) — Anya gets a server-side voice (Phase 0 + 1, dark)
+
+Anya's voice has always been whatever `en-IN`/`hi-IN` voice the user's OS
+happens to expose to `SpeechSynthesis` — different gender, accent, and
+quality on every device, with no way to fix it from the frontend since the
+browser picks the voice, not the app. Fixing that requires synthesizing
+speech server-side instead, so this is a two-phase build: pick a provider
+and voice (Phase 0), then wire a backend endpoint for it (Phase 1). The
+frontend hookup (Phase 2, swapping `useVoice.ts`'s `SpeechSynthesis.speak()`
+call for `<audio>` playback of this endpoint) is not part of this change.
+
+**Phase 0 — provider and voice selection.** Evaluated against Google Cloud
+TTS Chirp 3: HD (no per-request API-key auth — only service-account
+credentials via Application Default Credentials). Auditioned 5 candidate
+voices (Leda, Aoede, Kore, Sulafat, Achernar) across en-IN/hi-IN on real
+Anya lines (greeting, ₹-amount, Hinglish, everyday replies); **Achernar**
+selected. Sarvam was scoped for evaluation but skipped for this round.
+
+🔴 **Every voice mispronounced "Anya" the same wrong way**, regardless of
+provider voice or language. Fixed with plain-text respelling applied only to
+the TTS-bound copy of a reply, never to what's displayed in chat:
+`"Anya"` → `"Aanya"` (English) and `"अन्या"` (short अ) → `"आन्या"` (long आ,
+the "Aardvark"-style long-A sound) for Hindi. SSML `<phoneme>`/`<sub>`
+alternatives were tried first and discarded — the plain respelling sounded
+better and works on both synchronous and (unlike SSML) streaming synthesis.
+Full audition notes and the pronunciation-fix writeup are in
+`docs/adr/0001-anya-voice-provider.md`.
+
+**Phase 1 — backend scaffolding**, entirely new and dark in production
+behind `TTS_PROVIDER=off`:
+
+- `core/voice_persona.py` — Achernar voice config + `respell_name_for_speech()`.
+- `services/tts/base.py` + `google_chirp.py` — provider protocol and the
+  Google Chirp 3: HD implementation (async client, `asia-southeast1`, lazy
+  `google.cloud` import so the router loads without credentials present).
+- `core/tts_budget.py` — Redis-backed monthly character budget guard
+  (non-atomic read-modify-write, same accepted tradeoff already documented
+  for `core/rate_limit.py`'s in-memory limiter).
+- `core/reply_signing.py` — HMAC-signs each `/api/wizard-chat` reply
+  (reusing `settings.jwt_secret`) so `/api/voice/tts` only ever synthesizes
+  text the backend itself just produced, never arbitrary client input.
+- `POST /api/voice/tts` (`routers/voice.py`) — kill switch → validation →
+  signature check → Redis cache → budget guard → provider call, returning
+  distinct error codes (`tts_provider_disabled`, `tts_invalid_signature`,
+  `tts_budget_exceeded`, `tts_unavailable`) so a future frontend can fall
+  back to on-device `SpeechSynthesis` without ever breaking the text UX.
+
+20 new unit tests added; full suite re-run clean (1107 passed / 6 skipped,
+no regressions). See `docs/system-design.md` §7 for the updated data-flow
+diagram and `docs/GTM_STRATEGY.md` for the updated roadmap framing.
 
 ### v10.65.0 Changes (August 2026) — the prompt-injection fence could be closed from inside
 

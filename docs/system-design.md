@@ -834,6 +834,52 @@ Latest bot reply → SpeechSynthesis.speak(utterance)
   rate: 0.9, pitch: 1.1, volume: 1.0
 ```
 
+STT (speech-to-text, above) stays entirely client-side — the browser
+`SpeechRecognition` API has no server equivalent, and its `lang` must be
+fixed before `start()`, which is why the wizard still asks the user to
+pick Hindi/English up front (auto-detecting the *reply* language doesn't
+help mid-utterance mic input; see ADR 0001 §"Language selection UX").
+
+TTS (text-to-speech, the `SpeechSynthesis.speak(...)` step above) is
+device-dependent: the OS/browser picks whichever `en-IN`/`hi-IN` voice
+happens to be installed, so Anya sounds different — or robotic, or wrong
+gender — on every machine. **⭐ NEW (Phase 1, currently dark behind
+`TTS_PROVIDER=off`)**: a server-side synthesis path replaces this last
+step with a consistent voice everywhere:
+
+```
+Latest bot reply text + signed reply_sig (from /api/wizard-chat)
+         │
+         ▼
+POST /api/voice/tts  { text, lang, reply_sig }
+         │
+         ▼
+1. kill switch check       → TTS_PROVIDER=off ⇒ 503 tts_provider_disabled
+2. lang/length validation  → too long ⇒ 400
+3. HMAC signature check    → mismatched/expired ⇒ 401 tts_invalid_signature
+4. Redis cache lookup      → hit ⇒ return cached audio
+5. monthly char budget     → exceeded ⇒ 429 tts_budget_exceeded
+6. respell_name_for_speech() ("Anya"→"Aanya", "अन्या"→"आन्या")
+7. GoogleChirpProvider.synthesize()
+     voice: hi-IN/en-IN-Chirp3-HD-Achernar, encoding: OGG_OPUS,
+     region: asia-southeast1
+8. cache write + return audio
+         │
+         ▼
+Frontend plays audio via <audio> element; any error code above
+falls back to on-device SpeechSynthesis (text-only UX never breaks)
+```
+
+Reply signing (`core/reply_signing.py`) is an HMAC over the reply text
+using `settings.jwt_secret`, so `/voice/tts` only ever synthesizes text
+the backend itself just produced — not arbitrary client-supplied strings.
+Voice selection (Achernar), the pronunciation fix, and the audition
+process that led to this decision are documented in full in
+`docs/adr/0001-anya-voice-provider.md`. The frontend swap
+(`useVoice.ts` calling `/api/voice/tts` instead of `SpeechSynthesis`) is
+Phase 2 and not yet implemented — the endpoint exists and is tested, but
+nothing in production calls it yet.
+
 ---
 
 ## 8. API Contract
@@ -852,9 +898,23 @@ Response: {
   chips: string[],
   config_patch: Partial<TripConfig>,
   ready_to_generate: bool,
-  summary: string | null
+  summary: string | null,
+  reply_sig: string | null   // ⭐ NEW — HMAC of `reply`, consumed by /api/voice/tts
 }
 ```
+
+#### `POST /api/voice/tts` ⭐ NEW (Phase 1 — dark behind `TTS_PROVIDER=off`)
+```
+Request:  { text: string, lang: 'en'|'hi', reply_sig: string }
+Response: audio/ogg (Opus) binary, or:
+  400 invalid_input, 401 tts_invalid_signature, 429 tts_budget_exceeded,
+  503 tts_provider_disabled | tts_unavailable
+```
+Server-side synthesis via Google Cloud TTS Chirp 3: HD (voice: Achernar).
+`text` must be a reply the backend produced — `reply_sig` is the HMAC
+returned alongside it from `/api/wizard-chat`. Redis-cached by
+`(text, lang)`; monthly character budget enforced in `core/tts_budget.py`.
+See §7 above and `docs/adr/0001-anya-voice-provider.md`.
 
 #### `POST /api/generate-itinerary`
 ```
