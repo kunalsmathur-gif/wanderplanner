@@ -12,7 +12,7 @@ headroom for the race window; revisit if this ever needs to be exact.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from core.config import settings
 from core.redis_client import get_cache
@@ -25,13 +25,19 @@ _KEY_TTL_SECONDS = 40 * 24 * 60 * 60
 
 
 def _current_month_key() -> str:
-    return f"{_KEY_PREFIX}:{datetime.now(timezone.utc).strftime('%Y-%m')}"
+    return f"{_KEY_PREFIX}:{datetime.now(UTC).strftime('%Y-%m')}"
 
 
 async def get_chars_used_this_month() -> int:
     cache = get_cache()
     value = await cache.get_json(_current_month_key())
-    return int(value) if value is not None else 0
+    # `get_json` returns `object | None` by design (the cache round-trips
+    # arbitrary JSON); narrow at the call site, which also treats a malformed
+    # or legacy entry as "nothing spent yet" rather than raising mid-request.
+    # That direction is deliberate: the counter is advisory (see the module
+    # docstring's non-atomicity note) and the budget already sits 100k under
+    # the free tier, so a reset counter costs headroom, not money.
+    return value if isinstance(value, int) else 0
 
 
 async def would_exceed_budget(additional_chars: int) -> bool:

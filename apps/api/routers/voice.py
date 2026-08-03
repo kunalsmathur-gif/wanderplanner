@@ -13,8 +13,8 @@ decision here, not an oversight.
 """
 from __future__ import annotations
 
-import hashlib
 import base64
+import hashlib
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -98,7 +98,10 @@ async def synthesize_voice(request: Request, body: TtsRequest) -> Response:
     key = _cache_key(body.text, body.lang)
     cached = await cache.get_json(key)
     media_type = _AUDIO_MEDIA_TYPES[ANYA_VOICE.audio_encoding]
-    if cached is not None:
+    # `get_json` returns `object | None` by design (the cache round-trips
+    # arbitrary JSON); narrow to the base64 string we wrote. A malformed or
+    # legacy entry falls through to a fresh synthesis instead of raising.
+    if isinstance(cached, str):
         return Response(content=base64.b64decode(cached), media_type=media_type)
 
     if await would_exceed_budget(len(body.text)):

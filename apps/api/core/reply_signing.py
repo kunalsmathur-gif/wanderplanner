@@ -20,7 +20,7 @@ from core.config import settings
 
 
 def _digest(text: str, expires_at: int) -> str:
-    message = f"{expires_at}.{text}".encode("utf-8")
+    message = f"{expires_at}.{text}".encode()
     key = settings.jwt_secret.encode("utf-8")
     return hmac.new(key, message, hashlib.sha256).hexdigest()
 
