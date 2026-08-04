@@ -134,12 +134,19 @@ Prior to this, the main app shell had **no visible sign-in state at all**: no "L
 - Accepts an `inverted` prop for use on dark/photo chrome (`TopNav`) vs. the light card-style default.
 
 ### Admin console UI — `/admin` page ⭐ NEW
-Full-page dashboard, gated client-side on `user.is_admin` (with the same 401→"please log in" / non-admin→"not allowed" split as the backend) and reachable from `UserMenu`'s "Admin console" link:
-- **Stat cards** (4-up grid, responsive to 2-up on mobile): total users, sign-ups (30d), login success rate, itineraries generated (30d) — each using the existing `StatCard` primitive (icon + label + big number + optional sub-label), consistent with the rest of the app's card styling.
-- **Cost & usage metrics** row: Gemini request count, Gemini token count, **estimated Gemini cost in ₹ (INR, not USD)** with `IndianRupee` icon and `en-IN` locale number formatting, Pexels free-tier call count.
-- **Activity-over-time chart**: `recharts` line chart (sessions/signups/logins/itineraries) with a 7-day/30-day toggle.
-- **Admin access requests panel** ⭐ NEW — sits above the stat cards so it's the first thing an admin sees on load. Lists pending requests (requester name/email + optional reason message) with green "Approve" / outlined-red "Reject" buttons; a pill badge shows the pending count next to the panel heading. Approving/rejecting immediately removes the row from the list (optimistic-feeling, backed by a real API round-trip) rather than requiring a manual refresh.
-- **Danger zone**: bulk data-purge control, unchanged from the prior design (typed `DELETE ALL USERS` confirmation phrase).
+Full-page dashboard, gated client-side on `user.is_admin` (with the same 401→"please log in" / non-admin→"not allowed" split as the backend) and reachable from `UserMenu`'s "Admin console" link. As of the v10.67.0 reorder, sections read top-to-bottom in this order:
+1. **Admin analytics** — page header (title + 7-day/30-day range toggle).
+2. **Admin access requests panel** ⭐ — sits first so it's the first thing an admin sees on load. Lists pending requests (requester name/email + optional reason message) with green "Approve" / outlined-red "Reject" buttons; a pill badge shows the pending count next to the panel heading. Approving/rejecting immediately removes the row from the list (optimistic-feeling, backed by a real API round-trip) rather than requiring a manual refresh.
+3. **Latest lead queue** — table of leads (destination, created, status, response time, and per-row "Mark responded"/"Mark booked" actions).
+4. **Response-time trend** — `recharts` line chart of average lead response time over the selected range.
+5. **Agent Leads** — stat cards (4-up grid, responsive to 2-up on mobile): avg response time, SLA breach rate, leads created (with top destinations), marked-booked count.
+6. **Adoption** — stat cards: total users, sign-ups (30d), login success rate, itineraries generated (30d) — each using the existing `StatCard` primitive (icon + label + big number + optional sub-label), consistent with the rest of the app's card styling.
+7. **Activity over time** — `recharts` line chart (sessions/signups/logins/itineraries) with the same 7-day/30-day toggle.
+8. **Usage & Cost** — Gemini request count, Gemini token count, **estimated Gemini cost in ₹ (INR, not USD)** with `IndianRupee` icon and `en-IN` locale number formatting, Pexels free-tier call count.
+9. **System** — Qdrant storage and Redis cache headroom stat cards (moved down from directly-after-requests to directly-before-Danger-zone in the v10.67.0 reorder).
+10. **Danger zone**: bulk data-purge control, unchanged from the prior design (typed `DELETE ALL USERS` confirmation phrase) — still last.
+
+Lead-operations sections (queue, response-time trend, Agent Leads stats) were promoted ahead of the slower-moving Adoption/Activity/Usage/System sections so SLA-relevant work surfaces before general health metrics.
 
 ### Admin access request UI on `/account` ⭐ NEW
 A new "Admin access" section was added to the account-settings card, positioned between the identity block and the existing "Danger zone" — visible only to non-admin users (already-admin users don't need it, since they already have the console link in `UserMenu`):

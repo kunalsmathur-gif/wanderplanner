@@ -422,137 +422,7 @@ export default function AdminDashboardPage() {
         {summary && (
           <>
             <section className="mt-10">
-              <h2 className="font-display text-xl font-bold text-[var(--_fg)]">System</h2>
-              <p className="mt-1 text-sm text-[var(--_muted-fg)]">Storage headroom and cache safety checks.</p>
-              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                {summary.qdrant_storage ? (
-                  <StatCard
-                    icon={<Database size={16} className={summary.qdrant_storage.used_fraction != null && summary.qdrant_storage.used_fraction >= 0.7 ? 'text-[var(--_destructive)]' : undefined} />}
-                    label="Qdrant storage"
-                    value={`${summary.qdrant_storage.estimated_used_mb.toLocaleString()} MB`}
-                    sub={
-                      summary.qdrant_storage.used_fraction != null
-                        ? `${Math.round(summary.qdrant_storage.used_fraction * 100)}% of ${summary.qdrant_storage.limit_mb.toLocaleString()}MB free-tier cap`
-                        : 'Estimate unavailable'
-                    }
-                  />
-                ) : (
-                  <StatCard icon={<Database size={16} />} label="Qdrant storage" value="—" sub="Unavailable in local/:memory: mode" />
-                )}
-                {summary.redis_storage ? (
-                  <StatCard
-                    icon={<Database size={16} className={summary.redis_storage.used_fraction != null && summary.redis_storage.used_fraction >= 0.7 ? 'text-[var(--_destructive)]' : undefined} />}
-                    label="Redis cache"
-                    value={`${summary.redis_storage.estimated_used_mb.toLocaleString()} MB`}
-                    sub={
-                      summary.redis_storage.used_fraction != null
-                        ? `${Math.round(summary.redis_storage.used_fraction * 100)}% of ${summary.redis_storage.limit_mb.toLocaleString()}MB cap · ${summary.redis_storage.key_count ?? 0} keys`
-                        : 'Unavailable'
-                    }
-                  />
-                ) : (
-                  <StatCard icon={<Database size={16} />} label="Redis cache" value="—" sub="Unavailable in local fallback mode" />
-                )}
-              </div>
-            </section>
-
-            <section className="mt-10">
-              <h2 className="font-display text-xl font-bold text-[var(--_fg)]">Adoption</h2>
-              <p className="mt-1 text-sm text-[var(--_muted-fg)]">Sign-ups, sessions, itinerary generation, and the expert-handoff funnel.</p>
-
-              <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
-                <StatCard icon={<Users size={16} />} label="Total users" value={summary.total_users} />
-                <StatCard icon={<Sparkles size={16} />} label="Sign-ups (30d)" value={summary.signups['30d']} sub={`${summary.signups.today} today`} />
-                <StatCard icon={<LogIn size={16} />} label="Login success rate" value={summary.logins.success_rate_30d != null ? `${Math.round(summary.logins.success_rate_30d * 100)}%` : '—'} sub={`${summary.logins.success_30d} ok · ${summary.logins.failed_30d} failed`} />
-                <StatCard icon={<Sparkles size={16} />} label="Itineraries (30d)" value={summary.itineraries.generated_30d} sub={`${summary.itineraries.failed_30d} failed`} />
-              </div>
-
-              <h3 className="mt-8 text-base font-semibold text-[var(--_fg)]">Agent Leads</h3>
-              <div className="mt-3 grid grid-cols-2 gap-4 md:grid-cols-4">
-                <StatCard
-                  icon={<LogIn size={16} />}
-                  label="Avg response time"
-                  value={summary.agent_leads.response_time_avg_hours != null ? `${summary.agent_leads.response_time_avg_hours.toFixed(1)}h` : '—'}
-                  valueClassName="font-mono"
-                  sub={
-                    summary.agent_leads.response_time_p50_hours != null && summary.agent_leads.response_time_p90_hours != null
-                      ? `p50 ${summary.agent_leads.response_time_p50_hours.toFixed(1)}h · p90 ${summary.agent_leads.response_time_p90_hours.toFixed(1)}h`
-                      : 'No responded leads yet'
-                  }
-                />
-                <StatCard
-                  icon={<AlertTriangle size={16} />}
-                  label="SLA breach rate"
-                  value={summary.agent_leads.sla_breach_rate != null ? `${Math.round(summary.agent_leads.sla_breach_rate * 100)}%` : '—'}
-                  valueStyle={slaBreachStyle(summary.agent_leads.sla_breach_rate)}
-                  sub="Escalated leads / created leads (30d)"
-                />
-                <StatCard
-                  icon={<Users size={16} />}
-                  label="Leads created"
-                  value={summary.agent_leads.created_total}
-                  sub={
-                    summary.agent_leads.top_destinations.length > 0
-                      ? `Top: ${summary.agent_leads.top_destinations.map((row) => `${row.destination} (${row.count})`).join(', ')}`
-                      : 'No destinations yet'
-                  }
-                />
-                <StatCard icon={<Check size={16} />} label="Marked booked" value={summary.agent_leads.marked_booked_total} sub={`${summary.agent_leads.responded_total} responded · ${summary.agent_leads.reassurance_sent_total} reassured`} />
-              </div>
-
-              <h3 className="mt-8 text-base font-semibold text-[var(--_fg)]">Activity over time</h3>
-              <div className="mt-3 rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-4">
-                <div className="overflow-x-auto">
-                  <div className="h-72 min-w-[520px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={chartData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--_border)" />
-                        <XAxis dataKey="day" fontSize={12} />
-                        <YAxis fontSize={12} allowDecimals={false} />
-                        <Tooltip />
-                        <Legend />
-                        {ACTIVITY_SERIES.map((series) => (
-                          <Line key={series.key} type="monotone" dataKey={series.key} stroke={series.stroke} strokeWidth={2} dot={false} />
-                        ))}
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-                <ul className="mt-3 grid gap-2 text-sm text-[var(--_fg)] sm:grid-cols-2">
-                  {ACTIVITY_SERIES.map((series) => (
-                    <li key={series.key} className="flex items-center gap-2 rounded-lg border border-[var(--_border)] px-3 py-2">
-                      <span aria-hidden="true" className="h-0.5 w-6 shrink-0 rounded-full" style={{ backgroundColor: series.stroke }} />
-                      <span className="font-medium">{series.label}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <h3 className="mt-8 text-base font-semibold text-[var(--_fg)]">Response-time trend</h3>
-              <div className="mt-3 rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-4">
-                {leadResponseData.length > 0 ? (
-                  <div className="overflow-x-auto">
-                    <div className="h-72 min-w-[520px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={leadResponseData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="var(--_border)" />
-                          <XAxis dataKey="day" fontSize={12} />
-                          <YAxis fontSize={12} />
-                          <Tooltip />
-                          <Legend />
-                          {LEAD_RESPONSE_SERIES.map((series) => (
-                            <Line key={series.key} type="monotone" dataKey={series.key} stroke={series.stroke} strokeWidth={2} dot={false} />
-                          ))}
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-sm text-[var(--_muted-fg)]">No responded leads yet, so there’s no response-time trend to plot.</p>
-                )}
-              </div>
-
-              <h3 className="mt-8 text-base font-semibold text-[var(--_fg)]">Latest lead queue</h3>
+              <h2 className="font-display text-xl font-bold text-[var(--_fg)]">Latest lead queue</h2>
               {leadsError && <p className="mt-2 text-sm text-[var(--_destructive)]">{leadsError}</p>}
               <div className="mt-3 overflow-x-auto rounded-2xl border border-[var(--_border)] bg-[var(--_card)]">
                 <table className="min-w-full text-left text-sm">
@@ -625,6 +495,109 @@ export default function AdminDashboardPage() {
             </section>
 
             <section className="mt-10">
+              <h2 className="font-display text-xl font-bold text-[var(--_fg)]">Response-time trend</h2>
+              <div className="mt-3 rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-4">
+                {leadResponseData.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <div className="h-72 min-w-[520px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={leadResponseData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="var(--_border)" />
+                          <XAxis dataKey="day" fontSize={12} />
+                          <YAxis fontSize={12} />
+                          <Tooltip />
+                          <Legend />
+                          {LEAD_RESPONSE_SERIES.map((series) => (
+                            <Line key={series.key} type="monotone" dataKey={series.key} stroke={series.stroke} strokeWidth={2} dot={false} />
+                          ))}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-[var(--_muted-fg)]">No responded leads yet, so there’s no response-time trend to plot.</p>
+                )}
+              </div>
+            </section>
+
+            <section className="mt-10">
+              <h2 className="font-display text-xl font-bold text-[var(--_fg)]">Agent Leads</h2>
+              <div className="mt-3 grid grid-cols-2 gap-4 md:grid-cols-4">
+                <StatCard
+                  icon={<LogIn size={16} />}
+                  label="Avg response time"
+                  value={summary.agent_leads.response_time_avg_hours != null ? `${summary.agent_leads.response_time_avg_hours.toFixed(1)}h` : '—'}
+                  valueClassName="font-mono"
+                  sub={
+                    summary.agent_leads.response_time_p50_hours != null && summary.agent_leads.response_time_p90_hours != null
+                      ? `p50 ${summary.agent_leads.response_time_p50_hours.toFixed(1)}h · p90 ${summary.agent_leads.response_time_p90_hours.toFixed(1)}h`
+                      : 'No responded leads yet'
+                  }
+                />
+                <StatCard
+                  icon={<AlertTriangle size={16} />}
+                  label="SLA breach rate"
+                  value={summary.agent_leads.sla_breach_rate != null ? `${Math.round(summary.agent_leads.sla_breach_rate * 100)}%` : '—'}
+                  valueStyle={slaBreachStyle(summary.agent_leads.sla_breach_rate)}
+                  sub="Escalated leads / created leads (30d)"
+                />
+                <StatCard
+                  icon={<Users size={16} />}
+                  label="Leads created"
+                  value={summary.agent_leads.created_total}
+                  sub={
+                    summary.agent_leads.top_destinations.length > 0
+                      ? `Top: ${summary.agent_leads.top_destinations.map((row) => `${row.destination} (${row.count})`).join(', ')}`
+                      : 'No destinations yet'
+                  }
+                />
+                <StatCard icon={<Check size={16} />} label="Marked booked" value={summary.agent_leads.marked_booked_total} sub={`${summary.agent_leads.responded_total} responded · ${summary.agent_leads.reassurance_sent_total} reassured`} />
+              </div>
+            </section>
+
+            <section className="mt-10">
+              <h2 className="font-display text-xl font-bold text-[var(--_fg)]">Adoption</h2>
+              <p className="mt-1 text-sm text-[var(--_muted-fg)]">Sign-ups, sessions, itinerary generation, and the expert-handoff funnel.</p>
+
+              <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
+                <StatCard icon={<Users size={16} />} label="Total users" value={summary.total_users} />
+                <StatCard icon={<Sparkles size={16} />} label="Sign-ups (30d)" value={summary.signups['30d']} sub={`${summary.signups.today} today`} />
+                <StatCard icon={<LogIn size={16} />} label="Login success rate" value={summary.logins.success_rate_30d != null ? `${Math.round(summary.logins.success_rate_30d * 100)}%` : '—'} sub={`${summary.logins.success_30d} ok · ${summary.logins.failed_30d} failed`} />
+                <StatCard icon={<Sparkles size={16} />} label="Itineraries (30d)" value={summary.itineraries.generated_30d} sub={`${summary.itineraries.failed_30d} failed`} />
+              </div>
+            </section>
+
+            <section className="mt-10">
+              <h2 className="font-display text-xl font-bold text-[var(--_fg)]">Activity over time</h2>
+              <div className="mt-3 rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-4">
+                <div className="overflow-x-auto">
+                  <div className="h-72 min-w-[520px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--_border)" />
+                        <XAxis dataKey="day" fontSize={12} />
+                        <YAxis fontSize={12} allowDecimals={false} />
+                        <Tooltip />
+                        <Legend />
+                        {ACTIVITY_SERIES.map((series) => (
+                          <Line key={series.key} type="monotone" dataKey={series.key} stroke={series.stroke} strokeWidth={2} dot={false} />
+                        ))}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+                <ul className="mt-3 grid gap-2 text-sm text-[var(--_fg)] sm:grid-cols-2">
+                  {ACTIVITY_SERIES.map((series) => (
+                    <li key={series.key} className="flex items-center gap-2 rounded-lg border border-[var(--_border)] px-3 py-2">
+                      <span aria-hidden="true" className="h-0.5 w-6 shrink-0 rounded-full" style={{ backgroundColor: series.stroke }} />
+                      <span className="font-medium">{series.label}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </section>
+
+            <section className="mt-10">
               <h2 className="font-display text-xl font-bold text-[var(--_fg)]">Usage &amp; Cost</h2>
               <p className="mt-1 text-sm text-[var(--_muted-fg)]">External API demand and spend approximations.</p>
               <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -632,6 +605,41 @@ export default function AdminDashboardPage() {
                 <StatCard icon={<Sparkles size={16} />} label="Gemini tokens (30d)" value={summary.cost_usage.gemini_tokens_30d.toLocaleString()} />
                 <StatCard icon={<IndianRupee size={16} />} label="Est. Gemini cost (30d)" value={`₹${summary.cost_usage.gemini_estimated_cost_inr_30d.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} sub="Approximate — monitoring only" />
                 <StatCard icon={<ImageIcon size={16} />} label="Pexels calls (30d)" value={summary.cost_usage.pexels_calls_30d} sub="Free tier: 200 req/hour" />
+              </div>
+            </section>
+
+            <section className="mt-10">
+              <h2 className="font-display text-xl font-bold text-[var(--_fg)]">System</h2>
+              <p className="mt-1 text-sm text-[var(--_muted-fg)]">Storage headroom and cache safety checks.</p>
+              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                {summary.qdrant_storage ? (
+                  <StatCard
+                    icon={<Database size={16} className={summary.qdrant_storage.used_fraction != null && summary.qdrant_storage.used_fraction >= 0.7 ? 'text-[var(--_destructive)]' : undefined} />}
+                    label="Qdrant storage"
+                    value={`${summary.qdrant_storage.estimated_used_mb.toLocaleString()} MB`}
+                    sub={
+                      summary.qdrant_storage.used_fraction != null
+                        ? `${Math.round(summary.qdrant_storage.used_fraction * 100)}% of ${summary.qdrant_storage.limit_mb.toLocaleString()}MB free-tier cap`
+                        : 'Estimate unavailable'
+                    }
+                  />
+                ) : (
+                  <StatCard icon={<Database size={16} />} label="Qdrant storage" value="—" sub="Unavailable in local/:memory: mode" />
+                )}
+                {summary.redis_storage ? (
+                  <StatCard
+                    icon={<Database size={16} className={summary.redis_storage.used_fraction != null && summary.redis_storage.used_fraction >= 0.7 ? 'text-[var(--_destructive)]' : undefined} />}
+                    label="Redis cache"
+                    value={`${summary.redis_storage.estimated_used_mb.toLocaleString()} MB`}
+                    sub={
+                      summary.redis_storage.used_fraction != null
+                        ? `${Math.round(summary.redis_storage.used_fraction * 100)}% of ${summary.redis_storage.limit_mb.toLocaleString()}MB cap · ${summary.redis_storage.key_count ?? 0} keys`
+                        : 'Unavailable'
+                    }
+                  />
+                ) : (
+                  <StatCard icon={<Database size={16} />} label="Redis cache" value="—" sub="Unavailable in local fallback mode" />
+                )}
               </div>
             </section>
 

@@ -1864,6 +1864,32 @@ instead of the agent) that govern how these tools are meant to be used.
 
 ## 16. Change Log
 
+### v10.67 (August 2026) — Admin console section reorder
+
+Pure UX reorder of `/admin` (`apps/web/app/admin/page.tsx`) — no backend or
+data-shape changes. The former single "Adoption" `<section>` (nesting
+Agent Leads, Activity-over-time, Response-time trend, and Latest lead queue
+as `h3` subsections underneath it) is split into five independent top-level
+sections, each promoted to its own `h2`, and reordered along with the
+existing "System" and "Usage & Cost" sections into:
+
+1. Admin analytics (page header)
+2. Admin access requests
+3. Latest lead queue
+4. Response-time trend
+5. Agent Leads
+6. Adoption
+7. Activity over time
+8. Usage & Cost
+9. System (storage/cache health — moved down from its old spot right after
+   the requests panel)
+10. Danger zone (unchanged, still last)
+
+Rationale: SLA-relevant lead operations (queue, response-time trend, lead
+stats) now read top-to-bottom before the slower-moving adoption/usage/system
+metrics, so the admin sees "what needs action today" before "how's the
+system doing overall."
+
 ### v10.62 (August 2026) — the two Anya surfaces say which one they are
 
 - 🔴 **Both introduced themselves with the same words.** The wizard header read

@@ -1551,12 +1551,28 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
 
 > ⚠️ **v10.63.0 and v10.64.0 shipped code and tests but have no entry in this
 > section** (visa cost exclusion + corpus-gated `visa_inr`, and the analytics
 > event fix). This is the known changelog-reconciliation backlog, not an
 > omission specific to v10.65.0.
+
+### v10.67.0 Changes (August 2026) — Admin console section reorder
+
+Pure frontend UX change to `/admin` (`apps/web/app/admin/page.tsx`), no
+backend/API changes. The old layout buried the lead-operations views
+(queue, response-time trend, per-lead stats) as `h3` subsections nested
+inside one big "Adoption" `<section>`, well below the fold. Split into five
+standalone `h2` sections and reordered the full page to:
+
+Admin analytics (header) → Admin access requests → Latest lead queue →
+Response-time trend → Agent Leads → Adoption → Activity over time →
+Usage & Cost → System (storage/cache health) → Danger zone.
+
+"System" moved down from directly-after-requests to directly-before-Danger
+zone, at the requester's explicit choice. No component logic, API calls, or
+data shapes changed — `tsc --noEmit` clean.
 
 ### v10.66.0 Changes (August 2026) — Anya gets a server-side voice (Phase 0 + 1, dark)
 
