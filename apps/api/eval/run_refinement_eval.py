@@ -131,10 +131,6 @@ def flatten_items(itinerary) -> list[dict]:
     ]
 
 
-async def _no_photos(queries: list[str]) -> list[None]:
-    return [None] * len(queries)
-
-
 async def refine_case(case: dict, trip: TripConfig, live: bool) -> ChatRefineResponse:
     """Run the refinement turn. Live mode exercises real detection via
     chat_refine; offline replays the dataset's recorded expansion through the
@@ -174,15 +170,16 @@ async def run_case(case: dict, live: bool) -> dict:
     pinned = [PinnedPOI(**p) for p in patch_pins]
     trip_pinned = trip.model_copy(update={"pinned_pois": pinned})
 
-    with patch("chains.itinerary_chain.get_day_photos", _no_photos):
-        itinerary = await generate_itinerary(trip_pinned)
-        items = flatten_items(itinerary)
+    # Day photos are fetched at PDF-download time (perf refactor, v10.59.0),
+    # not during generation, so there is nothing left here to mock.
+    itinerary = await generate_itinerary(trip_pinned)
+    items = flatten_items(itinerary)
 
-        # Unrelated second refinement (pace change) + regeneration — the
-        # diff-fidelity check: committed pins must survive.
-        trip_refined = trip_pinned.model_copy(update={"pace": "relaxed"})
-        refined = await generate_itinerary(trip_refined)
-        refined_items = flatten_items(refined)
+    # Unrelated second refinement (pace change) + regeneration — the
+    # diff-fidelity check: committed pins must survive.
+    trip_refined = trip_pinned.model_copy(update={"pace": "relaxed"})
+    refined = await generate_itinerary(trip_refined)
+    refined_items = flatten_items(refined)
 
     if case["negative"]:
         return score_negative_case(case, pin_names, items)

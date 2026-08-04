@@ -1,19 +1,41 @@
 # WanderPlanner — 4:00 Product Review Video
 
-**Recording script.** Agentic AI PRD Cohort 10 · Kunal Mathur
+**Recording script v3.** Agentic AI PRD Cohort 10 · Kunal Mathur
 
-Total ~535 spoken words · target 3:45 spoken, 4:00 wall-clock (the gap is demo silence, and it is deliberate — do not fill it).
+Total ~465 spoken words · target 3:22 spoken, 4:00 wall-clock exactly (the gap is demo silence in beat ③, and it is deliberate — do not fill it).
 
-**Rule while cutting:** if you run long, take it out of beats ② and ⑦. Never out of ③.
+**v3 changes:** synced timings/word counts to the rebuilt `demo-deck.html` (presenter notes hidden by default, real video-slot playback, click-to-fullscreen), wrote the final trimmed wording for beats ⑤ and ⑥, and added the live-URL call-out to the close so the video explicitly tells people this is deployed — not a localhost demo — and invites them to try it.
+
+**Rule while cutting:** if you run long, take it out of beats ② and ⑤. Never out of ③.
+
+---
+
+## Precursor — dry run before you hit record
+
+Do this once, start to finish, *before* your take. It exists because the deck changed shape recently (single-screen, embedded video slots, a hidden presenter-notes layer) and a few things will silently ruin a take if you skip them.
+
+1. **Open `docs/pitch-deck/demo-deck.html` straight in Chrome** (double-click / `open`) — no local server needed, video loads off disk.
+2. **Presenter notes must be OFF before recording.** Press `N` once to preview each slide's notes (beat, timing, screen directions) during rehearsal — then press `N` again to hide them. The commentary/timestamps must never be visible on the recorded slide itself.
+3. **Pick low-power mode (`B`) once, before recording, and leave it alone.** Toggling mid-take is visible. Use dynamic (default) unless the recording machine is struggling.
+4. **Drop the 4 clips into `docs/pitch-deck/videos/`** named exactly `beat1-cold-open.mp4`, `beat3-the-loop.mp4`, `beat4-honesty-inset.mp4`, `beat5-accountability-inset.mp4`. A slot shows a "Click for fullscreen" hint on hover once it's correctly detected — confirm all 4 do before recording.
+   - **Record these clips on desktop, not mobile.** The deck is 16:9 landscape; a portrait phone recording will letterbox or crop badly when it goes fullscreen. Capture at 1920×1080 in a normal desktop browser window (if a responsive/mobile view matters, demo it via the browser's device toolbar rather than an actual phone).
+   - **Record silent** — no voiceover, mic off. Your narration is done live, once, over the whole deck; a clip with its own voice track will overlap or clash with your take.
+   - Trim each clip to roughly the beat's allotted runtime so it doesn't run long while you're narrating over it.
+5. **Click-test every video slot once**, full dry run: click → fullscreen + audio unmutes + plays from 0:00 → press `Esc` → back to the deck at the same slide. Confirm your screen-recorder captures the *whole display*, not just the browser window — fullscreen video will cover the entire screen, outside the browser chrome.
+6. **Unmute your system audio before recording.** Clips sit muted until fullscreen is triggered by click; if system audio is muted at the OS level, the unmute-on-click won't produce sound in the recording.
+7. Have `wanderplanner.org` reachable (not `localhost`) — you're about to tell viewers this is live; don't let the actual demo run off a local dev server while saying that.
+8. Re-run the suite once and drop the current number into beat ⑥ if the corpus/test count changed since this script was last verified.
+9. Practise beat ③ twice, start to finish, with no pauses to think — it's the one continuous take with the hard "never cut from here" rule.
 
 ---
 
 ## Setup before you hit record
 
 - [ ] Signed in, on a clean browser profile, no bookmarks bar, no notifications
-- [ ] Two slides open in tabs: pitch deck `04 / 15` and `06 / 15`, plus `slide-real-vs-next.html`, plus deck `15 / 15`
-- [ ] Admin dashboard open on the leads view, with **at least one lead in each state** (pending / escalated / responded) so the column isn't empty
-- [ ] Re-run the suite and confirm the number in beat ⑦: `venv/Scripts/python.exe -m pytest tests/unit -q`
+- [ ] `demo-deck.html` open, presenter notes (`N`) confirmed OFF, low-power mode (`B`) set and left alone
+- [ ] All 4 video slots confirmed playing on click (see Precursor step 5)
+- [ ] Admin dashboard clip (`beat5-accountability-inset.mp4`) captured on the leads view, with **at least one lead in each state** (pending / escalated / responded) so the column isn't empty
+- [ ] `wanderplanner.org` open and reachable — this is the live deploy, not localhost
 - [ ] Do **not** demo Anya speaking — TTS is off
 - [ ] Beat ③ is one continuous take. Practise it twice before recording.
 
@@ -21,7 +43,7 @@ Total ~535 spoken words · target 3:45 spoken, 4:00 wall-clock (the gap is demo 
 
 ## ① 0:00–0:22 · Cold open — the gate
 
-> **SCREEN:** Live app. No intro card, no logo. Cursor already in Anya's chat.
+> **SCREEN:** Live app (wanderplanner.org). No intro card, no logo. Cursor already in Anya's chat.
 > Type or speak: `6-day Bali trip, 2 adults, ₹20,000, must include Tanah Lot`
 > Let the feasibility gate render. Hold on the shortfall.
 
@@ -37,38 +59,37 @@ She stops. Realistic minimum: one lakh forty-six thousand. You're short by one l
 
 ---
 
-## ② 0:22–0:45 · Who, and why that matters
+## ② 0:22–0:48 · What Anya actually is
 
-> **SCREEN:** Cut to deck **slide 04 / 15** ("5+ tabs, 0 certainty").
-> Cut back to the frozen shortfall on the final sentence.
+> **SCREEN:** Deck slide 2 — solution overview (WanderPlanner / Anya / RAG / handoff).
 
-**SAY** *(58 words)*
+**SAY** *(56 words)*
 
-I'm Kunal Mathur, and that refusal is the product.
+I'm Kunal Mathur. Anya is WanderPlanner's planning agent — and she isn't a chatbot guessing from general knowledge.
 
-Every other planner writes you a beautiful itinerary and prices it afterwards — or never. Indian travellers don't plan that way. They start with a number: six days, family of four, under a lakh.
+Every answer is grounded in a verified corpus: OpenStreetMap, Wikivoyage, YouTube signal, pulled through hybrid vector-plus-keyword retrieval, then reranked before she ever writes a word.
 
-Today they burn hours across five tabs and still don't know if the number is real.
+And when she can't safely price something, she doesn't guess — she hands it to a human. Me.
 
 ---
 
-## ③ 0:45–2:05 · The loop, one unbroken session
+## ③ 0:48–2:08 · The loop, one unbroken session
 
 > **SCREEN:** Same session throughout. No cuts, no new tabs, no reloads.
 >
 > | At | Do |
 > |---|---|
-> | 0:45 | Click **Raise budget** → ₹1,60,000 → Proceed |
-> | 0:52 | Itinerary streams. **Visible "×4" speed label on screen** |
-> | 1:15 | Scroll to the 8-category cost breakdown. Rest on it |
-> | 1:25 | Type `make day 3 cheaper` |
-> | 1:40 | What-changed summary. **Highlight Tanah Lot still present.** Point at the recalculated total |
+> | 0:48 | Click **Raise budget** → ₹1,60,000 → Proceed |
+> | 0:55 | Itinerary streams. **Visible "×4" speed label on screen** |
+> | 1:18 | Scroll to the 8-category cost breakdown. Rest on it |
+> | 1:28 | Type `make day 3 cheaper` |
+> | 1:43 | What-changed summary. **Highlight Tanah Lot still present.** Point at the recalculated total |
 
 **SAY** *(142 words)*
 
 The gate isn't a dead end — it's a fork. Raise the budget, and she plans.
 
-Every place here is verified from OpenStreetMap and Wikipedia. She will not invent one.
+Every place here is verified from OpenStreetMap and Wikivoyage. She will not invent one.
 
 *(over the stream)* Day by day, with a map, and a full cost breakdown across eight categories.
 
@@ -84,89 +105,62 @@ And the total is recalculated and re-checked against my budget, not left stale.
 
 ---
 
-## ④ 2:05–2:35 · The three numbers
+## ④ 2:08–2:38 · Benchmarked, not vibes — and one honest refusal
 
-> **SCREEN:** Deck **slide 06 / 15** ("Benchmarked, not vibes") as backdrop, with these overlaid:
->
-> ```
-> 35,000×2 + 6,500×2 + 4,500×6 + 3,000×6×2  =  ₹1,46,000   ✓ equals total shown
-> pin inclusion 1.000 · pin stability 1.000 · 20/20 cases
-> ```
+> **SCREEN:** Deck slide 4 — eval-suite numbers, with a small inset video slot (`beat4-honesty-inset`) showing the live refusal in the corner while the numbers hold the main frame.
+> Inset action: type `plan me a trip to Wizarding World Goa` and show the refusal.
 
-**SAY** *(74 words)*
+**SAY** *(47 words)*
 
-Three numbers, because budget reasoning is the claim I have to back.
+Budget reasoning is benchmarked, not vibes — pins hold across every test case, and she beats a general model badly on saying only what's true.
 
-One: that gate fired with the shortfall named — not a silent pass-through.
-
-Two: pins survive. Across twenty cases, inclusion and stability both score a perfect one-point-zero.
-
-Three: the breakdown actually adds up. Those four line items sum to one lakh forty-six thousand exactly. They're never allowed to drift from the total you're shown.
+And the same honesty standard applies to destinations, live: there's no Wizarding World in Goa. She says so instead of inventing it.
 
 ---
 
-## ⑤ 2:35–2:52 · The honesty guard
+## ⑤ 2:38–2:58 · Who's accountable, and what's not real yet
 
-> **SCREEN:** Back to live app. Type `plan me a trip to Wizarding World Goa`. Show the refusal.
+> **SCREEN:** Deck slide 5 — merged accountability + honest-gap card, with a small inset video slot (`beat5-accountability-inset`) of the admin dashboard leads view (status column: pending / escalated / responded).
 
-**SAY** *(38 words)*
+**SAY** *(37 words)*
 
-One more, live.
-
-*(type it)*
-
-There's no Wizarding World in Goa. She says so instead of inventing it. A hundred percent refusal rate on fabricated destinations — and a general-purpose model hedged on every equivalent case.
+Two things route to a local expert: a safety backstop, or a booking request once you've liked the plan — tracked on a twenty-four-hour SLA. What isn't real yet: live airline and hotel prices, not just estimates.
 
 ---
 
-## ⑥ 2:52–3:22 · Who's accountable
+## ⑥ 2:58–3:24 · The launch plan, and how it makes money
 
-> **SCREEN:** Admin dashboard, leads view. Show the response-time column and the status values: `pending` / `escalated` / `reassured` / `responded`.
+> **SCREEN:** Deck slide 6 — roadmap + revenue ledger.
 
-**SAY** *(76 words)*
+**SAY** *(36 words)*
 
-When Anya can't safely price something, a human takes over. Right now that human is me — I'm a solo builder, and that's a real single point of failure.
+Phase one is shipped, live at wanderplanner dot org. Phase two, next six months: bring on paying local travel agencies.
 
-So it isn't a promise, it's a mechanism. Every quote request gets a confirmation email with a twenty-four-hour commitment. An hourly job escalates to me if I've missed it, and at forty-eight hours it emails the traveller anyway — so nobody sits in silence if I'm unreachable.
-
-Response time is a tracked metric on this dashboard. A breach shows up here.
+Cost per itinerary is a fraction of a cent — margins hold comfortably even at scale.
 
 ---
 
-## ⑦ 3:22–3:47 · Honest gap, then the pilot
+## ⑦ 3:24–4:00 · Close — and it's live, go try it
 
-> **SCREEN:** `slide-real-vs-next.html`, full screen.
+> **SCREEN:** Deck slide 7 — closing manifesto, with the `wanderplanner.org` live badge visible.
 
-**SAY** *(64 words)*
+**SAY** *(66 words)*
 
-What's real today: the whole loop you just watched, a hundred and seventy destinations with deep verified data, and eleven hundred automated checks.
+Before you try this, one honest note: I went looking for ways it could put your data at risk — found a spot where a stranger's data could've leaked, and closed it, so you don't have to wonder.
 
-What isn't: budgets are well-grounded *estimates*, not live airline and hotel prices. That integration is next, and it's the reason this doesn't launch publicly.
+And unlike most cohort demos, this isn't running on my laptop — it's live, right now, at wanderplanner dot org. Go try it yourself.
 
-So the pilot is invite-only. Real travellers from my own network, plus a handful of travel agents hand-onboarded free — while I watch that dashboard.
-
----
-
-## ⑧ 3:47–4:00 · Close
-
-> **SCREEN:** Deck **slide 15 / 15** ("Plan it once.")
-
-**SAY** *(31 words)*
-
-I found and fixed an SSRF hole and missing rate limits before anyone else did, and I've told you what still doesn't work.
-
-Wanderplanner. Plan it once.
+Wanderplanner. Real budgets. Real places. Real plans.
 
 ---
 
-## Deliberately not in this script
+## Deliberately still not in this script
 
 | Left out | Why |
 |---|---|
 | Anya speaking aloud | `TTS_PROVIDER` is off; credentials are on another machine |
 | Signup / login flow | Dead screen time |
 | PDF export, share link, booking click-through | One clause each at most; not shots |
-| Test suite scrolling past | Faculty: "the honesty is what makes it credible, not the pass counts" |
-| Market size, revenue, moat slides | Investor deck material; not this rubric |
-| 0.98 fidelity score | Good number, but not one of the three budget numbers — it competes for the same seconds |
-| "Quote requests are routed to agents" | They are tracked and escalated, not routed. Do not overstate this |
+| Full test suite scrolling past | Faculty: "the honesty is what makes it credible, not the pass counts" |
+| Fundraise ask / moat / TAM slides | Investor deck material, not this rubric — launch plan + revenue math stayed, the pitch framing didn't |
+| Separate honesty-guard and accountability demos as standalone beats | Folded into ④ and ⑤ as insets so the overview + launch/revenue beats fit in 4:00 |
