@@ -1551,12 +1551,63 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.69, v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.70, v10.69, v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
 
 > ⚠️ **v10.63.0 and v10.64.0 shipped code and tests but have no entry in this
 > section** (visa cost exclusion + corpus-gated `visa_inr`, and the analytics
 > event fix). This is the known changelog-reconciliation backlog, not an
 > omission specific to v10.65.0.
+
+### v10.70.0 Changes (August 2026) — Kaggle pricing plan Workstreams C & A: inflation/peak multipliers + domestic rail/bus/cab "cheaper alternative"
+
+Two independent new pricing modules from issue #51 (Workstream A) and #53
+(Workstream C), plus the wiring that surfaces Workstream A to users:
+
+- **`core/pricing_multipliers.py` (new, Workstream C):** `inflation_multiplier()`
+  (6%/year compounding, `_ANNUAL_INFLATION_RATE = 0.06` — a placeholder
+  midpoint between general India CPI and travel-specific inflation, no real
+  CPI source cited yet), `dataset_peak_multiplier()` (per-dataset peak-season
+  adjustment lookup; the Kaggle flight-price dataset's entry is deliberately
+  left empty since that dataset only covers Feb–Mar 2026, both non-peak
+  months — too little signal to guess a multiplier from), and
+  `combined_multiplier()`. 11 unit tests
+  (`tests/unit/test_pricing_multipliers.py`). Not yet wired into any caller
+  — this module exists so future Kaggle-dataset ingestion (Workstream B)
+  can normalize historical fares to current-year, non-peak-adjusted INR
+  without each caller reimplementing the math.
+- **`core/domestic_transport_pricing.py` (new, Workstream A):**
+  `estimate_domestic_alternative(distance_km, class_tier)` returns one-way
+  rail/bus/cab fare estimates for a given distance and comfort tier
+  (reusing `budget_estimator.py`'s existing `"economical"|"mid_range"|"premium"`
+  vocabulary). Rates are hand-derived approximations (rail ₹0.55–2.10/km with
+  a telescopic taper past 500km, bus ₹1.10–2.40/km capped at 1200km, cab
+  ₹14/km capped at 150km) — **LOW-MEDIUM confidence, no official Indian
+  Railways per-km fare table exists** (CRIS/PRS uses a private telescopic
+  slab lookup); documented as an honest limitation in the module's own
+  docstring. 13 unit tests (`tests/unit/test_domestic_transport_pricing.py`).
+- **`core/budget_estimator.py` wiring:** `estimate_bare_minimum_budget()` now
+  computes a `cheaper_alternative` field for domestic (`scope="domestic"`)
+  routes with known coordinates — haversine distance → cheapest of
+  rail/bus/cab via the new module → compared against half the estimated
+  round-trip flight cost. Populated only when the cheaper mode saves ≥15%
+  (`_CHEAPER_ALTERNATIVE_MIN_SAVINGS_FRACTION = 0.15`); `None` for
+  international routes, sub-threshold domestic routes, and domestic routes
+  missing coordinates. `budget_estimate_prompt_hint()` (the function injected
+  into the wizard system prompt, `chains/wizard_chat_chain.py:1218`) surfaces
+  an explicit "CHEAPER ALTERNATIVE AVAILABLE" call-out instructing Anya to
+  mention it as an optional tip, never as overriding the flight-based total.
+  5 new unit tests added to `tests/unit/test_budget_estimator.py` (domestic
+  savings fire, international never fires, missing-coordinates graceful
+  degradation, prompt-hint text present/absent). Full backend suite (1200
+  tests) re-run clean — no regressions from the new `cheaper_alternative`
+  return-dict key. Also documented in `docs/eval-set.md` §10D.
+- Kaggle Workstream A's original risk note ("may need new city/country
+  domestic-detection logic") turned out unnecessary — `TripConfig.scope`
+  already existed and was already used for `_DOMESTIC_FLIGHT_DISCOUNT`.
+- Workstream B (actual Kaggle dataset ingestion script + runbook) was not
+  started this session — Kaggle API credentials were verified working
+  (`~/.kaggle/kaggle.json`, real `kaggle.api.dataset_list()` call
+  succeeded) but building the ingestion pipeline itself is still open.
 
 ### v10.69.0 Changes (August 2026) — Anya's server-side voice flipped on in production
 

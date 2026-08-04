@@ -1869,6 +1869,35 @@ instead of the agent) that govern how these tools are meant to be used.
 
 ## 16. Change Log
 
+### v10.70 (August 2026) — Kaggle pricing plan Workstreams C & A
+
+Two new pricing modules, independent of each other:
+
+- `core/pricing_multipliers.py` (Workstream C): `inflation_multiplier()`
+  (6%/year compounding placeholder), `dataset_peak_multiplier()`,
+  `combined_multiplier()`. Exists for future Kaggle-dataset ingestion
+  (Workstream B, not yet started) to normalize historical fares — not wired
+  into any live caller yet. 11 unit tests.
+- `core/domestic_transport_pricing.py` (Workstream A):
+  `estimate_domestic_alternative(distance_km, class_tier)` — one-way
+  rail/bus/cab fare bands for India (hand-derived approximations, LOW-MEDIUM
+  confidence — no official per-km fare table exists). 13 unit tests.
+- `core/budget_estimator.py` wiring: `estimate_bare_minimum_budget()` gains
+  a `cheaper_alternative` field for domestic (`scope="domestic"`) routes
+  with known coordinates, populated only when the cheapest of rail/bus/cab
+  beats half the round-trip flight cost by ≥15%
+  (`_CHEAPER_ALTERNATIVE_MIN_SAVINGS_FRACTION`). `budget_estimate_prompt_hint()`
+  (injected into the wizard system prompt, `chains/wizard_chat_chain.py:1218`)
+  surfaces a "CHEAPER ALTERNATIVE AVAILABLE" call-out as an optional tip,
+  never overriding the flight-based total. `None` for international routes,
+  sub-threshold savings, or missing coordinates. 5 new unit tests; full
+  1200-test backend suite re-run clean, no regressions. Documented in
+  `docs/eval-set.md` §10D.
+- Workstream A's originally-flagged risk (needing new domestic-detection
+  logic) turned out unnecessary — `TripConfig.scope` already existed.
+  Workstream B (Kaggle ingestion script) not started; Kaggle API
+  credentials (`~/.kaggle/kaggle.json`) verified working this session.
+
 ### v10.69 (August 2026) — Anya's server-side voice flipped on in production
 
 Config-only: set `TTS_PROVIDER=google` and `GOOGLE_TTS_CREDENTIALS_JSON` on

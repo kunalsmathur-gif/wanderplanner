@@ -80,7 +80,8 @@ from typing import Any
 
 from core.airbnb_pricing import airbnb_hotel_equivalent_pp_inr
 from core.cost_grounding import community_food_per_day_inr, community_median_price_inr
-from core.distance_pricing import flight_band_inr
+from core.distance_pricing import flight_band_inr, haversine_km
+from core.domestic_transport_pricing import estimate_domestic_alternative
 from core.keyword_match import has_keyword
 from core.price_extraction import FOOD_CONTEXT_KEYWORDS, STAY_CONTEXT_KEYWORDS
 
@@ -371,6 +372,12 @@ _LEVEL_BAND_FRACTION = {"economical": 0.15, "mid_range": 0.5, "premium": 0.9}
 # flight component when scope is domestic.
 _DOMESTIC_FLIGHT_DISCOUNT = 0.5
 
+# The rail/bus/cab "cheaper alternative" call-out (core/domestic_transport_
+# pricing.py) only fires when it beats the flight estimate by at least this
+# much — a marginal saving isn't worth an unsolicited "consider the bus"
+# nudge that reads as noise rather than a genuinely useful tip.
+_CHEAPER_ALTERNATIVE_MIN_SAVINGS_FRACTION = 0.15
+
 
 ECONOMICAL_KEYWORDS = ["economical", "budget", "cheap", "affordable", "backpack", "shoestring", "low cost", "low-cost", "save money", "frugal", "no frills", "bare minimum", "economy"]
 PREMIUM_KEYWORDS = ["premium", "luxur", "splurge", "high-end", "high end", "five star", "5 star", "indulgent", "lavish", "no expense", "opulent", "upscale", "posh", "fancier", "top-notch", "top notch"]
@@ -599,6 +606,33 @@ async def estimate_bare_minimum_budget(
     if scope == "domestic":
         flight_pp *= _DOMESTIC_FLIGHT_DISCOUNT
 
+    # Rail/bus/cab "cheaper alternative" call-out — domestic (India-internal)
+    # routes only; international routes have no rail/bus alternative worth
+    # modelling here (see core/domestic_transport_pricing.py's docstring).
+    # This is a ONE-WAY per-passenger comparison against the ONE-WAY portion
+    # of the (round-trip) flight_pp figure, since the transport-pricing
+    # module's fares are one-way — halving flight_pp keeps both sides of the
+    # comparison on the same footing.
+    cheaper_alternative: dict[str, Any] | None = None
+    if scope == "domestic" and origin.get("lat") and origin.get("lon") and destination.get("lat") and destination.get("lon"):
+        distance_km = haversine_km(origin["lat"], origin["lon"], destination["lat"], destination["lon"])
+        alt = estimate_domestic_alternative(distance_km, traveller_level)
+        flight_one_way_pp = flight_pp / 2
+        # Prefer the cheapest still-available alternative option (rail is
+        # always available; bus/cab may be None past their max distance).
+        candidates = [(mode, fare) for mode, fare in alt.items() if fare is not None]
+        if candidates:
+            cheapest_mode, cheapest_fare = min(candidates, key=lambda item: item[1])
+            if flight_one_way_pp > 0:
+                savings_fraction = (flight_one_way_pp - cheapest_fare) / flight_one_way_pp
+                if savings_fraction >= _CHEAPER_ALTERNATIVE_MIN_SAVINGS_FRACTION:
+                    cheaper_alternative = {
+                        "mode": cheapest_mode.replace("_inr", ""),  # "rail_inr" -> "rail"
+                        "fare_inr": cheapest_fare,
+                        "flight_one_way_inr": round(flight_one_way_pp, -2),
+                        "savings_fraction": round(savings_fraction, 2),
+                    }
+
     stay_pp_base, stay_community_based = await _grounded_or_flat(
         city, country, "hotel accommodation nightly rate per person", rates["stay_per_night_pp"], _STAY_PP_BOUNDS,
         context_keywords=STAY_CONTEXT_KEYWORDS, min_samples=_STAY_MIN_SAMPLES,
@@ -678,6 +712,7 @@ async def estimate_bare_minimum_budget(
         "food_community_based": food_community_based,
         "stay_airbnb_based": airbnb_requested,
         "stay_airbnb_fallback_used": stay_airbnb_fallback_used,
+        "cheaper_alternative": cheaper_alternative,
     }
 
 
@@ -742,6 +777,18 @@ async def budget_estimate_prompt_hint(trip_config: dict[str, Any], hint_text: st
         assumptions.append("using the user's real already-booked accommodation cost instead of an estimate")
     assumptions_text = ("; ".join(assumptions) + ".") if assumptions else ""
 
+    cheaper_alternative_note = ""
+    alt = estimate.get("cheaper_alternative")
+    if alt:
+        cheaper_alternative_note = (
+            f"CHEAPER ALTERNATIVE AVAILABLE: for this domestic route, one-way {alt['mode']} costs approximately "
+            f"₹{alt['fare_inr']:,} per person versus ~₹{alt['flight_one_way_inr']:,} one-way by flight — about "
+            f"{int(alt['savings_fraction'] * 100)}% cheaper. Mention this to the user as an optional money-saving "
+            f"tip (e.g. \"you could also consider taking the {alt['mode']}, which tends to be noticeably cheaper "
+            f"on this route\") — do not present it as mandatory or as changing the budget total above, which "
+            f"still assumes flying.\n"
+        )
+
     prebooked_note = (
         "Note: if the user mentions they've ALREADY BOOKED flights or accommodation, ask for the actual "
         "amount they paid (do not guess) and record it as prebooked_flights_inr / prebooked_accommodation_inr "
@@ -757,6 +804,7 @@ async def budget_estimate_prompt_hint(trip_config: dict[str, Any], hint_text: st
         f"  Breakdown — flights: ₹{b['flights_inr']:,} | stay: ₹{b['stay_inr']:,} | food: ₹{b['food_inr']:,}\n"
         f"  Destination cost tier: {estimate['destination_tier']} | comfort level used: {estimate['traveller_level']}\n"
         f"  {assumptions_text}\n"
+        + cheaper_alternative_note
         + prebooked_note +
         "Present this naturally in your own words, ALWAYS stating both the total AND the per-person figure, "
         "and mention it covers flights + stay + food as a bare minimum (activities/shopping/local transport "

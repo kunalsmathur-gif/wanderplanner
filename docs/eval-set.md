@@ -1141,6 +1141,41 @@ Run with (from `apps/api`, venv python):
 python -m eval.run_budget_comparison --models gpt-4o-mini,claude-3-5-haiku-20241022,gemini-2.5-flash,kimi-k2-0711-preview --runs 3
 ```
 
+### 10D — Domestic "cheaper alternative" call-out (rail/bus/cab) ✅ DONE (v10.70)
+
+`core/budget_estimator.py`'s `estimate_bare_minimum_budget()` now also
+computes a `cheaper_alternative` field for domestic (`scope="domestic"`)
+routes with known origin/destination coordinates: it estimates one-way
+rail/bus/cab fares via `core/domestic_transport_pricing.py`
+(`estimate_domestic_alternative()`, itself using hand-derived India
+rail/bus/cab per-km rate bands — LOW-MEDIUM confidence, no official
+per-km fare table exists; see that module's docstring) and compares the
+cheapest available mode against half of the estimated round-trip flight
+cost. If the cheaper mode saves ≥15%
+(`_CHEAPER_ALTERNATIVE_MIN_SAVINGS_FRACTION`), `budget_estimate_prompt_hint()`
+surfaces an explicit "CHEAPER ALTERNATIVE AVAILABLE" call-out instructing
+Anya to mention it as an optional tip (never overriding the flight-based
+total). `cheaper_alternative` is `None` for international routes, for
+domestic routes below the 15% threshold, and for domestic routes missing
+coordinates (graceful degradation — no crash, no distance guessing).
+
+BC-003 (Delhi → Goa, domestic peak-season) is this eval's one domestic
+case and is expected to trigger this call-out once BC-003's live
+`trip_config` includes `scope: "domestic"` with resolved coordinates —
+worth spot-checking the next time `eval/run_budget_comparison.py` is run
+against a live model, since none of the four LLMs being compared have an
+equivalent rail/bus/cab-aware feature to begin with (this is a
+WanderPlanner-only advantage, not something the comparison table above
+scores against the other providers).
+
+Covered by 5 new unit tests in `tests/unit/test_budget_estimator.py`
+(domestic route with real savings, international route never fires,
+missing-coordinates graceful degradation, and both prompt-hint-text
+assertions) plus 24 unit tests for the underlying pricing modules
+(`tests/unit/test_pricing_multipliers.py`,
+`tests/unit/test_domestic_transport_pricing.py`) — all offline, no live
+data dependency.
+
 ---
 
 ## Appendix A — Regression Test Checklist (Run Before Each Release)

@@ -193,3 +193,54 @@ async def test_prebooked_accommodation_overrides_flat_and_community_estimate():
         estimate = await estimate_bare_minimum_budget(_config(prebooked_accommodation_inr=99999))
     assert estimate["breakdown"]["stay_inr"] == 99999
     assert estimate["accommodation_prebooked"] is True
+
+
+# ── Domestic (India) rail/bus/cab "cheaper alternative" call-out ──────────
+
+DELHI = {"city": "Delhi", "country": "India", "lat": 28.6139, "lon": 77.2090}
+GOA = {"city": "Goa", "country": "India", "lat": 15.2993, "lon": 74.1240}
+
+
+async def test_domestic_route_with_real_savings_surfaces_cheaper_alternative():
+    config = _config(
+        scope="domestic", origin=dict(DELHI), destination=dict(GOA), group={"adults": 2},
+    )
+    estimate = await estimate_bare_minimum_budget(config)
+    alt = estimate["cheaper_alternative"]
+    assert alt is not None
+    assert alt["mode"] in {"rail", "bus", "cab"}
+    assert alt["fare_inr"] > 0
+    assert alt["savings_fraction"] >= 0.15
+
+
+async def test_international_route_never_surfaces_cheaper_alternative():
+    # Same coordinates, but scope left as the default "international" — the
+    # rail/bus/cab alternative must never fire for a non-domestic route.
+    config = _config(origin=dict(DELHI), destination=dict(GOA), group={"adults": 2})
+    estimate = await estimate_bare_minimum_budget(config)
+    assert estimate["cheaper_alternative"] is None
+
+
+async def test_domestic_route_without_coords_does_not_crash_and_has_no_alternative():
+    # scope="domestic" but no lat/lon on one side (not yet geocoded) — must
+    # degrade gracefully, not raise or fabricate a distance.
+    config = _config(
+        scope="domestic",
+        origin={"city": "Delhi"},
+        destination={"city": "Goa", "country": "India"},
+        group={"adults": 2},
+    )
+    estimate = await estimate_bare_minimum_budget(config)
+    assert estimate["cheaper_alternative"] is None
+
+
+async def test_cheaper_alternative_note_appears_in_the_prompt_hint():
+    config = _config(scope="domestic", origin=dict(DELHI), destination=dict(GOA), group={"adults": 2})
+    hint = await budget_estimate_prompt_hint(config)
+    assert "CHEAPER ALTERNATIVE AVAILABLE" in hint
+
+
+async def test_no_cheaper_alternative_note_for_international_route():
+    config = _config(origin=dict(DELHI), destination=dict(GOA), group={"adults": 2})
+    hint = await budget_estimate_prompt_hint(config)
+    assert "CHEAPER ALTERNATIVE AVAILABLE" not in hint
