@@ -1,8 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { synthesizeVoice, TtsRequestError } from '@/lib/api'
 import {
   DEFAULT_VOICE_LANG,
+  SILENT_AUDIO_DATA_URI,
   UNSUPPORTED_RECOGNITION_MESSAGE,
   VOICE_LANGS,
   getRecognitionCtor,
@@ -13,6 +15,7 @@ import {
   recognitionErrorMessage,
   sanitiseForSpeech,
   synthesisErrorMessage,
+  ttsErrorMessage,
   type RecognitionInstance,
   type VoiceLang,
 } from '@/lib/voice'
@@ -75,8 +78,18 @@ export interface UseVoiceApi {
   lang: VoiceLang
   setLang: (lang: VoiceLang) => void
   toggleVoiceMode: () => void
-  /** Speak a reply if — and only if — voice mode is on. Safe to call always. */
-  speakReply: (text: string) => void
+  /**
+   * Speak a reply if — and only if — voice mode is on. Safe to call always.
+   *
+   * `sig` should be the `reply_sig` `/wizard-chat` returned alongside this
+   * exact `text` — pass it through unmodified so the server voice
+   * (Google Chirp 3: HD / Achernar, docs/adr/0001) can verify the text and
+   * synthesize it. Omitting `sig` falls back to the browser's own
+   * `speechSynthesis`, which should not happen in practice once every
+   * caller threads `reply_sig` through; it exists as a defensive path, not
+   * a second supported voice.
+   */
+  speakReply: (text: string, sig?: string | null) => void
   /** Stop any in-flight speech without leaving voice mode. */
   stopSpeaking: () => void
 }
@@ -100,6 +113,15 @@ export function useVoice(options: UseVoiceOptions): UseVoiceApi {
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null)
   const voicesRef = useRef<readonly SpeechSynthesisVoice[]>([])
   const listeningRef = useRef(false)
+  // The one <audio> element server-voiced replies play through. Reused
+  // rather than a fresh `new Audio()` per reply — the same "unlock once,
+  // reuse forever" trick as `primedRef`/`primeSynthesis` below, and for the
+  // same reason: iOS Safari's user-gesture rule doesn't reliably survive a
+  // brand-new element created later, without a gesture on the stack.
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  // Object URL currently assigned to `audioRef.current.src`, so it can be
+  // revoked before the next one replaces it instead of leaking.
+  const audioUrlRef = useRef<string | null>(null)
   // Whether the synthesiser has been unlocked by a user gesture (iOS Safari).
   const primedRef = useRef(false)
   // Which language we have already reported as unspeakable, so the warning
@@ -227,32 +249,58 @@ export function useVoice(options: UseVoiceOptions): UseVoiceApi {
   const stopSpeaking = useCallback(() => {
     if (isSynthesisSupported()) window.speechSynthesis.cancel()
     utteranceRef.current = null
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.currentTime = 0
+    }
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current)
+      audioUrlRef.current = null
+    }
     setIsSpeaking(false)
   }, [])
 
   /**
-   * Unlock the synthesiser while a user gesture is still on the stack.
+   * Unlock both speech paths while a user gesture is still on the stack.
    *
-   * iOS Safari only allows `speechSynthesis.speak()` from inside a user
-   * gesture, and Anya's first utterance arrives *after* an awaited API call —
-   * long past the tap that started voice mode. On iPhone that reads as the
-   * feature simply not working, which is the exact symptom this whole
-   * milestone was fixing.
+   * iOS Safari only allows `speechSynthesis.speak()` / `<audio>.play()` from
+   * inside a user gesture, and Anya's first reply arrives *after* an awaited
+   * API call — long past the tap that started voice mode. On iPhone that
+   * reads as the feature simply not working, which is the exact symptom this
+   * whole milestone was fixing.
    *
-   * Speaking a silent utterance synchronously inside the toggle handler
-   * satisfies the gesture requirement for the rest of the session. It is a
-   * no-op everywhere else: a zero-volume space costs nothing on desktop.
+   * Speaking a silent utterance, and separately playing a silent `<audio>`
+   * element, synchronously inside the toggle handler satisfies the gesture
+   * requirement for the rest of the session for both paths. It is a no-op
+   * everywhere else: a zero-volume clip costs nothing on desktop.
    *
    * ⚠️ Not verified on a real iPhone — this is defensive, based on a
    * documented WebKit constraint. `app/dev/voice` exists to check it on a
    * device.
    */
   const primeSynthesis = useCallback(() => {
-    if (primedRef.current || !isSynthesisSupported()) return
+    if (primedRef.current) return
     primedRef.current = true
-    const warmup = new SpeechSynthesisUtterance(' ')
-    warmup.volume = 0
-    window.speechSynthesis.speak(warmup)
+
+    if (isSynthesisSupported()) {
+      const warmup = new SpeechSynthesisUtterance(' ')
+      warmup.volume = 0
+      window.speechSynthesis.speak(warmup)
+    }
+
+    if (typeof Audio !== 'undefined') {
+      const audio = audioRef.current ?? new Audio()
+      audioRef.current = audio
+      audio.src = SILENT_AUDIO_DATA_URI
+      audio.volume = 0
+      // Best-effort: autoplay/gesture rules vary by browser, and a real
+      // reply later will surface its own error if speech genuinely never
+      // works on this device — nothing to recover from here. Wrapped in
+      // `Promise.resolve` because `HTMLMediaElement.play()` isn't
+      // guaranteed to return a promise (jsdom's test-environment stub
+      // returns `undefined`).
+      Promise.resolve(audio.play()).catch(() => {})
+    }
   }, [])
 
   /** Re-open the mic after a turn, if the caller still wants one. */
@@ -262,16 +310,75 @@ export function useVoice(options: UseVoiceOptions): UseVoiceApi {
     startListening()
   }, [startListening])
 
+  /**
+   * Speaks `text` with Anya's real, server-synthesized voice (the whole
+   * point of docs/adr/0001-anya-voice-provider.md: the same voice on every
+   * device, not whatever `speechSynthesis` happens to expose locally).
+   *
+   * Any failure here — provider off, budget spent, bad/expired signature,
+   * a transient provider error — surfaces a text notice and nothing else.
+   * It deliberately never falls back to `window.speechSynthesis`: that
+   * fallback is the exact "different Anya on every device" bug this
+   * project exists to retire, so resurrecting it on error would silently
+   * undo the fix for the one message a user might most want spoken well.
+   */
+  const speakViaServer = useCallback(
+    async (text: string, sig: string) => {
+      const { tts } = VOICE_LANGS[langRef.current]
+      try {
+        const blob = await synthesizeVoice(text, tts, sig)
+        const url = URL.createObjectURL(blob)
+        const audio = audioRef.current ?? new Audio()
+        audioRef.current = audio
+
+        if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current)
+        audioUrlRef.current = url
+
+        audio.src = url
+        audio.volume = 1.0
+        audio.onplay = () => setIsSpeaking(true)
+        audio.onended = () => {
+          setIsSpeaking(false)
+          // Re-arm here and nowhere else: the mic must never be open while
+          // audio is playing, or it transcribes Anya back into the chat.
+          rearm()
+        }
+        audio.onerror = () => {
+          setIsSpeaking(false)
+          notify(ttsErrorMessage('tts_unavailable'))
+          rearm()
+        }
+        await Promise.resolve(audio.play())
+      } catch (e) {
+        setIsSpeaking(false)
+        const code = e instanceof TtsRequestError ? e.code : 'unknown'
+        notify(ttsErrorMessage(code))
+        rearm()
+      }
+    },
+    [notify, rearm],
+  )
+
   const speakReply = useCallback(
-    (text: string) => {
+    (text: string, sig?: string | null) => {
       // Read through the ref, not a captured `voiceMode` — this line is the
       // one the original stale closure got wrong.
       if (!voiceModeRef.current) return
 
-      if (!isSynthesisSupported()) { rearm(); return }
-
       const clean = sanitiseForSpeech(text)
       if (!clean) { rearm(); return }
+
+      // The server voice is the product (see docstring above) — this is the
+      // only path taken once every caller threads `reply_sig` through.
+      if (sig) {
+        void speakViaServer(clean, sig)
+        return
+      }
+
+      // Defensive fallback for the should-not-happen case of no signature
+      // (e.g. signing itself failed server-side) — not a second supported
+      // voice. Everything below is unchanged from before server-side TTS.
+      if (!isSynthesisSupported()) { rearm(); return }
 
       const { tts, label } = VOICE_LANGS[langRef.current]
 
@@ -311,7 +418,7 @@ export function useVoice(options: UseVoiceOptions): UseVoiceApi {
       utteranceRef.current = utterance
       window.speechSynthesis.speak(utterance)
     },
-    [ensureVoiceForLang, notify, rearm],
+    [ensureVoiceForLang, notify, rearm, speakViaServer],
   )
 
   // ── Mode + language ─────────────────────────────────────────────────────
@@ -380,6 +487,8 @@ export function useVoice(options: UseVoiceOptions): UseVoiceApi {
       }
       recognitionRef.current = null
       if (isSynthesisSupported()) window.speechSynthesis.cancel()
+      if (audioRef.current) audioRef.current.pause()
+      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current)
     }
   }, [])
 

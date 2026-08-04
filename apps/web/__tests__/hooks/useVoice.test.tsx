@@ -1,6 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { useVoice } from '@/hooks/useVoice'
+import { synthesizeVoice, TtsRequestError } from '@/lib/api'
+
+// The real module talks to the network; the server-voice path is exercised
+// against this mock instead (see "useVoice — server-synthesized voice"
+// below). Kept a `TtsRequestError` re-export so tests can throw the same
+// class the hook's `catch` block checks with `instanceof`.
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>()
+  return { ...actual, synthesizeVoice: vi.fn() }
+})
 
 // ── Web Speech API fakes ──────────────────────────────────────────────────
 // jsdom implements neither half of the Web Speech API, so both are stubbed
@@ -511,5 +521,98 @@ describe('useVoice — unmount', () => {
 
     expect(rec.started).toBe(false)
     expect(synth.cancelCount).toBeGreaterThan(cancelsBefore)
+  })
+})
+
+// ── Server-synthesized voice (docs/adr/0001-anya-voice-provider.md) ───────
+
+class FakeAudio {
+  static instances: FakeAudio[] = []
+  src = ''
+  volume = 1
+  onplay: (() => void) | null = null
+  onended: (() => void) | null = null
+  onerror: (() => void) | null = null
+  played = false
+  paused = true
+
+  constructor() {
+    FakeAudio.instances.push(this)
+  }
+
+  play() {
+    this.played = true
+    this.paused = false
+    this.onplay?.()
+    return Promise.resolve()
+  }
+
+  pause() {
+    this.paused = true
+  }
+}
+
+const mockedSynthesizeVoice = vi.mocked(synthesizeVoice)
+
+function installAudioApis() {
+  FakeAudio.instances = []
+  Object.defineProperty(window, 'Audio', { value: FakeAudio, configurable: true, writable: true })
+  Object.defineProperty(URL, 'createObjectURL', {
+    value: vi.fn(() => 'blob:fake-url'), configurable: true, writable: true,
+  })
+  Object.defineProperty(URL, 'revokeObjectURL', {
+    value: vi.fn(), configurable: true, writable: true,
+  })
+}
+
+describe('useVoice — server-synthesized voice', () => {
+  beforeEach(() => {
+    installAudioApis()
+    mockedSynthesizeVoice.mockReset()
+  })
+
+  it('plays Anya\'s real server-synthesized audio instead of speechSynthesis when a signature is present', async () => {
+    const blob = new Blob(['fake-audio'], { type: 'audio/ogg' })
+    mockedSynthesizeVoice.mockResolvedValue(blob)
+    const { result } = renderHook(() => useVoice({ onTranscript: vi.fn() }))
+    act(() => { result.current.toggleVoiceMode() })
+
+    await act(async () => {
+      result.current.speakReply('Goa is a wonderful choice!', 'sig-123')
+    })
+
+    expect(mockedSynthesizeVoice).toHaveBeenCalledWith(
+      'Goa is a wonderful choice!', expect.any(String), 'sig-123',
+    )
+    // Never falls back to the browser voice — that fallback is the exact
+    // "different Anya on every device" bug this path exists to retire.
+    expect(synth.real).toHaveLength(0)
+    expect(FakeAudio.instances[0]!.played).toBe(true)
+  })
+
+  it('falls back to browser speechSynthesis when no signature is provided', async () => {
+    const { result } = renderHook(() => useVoice({ onTranscript: vi.fn() }))
+    act(() => { result.current.toggleVoiceMode() })
+
+    await act(async () => {
+      result.current.speakReply('Goa is a wonderful choice!')
+    })
+
+    expect(mockedSynthesizeVoice).not.toHaveBeenCalled()
+    expect(synth.last.text).toBe('Goa is a wonderful choice!')
+  })
+
+  it('surfaces a text notice and stays silent on synthesis failure, without falling back to speechSynthesis', async () => {
+    mockedSynthesizeVoice.mockRejectedValue(new TtsRequestError('tts_unavailable', 'nope'))
+    const onNotice = vi.fn()
+    const { result } = renderHook(() => useVoice({ onTranscript: vi.fn(), onNotice }))
+    act(() => { result.current.toggleVoiceMode() })
+
+    await act(async () => {
+      result.current.speakReply('Goa is a wonderful choice!', 'sig-123')
+    })
+
+    expect(synth.real).toHaveLength(0)
+    expect(onNotice).toHaveBeenCalled()
   })
 })

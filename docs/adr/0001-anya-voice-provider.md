@@ -145,3 +145,39 @@ created a new dedicated service account:
 - Sarvam remains unverified and untried. If Chirp 3: HD's per-locale voice identity ever proves
   inconsistent in wider use (beyond this 6-line audition), Sarvam is the documented fallback to
   evaluate next — not Azure, not `edge-tts`.
+
+## Phase 2 (frontend hookup): shipped
+
+`useVoice.ts`'s `speakReply()` now calls the real `/api/voice/tts` endpoint (via `speakViaServer()`)
+whenever the caller threads through `res.reply_sig` from `/api/wizard-chat` — this is now the only
+call site (`LLMWizard.tsx`) and is the sole production path. The old `window.speechSynthesis`
+branch is kept **only** as a defensive fallback for the should-not-happen case of a missing
+signature (e.g. server-side signing itself failing); it is deliberately not treated as a second
+supported voice, and any `/voice/tts` failure surfaces a text-only notice — it never falls back to
+`speechSynthesis`, since that fallback is the exact "different Anya on every device" bug this ADR
+exists to close.
+
+Two real bugs were found and fixed while wiring this up, both worth recording so they aren't
+reintroduced:
+
+1. **FastAPI/Pydantic forward-ref bug (root cause of every real `/voice/tts` call 422'ing).**
+   `routers/voice.py` had `from __future__ import annotations` while defining the `TtsRequest`
+   `BaseModel` in the same module. With FastAPI 0.111.0 + Pydantic 2.13.4, this broke FastAPI's
+   dependant analysis, silently downgrading `body: TtsRequest` to a `Query` parameter instead of a
+   request body. Fixed by removing the future-annotations import from `voice.py` only — other
+   routers keep it safely because their body models are imported from elsewhere, not defined
+   in-file.
+2. **Local ADC credentials bug (local dev only, not production).** `pydantic-settings` loads
+   `.env` values into the app's `Settings` object, but never exports them to real `os.environ` —
+   Google's `google.auth.default()` reads `GOOGLE_APPLICATION_CREDENTIALS` straight from
+   `os.environ`, so a `.env`-only value was invisible to it. Fixed by adding an explicit
+   `google_application_credentials` field to `Settings` and having `google_chirp.py` load the
+   service-account file directly via `service_account.Credentials.from_service_account_file(...)`
+   instead of relying on bare ADC discovery. Railway's production credentials path
+   (`GOOGLE_TTS_CREDENTIALS_JSON`, parsed straight from an env var) was unaffected by this bug.
+
+Verified end-to-end against a local server: `/api/wizard-chat` → signed `reply_sig` →
+`/api/voice/tts` → 200 OK, valid Ogg Opus/Achernar audio. `pickVoice`, `genderScore`,
+`FEMALE_VOICE_TOKENS` / `MALE_VOICE_TOKENS`, `hasVoiceForLang`, and `missingVoiceMessage` remain in
+place for the defensive fallback path rather than being removed, since that path is still reachable
+and covered by tests.

@@ -1551,12 +1551,52 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
 
 > ⚠️ **v10.63.0 and v10.64.0 shipped code and tests but have no entry in this
 > section** (visa cost exclusion + corpus-gated `visa_inr`, and the analytics
 > event fix). This is the known changelog-reconciliation backlog, not an
 > omission specific to v10.65.0.
+
+### v10.68.0 Changes (August 2026) — Anya's server-side voice goes live (Phase 2 + two bugfixes)
+
+Ships the frontend hookup that v10.66.0 explicitly deferred, plus two real
+bugs found while turning `TTS_PROVIDER` on for the first time:
+
+- **Phase 2 (frontend).** `useVoice.ts`'s `speakReply(text, sig?)` now
+  branches on whether the caller passes `reply_sig` from `/api/wizard-chat`:
+  if present, `speakViaServer()` calls `/api/voice/tts`, plays the returned
+  Ogg Opus blob through a reused `<audio>` element, and — critically — never
+  falls back to `window.speechSynthesis` on failure (any error surfaces a
+  text-only notice via `ttsErrorMessage()` instead), since that fallback is
+  the exact "different Anya on every device" bug this whole effort exists to
+  close. The old browser-voice branch is kept only as a defensive path for
+  the should-not-happen case of a missing signature; `LLMWizard.tsx` is
+  the only call site and now always passes `res.reply_sig`. `primeSynthesis()`
+  was extended to also unlock a reusable `<audio>` element (via a silent
+  data-URI) inside the user gesture, so the later awaited `/voice/tts`
+  round-trip isn't blocked by Safari's autoplay-gesture policy.
+- **Bugfix: FastAPI/Pydantic forward-ref bug.** `routers/voice.py` had kept
+  `from __future__ import annotations` while defining the `TtsRequest`
+  `BaseModel` in the same file — with FastAPI 0.111.0 + Pydantic 2.13.4 this
+  silently downgraded the request body to a `Query` param, so every real
+  `POST /api/voice/tts` 422'd with `"Field required"` regardless of provider
+  or credentials. Removed the future-annotations import from `voice.py` only.
+- **Bugfix: local ADC credentials never reached `google.auth.default()`.**
+  `pydantic-settings` loads `.env` into the app's own `Settings` object, not
+  into real `os.environ`, so a `.env`-only `GOOGLE_APPLICATION_CREDENTIALS`
+  was invisible to Google's local ADC discovery. Added an explicit
+  `google_application_credentials` field to `core/config.py`'s `Settings`
+  and updated `services/tts/google_chirp.py` to load the service-account
+  file directly via `from_service_account_file(...)`. Railway's production
+  path (`GOOGLE_TTS_CREDENTIALS_JSON`) was unaffected.
+
+Verified end-to-end against a local server (`/api/wizard-chat` →
+`reply_sig` → `/api/voice/tts` → 200 OK, valid Ogg Opus/Achernar audio) and
+against the full test suite: 1171 backend tests passed / 6 skipped, 197
+frontend tests passed (3 new, covering the server-voice path). See
+`docs/adr/0001-anya-voice-provider.md`'s "Phase 2" addendum for the full
+writeup.
 
 ### v10.67.0 Changes (August 2026) — Admin console section reorder
 

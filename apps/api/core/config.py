@@ -128,6 +128,15 @@ class Settings(BaseSettings):
     # persistence isn't guaranteed there). Local dev instead sets
     # GOOGLE_APPLICATION_CREDENTIALS to a file path, picked up by ADC.
     google_tts_credentials_json: str = ""
+    # Declared explicitly (not left to bare ADC discovery) because Google's
+    # `google.auth.default()` reads this straight out of `os.environ`, and
+    # pydantic-settings loading `.env` into *this* Settings object does not
+    # also export it to the real process environment — a `.env`-only value
+    # was invisible to the ADC search and every local /voice/tts call 500'd
+    # with `DefaultCredentialsError` even with `tts_provider=google` and a
+    # real key file on disk. `services/tts/google_chirp.py` reads this
+    # field directly and loads the file itself instead of relying on ADC.
+    google_application_credentials: str = ""
     # Deliberately under Chirp 3: HD's 1M/month free tier, so "free tier" is
     # a guarantee, not a hope (docs/adr/0001).
     tts_monthly_char_budget: int = 900_000

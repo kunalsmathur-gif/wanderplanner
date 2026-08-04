@@ -10,8 +10,17 @@ cache -> monthly budget guard -> provider call -> cache write. Any failure
 frontend-recognizable response rather than ever falling back to
 `speechSynthesis` — text-only-with-a-notice is the explicit product
 decision here, not an oversight.
+
+⚠️ Deliberately no `from __future__ import annotations` here, unlike most
+other routers: `TtsRequest` is defined in this same module, and with
+postponed evaluation on, FastAPI 0.111.0 + Pydantic 2.13's dependant
+analysis fails to resolve the forward reference to a real `BaseModel`
+subclass in time, silently downgrading `body: TtsRequest` to a `Query`
+parameter — every real request then 422s with "Field required" for
+`query.body`, root cause of "TTS is enabled but never speaks" bug reports.
+Routers that keep the future import (agent_leads.py, best_time.py, etc.)
+all import their body models from another module, which resolves fine.
 """
-from __future__ import annotations
 
 import base64
 import hashlib

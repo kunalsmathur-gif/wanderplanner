@@ -79,6 +79,12 @@ export interface WizardChatResponse {
   // should be able to pick several of before continuing. Computed
   // deterministically server-side — do not re-derive this on the frontend.
   multi_select: boolean
+  // Short-lived HMAC of `reply` (core/reply_signing.py) — passed straight
+  // through to `synthesizeVoice()` so `/voice/tts` can verify the text it's
+  // asked to speak is really a reply we produced, not arbitrary input. Only
+  // ever null if signing itself failed server-side; `useVoice.speakReply`
+  // treats a missing signature as "can't use the server voice this turn."
+  reply_sig: string | null
 }
 
 export async function wizardChat(
@@ -387,4 +393,82 @@ export async function getDayPhotos(queries: string[]): Promise<DayPhoto[]> {
   // apply, and timing out here simply means a PDF without hero images.
   const { data } = await api.post('/api/day-photos', { queries }, { timeout: 6_000 })
   return data as DayPhoto[]
+}
+
+// ── Voice — Anya's server-side TTS (docs/adr/0001-anya-voice-provider.md) ─
+
+// Mirrors the `error` values `routers/voice.py` puts in its HTTPException
+// `detail` — `useVoice.speakReply` maps these to a user-facing notice
+// without ever falling back to the browser's own `speechSynthesis` for an
+// actual synthesis failure (that fallback is exactly what the whole
+// server-side-voice project exists to get away from).
+export type TtsErrorCode =
+  | 'tts_provider_disabled'
+  | 'tts_budget_exceeded'
+  | 'tts_invalid_signature'
+  | 'tts_unavailable'
+  | 'unsupported_language'
+  | 'text_too_long'
+  | 'unknown'
+
+export class TtsRequestError extends Error {
+  code: TtsErrorCode
+  constructor(code: TtsErrorCode) {
+    super(`TTS request failed: ${code}`)
+    this.code = code
+    this.name = 'TtsRequestError'
+  }
+}
+
+/**
+ * Synthesizes `text` in `lang` (a full BCP-47 tag, e.g. `"en-IN"`) via
+ * `POST /api/voice/tts`, returning playable audio (OGG Opus — see
+ * `core/voice_persona.ANYA_VOICE`). `sig` is `WizardChatResponse.reply_sig`,
+ * unmodified — the endpoint refuses to synthesize any text whose signature
+ * doesn't verify, so this must be the exact reply string the signature was
+ * issued for.
+ *
+ * Throws `TtsRequestError` on any non-2xx response, with `.code` set from
+ * the backend's `detail.error`. Since the request itself uses
+ * `responseType: 'blob'`, axios also delivers *error* bodies as a `Blob`
+ * (it doesn't know the content type in advance) — that has to be read back
+ * to text and parsed before the error code underneath it is visible.
+ */
+export async function synthesizeVoice(text: string, lang: string, sig: string): Promise<Blob> {
+  try {
+    const { data } = await api.post(
+      '/api/voice/tts',
+      { text, lang, sig },
+      { responseType: 'blob', timeout: 15_000 },
+    )
+    return data as Blob
+  } catch (e) {
+    throw new TtsRequestError(await extractTtsErrorCode(e))
+  }
+}
+
+async function extractTtsErrorCode(e: unknown): Promise<TtsErrorCode> {
+  if (!axios.isAxiosError(e) || !e.response) return 'unknown'
+
+  let detail: unknown = e.response.data
+  // The failed request still used `responseType: 'blob'`, so a JSON error
+  // body arrives as a Blob rather than already-parsed data.
+  if (detail instanceof Blob) {
+    try {
+      detail = JSON.parse(await detail.text())
+    } catch {
+      return 'unknown'
+    }
+  }
+
+  const code = (detail as { detail?: { error?: string } } | undefined)?.detail?.error
+  const KNOWN: readonly TtsErrorCode[] = [
+    'tts_provider_disabled',
+    'tts_budget_exceeded',
+    'tts_invalid_signature',
+    'tts_unavailable',
+    'unsupported_language',
+    'text_too_long',
+  ]
+  return (KNOWN as readonly string[]).includes(code ?? '') ? (code as TtsErrorCode) : 'unknown'
 }

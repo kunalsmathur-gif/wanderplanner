@@ -95,6 +95,22 @@ export function isSynthesisSupported(): boolean {
   return typeof window !== 'undefined' && typeof window.speechSynthesis !== 'undefined'
 }
 
+/**
+ * A valid, silent one-sample WAV, used to "unlock" the `<audio>` element
+ * `useVoice` plays server-synthesized replies through.
+ *
+ * iOS Safari (and, historically, some Android WebViews) only allow media
+ * playback to start from inside a user gesture; Anya's first reply arrives
+ * well after one (an awaited `/wizard-chat` + `/voice/tts` round trip), so
+ * without this the element would need a fresh, in-gesture `.play()` call
+ * every single turn. Playing this once, synchronously, inside the gesture
+ * that turns voice mode on satisfies that rule for the rest of the
+ * session — the same trick `useVoice.primeSynthesis` already uses for
+ * `SpeechSynthesisUtterance`, applied to the new server-audio element.
+ */
+export const SILENT_AUDIO_DATA_URI =
+  'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='
+
 // ── Text → speech-safe text ───────────────────────────────────────────────
 
 /**
@@ -358,4 +374,31 @@ export const UNSUPPORTED_RECOGNITION_MESSAGE =
 /** Shown when a language is selected but no system voice can speak it. */
 export function missingVoiceMessage(langLabel: string): string {
   return `No ${langLabel} voice is installed on this device, so Anya will reply in text only.`
+}
+
+/**
+ * A user-facing message for a `TtsErrorCode` (see `lib/api.ts`), read from
+ * `/api/voice/tts`'s response — or `null` for codes that should stay silent.
+ *
+ * `tts_invalid_signature` and `unsupported_language`/`text_too_long` return
+ * `null`: they indicate a client bug (a stale/mismatched reply, or a length
+ * check that should already have been enforced upstream) rather than
+ * something the traveler did, so surfacing them would just be noise. Every
+ * other code reflects a real, occasionally-expected condition — the
+ * provider being off, the monthly budget being spent, or a transient
+ * provider failure — and always resolves to the same reassurance: the
+ * reply is already on screen, only the voice failed.
+ */
+export function ttsErrorMessage(code: string): string | null {
+  switch (code) {
+    case 'tts_invalid_signature':
+    case 'unsupported_language':
+    case 'text_too_long':
+      return null
+    case 'tts_provider_disabled':
+    case 'tts_budget_exceeded':
+    case 'tts_unavailable':
+    default:
+      return 'Anya couldn’t speak that reply — it’s written above.'
+  }
 }

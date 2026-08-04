@@ -528,7 +528,7 @@ export function LLMWizard() {
 
       // No-op unless voice mode is on. The check lives inside the hook, read
       // from a ref — doing it here is what made this line dead code before.
-      voice.speakReply(res.reply)
+      voice.speakReply(res.reply, res.reply_sig)
 
       if (res.ready_to_generate) {
         setSummary(res.summary)

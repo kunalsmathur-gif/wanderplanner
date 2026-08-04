@@ -1864,6 +1864,42 @@ instead of the agent) that govern how these tools are meant to be used.
 
 ## 16. Change Log
 
+### v10.68 (August 2026) — Anya's server-side voice goes live (Phase 2 + two bugfixes)
+
+Ships the frontend hookup deferred by v10.66's Phase 0/1 backend scaffolding.
+`useVoice.ts`'s `speakReply(text, sig?)` now calls the real
+`POST /api/voice/tts` endpoint (`speakViaServer()`) whenever a `reply_sig`
+from `/api/wizard-chat` is threaded through — the only call site,
+`LLMWizard.tsx`, now always passes it. The response is played through a
+reused `<audio>` element (unlocked during the toggle gesture, same pattern
+as the existing `SpeechSynthesis` priming, for Safari's autoplay policy). On
+any failure (provider off, budget exceeded, bad signature, transient
+provider error) the hook surfaces a text-only notice and **never** falls
+back to `window.speechSynthesis` — that fallback is the "different Anya on
+every device" bug this whole effort exists to close. The old browser-voice
+branch stays only as a defensive path for the should-not-happen case of a
+missing signature.
+
+Two real bugs surfaced while turning `TTS_PROVIDER=google` on for the first
+time and are now fixed:
+
+1. `routers/voice.py` kept `from __future__ import annotations` while
+   defining the `TtsRequest` body model in the same file — with
+   FastAPI 0.111.0 + Pydantic 2.13.4 this silently downgraded the request
+   body to a `Query` param, so every real `POST /api/voice/tts` 422'd
+   regardless of provider/credentials state. Removed from `voice.py` only.
+2. `.env`-only `GOOGLE_APPLICATION_CREDENTIALS` never reached
+   `google.auth.default()` locally, since `pydantic-settings` loads `.env`
+   into its own `Settings` object rather than real `os.environ`. Added an
+   explicit `google_application_credentials` setting and load the
+   service-account file directly in `google_chirp.py`. Railway's
+   `GOOGLE_TTS_CREDENTIALS_JSON` production path was unaffected.
+
+Verified end-to-end locally (`/api/wizard-chat` → signed reply →
+`/api/voice/tts` → 200 OK, valid Ogg Opus/Achernar audio); full suites
+re-run clean (1171 backend passed / 6 skipped, 197 frontend passed, 3 new).
+See `docs/adr/0001-anya-voice-provider.md`'s Phase 2 addendum.
+
 ### v10.67 (August 2026) — Admin console section reorder
 
 Pure UX reorder of `/admin` (`apps/web/app/admin/page.tsx`) — no backend or

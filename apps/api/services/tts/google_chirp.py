@@ -54,16 +54,23 @@ class GoogleChirpProvider(TtsProvider):
         if settings.google_tts_credentials_json:
             info = json.loads(settings.google_tts_credentials_json)
             credentials = service_account.Credentials.from_service_account_info(info)
-            self._client = texttospeech.TextToSpeechAsyncClient(
-                credentials=credentials,
-                client_options={"api_endpoint": f"{TTS_REGION}-texttospeech.googleapis.com"},
+        elif settings.google_application_credentials:
+            # Loaded explicitly from our own Settings field rather than left
+            # to bare ADC discovery — `google.auth.default()` reads
+            # `GOOGLE_APPLICATION_CREDENTIALS` straight out of `os.environ`,
+            # which a `.env`-only value never reaches (pydantic-settings
+            # loads `.env` into this Settings object, not the real process
+            # environment). This is the local-dev path.
+            credentials = service_account.Credentials.from_service_account_file(
+                settings.google_application_credentials
             )
         else:
-            # Falls back to GOOGLE_APPLICATION_CREDENTIALS / default ADC
-            # search — this is the local-dev path.
-            self._client = texttospeech.TextToSpeechAsyncClient(
-                client_options={"api_endpoint": f"{TTS_REGION}-texttospeech.googleapis.com"},
-            )
+            credentials = None
+
+        self._client = texttospeech.TextToSpeechAsyncClient(
+            credentials=credentials,
+            client_options={"api_endpoint": f"{TTS_REGION}-texttospeech.googleapis.com"},
+        )
         return self._client
 
     async def synthesize(self, text: str, lang: str) -> bytes:
