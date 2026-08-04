@@ -33,6 +33,7 @@ const DEFAULT_CONFIG: TripConfig = {
   prebooked_flights_inr: null,
   prebooked_accommodation_inr: null,
   pinned_pois: [],
+  day_cost_preferences: [],
 }
 
 interface TripConfigStore {

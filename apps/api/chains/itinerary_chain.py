@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -111,6 +112,44 @@ def _pinned_guidance_block(trip_config: TripConfig) -> str:
         "a pinned place. Add \"pinned\" to its tags array, and mention in its "
         "description why it matches the user's interest.\n"
         + "\n".join(lines)
+    )
+
+
+def _day_cost_guidance_block(trip_config: TripConfig) -> str:
+    """Per-day spend steering ("make day 3 cheaper") as an explicit prompt
+    block. Deterministic formatting, zero lookups, zero LLM calls.
+
+    The wording asks for a *relative* shift against the trip's other days
+    rather than an absolute rupee target: we cannot know a defensible target
+    for an arbitrary day, and naming one would invite the model to invent
+    prices to hit it — the exact guessing this codebase avoids elsewhere. It
+    also says explicitly not to drop a pinned place to save money, because
+    that is the one way a cheaper day could silently break a hard constraint.
+    """
+    prefs = getattr(trip_config, "day_cost_preferences", None) or []
+    if not prefs:
+        return ""
+    lines = []
+    for pref in prefs:
+        if pref.direction == "cheaper":
+            lines.append(
+                f"- Day {pref.day_number}: spend NOTICEABLY LESS than the other days. "
+                "Prefer free or low-cost activities (parks, beaches, markets, walks, "
+                "free-entry sites), street food or casual local eateries over "
+                "restaurants, and public transport or walking over private taxis."
+            )
+        else:
+            lines.append(
+                f"- Day {pref.day_number}: this is the day to SPEND MORE. A signature "
+                "experience, a notable restaurant, or a premium tour is appropriate here."
+            )
+    return (
+        "PER-DAY SPEND PREFERENCES — the user asked for these explicitly:\n"
+        + "\n".join(lines)
+        + "\nReflect this in `estimated_cost_inr` on that day's items, and keep the "
+        "day genuinely worthwhile — cheaper means better value, not an empty day. "
+        "NEVER drop or move a pinned must-include place to make a day cheaper; "
+        "pinned places stay exactly where the hard constraints above require."
     )
 
 
@@ -249,6 +288,7 @@ OUTPUT SCHEMA:
           "description": "string",
           "location": {{"lat": 0.0, "lon": 0.0, "address": "string"}},
           "tags": ["string"],
+          "estimated_cost_inr": <what this ONE item costs the WHOLE GROUP in INR: entry/ticket price, the meal, or the ride. 0 if genuinely free (a beach, a walk, a temple with no entry fee). EXCLUDE flights and accommodation — those are trip-level, not a day's cost>,
           "booking_url": "string",
           "youtube_video_id": "",
           "youtube_search_query": "short search phrase for YouTube e.g. Senso-ji Temple Tokyo travel guide"
@@ -282,6 +322,8 @@ REAL TRAVELLER ITINERARIES FOR REFERENCE (use as inspiration, not verbatim):
 {gem_guidance}
 
 {pinned_guidance}
+
+{day_cost_guidance}
 
 {budget_guidance}
 
@@ -510,7 +552,7 @@ def _classify_gemini_error(err_str: str) -> str:
     return "fatal"
 
 
-async def _gemini_itinerary(trip_config: TripConfig) -> dict:
+async def _gemini_itinerary(trip_config: TripConfig, cost_correction: str = "") -> dict:
     """Call Google Gemini directly with automatic retry on 503 errors."""
     import asyncio
     try:
@@ -561,11 +603,17 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
         itinerary_examples=itinerary_examples,
         gem_guidance=gem_guidance,
         pinned_guidance=_pinned_guidance_block(trip_config),
+        day_cost_guidance=_day_cost_guidance_block(trip_config),
         budget_guidance=neutralize(
             budget_guidance, context="budget tier + cost grounding guidance"
         ),
         trip_config=neutralize(trip_json, context="trip configuration"),
     )
+    if cost_correction:
+        # Appended last so it is the final instruction the model reads. Authored
+        # entirely by us from our own measurements — no user or scraped text
+        # reaches it, so it needs no neutralize() pass.
+        prompt = f"{prompt}\n\n{cost_correction}"
 
     # Retry logic: up to 5 attempts, broader exception matching, fallback model
     loop = asyncio.get_event_loop()
@@ -664,7 +712,7 @@ async def _gemini_itinerary(trip_config: TripConfig) -> dict:
     raise RuntimeError(f"Gemini itinerary generation failed on all models: {last_error}")
 
 
-async def _langchain_itinerary(trip_config: TripConfig) -> dict:
+async def _langchain_itinerary(trip_config: TripConfig, cost_correction: str = "") -> dict:
     """Groq/Ollama path via LangChain, grounded with the same summarised
     RAG context used by the Gemini path."""
     # Reranking enabled: this feeds directly into the final generated
@@ -709,8 +757,9 @@ async def _langchain_itinerary(trip_config: TripConfig) -> dict:
             "itinerary_examples": itinerary_examples,
             "gem_guidance": gem_guidance,
             "pinned_guidance": _pinned_guidance_block(trip_config),
+            "day_cost_guidance": _day_cost_guidance_block(trip_config),
             "budget_guidance": neutralize(budget_guidance, context="budget tier + cost grounding guidance"),
-            "trip_config": trip_json,
+            "trip_config": trip_json + (f"\n\n{cost_correction}" if cost_correction else ""),
         })
 
 
@@ -767,6 +816,9 @@ async def _generate_itinerary_inner(
     trip_config: TripConfig, timings: timing.RequestTimings
 ) -> ItineraryResponse:
     timings.label("provider", settings.llm_provider)
+    # Set only by the live path; stays None for mock/cache/fallback, whose costs
+    # come from code we control rather than a model that can drift currency.
+    cost_warning: str | None = None
     if settings.llm_provider == "mock":
         raw = _mock_itinerary(trip_config)
         raw.setdefault("_from_fallback", "mock")
@@ -783,11 +835,34 @@ async def _generate_itinerary_inner(
                     await ensure_destination_ingested(dest)
             except Exception:
                 logger.warning("destination ingestion gatekeeper failed for %r", dest, exc_info=True)
-        try:
+        async def _generate(correction: str = "") -> dict:
             if settings.llm_provider == "gemini":
-                raw = await _gemini_itinerary(trip_config)
-            else:
-                raw = await _langchain_itinerary(trip_config)
+                return await _gemini_itinerary(trip_config, cost_correction=correction)
+            return await _langchain_itinerary(trip_config, cost_correction=correction)
+
+        try:
+            raw = await _generate()
+            # Cost sanity BEFORE the cache write — caching a wrong-currency or
+            # wrong-direction itinerary would serve the defect to every later
+            # fallback for this trip shape, long after the bad run is forgotten.
+            problem = _cost_sanity_problem(raw, trip_config)
+            if problem:
+                logger.warning("Itinerary costs rejected, regenerating once: %s", problem)
+                timing.increment("cost_sanity_retries")
+                with timing.stage("cost_retry"):
+                    retry_raw = await _generate(_cost_correction_block(problem))
+                retry_problem = _cost_sanity_problem(retry_raw, trip_config)
+                if not retry_problem:
+                    raw, problem = retry_raw, None
+                else:
+                    # Keep the FIRST result. A second bad answer is not an
+                    # improvement, and swapping one defect for another loses
+                    # the only thing we know about this one. The surviving
+                    # `problem` becomes a user-visible warning below — never
+                    # present unreliable costs as if they were checked.
+                    logger.warning("Regenerated itinerary still fails cost sanity: %s", retry_problem)
+                    timing.increment("cost_sanity_retries_failed")
+            cost_warning = problem
         except Exception as llm_error:
             with timing.stage("fallback"):
                 raw = await _fallback_itinerary(trip_config, llm_error)
@@ -844,14 +919,143 @@ async def _generate_itinerary_inner(
     )
     entry_grounded = await ensure_entry_info(entry_country)
 
+    # A surviving cost problem is disclosed, not swallowed: the plan itself is
+    # good (real places, pins honoured) and is worth showing, but its numbers
+    # failed our own check twice and must not read as verified.
+    warnings = (
+        ["Cost estimates for this itinerary look unreliable and should be treated "
+         "as rough — the plan itself is unaffected."]
+        if cost_warning else []
+    )
+
     return ItineraryResponse(
         days=scored_days,
         alignment_score=round(overall_score, 2),
+        warnings=warnings,
         expense_breakdown=_parse_expense_breakdown(
             raw.get("expense_breakdown", {}), trip_config, entry_grounded=entry_grounded
         ),
         generation_tier=raw.get("_from_fallback", "live"),
     )
+
+
+# ── Cost sanity, and the one retry it earns ──────────────────────────────────
+#
+# Two failure modes, both live-observed 2026-08-05 on Bali generations, both
+# invisible to every other check because the itinerary is otherwise perfect —
+# right day count, real places, pins honoured, internally consistent totals.
+#
+# 1. WRONG CURRENCY. One run in five returned `Rs 124,525,000` for a 6-day trip
+#    on a Rs 2.4L budget, with day figures like Rs 1,800,000 — Gemini silently
+#    costing in Indonesian Rupiah despite the schema saying INR. It corrupts
+#    `expense_breakdown` too, not just the per-item field, so it is not
+#    specific to per-day costs.
+# 2. WRONG DIRECTION. A day the user asked to be made CHEAPER coming back at or
+#    above the cost of the trip's other days. Scale can look perfectly normal
+#    here — the number is simply wrong, which is the more insidious of the two.
+#
+# The anchor for (1) is deliberately budget-free: per-person-per-day. A stated
+# budget cannot be the yardstick, because the entire feasibility gate exists
+# for trips whose real cost far exceeds what the user typed. Bounds are set
+# very wide — this is a unit-error detector, not a price opinion.
+_MAX_PLAUSIBLE_INR_PER_PERSON_PER_DAY = 500_000
+_MIN_PLAUSIBLE_INR_PER_PERSON_PER_DAY = 200
+
+
+def _cost_sanity_problem(raw: dict, trip_config: TripConfig) -> str | None:
+    """Describe what is wrong with this itinerary's costs, or None if fine.
+
+    The string is fed back to the model as a correction, so it names the
+    defect in the model's own terms rather than ours.
+    """
+    breakdown = raw.get("expense_breakdown") or {}
+    total = _coerce_cost_inr(breakdown.get("total_inr"))
+    days = raw.get("days") or []
+    group = trip_config.group
+    people = max(1, group.adults + group.seniors + len(group.kids))
+    n_days = max(1, len(days))
+
+    if total:
+        per_person_per_day = total / (people * n_days)
+        if per_person_per_day > _MAX_PLAUSIBLE_INR_PER_PERSON_PER_DAY:
+            return (
+                f"the total came to INR {total:,} for {people} people over {n_days} days "
+                f"— about INR {per_person_per_day:,.0f} per person per day, which is far "
+                "too high for any real trip. This normally means the figures were given "
+                "in the destination's local currency instead of Indian Rupees"
+            )
+        if per_person_per_day < _MIN_PLAUSIBLE_INR_PER_PERSON_PER_DAY:
+            return (
+                f"the total came to only INR {total:,} for {people} people over "
+                f"{n_days} days, which is far too low to be a real trip cost"
+            )
+
+    # Direction: a day asked to be cheaper must actually BE cheaper than the
+    # rest of the trip. Compared against the other days rather than against a
+    # previous generation, because each generation is independent — there is no
+    # "before" to diff against inside a single call.
+    prefs = getattr(trip_config, "day_cost_preferences", None) or []
+    if prefs and len(days) > 1:
+        by_day = {
+            _coerce_cost_inr(d.get("day_number")): sum(
+                _coerce_cost_inr(i.get("estimated_cost_inr")) for i in (d.get("items") or [])
+            )
+            for d in days
+        }
+        if any(by_day.values()):        # all-zero costs is a separate problem
+            for pref in prefs:
+                target = by_day.get(pref.day_number)
+                others = [c for d, c in by_day.items() if d != pref.day_number]
+                if target is None or not others:
+                    continue
+                avg_other = sum(others) / len(others)
+                if pref.direction == "cheaper" and target >= avg_other:
+                    return (
+                        f"day {pref.day_number} was supposed to be the CHEAPER day, but it "
+                        f"costs INR {target:,} while the other days average INR "
+                        f"{avg_other:,.0f} — it must come out clearly below them"
+                    )
+                if pref.direction == "pricier" and target <= avg_other:
+                    return (
+                        f"day {pref.day_number} was supposed to be the day to SPEND MORE, "
+                        f"but it costs INR {target:,} while the other days average INR "
+                        f"{avg_other:,.0f} — it must come out clearly above them"
+                    )
+    return None
+
+
+def _cost_correction_block(problem: str) -> str:
+    """The corrective instruction appended to a regeneration prompt."""
+    return (
+        "🔴 COST CORRECTION — your previous answer for this exact trip was rejected:\n"
+        f"{problem}.\n"
+        "Regenerate the whole itinerary. EVERY monetary figure — every item's "
+        "`estimated_cost_inr` and every field in `expense_breakdown` — must be in "
+        "INDIAN RUPEES (INR), never the destination's local currency, and must stay "
+        "in INR consistently across the entire response. Convert at a realistic rate "
+        "if you are thinking in local prices. Keep the same places, the same pinned "
+        "must-includes and the same structure — only the costs were wrong."
+    )
+
+
+_COST_DIGITS_RE = re.compile(r"\d+")
+
+
+def _coerce_cost_inr(raw: object) -> int:
+    """Best-effort int for a per-item cost the model may have typed loosely.
+
+    Accepts 500, 500.0, "500", "₹500", "500 INR", "1,200"; maps "free"/None/
+    anything unparseable to 0. Negatives clamp to 0 — a negative cost is
+    nonsense and the field rejects it, which would sink the whole itinerary.
+    """
+    if isinstance(raw, bool):          # bool is an int subclass; never a cost
+        return 0
+    if isinstance(raw, int | float):
+        return max(0, int(raw))
+    if isinstance(raw, str):
+        digits = "".join(_COST_DIGITS_RE.findall(raw.replace(",", "")))
+        return int(digits) if digits else 0
+    return 0
 
 
 def _parse_days(raw_days: list[dict]) -> list[ItineraryDay]:
@@ -873,6 +1077,11 @@ def _parse_days(raw_days: list[dict]) -> list[ItineraryDay]:
                 ),
                 local_name=ri.get("local_name", ""),
                 tags=ri.get("tags", []),
+                # Coerced defensively: the model occasionally answers "₹500",
+                # "free" or a float here rather than an int, and a ValidationError
+                # would discard the ENTIRE itinerary over one cost estimate.
+                # Falling back to 0 loses a figure; raising loses the trip.
+                estimated_cost_inr=_coerce_cost_inr(ri.get("estimated_cost_inr")),
                 booking_url=ri.get("booking_url", ""),
                 youtube_video_id=ri.get("youtube_video_id", ""),
                 youtube_search_query=ri.get("youtube_search_query", ""),

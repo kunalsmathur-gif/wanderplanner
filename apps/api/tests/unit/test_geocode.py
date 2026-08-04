@@ -222,6 +222,12 @@ class TestGeocodeQueryOverrides:
             ("Austin", "Austin, Texas"),
             ("La Paz", "La Paz, Bolivia"),
             ("Valencia", "Valencia, Spain"),
+            # Not a same-name collision but the same failure surface: a bare
+            # "Bali" resolves to the island centroid, ~49km north of the hub
+            # and 44-67km from every landmark the name means. The automatic
+            # hub-town lookup fixes it only when Overpass answers, so the
+            # override is what makes ingestion deterministic.
+            ("Bali", "Denpasar, Indonesia"),
         ],
     )
     @pytest.mark.asyncio

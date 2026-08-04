@@ -36,7 +36,9 @@ Do this once, start to finish, *before* your take. It exists because the deck ch
 - [ ] All 4 video slots confirmed playing on click (see Precursor step 5)
 - [ ] Admin dashboard clip (`beat5-accountability-inset.mp4`) captured on the leads view, with **at least one lead in each state** (pending / escalated / responded) so the column isn't empty
 - [ ] `wanderplanner.org` open and reachable — this is the live deploy, not localhost
-- [ ] Do **not** demo Anya speaking — TTS is off
+- [ ] Rehearsed beat ① as **four turns** (§3.1 of `demo-script-validation.md`), leaving departure city blank
+- [ ] Anya's voice is LIVE in production (v10.68/69) — the old "TTS is off" note was stale.
+      Still out of this cut for time, but it is available if you want it
 - [ ] Beat ③ is one continuous take. Practise it twice before recording.
 
 ---
@@ -44,7 +46,20 @@ Do this once, start to finish, *before* your take. It exists because the deck ch
 ## ① 0:00–0:22 · Cold open — the gate
 
 > **SCREEN:** Live app (wanderplanner.org). No intro card, no logo. Cursor already in Anya's chat.
-> Type or speak: `6-day Bali trip, 2 adults, ₹20,000, must include Tanah Lot`
+>
+> ⚠️ **The gate needs four turns, not one** — it only fires once all six required
+> fields are in and you confirm. Verified transcript (`docs/demo-script-validation.md` §3.1):
+>
+> | Turn | Type |
+> |---|---|
+> | 1 | `6-day Bali trip, 2 adults, 20000 rupees` |
+> | 2 | `It's a leisure beach and temples holiday, 10 to 15 September 2026` |
+> | 3 | `Moderate pace` |
+> | 4 | click **`Just generate it!`** |
+>
+> Speed the clip up through turns 1–3; land at normal speed on the gate.
+> **Do not click "Add departure city"** — with origin blank the minimum lands near
+> ₹1.5L; supplying one roughly doubles it and breaks the next beat's arithmetic.
 > Let the feasibility gate render. Hold on the shortfall.
 
 **SAY** *(45 words)*
@@ -55,7 +70,12 @@ Watch what Anya does *before* she plans anything.
 
 *(beat — let the gate land)*
 
-She stops. Realistic minimum: one lakh forty-six thousand. You're short by one lakh twenty-six.
+She stops. The realistic minimum is around a lakh and a half — against a budget of twenty thousand.
+
+> 🔴 **Read the shortfall off the screen; do not pre-script the digits.** This
+> figure is LLM-generated at temperature 0.2. Five live runs of the identical
+> trip returned ₹1.48L / ₹2.33L / ₹2.36L / ₹2.68L / ₹2.74L, and the visa line
+> flips between a real figure and "not available" between runs.
 
 ---
 
@@ -69,7 +89,7 @@ I'm Kunal Mathur. Anya is WanderPlanner's planning agent — and she isn't a cha
 
 Every answer is grounded in a verified corpus: OpenStreetMap, Wikivoyage, YouTube signal, pulled through hybrid vector-plus-keyword retrieval, then reranked before she ever writes a word.
 
-And when she can't safely price something, she doesn't guess — she hands it to a human. Me.
+And when she can't safely price something, she doesn't guess — she says so, and there's a human backstop behind her. Me.
 
 ---
 
@@ -79,11 +99,13 @@ And when she can't safely price something, she doesn't guess — she hands it to
 >
 > | At | Do |
 > |---|---|
-> | 0:48 | Click **Raise budget** → ₹1,60,000 → Proceed |
-> | 0:55 | Itinerary streams. **Visible "×4" speed label on screen** |
-> | 1:18 | Scroll to the 8-category cost breakdown. Rest on it |
-> | 1:28 | Type `make day 3 cheaper` |
-> | 1:43 | What-changed summary. **Highlight Tanah Lot still present.** Point at the recalculated total |
+> | 0:48 | Click the **`Set budget to ₹…`** chip (the app supplies the figure — do not type your own) → Proceed |
+> | 0:55 | Itinerary streams. **Visible "×4" speed label on screen** (an editing overlay — the app has no such label; generation really takes 40–50s) |
+> | 1:18 | Scroll to the cost breakdown. Rest on it |
+> | 1:28 | In Anya's chat, type `we're really into iconic Balinese temples and sunset views` |
+> | 1:36 | Pin card lands: **Tanah Lot Temple + Uluwatu Temple pinned**, eight others honestly listed as unverified. Itinerary auto-rebuilds |
+> | 1:50 | Type `make day 3 cheaper` |
+> | 1:58 | What-changed summary. **Highlight Tanah Lot still present.** Point at day 3's lowered cost and the recalculated total |
 
 **SAY** *(142 words)*
 
@@ -91,15 +113,20 @@ The gate isn't a dead end — it's a fork. Raise the budget, and she plans.
 
 Every place here is verified from OpenStreetMap and Wikivoyage. She will not invent one.
 
-*(over the stream)* Day by day, with a map, and a full cost breakdown across eight categories.
+*(over the stream)* Day by day, with a map, and a full cost breakdown — right down to the emergency buffer.
+
+> ⚠️ **Do not say "eight categories."** The card hides any zero row, and Bali's
+> visa cost is ₹0, so seven render. A viewer counting along catches it.
 
 *(let it finish — silence is fine here)*
 
-Now I'll change my mind, the way anyone would.
+*(type: we're really into iconic Balinese temples and sunset views)*
+
+I asked for temples. She pinned the two she could verify against OpenStreetMap — and told me, unprompted, about eight more she couldn't. That list is the product.
 
 *(type: make day 3 cheaper)*
 
-Day three is cheaper. But look at Tanah Lot — the place I locked in at the very start is still there. She can't quietly drop a commitment to hit a number.
+Day three is cheaper. But look — Tanah Lot is still there. She can't quietly drop a commitment to hit a number.
 
 And the total is recalculated and re-checked against my budget, not left stale.
 
@@ -124,7 +151,7 @@ And the same honesty standard applies to destinations, live: there's no Wizardin
 
 **SAY** *(37 words)*
 
-Two things route to a local expert: a safety backstop, or a booking request once you've liked the plan — tracked on a twenty-four-hour SLA. What isn't real yet: live airline and hotel prices, not just estimates.
+Once you've liked the plan, a booking request routes to a local expert — tracked on a twenty-four-hour SLA, with escalation if nobody answers. What isn't real yet: live airline and hotel prices, not just estimates.
 
 ---
 
@@ -158,7 +185,7 @@ Wanderplanner. Real budgets. Real places. Real plans.
 
 | Left out | Why |
 |---|---|
-| Anya speaking aloud | `TTS_PROVIDER` is off; credentials are on another machine |
+| Anya speaking aloud | Works in production as of v10.68/69 (verified: `/api/voice/tts` returns real audio) — left out for time, not capability |
 | Signup / login flow | Dead screen time |
 | PDF export, share link, booking click-through | One clause each at most; not shots |
 | Full test suite scrolling past | Faculty: "the honesty is what makes it credible, not the pass counts" |

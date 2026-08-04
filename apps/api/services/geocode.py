@@ -62,6 +62,22 @@ GEOCODE_QUERY_OVERRIDES: dict[str, str] = {
     "maldives": "Male, Maldives",
     "fiji": "Nadi",
     "hawaii": "Honolulu",
+    # Same island-without-a-hub shape as Andaman/Maldives/Fiji/Hawaii above,
+    # but it reached us as an intermittent bug rather than an obviously-wrong
+    # name: a bare "Bali" query returns the ISLAND centroid (-8.227, 115.192),
+    # 49km north of Denpasar and 44-67km from every landmark a traveller means
+    # by "Bali" (Tanah Lot, Uluwatu, Kuta, Ubud). geocode_city's automatic
+    # hub-town lookup normally corrects this to Denpasar — but that lookup is
+    # an Overpass call, so when Overpass throttles it silently falls back to
+    # the raw centroid and ingestion lands in Buleleng/Bedugul on the north
+    # coast instead. Live-confirmed 2026-08-05: the lookup returned 429 then
+    # 504 on consecutive attempts while succeeding earlier the same day, and
+    # the 25 POIs stored in production (centroid -8.235, 115.161 — 'Gado
+    # gado', 'Pura Desa Panji', 'Monumen Panji Sakti') sit 3km from the
+    # fallback centroid, i.e. they were written by exactly such a run.
+    # Pinning the hub makes ingestion deterministic regardless of Overpass
+    # health; the automatic path stays as the general fix for new cases.
+    "bali": "Denpasar, Indonesia",
     # Genuine same-name ambiguity between two real, comparably prominent
     # cities (Cartagena, Colombia vs Cartagena, Spain) that no generic
     # heuristic can resolve on names alone — Nominatim's bare-query top hit

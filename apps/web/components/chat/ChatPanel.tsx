@@ -121,8 +121,14 @@ export function ChatPanel() {
       if (result.action_type === 'patch_config' && result.config_patch) {
         updateConfig(result.config_patch as Parameters<typeof updateConfig>[0])
         // Newly pinned places are a commitment — regenerate the plan around
-        // them right away (if one exists) and show the diff.
-        if (result.config_patch.pinned_pois && useItineraryStore.getState().days.length > 0) {
+        // them right away (if one exists) and show the diff. A per-day spend
+        // change ("make day 3 cheaper") is the same kind of edit: the user
+        // asked for the itinerary itself to change, so applying it silently
+        // to the config and waiting for some later regeneration is exactly
+        // the "promised an edit that never happens" bug this path fixes.
+        const rebuilds =
+          result.config_patch.pinned_pois || result.config_patch.day_cost_preferences
+        if (rebuilds && useItineraryStore.getState().days.length > 0) {
           regenerateInPlace(useTripConfigStore.getState().config)
         }
       } else if (result.action_type === 'regenerate' && result.major_change) {

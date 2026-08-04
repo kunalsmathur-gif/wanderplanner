@@ -26,6 +26,19 @@ class ItineraryItem(BaseModel):
     description: str
     location: ItineraryItemLocation
     tags: list[str] = Field(default_factory=list)
+    # Out-of-pocket cost of doing this one thing, for the WHOLE GROUP, in INR:
+    # entry/ticket price, the meal, the ride. 0 means genuinely free (a beach,
+    # a walk, a temple with no entry fee) — unlike ExpenseBreakdown.visa_inr,
+    # there is no "unknown" state here, because a per-item figure is only ever
+    # an estimate and a null would give callers a third case to handle for no
+    # benefit. Deliberately EXCLUDES flights and accommodation: those are
+    # trip-level, and folding them into a day would make every day containing
+    # a hotel check-in look artificially expensive.
+    #
+    # This exists so a day has a summable cost at all — without it "make day 3
+    # cheaper" has nothing to move and nothing to show (see
+    # TripConfig.day_cost_preferences).
+    estimated_cost_inr: int = Field(default=0, ge=0, le=10_000_000)
     booking_url: str = ""
     youtube_video_id: str = ""
     youtube_search_query: str = ""
@@ -38,6 +51,16 @@ class ItineraryDay(BaseModel):
     date: str
     theme: str
     items: list[ItineraryItem] = Field(default_factory=list)
+
+    @property
+    def estimated_cost_inr(self) -> int:
+        """What this day costs the group, in INR — the sum of its items.
+
+        A property rather than a stored field so it can never disagree with
+        the items it is derived from (a stored total would drift the moment
+        an item is added, dropped or re-costed during refinement).
+        """
+        return sum(item.estimated_cost_inr for item in self.items)
     transit_warnings: list[TransitWarning] = Field(default_factory=list)
     image_url: str = ""
     image_photographer: str = ""

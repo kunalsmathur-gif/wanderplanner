@@ -75,7 +75,11 @@ def _rail_fare_inr(distance_km: float, class_tier: str) -> int:
             _TELESCOPIC_TAPER_KM * rate
             + (distance_km - _TELESCOPIC_TAPER_KM) * rate * _TELESCOPIC_TAPER_DISCOUNT
         )
-    return max(_RAIL_MINIMUM_FARE_INR, round(fare, -1))  # round to nearest 10
+    # `round(x, -1)` on a float returns a float, so `max(int, float)` widens the
+    # whole expression to float and breaks the `-> int` contract these fares are
+    # consumed under (they land in int-typed INR fields). The value is already a
+    # whole multiple of 10 by then, so `int()` is exact, never a truncation.
+    return int(max(_RAIL_MINIMUM_FARE_INR, round(fare, -1)))  # round to nearest 10
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +107,7 @@ def _bus_fare_inr(distance_km: float, class_tier: str) -> int | None:
     if distance_km > _BUS_MAX_KM:
         return None
     rate = BUS_RATE_PER_KM_INR[class_tier]
-    return max(_BUS_MINIMUM_FARE_INR, round(distance_km * rate, -1))
+    return int(max(_BUS_MINIMUM_FARE_INR, round(distance_km * rate, -1)))
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +123,7 @@ _CAB_MINIMUM_FARE_INR = 800
 def _cab_fare_inr(distance_km: float) -> int | None:
     if distance_km > CAB_MAX_KM:
         return None
-    return max(_CAB_MINIMUM_FARE_INR, round(distance_km * _CAB_RATE_PER_KM_INR, -1))
+    return int(max(_CAB_MINIMUM_FARE_INR, round(distance_km * _CAB_RATE_PER_KM_INR, -1)))
 
 
 def estimate_domestic_alternative(distance_km: float, class_tier: str) -> dict[str, int | None]:

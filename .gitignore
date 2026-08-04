@@ -71,3 +71,6 @@ Skills-Results/
 agent/
 docs/agents/
 skills-lock.json
+
+# Demo recording clips — large binaries, regenerated per session (see videos/README.md)
+docs/pitch-deck/videos/*.mp4

@@ -1,7 +1,7 @@
 # WanderPlanner — System Design Document
 
-**Version:** 8.8 (Eval recall chase: interest-expansion anti-distractor rule tuned, fidelity 0.975 → 0.983)
-**Last Updated:** July 15, 2026  
+**Version:** 8.9 (Per-day costs and their sanity guard; region-scale OSM radius overrides; the geocode hub-town lookup's silent throttle fallback)
+**Last Updated:** August 5, 2026  
 **Audience:** Engineering team and technical stakeholders
 
 ---
@@ -1868,6 +1868,83 @@ instead of the agent) that govern how these tools are meant to be used.
 ---
 
 ## 16. Change Log
+
+### v10.71 (August 2026) — Per-day costs, a cost-sanity retry, and region-scale destinations
+
+**Per-day cost is a new dimension in the itinerary model.** Until now cost
+existed only as one whole-trip `ExpenseBreakdown`, so "make day 3 cheaper" had
+nothing to move and nothing to display — which is why it had never been built.
+`ItineraryItem.estimated_cost_inr` holds the group cost of one item (entry fee,
+meal, ride) and deliberately **excludes flights and accommodation**, which are
+trip-level; folding them in would make every day containing a hotel check-in
+look artificially expensive, and it means day totals intentionally do not sum
+to the trip total. `ItineraryDay.estimated_cost_inr` is a **derived property,
+not a stored field**, so it cannot drift from the items it summarises when
+refinement adds, drops or re-costs one.
+
+`TripConfig.day_cost_preferences` carries the constraint as
+`{day_number, Literal["cheaper","pricier"]}` rather than free text. Threading
+the user's raw sentence into the generation prompt would be both an injection
+surface and unbounded; a closed direction set means the prompt block is
+authored by us and the model only chooses places. The day number is parsed
+**deterministically from the user's own message** in
+`chat_refine_chain.py::_parse_day_cost_request`, on the same principle that
+pins are verified server-side: the day number is a structural index into the
+itinerary, and a model that miscounts it silently re-costs the wrong day.
+
+**Cost sanity (`_cost_sanity_problem`) and its single retry.** Two live-measured
+failure modes, both invisible to every other check because the itinerary is
+otherwise perfect:
+
+| Mode | Live example | Why nothing else caught it |
+|---|---|---|
+| Wrong currency | `Rs 124,525,000` for 6 days / 2 people (Gemini costing in IDR) | Internally consistent — the breakdown sums correctly, in the wrong unit |
+| Wrong direction | A "cheaper" day costing more than the others | Scale looks entirely normal; only the *relationship* is wrong |
+
+The scale anchor is **per-person-per-day, deliberately budget-free**: a stated
+budget cannot be the yardstick when the feasibility gate exists precisely for
+trips whose real cost far exceeds what the user typed. Bounds are very wide
+(INR 200–500,000 pppd) because this is a unit-error detector, not a price
+opinion — an 8-person trip and a solo trip get different ceilings from the same
+total. On failure, exactly one regeneration carries a correction naming the
+defect and re-anchoring every figure to INR, keeping the same places and pins.
+
+Three deliberate properties, each earned by a failure this codebase has already
+had once:
+
+1. **The check runs before the cache write.** Caching a wrong-currency
+   itinerary would serve the defect to every later fallback for that trip
+   shape, long after the bad run was forgotten.
+2. **A second bad answer does not replace the first.** Swapping one defect for
+   another is not an improvement and loses the only thing known about the
+   first.
+3. **A surviving problem is disclosed, not swallowed** — it becomes an
+   `ItineraryResponse.warnings` entry. The plan is good and worth showing; its
+   numbers failed our own check twice and must not read as verified.
+
+**Region-scale destinations (`scrapers/osm.py::_OSM_RADIUS_OVERRIDES_M`).** The
+5 km default radius (and the 15 km thin-destination retry) encodes a
+city-shaped assumption: that what a name means sits near its centre. That is
+false for an island or a region. From Denpasar, Tanah Lot is 15.3 km, Ubud
+19 km and Uluwatu 22.7 km, so Bali at 5 km returned **zero** marquee landmarks
+and filled its 60 slots with Denpasar churches, cinemas and gyms. The override
+is read *inside* `ingest_osm_pois` rather than passed by callers, because
+`core/scheduler.py::_refresh_osm_pois` calls it bare — a call-site radius would
+be silently reverted by the next scheduled refresh. The thin-destination retry
+takes `max(expanded, override)` so it can only ever widen.
+
+🔴 **Open, and broader than Bali: `geocode_city`'s hub-town correction is
+itself an Overpass call.** A bare region name resolves to the area centroid;
+`_hub_town_in_bbox` normally corrects it to the hub town, but when Overpass
+throttles that lookup fails and the raw centroid is used instead — silently.
+Confirmed live 2026-08-05: "Bali" returned Denpasar cleanly, then `429`, then
+`504` within one session, and the 25 POIs then in production had a centroid
+3 km from the fallback point and 48 km from Denpasar. **Ingestion quality
+depended on whether an unrelated API happened to be up, and no downstream guard
+notices** — POI count, category share and the prominence check all look healthy
+on wrong-location data. Bali is pinned via `GEOCODE_QUERY_OVERRIDES`; **every
+other region-scale destination relying on that lookup has the same exposure and
+is unaudited.**
 
 ### v10.70 (August 2026) — Kaggle pricing plan Workstreams C & A
 

@@ -112,6 +112,45 @@ flowchart TD
     ERR2 --> B3
 ```
 
+
+## Cost sanity gate (⭐ NEW v10.71)
+
+Between the LLM call and the cache write, `chains/itinerary_chain.py` validates
+the generated costs and may regenerate **once**:
+
+```
+_gemini_itinerary() / _langchain_itinerary()
+        |
+        v
+_cost_sanity_problem(raw, trip_config)  ──► None ──► store_itinerary() ──► post-processing
+        |
+        | problem (wrong currency, or a "cheaper" day that is not cheaper)
+        v
+_generate(cost_correction=_cost_correction_block(problem))   # exactly one retry
+        |
+        +── retry clean  ──► use the retry
+        +── retry also bad ──► keep the FIRST result, and attach a user-visible
+                               warning to ItineraryResponse.warnings
+```
+
+Two checks:
+
+- **Scale** — `total_inr / (people × days)` must fall inside INR 200–500,000.
+  A unit-error detector, not a price opinion; deliberately anchored on
+  per-person-per-day rather than the stated budget, because the feasibility
+  gate exists precisely for trips that cost far more than the user typed.
+  Live-caught: `Rs 124,525,000` for a 6-day Bali trip, Gemini having costed in
+  Indonesian Rupiah.
+- **Direction** — for each `TripConfig.day_cost_preferences` entry, a
+  `"cheaper"` day must come out below the average of the trip's other days
+  (and `"pricier"` above). Compared within one generation, because each
+  generation is independent and there is no "before" to diff against.
+
+The gate runs **before** `store_itinerary()` on purpose: caching a
+wrong-currency itinerary would serve that defect to every later fallback for
+the same trip shape.
+
+
 ## Key design notes worth calling out
 
 - **This flow's output quality is graded offline by `eval/run_model_comparison.py` (⭐ NEW 2026-07-18).** The harness drives the exact same `_gemini_itinerary()`/`retrieve_context()`/`accuracy_score()` path shown above end-to-end per candidate model, then adds a subjective LLM-as-judge score (`eval/judge_metrics.py`: tone/personalization/coherence, judged by a fixed model independent of whichever model is under test) on top of the existing deterministic schema/day-count/theme/budget/hallucination checks — because two itineraries can both pass every structural check here while one reads generically and the other genuinely reflects the traveller's stated personas/themes/pace. See `docs/eval-set.md` §7 and `docs/system-design.md` §15A for the harness architecture, and `docs/PRD.md` §10 for the product framing of why a rule alone can't catch this.

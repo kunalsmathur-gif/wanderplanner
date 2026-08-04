@@ -2,6 +2,72 @@
 
 ---
 
+## 📌 SESSION OF 2026-08-05 — demo-script validation (v10.71.0)
+
+Validated every claim in `docs/video-script-4min.md` against live production
+before recording. Full findings, reproducible test cases with verbatim outputs,
+and a recording runbook: **`docs/demo-script-validation.md`**.
+
+**Shipped:** three "Anya narrated an action she cannot perform" bugs (a pin
+claimed but never created; the honesty message made unreachable by an early
+return when interest-expansion found nothing; "make day 3 cheaper" promising an
+edit with nothing to move it), per-day costs as a real feature, a cost-sanity
+guard with one retry, Bali's OSM pool re-ingested from the correct centre, and
+CI mypy back to green. Suite **1224 passed / 6 skipped**.
+
+### Open items from this session
+
+1. 🔴 **`geocode_city`'s hub-town correction is an Overpass call, and fails
+   silently when throttled.** A bare region name resolves to the area centroid;
+   `_hub_town_in_bbox` normally fixes it, but a `429`/`504` there means the raw
+   centroid is used and ingestion lands tens of km away. **No downstream guard
+   notices** — POI count, category share and the prominence check all pass on
+   wrong-location data. Bali is pinned via `GEOCODE_QUERY_OVERRIDES`; **every
+   other region-scale destination is unaudited.** Suggested: reverse-geocode
+   each destination's stored POI centroid and compare against the expected
+   country/hub, the way v10.37.0's geocode spot-check did for the mis-geocoded
+   trio (Austin/La Paz/Valencia).
+
+2. **The deck's `0.992` fidelity figure is unpublished.** It came from a live
+   run on another machine and is real, but `apps/api/eval/out/` is gitignored,
+   so every committed artifact still says **0.983** — including
+   `docs/eval-results/report_vs_chatgpt_2026-07-15.md`, `eval-set.md` §509,
+   `system-design.md`, `TECHNICAL_DOCUMENTATION.md` and the pitch deck's own
+   `index.html` (×3). On a slide captioned "a published eval suite", the
+   headline should be a number the repo can show a source for. **This is a
+   publishing job, not a re-measure** — copy that machine's
+   `refinement_fidelity_report.md` + `refinement_fidelity_results.json` into
+   `docs/eval-results/` as a dated pair, then sweep 0.983 → 0.992.
+   ⚠️ **Copy the raw JSON off that machine before running anything else there**
+   — any subsequent run overwrites it in place, including the free offline
+   gate. That is how the 2026-07-14 live results were lost.
+
+3. **Deck slide 4 compares two different metrics.** It reads "0.992 — Fidelity
+   score (vs ChatGPT 0.74)", but **0.74 is ChatGPT's unverifiable-suggestion
+   rate**, not a fidelity score. The older `pitch-deck/index.html` says "vs
+   ChatGPT 0.74 unverifiable"; the new `demo-deck.html` dropped the qualifier.
+   Also on that slide: "Pin inclusion & stability · 20/20" — both metrics are
+   only defined on the 16 positive cases; the other 4 are honesty cases.
+
+4. **Cost estimates can still be wrong ~1 in 5 runs without the guard firing
+   on scale.** The guard catches gross unit errors and direction violations,
+   but a *plausible-looking* wrong number passes. Worth a second anchor if
+   costs ever become user-facing beyond an estimate — the deterministic
+   `estimate_bare_minimum_budget` floor is the obvious candidate, at the cost
+   of an extra call on the generation path.
+
+5. **Frontend `tsc` has one pre-existing error** —
+   `__tests__/hooks/useVoice.test.tsx(606,84): Expected 1 arguments, but got 2`,
+   which arrived with v10.68 and is unrelated to this session. Confirmed
+   pre-existing by stashing all v10.71 frontend changes.
+
+6. **`ExpenseBreakupCard` hides zero-value rows**, so Bali (visa ₹0) renders
+   seven of the eight cost categories. Not a bug — but any copy that says
+   "eight categories" is wrong for such destinations, and the demo script has
+   been corrected accordingly.
+
+---
+
 ## 📌 SESSION OF 2026-08-03 — one security fix shipped, one research issue closed
 
 **v10.65.0 — the prompt-injection fence could be closed from inside (#42, closed).**

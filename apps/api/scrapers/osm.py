@@ -639,6 +639,37 @@ def _prioritize_landmarks(pois: list[dict]) -> list[dict]:
 _MIN_POIS_BEFORE_RADIUS_EXPANSION = 20
 _MAX_CATEGORY_SHARE_BEFORE_EXPANSION = 0.5
 
+# Region-scale destinations whose landmarks are simply further from the hub
+# than any city's are, keyed the same way as GEOCODE_QUERY_OVERRIDES
+# (destination.strip().lower()).
+#
+# The default 5km radius (and the 15km thin-destination retry) encodes a
+# city-shaped assumption: pick the centre, and what a traveller means by the
+# name is within walking-to-short-cab distance. That is false for an island
+# or a region, where the name covers a whole area and its landmarks are
+# spread across it. Bali is the worked example — from Denpasar, Tanah Lot is
+# 15.3km, Ubud 19km and Uluwatu 22.7km, so ALL of them fall outside both the
+# broad pass and the 15km prominence pass, and the 60-POI pool fills up with
+# Denpasar municipal noise (9 Catholic churches, 4 cinemas, 5 gyms) while
+# every landmark the destination is known for is missed. Measured 2026-08-05
+# from the corrected Denpasar centre: 5km/15km return zero marquee landmarks;
+# 30km returns Tanah Lot, Uluwatu, Ubud Palace, Sacred Monkey Forest, Tirta
+# Empul and Tegallalang Rice Terraces, with top-category share still 0.25 —
+# comfortably inside the completeness gate's 0.5.
+#
+# ⚠️ This must live here rather than being passed at the call site, because
+# core/scheduler.py::_refresh_osm_pois calls `ingest_osm_pois(destination)`
+# with no radius — a one-off wide ingestion would be silently reverted to 5km
+# by the next scheduled refresh, which is precisely the "correct data quietly
+# replaced by worse data" failure this file already guards against elsewhere.
+_OSM_RADIUS_OVERRIDES_M: dict[str, int] = {
+    "bali": 30000,
+}
+
+
+def _radius_override_for(destination: str) -> int | None:
+    return _OSM_RADIUS_OVERRIDES_M.get(destination.strip().lower())
+
 
 def _is_thin_or_dominated(pois: list[dict]) -> bool:
     """True if `pois` would fail the data-completeness gate's OSM checks —
@@ -663,7 +694,15 @@ async def ingest_osm_pois(destination: str) -> int:
     stable hash of (destination, name), so re-ingestion updates in place
     rather than duplicating.
     """
-    pois, prominence_ok = await _fetch_osm_pois_with_meta(destination)
+    override_radius = _radius_override_for(destination)
+    if override_radius:
+        logger.info(
+            "%r: region-scale destination, using %dm radius instead of the %dm default",
+            destination, override_radius, settings.osm_poi_radius_m,
+        )
+    pois, prominence_ok = await _fetch_osm_pois_with_meta(
+        destination, radius_m=override_radius
+    )
     # Thin/single-category-dominated results are common for small towns and
     # "hidden gem" destinations whose few landmark/nature POIs are spread
     # wider than the default 5km while restaurants cluster densely near the
@@ -672,14 +711,23 @@ async def ingest_osm_pois(destination: str) -> int:
     # than accepting a food/drink-only pool or an under-20 destination as
     # final; a wider-radius fetch is effectively a superset area so it's
     # never worse, only potentially the same.
-    if pois and _is_thin_or_dominated(pois):
+    # The retry must never NARROW the search: for a destination already using a
+    # region-scale override (30km for Bali), the 15km "expanded" radius is
+    # smaller than what we just fetched, and re-fetching at it would quietly
+    # drop the very landmarks the override exists to reach. Widen from
+    # whatever radius actually ran, never from the city-shaped default.
+    expanded_radius = max(settings.osm_poi_radius_expanded_m, override_radius or 0)
+    if pois and _is_thin_or_dominated(pois) and expanded_radius > (
+        override_radius or settings.osm_poi_radius_m
+    ):
         expanded_pois, expanded_prominence_ok = await _fetch_osm_pois_with_meta(
-            destination, radius_m=settings.osm_poi_radius_expanded_m
+            destination, radius_m=expanded_radius
         )
         if expanded_pois and (len(expanded_pois) > len(pois) or not _is_thin_or_dominated(expanded_pois)):
             logger.info(
-                "%r: default 5km radius was thin/dominated (%d POIs), expanded to %dm radius (%d POIs)",
-                destination, len(pois), settings.osm_poi_radius_expanded_m, len(expanded_pois),
+                "%r: %dm radius was thin/dominated (%d POIs), expanded to %dm radius (%d POIs)",
+                destination, override_radius or settings.osm_poi_radius_m,
+                len(pois), expanded_radius, len(expanded_pois),
             )
             pois, prominence_ok = expanded_pois, expanded_prominence_ok
     if not pois:

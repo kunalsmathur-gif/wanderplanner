@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -15,6 +15,7 @@ from core.validation import (
     MAX_PREBOOKED_INR,
     MAX_STYLE_OPTIONS,
     MAX_THEMES,
+    MAX_TRIP_DAYS,
     CityName,
     CountryName,
     CrowdPreference,
@@ -123,6 +124,21 @@ class PinnedPOI(BaseModel):
     verified_by: ShortLabel = "osm"    # "osm" (coords are real) | "wiki" (existence confirmed, coords unknown)
 
 
+class DayCostPreference(BaseModel):
+    """"Make day 3 cheaper" — a spend steer for one day of the itinerary.
+
+    Only ever created server-side from a refinement turn (see
+    chains/chat_refine_chain.py), never authored by the LLM as free text.
+    """
+    day_number: int = Field(ge=1, le=MAX_TRIP_DAYS)
+    # "cheaper" is the case that prompted this; "pricier" is its exact mirror
+    # and costs nothing to support ("splurge on the last night"). Anything
+    # outside the pair is rejected rather than coerced — unlike the wizard's
+    # enum fields, the producer here is our own deterministic parser, so a bad
+    # value is a bug in our code, not model drift to be tolerated.
+    direction: Literal["cheaper", "pricier"]
+
+
 class TripConfig(BaseModel):
     purpose: PurposeText = ""
     # Shape-validated by core.validation.clean_trip_dates, not modelled — a
@@ -166,11 +182,31 @@ class TripConfig(BaseModel):
     # "Harry Potter test"). Hard constraints in the generation prompt, not
     # suffix nudges. Capped to keep the prompt block and the itinerary sane.
     pinned_pois: list[PinnedPOI] = Field(default_factory=list)
+    # Per-day spend steering from refinement ("make day 3 cheaper"). Structured
+    # rather than free text on purpose: the alternative is threading the user's
+    # raw sentence into the generation prompt, which is both an injection
+    # surface and unbounded. A closed direction set means the prompt block is
+    # authored by us and the model only chooses places.
+    day_cost_preferences: list[DayCostPreference] = Field(default_factory=list)
 
     @field_validator('pinned_pois')
     @classmethod
     def cap_pinned_pois(cls, v: list[PinnedPOI]) -> list[PinnedPOI]:
         return v[:MAX_PINNED_POIS]
+
+    @field_validator('day_cost_preferences')
+    @classmethod
+    def dedupe_day_cost_preferences(cls, v: list[DayCostPreference]) -> list[DayCostPreference]:
+        """Last write wins per day, and the list can never outgrow the trip.
+
+        Refinement is iterative — "make day 3 cheaper" then "actually splurge
+        on day 3" must leave ONE preference for day 3, not two contradictory
+        ones the prompt would have to arbitrate.
+        """
+        by_day: dict[int, DayCostPreference] = {}
+        for pref in v:
+            by_day[pref.day_number] = pref
+        return [by_day[d] for d in sorted(by_day)][:MAX_TRIP_DAYS]
 
     @field_validator('dates', mode='before')
     @classmethod

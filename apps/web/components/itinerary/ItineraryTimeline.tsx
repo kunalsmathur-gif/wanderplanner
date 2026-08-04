@@ -7,7 +7,7 @@ import { ItineraryFeedbackWidget } from '@/components/itinerary/ItineraryFeedbac
 import type { ItineraryItem } from '@/types'
 import { useEffect, useState } from 'react'
 import { isSafeExternalUrl } from '@/lib/url-safety'
-import { formatDayDate } from '@/lib/format'
+import { formatCurrency, formatDayDate } from '@/lib/format'
 import { logClientEvent } from '@/lib/analyticsBeacon'
 
 const thumbnailCache = new Map<string, string | null>()
@@ -155,6 +155,12 @@ export function ItineraryTimeline() {
   const { days, activeDay, hoveredItemId, setActiveDay, setHoveredItem } = useItineraryStore()
   const setMobileTab = useAppStore((state) => state.setMobileTab)
   const day = days[activeDay]
+  // Summed here rather than stored on the day: a persisted total would drift
+  // the moment refinement adds, drops or re-costs an item.
+  const dayCostInr = (day?.items ?? []).reduce(
+    (sum, item) => sum + (item.estimated_cost_inr ?? 0),
+    0,
+  )
 
   // Selecting an activity (tap/click/Enter) both highlights its marker on
   // the map (existing hover-highlight mechanism, reused as "selected") and
@@ -198,9 +204,27 @@ export function ItineraryTimeline() {
 
       {/* Activity cards */}
       <div className="flex-1 overflow-y-auto px-4 py-4">
-        <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-[var(--_muted-fg)]">
-          {day.theme}
-        </p>
+        {/* Theme and this day's cost share a row. The cost is the sum of the
+            day's items (entry fees, meals, local transport) — it deliberately
+            excludes flights and accommodation, which are trip-level, so the
+            day totals will not add up to the trip total in the expense card.
+            Hidden entirely when every item is 0, rather than showing "₹0",
+            which would read as "this day is free" on an itinerary whose costs
+            simply were not estimated. */}
+        <div className="mb-3 flex items-baseline justify-between gap-3">
+          <p className="text-xs font-semibold uppercase tracking-widest text-[var(--_muted-fg)]">
+            {day.theme}
+          </p>
+          {dayCostInr > 0 && (
+            <p
+              className="shrink-0 text-xs font-semibold text-[var(--_fg)]"
+              title="Activities, food and local transport for this day — excludes flights and accommodation"
+            >
+              {formatCurrency(dayCostInr, 'INR')}
+              <span className="ml-1 font-normal text-[var(--_muted-fg)]">this day</span>
+            </p>
+          )}
+        </div>
 
         <div className="space-y-3">
           {day.items.map((item) => (

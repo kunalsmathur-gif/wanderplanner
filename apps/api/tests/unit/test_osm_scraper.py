@@ -23,10 +23,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from scrapers.osm import (
+    _OSM_RADIUS_OVERRIDES_M,
     _build_prominence_query,
     _display_name,
     _prioritize_landmarks,
     _prominence_score,
+    _radius_override_for,
     fetch_osm_pois,
 )
 
@@ -814,3 +816,28 @@ class TestIngestGuardsAgainstProminencePassFailure:
 
         assert count == 60
         mock_qdrant.upsert.assert_called_once()
+
+
+class TestRegionScaleRadiusOverrides:
+    """Region-scale destinations (islands, multi-town areas) need a wider
+    Overpass radius than the city-shaped 5km default — see
+    `_OSM_RADIUS_OVERRIDES_M`'s comment for the Bali measurements."""
+
+    def test_bali_is_overridden(self):
+        assert _radius_override_for("Bali") == 30000
+
+    def test_lookup_is_case_and_whitespace_insensitive(self):
+        # ingest_osm_pois passes the raw destination string through.
+        assert _radius_override_for("  bali ") == 30000
+        assert _radius_override_for("BALI") == 30000
+
+    def test_ordinary_city_has_no_override(self):
+        assert _radius_override_for("Jaipur") is None
+
+    def test_override_exceeds_the_thin_retry_radius(self):
+        """The thin/dominated retry widens to `osm_poi_radius_expanded_m`. Any
+        override at or below it would be silently undone by that retry, which
+        is the regression the max() guard in ingest_osm_pois prevents."""
+        from core.config import settings
+        for name, radius in _OSM_RADIUS_OVERRIDES_M.items():
+            assert radius > settings.osm_poi_radius_expanded_m, name

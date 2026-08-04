@@ -11,10 +11,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from chains.chat_refine_chain import (
+    _PIN_CLAIM_RETRACTION,
     ChatRefineRequest,
     ChatRefineResponse,
     _apply_interest_pinning,
     _is_transient_llm_error,
+    _strip_false_pin_claim,
     chat_refine,
 )
 from chains.interest_expansion_chain import _mock_candidates, expand_interest_to_candidates
@@ -348,6 +350,120 @@ class TestChatRefineOrchestration:
                                   pins=[], dropped=[])
         assert resp.named_interest is None
         assert resp.config_patch == {"pace": "relaxed"}
+
+
+@pytest.mark.asyncio
+class TestEmptyExpansionIsReportedHonestly:
+    """🔴 Regression (live-observed 2026-08-04, "Harry Potter" in Goa).
+
+    `_apply_interest_pinning` used to `return resp` the moment expansion came
+    back with no candidates, which skipped the honesty message written for
+    exactly this outcome. The user was left with "I'll look for real, verified
+    places ✨" and no follow-up — an unkept promise, which is worse than the
+    invention the pipeline exists to prevent.
+
+    To the traveller, "expansion found nothing" and "everything expansion
+    found failed verification" are the same event: we found nothing real. They
+    must produce the same reply.
+    """
+
+    async def _apply(self, candidates: list[str], trip: TripConfig):
+        verified: list[list[str]] = []
+
+        async def _fake_expand(interest, destination):
+            return candidates
+
+        async def _fake_verify(cands, destination, source_interest=""):
+            verified.append(list(cands))
+            return [], list(cands)
+
+        resp = ChatRefineResponse(
+            reply="Fantastic! I'll look for real, verified places for that. ✨",
+            action_type="patch_config",
+            named_interest="Harry Potter",
+        )
+        with patch(
+            "chains.interest_expansion_chain.expand_interest_to_candidates", _fake_expand
+        ), patch("services.poi_pinning.verify_candidates", _fake_verify):
+            out = await _apply_interest_pinning(resp, trip)
+        return out, verified
+
+    async def test_empty_expansion_still_says_nothing_was_pinned(self):
+        out, _ = await self._apply([], _trip())
+        assert out.pinned_pois == []
+        assert "haven't pinned anything" in out.reply
+        assert "better honest than invented" in out.reply
+
+    async def test_empty_expansion_matches_all_dropped_wording(self):
+        """The two paths to "we found nothing" must be indistinguishable."""
+        empty, _ = await self._apply([], _trip())
+        all_dropped, _ = await self._apply(["Platform 9 3/4"], _trip())
+        assert empty.reply == all_dropped.reply
+
+    async def test_empty_expansion_skips_the_verification_scroll(self):
+        """Nothing to verify — don't pay for a Qdrant scroll to prove it."""
+        _, verified = await self._apply([], _trip())
+        assert verified == []
+
+    async def test_empty_expansion_pins_nothing_into_config(self):
+        out, _ = await self._apply([], _trip())
+        assert out.config_patch is None or "pinned_pois" not in (out.config_patch or {})
+
+
+class TestFalsePinClaimRetraction:
+    """🔴 Regression (live-observed 2026-08-04): "I really want to see Tanah Lot"
+    returned named_interest=null and pinned_pois=[] while replying "Got it! I've
+    added Tanah Lot to your pinned points of interest for this trip."
+
+    Only the server can pin, so a past-tense pin claim in a turn that pinned
+    nothing is false by construction — the same shape as
+    wizard_chat_chain's _HALLUCINATED_GENERATION_RE, caught the same way.
+    """
+
+    def _resp(self, reply: str, pins: list[PinnedPOI] | None = None) -> ChatRefineResponse:
+        return ChatRefineResponse(
+            reply=reply, action_type="patch_config", pinned_pois=pins or []
+        )
+
+    @pytest.mark.parametrize("reply", [
+        "Got it! I've added Tanah Lot to your pinned points of interest for this trip.",
+        "I have pinned the Golden Temple for you.",
+        "Done — Meiji Shrine is now locked in.",
+        "Tanah Lot has been added to your itinerary.",
+        "Sure, I've included it in your plan.",
+        "I've locked that in for you.",
+    ])
+    def test_false_claim_is_retracted(self, reply):
+        out = _strip_false_pin_claim(self._resp(reply))
+        assert out.reply == _PIN_CLAIM_RETRACTION
+        assert "nothing is pinned" in out.reply
+
+    def test_real_pin_leaves_the_reply_alone(self):
+        """A turn that genuinely pinned carries the server's own 📌 block."""
+        reply = "Great! I've added it.\n\n📌 Pinned to your trip: Tanah Lot Temple"
+        out = _strip_false_pin_claim(
+            self._resp(reply, pins=[PinnedPOI(name="Tanah Lot Temple", verified_by="wiki")])
+        )
+        assert out.reply == reply
+
+    @pytest.mark.parametrize("reply", [
+        # Future/offer forms are legitimate — verification has not run yet.
+        "I'll add Tanah Lot to your trip once I've verified it.",
+        "Shall I pin that for you?",
+        "Let me find the verified places for that.",
+        "I can add more temples if you'd like.",
+        # Unrelated replies must not trip the guard.
+        "Bali is warmest in August, and the beaches are quieter mid-week.",
+        "I've updated your budget to ₹1,20,000.",
+    ])
+    def test_legitimate_replies_untouched(self, reply):
+        assert _strip_false_pin_claim(self._resp(reply)).reply == reply
+
+    def test_budget_update_is_not_a_pin_claim(self):
+        """`I've updated` is a real action the server does perform — the guard
+        must not swallow it just because it is past tense."""
+        reply = "Got it! I've updated your trip pace to 'relaxed'."
+        assert _strip_false_pin_claim(self._resp(reply)).reply == reply
 
 
 class TestGeminiErrorClassifier:

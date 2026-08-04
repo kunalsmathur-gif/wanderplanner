@@ -84,9 +84,15 @@ export interface TripConfig {
   prebooked_flights_inr: number | null
   prebooked_accommodation_inr: number | null
   pinned_pois: PinnedPOI[]             // verified hard constraints (max 8)
+  day_cost_preferences: DayCostPreference[]  // per-day spend steering ("make day 3 cheaper")
 }
 
 // Itinerary types
+export interface DayCostPreference {
+  day_number: number
+  direction: 'cheaper' | 'pricier'
+}
+
 export interface ItineraryItemLocation {
   lat: number
   lon: number
@@ -107,6 +113,10 @@ export interface ItineraryItem {
   description: string
   location: ItineraryItemLocation
   tags: string[]
+  // What this one item costs the whole group in INR. 0 means genuinely free
+  // (a beach, a walk) — there is no "unknown" state, see the backend model.
+  // Excludes flights/accommodation, which are trip-level, not per-day.
+  estimated_cost_inr?: number
   booking_url: string
   youtube_video_id: string
   youtube_search_query?: string // Pre-built YouTube search phrase

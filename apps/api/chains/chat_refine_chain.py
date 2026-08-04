@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Literal
 
 from pydantic import BaseModel
@@ -13,7 +14,7 @@ from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize
 from core.validation import normalise_choice_fields
 from models.chat import ChatMessage
-from models.trip import PinnedPOI, TripConfig
+from models.trip import DayCostPreference, PinnedPOI, TripConfig
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +98,25 @@ NAMED INTEREST DETECTION:
 - Detect it even when phrased as a question about the destination ("what
   does Bengaluru have for palace lovers?" → "historic palaces") — set
   named_interest and let the server find verified places.
+- A user naming SPECIFIC PLACES they want included counts too ("I really
+  want to see Tanah Lot", "make sure we do the Golden Temple", "must include
+  Meiji Shrine") → set named_interest to those place names and action_type
+  to "patch_config". A named place is a request to pin, and the server has
+  to verify it before it can be honoured — routing it anywhere else means
+  nothing is ever pinned.
 - In the reply, say you're finding real verified places for that interest —
   do NOT name specific places yourself, even when answering a question.
 - Otherwise set "named_interest": null.
+
+🔴 NEVER CLAIM SOMETHING IS PINNED. You cannot pin anything — only the server
+can, after verifying the place exists in our OpenStreetMap/Wikivoyage data,
+and it appends its own "📌 Pinned to your trip" line to your reply when it
+does. So never write "I've added X to your pinned places", "X is locked in",
+"that's been added to your itinerary", or any past-tense claim that a place
+is now part of the trip. Say what you are about to do, not what you have
+done: "Let me find the verified places for that" is correct. A past-tense
+claim is a promise you have no way to keep, and when verification finds
+nothing it becomes a straightforward lie to the traveller.
 
 GUARDRAILS:
 - Only answer travel-related questions.
@@ -110,6 +127,157 @@ GUARDRAILS:
 
 Non-travel response: "I'm Anya, WanderPlanner's travel assistant — I can only help with travel questions! 🌍"
 """
+
+
+# Phrases that falsely claim a place has been pinned — the same class of bug
+# as wizard_chat_chain.py's _HALLUCINATED_GENERATION_RE, and caught the same
+# way: the model narrating an action it has no way to perform. Observed live
+# (2026-08-04) on "I really want to see Tanah Lot on this trip", which returned
+# named_interest=null and pinned_pois=[] while replying "Got it! I've added
+# Tanah Lot to your pinned points of interest for this trip." Only the server
+# can pin (see _apply_interest_pinning), so any such claim in a turn that
+# pinned nothing is false by construction.
+#
+# Deliberately anchored on the past/perfect forms ("I've added", "I have
+# pinned", "is locked in") — NOT the future or offer forms ("I'll add",
+# "shall I pin"), which are legitimate things to say before verification runs.
+_HALLUCINATED_PIN_RE = re.compile(
+    r"\b(?:i'?ve|i\s+have)\s+(?:added|pinned|locked|included|saved)\b"
+    r"|\b(?:added|pinned|locked)\s+(?:it|that|them|this)\s+(?:to|into|in)\b"
+    r"|\bis\s+(?:now\s+)?(?:pinned|locked\s+in)\b"
+    r"|\bhas\s+been\s+(?:added|pinned|locked)\b",
+    re.IGNORECASE,
+)
+
+# What we say instead. Kept generic (no place name) because the whole point is
+# that we could not confirm which place, if any, is real.
+_PIN_CLAIM_RETRACTION = (
+    "I can only lock in places I've verified against my places database, and I "
+    "haven't verified anything for that yet — so nothing is pinned. Tell me the "
+    "kind of thing you're after (for example \"iconic temples and sunset "
+    "views\") and I'll go find the real ones."
+)
+
+
+# "make day 3 cheaper" — parsed deterministically from the user's own text
+# rather than trusted from the LLM, for the same reason pins are verified
+# server-side: the day number is a structural index into the itinerary, and a
+# model that miscounts it silently re-costs the wrong day. Ordinals are
+# included because people say "the third day" as readily as "day 3".
+_ORDINAL_DAYS = {
+    "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
+    "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10,
+    "last": -1,
+}
+_DAY_REF_RE = re.compile(
+    r"\bday\s*(\d{1,2})\b"
+    r"|\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last)\s+day\b",
+    re.IGNORECASE,
+)
+_CHEAPER_RE = re.compile(
+    r"\b(cheap(?:er|est)?|budget|less\s+expensive|save|saving|spend\s+less|"
+    r"lower\s+the\s+cost|cut\s+(?:the\s+)?cost|affordable|economical|sasta)\b",
+    re.IGNORECASE,
+)
+# `luxur\w*` is a deliberate STEM, not an oversight: a bare `\bluxur\b` cannot
+# match "luxurious" or "luxury" because there is no word boundary after the
+# stem. core/budget_estimator.py's PREMIUM_KEYWORDS documents the same trap.
+_PRICIER_RE = re.compile(
+    r"\b(splurge\w*|spend\s+more|fancy|luxur\w*|premium|treat\s+ourselves|"
+    r"go\s+all\s+out|upgrade)\b",
+    re.IGNORECASE,
+)
+
+
+def _parse_day_cost_request(
+    text: str, total_days: int | None
+) -> tuple[int, Literal["cheaper", "pricier"]] | None:
+    """Extract (day_number, direction) from a message like "make day 3 cheaper".
+
+    Returns None when the message doesn't name BOTH a day and a spend
+    direction — "make it cheaper" (no day) is a trip-wide budget change that
+    belongs to the existing `regenerate` path, and "tell me about day 3" names
+    a day but asks for nothing.
+    """
+    day_match = _DAY_REF_RE.search(text or "")
+    if not day_match:
+        return None
+    if day_match.group(1):
+        day = int(day_match.group(1))
+    else:
+        day = _ORDINAL_DAYS[day_match.group(2).lower()]
+    if day == -1:                       # "the last day"
+        if not total_days:
+            return None                 # can't resolve it; don't guess a day
+        day = total_days
+    if total_days and not 1 <= day <= total_days:
+        return None                     # a day this trip doesn't have
+    if day < 1:
+        return None
+
+    # Direction: check "pricier" first — "splurge on day 3, save elsewhere"
+    # mentions both, and the day named is the one being splurged on.
+    if _PRICIER_RE.search(text):
+        return day, "pricier"
+    if _CHEAPER_RE.search(text):
+        return day, "cheaper"
+    return None
+
+
+def _apply_day_cost_preference(
+    resp: ChatRefineResponse, trip_config: TripConfig, last_user_text: str
+) -> ChatRefineResponse:
+    """Turn "make day 3 cheaper" into a real, structured config change.
+
+    Before this existed the refine LLM answered "I'll make a note to optimize
+    Day 3" and produced `action_type: "none"` with no patch — nothing was
+    stored, nothing regenerated, and the promise was never kept (live-observed
+    2026-08-04). The itinerary is regenerated by the client whenever the patch
+    carries `day_cost_preferences`, exactly as it does for `pinned_pois`.
+    """
+    parsed = _parse_day_cost_request(last_user_text, trip_config.effective_duration_days())
+    if not parsed:
+        return resp
+    day, direction = parsed
+
+    existing = list(getattr(trip_config, "day_cost_preferences", None) or [])
+    merged = [*existing, DayCostPreference(day_number=day, direction=direction)]
+    # The model validator dedupes (last write wins) and caps — go through it
+    # rather than reimplementing that here, so the two can never disagree.
+    normalised = TripConfig(day_cost_preferences=merged).day_cost_preferences
+
+    patch = dict(resp.config_patch or {})
+    patch["day_cost_preferences"] = [p.model_dump() for p in normalised]
+    resp.config_patch = patch
+    resp.action_type = "patch_config"
+    # Not `major_change`: this re-plans one day, and routing it through the
+    # confirm-then-regenerate path would put a modal in front of a small,
+    # obviously-reversible edit.
+    resp.major_change = False
+    verb = "lighter on the wallet" if direction == "cheaper" else "more of a splurge"
+    resp.reply = (
+        f"Done — I'm making day {day} {verb} and rebuilding your itinerary now. "
+        "Anything you've pinned stays exactly where it is."
+    )
+    return resp
+
+
+def _strip_false_pin_claim(resp: ChatRefineResponse) -> ChatRefineResponse:
+    """Replace a reply that claims a pin with the truth, when nothing pinned.
+
+    Runs AFTER _apply_interest_pinning, so `resp.pinned_pois` is final. A
+    turn that really did pin something has the server-authored 📌 block
+    appended and is left alone.
+    """
+    if resp.pinned_pois:
+        return resp
+    if not _HALLUCINATED_PIN_RE.search(resp.reply or ""):
+        return resp
+    logger.warning(
+        "chat_refine reply claimed a pin but nothing was pinned; retracting"
+    )
+    resp.reply = _PIN_CLAIM_RETRACTION
+    return resp
 
 
 async def _apply_interest_pinning(
@@ -145,10 +313,21 @@ async def _apply_interest_pinning(
     from services.poi_pinning import merge_pins, verify_candidates
 
     candidates = await expand_interest_to_candidates(interest, destination)
-    if not candidates:
-        return resp
-
-    pins, dropped = await verify_candidates(candidates, destination, source_interest=interest)
+    if candidates:
+        pins, dropped = await verify_candidates(
+            candidates, destination, source_interest=interest
+        )
+    else:
+        # 🔴 This used to `return resp` early, which silently skipped the
+        # honesty message below. Expansion coming back empty and expansion
+        # returning candidates that all fail verification are the SAME thing
+        # to the user — we found nothing real — so they must say the same
+        # thing. Without this, the live "Harry Potter in Goa" case answered
+        # "I'll look for real, verified Harry Potter places ✨" and then never
+        # mentioned it again: an unkept promise, which is worse than the
+        # invention we refuse to make. Skips the verification call rather
+        # than passing it an empty list, since there is nothing to scroll for.
+        pins, dropped = [], []
     resp.pinned_pois = pins
     resp.dropped_candidates = dropped
 
@@ -184,7 +363,13 @@ async def _apply_interest_pinning(
 async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
     if settings.llm_provider == "mock":
         last_msg = request.messages[-1].content if request.messages else ""
-        return await _apply_interest_pinning(_mock_refine(last_msg), request.trip_config)
+        return _strip_false_pin_claim(
+            _apply_day_cost_preference(
+                await _apply_interest_pinning(_mock_refine(last_msg), request.trip_config),
+                request.trip_config,
+                last_msg,
+            )
+        )
 
     try:
         from google import genai as google_genai
@@ -255,7 +440,16 @@ async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
     except Exception:
         return ChatRefineResponse(reply=raw, action_type="none", config_patch=None, major_change=False)
 
-    return await _apply_interest_pinning(resp, request.trip_config)
+    last_user_text = next(
+        (m.content for m in reversed(request.messages) if m.role == "user"), ""
+    )
+    return _strip_false_pin_claim(
+        _apply_day_cost_preference(
+            await _apply_interest_pinning(resp, request.trip_config),
+            request.trip_config,
+            last_user_text,
+        )
+    )
 
 
 def _mock_refine(user_msg: str) -> ChatRefineResponse:
