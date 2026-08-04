@@ -138,10 +138,11 @@ created a new dedicated service account:
 - Same Achernar voice, same bytes, on every device and OS — the bug this ADR exists to fix is
   closed for TTS.
 - `pickVoice`, `genderScore`, `FEMALE_VOICE_TOKENS` / `MALE_VOICE_TOKENS`, `hasVoiceForLang`, and
-  `missingVoiceMessage` become dead code to remove in Phase 2 (Frontend swap).
+  `missingVoiceMessage` were kept rather than deleted in Phase 2 — they now back the defensive
+  no-signature fallback path instead of being dead code (see "Phase 2" section below).
 - `sanitiseForSpeech()` stays, and gains one more responsibility: the Anya name-respelling pass.
-- Service-account credential management is now part of the deploy surface; document the Railway
-  env var setup in the deployment runbook when Phase 1 lands.
+- Service-account credential management is now part of the deploy surface; the Railway env var
+  setup is documented in the "Production rollout" section below (shipped in v10.69).
 - Sarvam remains unverified and untried. If Chirp 3: HD's per-locale voice identity ever proves
   inconsistent in wider use (beyond this 6-line audition), Sarvam is the documented fallback to
   evaluate next — not Azure, not `edge-tts`.
@@ -181,3 +182,14 @@ Verified end-to-end against a local server: `/api/wizard-chat` → signed `reply
 `FEMALE_VOICE_TOKENS` / `MALE_VOICE_TOKENS`, `hasVoiceForLang`, and `missingVoiceMessage` remain in
 place for the defensive fallback path rather than being removed, since that path is still reachable
 and covered by tests.
+
+## Production rollout: live (v10.69)
+
+`TTS_PROVIDER=google` and `GOOGLE_TTS_CREDENTIALS_JSON` (the `anya-tts-service` key referenced
+above) are now set on Railway's `api` service, production environment — the kill switch described
+in "Consequences" is off. Every user gets the real Achernar server-synthesized voice; the
+browser-`SpeechSynthesis` path only fires in the defensive no-signature case. Verified against
+`https://api.wanderplanner.org` directly: a real `/api/wizard-chat` reply, signed and passed to
+`/api/voice/tts`, returned 200 OK with valid Ogg Opus/Achernar audio. Budget/length/TTL env vars
+(`TTS_MONTHLY_CHAR_BUDGET`, `TTS_MAX_INPUT_CHARS`, `TTS_REPLY_SIGNING_TTL_SECONDS`) were left unset
+on Railway and run on `core/config.py`'s defaults (900,000 chars/month, 500 chars/request, 600s).

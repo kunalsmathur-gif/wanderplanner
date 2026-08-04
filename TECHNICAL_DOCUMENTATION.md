@@ -1551,12 +1551,28 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.69, v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
 
 > ⚠️ **v10.63.0 and v10.64.0 shipped code and tests but have no entry in this
 > section** (visa cost exclusion + corpus-gated `visa_inr`, and the analytics
 > event fix). This is the known changelog-reconciliation backlog, not an
 > omission specific to v10.65.0.
+
+### v10.69.0 Changes (August 2026) — Anya's server-side voice flipped on in production
+
+Config-only change, no code shipped: set `TTS_PROVIDER=google` and
+`GOOGLE_TTS_CREDENTIALS_JSON` (the `anya-tts-service` service-account key,
+see `docs/adr/0001-anya-voice-provider.md`) on Railway's `api` service and
+redeployed to pick up both the new env vars and the v10.68.0 frontend
+hookup. Every user now hears the real Achernar server-synthesized voice —
+the browser-`SpeechSynthesis` fallback is no longer the default experience
+for anyone with a valid `reply_sig`. Verified end-to-end against
+`https://api.wanderplanner.org`: `/api/wizard-chat` → signed reply →
+`/api/voice/tts` → 200 OK, valid Ogg Opus/Achernar audio, confirmed via
+`file`. `TTS_MONTHLY_CHAR_BUDGET`/`TTS_MAX_INPUT_CHARS`/
+`TTS_REPLY_SIGNING_TTL_SECONDS` were left unset on Railway and fall back to
+`core/config.py`'s defaults (900,000 chars/month, 500 chars/request, 600s
+TTL) — no separate budget tuning was requested.
 
 ### v10.68.0 Changes (August 2026) — Anya's server-side voice goes live (Phase 2 + two bugfixes)
 

@@ -843,9 +843,9 @@ help mid-utterance mic input; see ADR 0001 §"Language selection UX").
 TTS (text-to-speech, the `SpeechSynthesis.speak(...)` step above) is
 device-dependent: the OS/browser picks whichever `en-IN`/`hi-IN` voice
 happens to be installed, so Anya sounds different — or robotic, or wrong
-gender — on every machine. **⭐ NEW (Phase 1, currently dark behind
-`TTS_PROVIDER=off`)**: a server-side synthesis path replaces this last
-step with a consistent voice everywhere:
+gender — on every machine. **⭐ Server-side synthesis is live in production
+(`TTS_PROVIDER=google`)**, replacing this last step with a consistent
+voice everywhere:
 
 ```
 Latest bot reply text + signed reply_sig (from /api/wizard-chat)
@@ -866,8 +866,13 @@ POST /api/voice/tts  { text, lang, reply_sig }
 8. cache write + return audio
          │
          ▼
-Frontend plays audio via <audio> element; any error code above
-falls back to on-device SpeechSynthesis (text-only UX never breaks)
+Frontend plays the returned audio through a reused <audio> element.
+Any failure (kill switch, budget, bad signature, provider error) surfaces
+a text-only notice via ttsErrorMessage() — it never falls back to
+on-device SpeechSynthesis, since that fallback is the exact
+"different Anya on every device" bug this path exists to fix. The
+legacy SpeechSynthesis branch is retained only as a defensive path for
+the should-not-happen case of a missing reply_sig.
 ```
 
 Reply signing (`core/reply_signing.py`) is an HMAC over the reply text
@@ -877,8 +882,8 @@ Voice selection (Achernar), the pronunciation fix, and the audition
 process that led to this decision are documented in full in
 `docs/adr/0001-anya-voice-provider.md`. The frontend swap
 (`useVoice.ts` calling `/api/voice/tts` instead of `SpeechSynthesis`) is
-Phase 2 and not yet implemented — the endpoint exists and is tested, but
-nothing in production calls it yet.
+Phase 2, shipped in v10.68 — every reply is now spoken by the real
+server-side voice in production, not just tested in isolation.
 
 ---
 
@@ -903,7 +908,7 @@ Response: {
 }
 ```
 
-#### `POST /api/voice/tts` ⭐ NEW (Phase 1 — dark behind `TTS_PROVIDER=off`)
+#### `POST /api/voice/tts` ⭐ NEW (live in production — `TTS_PROVIDER=google`)
 ```
 Request:  { text: string, lang: 'en'|'hi', reply_sig: string }
 Response: audio/ogg (Opus) binary, or:
@@ -1863,6 +1868,18 @@ instead of the agent) that govern how these tools are meant to be used.
 ---
 
 ## 16. Change Log
+
+### v10.69 (August 2026) — Anya's server-side voice flipped on in production
+
+Config-only: set `TTS_PROVIDER=google` and `GOOGLE_TTS_CREDENTIALS_JSON` on
+Railway's `api` service (production environment) and redeployed, so the
+v10.68 frontend hookup now actually reaches the real Google Chirp 3: HD
+provider for every user instead of only in local dev. Verified against
+`https://api.wanderplanner.org`: `/api/wizard-chat` → signed reply →
+`/api/voice/tts` → 200 OK, valid Ogg Opus/Achernar audio. Budget/length/TTL
+env vars (`TTS_MONTHLY_CHAR_BUDGET`, `TTS_MAX_INPUT_CHARS`,
+`TTS_REPLY_SIGNING_TTL_SECONDS`) were left unset, so production runs on
+`core/config.py`'s defaults.
 
 ### v10.68 (August 2026) — Anya's server-side voice goes live (Phase 2 + two bugfixes)
 
