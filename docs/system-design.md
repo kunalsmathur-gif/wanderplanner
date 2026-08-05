@@ -1,6 +1,6 @@
 # WanderPlanner — System Design Document
 
-**Version:** 8.9 (Per-day costs and their sanity guard; region-scale OSM radius overrides; the geocode hub-town lookup's silent throttle fallback)
+**Version:** 9.0 (Geocode confidence is now a signal, not a guess; large destinations are sampled from several real settlements instead of one centre)
 **Last Updated:** August 5, 2026  
 **Audience:** Engineering team and technical stakeholders
 
@@ -1868,6 +1868,76 @@ instead of the agent) that govern how these tools are meant to be used.
 ---
 
 ## 16. Change Log
+
+### v10.72 (August 2026) — Geocode confidence, and sampling a destination from more than one point
+
+**A destination becomes coordinates through a chain that could fail silently.**
+`geocode_city` corrects a region name to its hub town via `_hub_town_in_bbox`,
+which is itself an Overpass call. That function returned `str | None`, which
+collapsed three different outcomes into "no hub": a real answer, an honest
+absence, and a throttled failure. Only the third means the region centroid is
+unverified — and it is the one that put Bali's POIs 48km from Denpasar, in the
+wrong half of the island.
+
+It now returns `(name, degraded)`, surfaced as
+`GeocodeResponse.hub_lookup_degraded`. `degraded` is set **only** on an Overpass
+error: an empty result and an over-large bbox are honest answers, and treating
+them as failures would block ingestion for genuinely hub-less places.
+`ingest_osm_pois` gained a third data-loss guard beside the prominence and
+thin-result ones — an unverified geocode never overwrites existing data, while
+still allowing a cold start, because wrong-place data beats no data when there
+is nothing to lose.
+
+**`scripts/audit_poi_geocode.py`** closes the loop by measuring stored data
+rather than trusting the pipeline: it reverse-geocodes each destination's POI
+centroid against a fresh geocode. 🔴 **Its first full run inverted the
+assumption behind it.** Of 3 drifts across 171 destinations, 2 had *correct*
+stored data and a *live geocode* that had drifted to a same-named place on
+another continent — a DRIFT says the two disagree, not which is wrong, and
+re-ingesting blind would have destroyed two correct pools.
+
+#### Why one centre is not enough
+
+| Goa (a ~105km state) | North | Central | South | Max reach | Skew |
+|---|---|---|---|---|---|
+| 5km default, one centre | 5 | 55 | **0** | 15.6km | — |
+| one 60km circle | 9 | 29 | 22 | **83.7km** (past the border) | **15/60 train stations** |
+| 4 discovered areas | 18 | 28 | **14** | 53.2km | 0.23 |
+
+A centre plus a radius assumes a destination is small and disc-shaped. Widening
+the circle trades a blind spot for out-of-area noise and rebuilds the exact
+category starvation `_prioritize_landmarks` exists to prevent — so the fix is
+more centres, not a bigger one.
+
+Centres come from OSM's own settlement data, so they are places a traveller
+would name rather than grid points that can land in the sea. Three design
+points worth keeping:
+
+1. **Population picks which places, distance picks where.** Goa's four largest
+   settlements all sit within ~15km of Panaji; top-N-by-population would
+   cluster straight back into the bug. `_MIN_KM_BETWEEN_CENTROIDS` is what
+   makes the sample a sample.
+2. **The 60-slot cap becomes a geographic allocation problem.**
+   `_interleave_by_area` round-robins across areas so the dense centre cannot
+   eat the cap — the same fix as `_prioritize_landmarks`, one dimension over.
+3. **`_OSM_RADIUS_OVERRIDES_M` now means declared EXTENT.** Pinning a region to
+   its hub for determinism (Goa -> Panaji) makes every automatic size check see
+   a small town, so the table is the only thing left that knows the state is
+   105km long. It drives area discovery rather than inflating a circle.
+
+**This also gates hidden gems.** `services/gems.py` can only surface a gem whose
+POI is in the pool, so an unreachable area's gems could never appear regardless
+of community signal — and sparsely-populated outskirts are exactly where gems
+are.
+
+🔴 **Not yet handled: island countries and far-flung archipelagos.**
+`_MAX_HUB_TOWN_BBOX_DEGREES = 6.0` makes settlement discovery return nothing
+for any destination whose bbox exceeds 6 degrees — the Maldives spans ~8 — so
+the most spread-out destinations silently get no area sampling at all. The cap
+exists because country-sized Overpass queries reliably 504; quadrant-splitting
+the bbox is the likelier fix than raising it. Tracked as a P0 in
+`docs/NEXT_SESSION_TODO.md`, together with the full re-ingestion that every
+stored pool still needs.
 
 ### v10.71 (August 2026) — Per-day costs, a cost-sanity retry, and region-scale destinations
 

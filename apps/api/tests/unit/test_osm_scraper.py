@@ -516,7 +516,7 @@ class TestIngestOsmPoisOrphanCleanup:
         ]
         mock_qdrant = MagicMock()
 
-        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(return_value=(fake_pois, True))), \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(return_value=(fake_pois, True, False))), \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384]), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.count_destination_points", return_value=0), \
@@ -536,7 +536,7 @@ class TestIngestOsmPoisOrphanCleanup:
         # real data — only clean up when there's something new to replace it.
         from scrapers.osm import ingest_osm_pois
 
-        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(return_value=([], True))), \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(return_value=([], True, False))), \
              patch("scrapers.osm.delete_stale_destination_points") as mock_delete:
             count = await ingest_osm_pois("Nowhere")
 
@@ -567,7 +567,7 @@ class TestRadiusExpansionForThinOrDominatedResults:
         wide = [self._poi(f"Landmark {i}", "attraction") for i in range(25)]
         mock_qdrant = MagicMock()
 
-        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(side_effect=[(thin, True), (wide, True)])) as mock_fetch, \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(side_effect=[(thin, True, False), (wide, True, False)])) as mock_fetch, \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 25), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.count_destination_points", return_value=0), \
@@ -589,7 +589,7 @@ class TestRadiusExpansionForThinOrDominatedResults:
         ]
         mock_qdrant = MagicMock()
 
-        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(side_effect=[(dominated, True), (balanced, True)])) as mock_fetch, \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(side_effect=[(dominated, True, False), (balanced, True, False)])) as mock_fetch, \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 25), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.count_destination_points", return_value=0), \
@@ -608,7 +608,7 @@ class TestRadiusExpansionForThinOrDominatedResults:
         ]
         mock_qdrant = MagicMock()
 
-        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(return_value=(healthy, True))) as mock_fetch, \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(return_value=(healthy, True, False))) as mock_fetch, \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 30), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.delete_stale_destination_points", return_value=0):
@@ -627,7 +627,7 @@ class TestRadiusExpansionForThinOrDominatedResults:
         thin = [self._poi(f"Landmark {i}", "attraction") for i in range(5)]
         mock_qdrant = MagicMock()
 
-        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(side_effect=[(thin, True), ([], True)])) as mock_fetch, \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(side_effect=[(thin, True, False), ([], True, False)])) as mock_fetch, \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 5), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.count_destination_points", return_value=0), \
@@ -657,7 +657,7 @@ class TestDataLossGuardForThinResults:
         thin = [self._poi("Only POI", "attraction")]
         mock_qdrant = MagicMock()
 
-        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(side_effect=[(thin, True), (thin, True)])), \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(side_effect=[(thin, True, False), (thin, True, False)])), \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384]), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.count_destination_points", return_value=60), \
@@ -675,7 +675,7 @@ class TestDataLossGuardForThinResults:
         thin = [self._poi("Only POI", "attraction")]
         mock_qdrant = MagicMock()
 
-        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(side_effect=[(thin, True), (thin, True)])), \
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(side_effect=[(thin, True, False), (thin, True, False)])), \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384]), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.count_destination_points", return_value=0), \
@@ -768,7 +768,7 @@ class TestIngestGuardsAgainstProminencePassFailure:
 
         mock_qdrant = MagicMock()
         with patch("scrapers.osm._fetch_osm_pois_with_meta",
-                   new=AsyncMock(return_value=(self._healthy_pool(), False))), \
+                   new=AsyncMock(return_value=(self._healthy_pool(), False, False))), \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384]), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.count_destination_points", return_value=60), \
@@ -788,7 +788,7 @@ class TestIngestGuardsAgainstProminencePassFailure:
 
         mock_qdrant = MagicMock()
         with patch("scrapers.osm._fetch_osm_pois_with_meta",
-                   new=AsyncMock(return_value=(self._healthy_pool(), False))), \
+                   new=AsyncMock(return_value=(self._healthy_pool(), False, False))), \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 60), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.count_destination_points", return_value=0), \
@@ -807,7 +807,7 @@ class TestIngestGuardsAgainstProminencePassFailure:
 
         mock_qdrant = MagicMock()
         with patch("scrapers.osm._fetch_osm_pois_with_meta",
-                   new=AsyncMock(return_value=(self._healthy_pool(), True))), \
+                   new=AsyncMock(return_value=(self._healthy_pool(), True, False))), \
              patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 60), \
              patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
              patch("scrapers.osm.count_destination_points", return_value=60), \
@@ -841,3 +841,174 @@ class TestRegionScaleRadiusOverrides:
         from core.config import settings
         for name, radius in _OSM_RADIUS_OVERRIDES_M.items():
             assert radius > settings.osm_poi_radius_expanded_m, name
+
+
+class TestIngestGuardsAgainstDegradedGeocode:
+    """🔴 The geocode itself can be wrong, and the fetch looks perfect anyway.
+
+    `geocode_city` corrects a region name to its hub town via an Overpass
+    lookup — so when Overpass throttles, that correction fails and the raw
+    region centroid is used instead. The resulting fetch has the right count,
+    well-spread categories and a healthy prominence pass, and is centred tens
+    of km from what the destination name means. Bali's 25 stored POIs sat 48km
+    from Denpasar, in the wrong half of the island, written by exactly this
+    path (2026-08-05).
+
+    Same contract as the prominence guard: protect an overwrite, never block a
+    cold start.
+    """
+
+    def _healthy_pool(self) -> list[dict]:
+        return [
+            {"destination": "Someregion", "name": f"POI {i}",
+             "poi_type": ["attraction", "museum", "park", "beach"][i % 4],
+             "lat": 1.0, "lon": 1.0, "text": f"POI {i}"}
+            for i in range(60)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_keeps_existing_data_when_the_geocode_is_unverified(self):
+        from scrapers.osm import ingest_osm_pois
+
+        mock_qdrant = MagicMock()
+        with patch("scrapers.osm._fetch_osm_pois_with_meta",
+                   new=AsyncMock(return_value=(self._healthy_pool(), True, True))), \
+             patch("scrapers.osm.embed", return_value=[[0.1] * 384]), \
+             patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.count_destination_points", return_value=60), \
+             patch("scrapers.osm.delete_stale_destination_points") as mock_delete:
+            count = await ingest_osm_pois("Someregion")
+
+        assert count == 60
+        mock_delete.assert_not_called()
+        mock_qdrant.upsert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_still_ingests_a_brand_new_destination(self):
+        """Wrong-place data beats no data when there is nothing to protect —
+        and the destination stays flagged for a later pass."""
+        from scrapers.osm import ingest_osm_pois
+
+        mock_qdrant = MagicMock()
+        with patch("scrapers.osm._fetch_osm_pois_with_meta",
+                   new=AsyncMock(return_value=(self._healthy_pool(), True, True))), \
+             patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 60), \
+             patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.count_destination_points", return_value=0), \
+             patch("scrapers.osm.delete_stale_destination_points", return_value=0):
+            count = await ingest_osm_pois("Somewhere New")
+
+        assert count == 60
+        mock_qdrant.upsert.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_a_verified_geocode_ingests_normally(self):
+        """The control: identical fetch, geocode not degraded."""
+        from scrapers.osm import ingest_osm_pois
+
+        mock_qdrant = MagicMock()
+        with patch("scrapers.osm._fetch_osm_pois_with_meta",
+                   new=AsyncMock(return_value=(self._healthy_pool(), True, False))), \
+             patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 60), \
+             patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.count_destination_points", return_value=60), \
+             patch("scrapers.osm.delete_stale_destination_points", return_value=0):
+            count = await ingest_osm_pois("Someregion")
+
+        assert count == 60
+        mock_qdrant.upsert.assert_called_once()
+
+
+class TestMultiAreaSampling:
+    """A single centre plus a radius assumes a destination is small and
+    disc-shaped. Measured on Goa (a ~105km state) 2026-08-05: at the 5km
+    default the pool held 5 North Goa POIs and ZERO from South Goa, with
+    Agonda (52.6km) and Palolem (57.4km) structurally unreachable. Widening to
+    one 60km circle measured WORSE — POIs 83.7km out, past the state border,
+    and 15/60 slots refilled with train stations. Hence several centres."""
+
+    def test_span_recognises_a_large_destination(self):
+        from scrapers.osm import _bbox_span_km
+        goa = (14.75, 15.80, 73.67, 74.33)
+        assert _bbox_span_km(goa) > 100
+
+    def test_span_recognises_a_small_one(self):
+        from scrapers.osm import _bbox_span_km
+        panaji = (15.47, 15.51, 73.80, 73.85)
+        assert _bbox_span_km(panaji) < 10
+
+    def test_bbox_around_a_point_spans_twice_the_radius(self):
+        from scrapers.osm import _bbox_around, _bbox_span_km
+        box = _bbox_around(15.49, 73.82, 55000)
+        # Diagonal of a 110km square is ~155km.
+        assert 140 < _bbox_span_km(box) < 175
+
+    def test_centroids_are_spread_not_merely_the_biggest_towns(self):
+        """Goa's four most populous settlements all sit near Panaji, so taking
+        the top N by population would cluster — which is the very bug this
+        fixes. Population picks WHICH places, distance picks WHERE."""
+        from scrapers.osm import _pick_spread_centroids
+        bbox = (14.75, 15.80, 73.67, 74.33)
+        towns = [
+            ("Panaji", 15.49, 73.82),
+            ("Taleigao", 15.46, 73.84),      # 4km away — must be rejected
+            ("Mapusa", 15.59, 73.81),        # 11km — still too close
+            ("Margao", 15.28, 73.98),        # ~28km — accepted
+            ("Palolem", 15.01, 74.02),       # ~57km — accepted
+        ]
+        chosen = _pick_spread_centroids((15.49, 73.82), towns, bbox)
+        names = [c[0] for c in chosen]
+        assert "Taleigao" not in names
+        assert "Margao" in names and "Palolem" in names
+
+    def test_centroids_outside_the_bbox_are_rejected(self):
+        """A town past the border is not this destination, and would drag the
+        pool across it."""
+        from scrapers.osm import _pick_spread_centroids
+        bbox = (14.75, 15.80, 73.67, 74.33)
+        towns = [("Mumbai", 19.07, 72.87)]
+        chosen = _pick_spread_centroids((15.49, 73.82), towns, bbox)
+        assert [c[0] for c in chosen] == [""]     # primary only
+
+    def test_centroid_count_is_capped(self):
+        from scrapers.osm import _MAX_AREA_CENTROIDS, _pick_spread_centroids
+        bbox = (0.0, 10.0, 0.0, 10.0)
+        towns = [(f"T{i}", float(i), float(i)) for i in range(1, 9)]
+        chosen = _pick_spread_centroids((0.0, 0.0), towns, bbox)
+        assert len(chosen) <= _MAX_AREA_CENTROIDS
+
+    def test_interleave_gives_every_area_a_share(self):
+        """Concatenating and truncating would let the densest area fill the
+        cap — the same starvation `_prioritize_landmarks` prevents per
+        category, one dimension over."""
+        from scrapers.osm import _interleave_by_area
+        dense = [{"name": f"Panaji {i}"} for i in range(50)]
+        sparse = [{"name": f"Palolem {i}"} for i in range(5)]
+        merged = _interleave_by_area([dense, sparse], cap=10)
+        assert len(merged) == 10
+        assert sum(1 for p in merged if p["name"].startswith("Palolem")) == 5
+
+    def test_interleave_preserves_ranking_within_an_area(self):
+        from scrapers.osm import _interleave_by_area
+        a = [{"name": "A best"}, {"name": "A second"}]
+        b = [{"name": "B best"}, {"name": "B second"}]
+        merged = _interleave_by_area([a, b], cap=4)
+        assert [p["name"] for p in merged] == ["A best", "B best", "A second", "B second"]
+
+    def test_interleave_dedupes_overlapping_areas(self):
+        """Neighbouring radii legitimately return the same place twice, and a
+        duplicate would consume a slot owed to another area."""
+        from scrapers.osm import _interleave_by_area
+        a = [{"name": "Se Cathedral"}, {"name": "Only in A"}]
+        b = [{"name": "se cathedral"}, {"name": "Only in B"}]
+        merged = _interleave_by_area([a, b], cap=10)
+        names = [p["name"].lower() for p in merged]
+        assert names.count("se cathedral") == 1
+        assert len(merged) == 3
+
+    def test_declared_extent_survives_hub_pinning(self):
+        """Once "Goa" resolves to Panaji, every automatic size check sees a
+        small town — the extent table is the only thing that still knows the
+        state is 105km long."""
+        from scrapers.osm import _radius_override_for
+        assert _radius_override_for("Goa") == 55000

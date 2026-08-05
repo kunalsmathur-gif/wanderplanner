@@ -148,7 +148,7 @@ async def test_geocode_city_country_hit_uses_hub_town_via_overpass():
 
     client = _mock_client(
         get_side_effect=[search_resp, hub_requery_resp],
-        post_return={"elements": [{"tags": {"name": "Hubtown", "place": "city", "population": "50000"}}]},
+        post_return={"elements": [{"lat": 11.0, "lon": 21.0, "tags": {"name": "Hubtown", "place": "city", "population": "50000"}}]},
     )
 
     with patch("services.geocode.httpx.AsyncClient", return_value=client), \
@@ -228,6 +228,13 @@ class TestGeocodeQueryOverrides:
             # hub-town lookup fixes it only when Overpass answers, so the
             # override is what makes ingestion deterministic.
             ("Bali", "Denpasar, Indonesia"),
+            # Found by scripts/audit_poi_geocode.py 2026-08-05, the opposite way
+            # round from the bug it hunts: the STORED POIs were correct and the
+            # live geocode had drifted to a same-named place on another
+            # continent. Without these, the next scheduled refresh would have
+            # replaced two correct 60-POI pools with the wrong continent's data.
+            ("Medellin", "Medellín, Colombia"),
+            ("Amalfi", "Amalfi, Italy"),
         ],
     )
     @pytest.mark.asyncio
@@ -249,3 +256,77 @@ class TestGeocodeQueryOverrides:
         # or the override silently never fires.
         for key in GEOCODE_QUERY_OVERRIDES:
             assert key == key.lower()
+
+
+class TestHubLookupDegradedSignal:
+    """🔴 `_hub_town_in_bbox` used to return a bare `str | None`, collapsing
+    three different outcomes into "no hub": a real answer, an honest absence,
+    and a failed lookup. Only the third means the region centroid is
+    unverified, and it is the one that silently ingested Bali 48km from
+    Denpasar (2026-08-05). Callers that persist data keyed on these
+    coordinates depend on telling them apart.
+    """
+
+    @pytest.mark.asyncio
+    async def test_overpass_error_is_reported_as_degraded(self):
+        from services.geocode import _hub_town_in_bbox
+
+        client = AsyncMock()
+        client.post = AsyncMock(side_effect=RuntimeError("429 Too Many Requests"))
+        name, degraded = await _hub_town_in_bbox(client, ["-9.0", "-7.4", "114.4", "115.8"])
+        assert name is None
+        assert degraded is True
+
+    @pytest.mark.asyncio
+    async def test_empty_result_is_an_honest_absence_not_a_failure(self):
+        """Overpass answered: there really is no town here. The centroid is
+        then the best answer we have, and must not block ingestion."""
+        from services.geocode import _hub_town_in_bbox
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"elements": []}
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=resp)
+        name, degraded = await _hub_town_in_bbox(client, ["-9.0", "-7.4", "114.4", "115.8"])
+        assert name is None
+        assert degraded is False
+
+    @pytest.mark.asyncio
+    async def test_oversized_bbox_is_a_decision_not_a_failure(self):
+        """We deliberately decline to ask — that is not the same as asking and
+        being refused."""
+        from services.geocode import _hub_town_in_bbox
+
+        client = AsyncMock()
+        client.post = AsyncMock()
+        name, degraded = await _hub_town_in_bbox(client, ["0", "40", "0", "40"])
+        assert name is None
+        assert degraded is False
+        client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_found_hub_is_not_degraded(self):
+        from services.geocode import _hub_town_in_bbox
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"elements": [
+            {"lat": -8.65, "lon": 115.21,
+             "tags": {"name": "Denpasar", "place": "city", "population": "725000"}},
+            {"lat": -8.11, "lon": 115.08,
+             "tags": {"name": "Singaraja", "place": "town", "population": "80000"}},
+        ]}
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=resp)
+        name, degraded = await _hub_town_in_bbox(client, ["-9.0", "-7.4", "114.4", "115.8"])
+        assert name == "Denpasar"
+        assert degraded is False
+
+    def test_geocode_response_defaults_to_not_degraded(self):
+        """Every non-region path leaves it False, so only the one code path
+        that can actually be unsure ever sets it."""
+        from models.common import GeocodeResponse
+
+        r = GeocodeResponse(display_name="Jaipur", lat=26.9, lon=75.8, country_code="in")
+        assert r.hub_lookup_degraded is False

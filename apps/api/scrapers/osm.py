@@ -24,7 +24,7 @@ from core.config import settings
 from core.embeddings import embed
 from core.ingestion_metadata import OSM_POI_TYPE_TO_ATTRACTION, build_ingestion_payload
 from core.qdrant import count_destination_points, delete_stale_destination_points, get_qdrant
-from services.geocode import geocode_city
+from services.geocode import area_centroids, geocode_city
 
 logger = logging.getLogger(__name__)
 
@@ -470,8 +470,9 @@ async def _fetch_osm_pois_with_meta(
     lat: float | None = None,
     lon: float | None = None,
     radius_m: int | None = None,
-) -> tuple[list[dict], bool]:
-    """`fetch_osm_pois`, plus whether the prominence pass actually succeeded.
+) -> tuple[list[dict], bool, bool]:
+    """`fetch_osm_pois`, plus whether the prominence pass actually succeeded,
+    plus whether the GEOCODE behind it is unverified.
 
     That second value matters to `ingest_osm_pois` and cannot be inferred from
     the POIs themselves: when the prominence pass fails, the broad pass still
@@ -482,51 +483,113 @@ async def _fetch_osm_pois_with_meta(
     fallback pool contained none of Red Fort, Humayun's Tomb, Qutub Minar,
     India Gate, Lotus Temple, Jama Masjid or Lodhi Gardens.
     """
+    # Caller-supplied coordinates are the caller's own responsibility — we did
+    # no geocoding, so there is nothing here to be unsure about.
+    geocode_degraded = False
+    bbox: tuple[float, float, float, float] | None = None
     if lat is None or lon is None:
         geo = await geocode_city(destination)
         lat, lon = geo.lat, geo.lon
+        bbox = geo.bbox
+        # 🔴 True when this is a region centroid we wanted to correct to its hub
+        # town but couldn't, because that correction is itself an Overpass call
+        # and it errored/throttled. Ingesting against it puts POIs tens of km
+        # from what the destination name means — see ingest_osm_pois' guard.
+        geocode_degraded = geo.hub_lookup_degraded
+        if geocode_degraded:
+            logger.warning(
+                "%r: geocoded to an UNVERIFIED region centroid (%.4f, %.4f) — the "
+                "hub-town lookup failed rather than finding no hub.",
+                destination, lat, lon,
+            )
 
     radius = radius_m or settings.osm_poi_radius_m
-    # The prominence pass never narrows below the caller's radius — when
-    # ingest_osm_pois retries a thin destination at the expanded radius, the
-    # prominent set must widen with it, not stay put.
-    prominence_radius = max(radius, settings.osm_prominence_radius_m)
+    # A destination big enough that one circle cannot reach its far end gets
+    # sampled from several real settlements instead — see the block comment
+    # above `_MULTI_AREA_MIN_SPAN_KM`. Only when the caller did not pin
+    # coordinates (that is an explicit "use this point") and only when we have
+    # a trustworthy bbox to size the place from.
+    centroids: list[tuple[str, float, float]] = [("", lat, lon)]
+    # Two ways to know a destination is too big for one circle, and both must
+    # count. A declared extent (`_OSM_RADIUS_OVERRIDES_M`) is the stronger
+    # signal precisely BECAUSE it survives hub-pinning: once "Goa" resolves to
+    # Panaji, every automatic size check sees a small town, so the table is the
+    # only thing left that knows the state is 105km long.
+    declared_extent = _radius_override_for(destination)
+    area_bbox = bbox
+    if declared_extent:
+        area_bbox = _bbox_around(lat, lon, declared_extent)
+    if area_bbox and not geocode_degraded:
+        span = _bbox_span_km(area_bbox)
+        if span >= _MULTI_AREA_MIN_SPAN_KM:
+            try:
+                towns = await area_centroids([str(v) for v in area_bbox], _MAX_AREA_CENTROIDS)
+            except Exception:
+                logger.warning("%r: area-centroid lookup failed", destination, exc_info=True)
+                towns = []
+            centroids = _pick_spread_centroids((lat, lon), towns, area_bbox)
+            logger.info(
+                "%r: %.0fkm across — sampling %d areas: %s",
+                destination, span, len(centroids),
+                ", ".join(c[0] or "primary" for c in centroids),
+            )
 
-    # Prominence pass first so that a landmark mapped both as an area and as
-    # a node is kept as the area element, which is the one carrying the
-    # richer tags (and therefore the honest prominence score).
-    prominent_elements = await _fetch_overpass(
-        _build_prominence_query(lat, lon, prominence_radius),
-        destination,
-        "prominence",
-        max_attempts=_PROMINENCE_FETCH_ATTEMPTS,
-    )
-    # An empty prominence result is genuinely possible for a rural or thinly
-    # mapped destination, so "did the request succeed" is tracked separately
-    # from "did it return anything" — only the former is a reason to protect
-    # existing data.
-    prominence_ok = prominent_elements is not None
-    broad_elements = await _fetch_overpass(
-        _build_overpass_query(lat, lon, radius), destination, "broad",
-    )
-    elements = (prominent_elements or []) + (broad_elements or [])
-    if not elements:
-        return [], prominence_ok
-    logger.info(
-        "%r: Overpass returned %d prominent + %d broad elements",
-        destination, len(prominent_elements or []), len(broad_elements or []),
-    )
-
-    pois: list[dict] = []
+    # Each centre contributes its own independently-prioritised pool, so the
+    # interleave below can guarantee every area is represented.
+    pools: list[list[dict]] = []
+    prominence_ok = False
     seen_names: set[str] = set()
-    for element in elements:
-        poi = _element_to_poi(element, destination)
-        if poi is None or poi["name"] in seen_names:
-            continue
-        seen_names.add(poi["name"])
-        pois.append(poi)
+    per_area_radius = _AREA_RADIUS_M if len(centroids) > 1 else radius
 
-    return _prioritize_landmarks(pois)[: settings.osm_poi_max_results], prominence_ok
+    for area_name, alat, alon in centroids:
+        area_prominence_radius = max(per_area_radius, settings.osm_prominence_radius_m)
+        # Prominence pass first so that a landmark mapped both as an area and
+        # as a node is kept as the area element, which is the one carrying the
+        # richer tags (and therefore the honest prominence score).
+        prominent_elements = await _fetch_overpass(
+            _build_prominence_query(alat, alon, area_prominence_radius),
+            destination,
+            "prominence",
+            max_attempts=_PROMINENCE_FETCH_ATTEMPTS,
+        )
+        # An empty prominence result is genuinely possible for a rural or
+        # thinly mapped destination, so "did the request succeed" is tracked
+        # separately from "did it return anything" — only the former is a
+        # reason to protect existing data. Across several areas, one success
+        # is enough: the pool as a whole then carries a landmark ranking.
+        prominence_ok = prominence_ok or prominent_elements is not None
+        broad_elements = await _fetch_overpass(
+            _build_overpass_query(alat, alon, per_area_radius), destination, "broad",
+        )
+        elements = (prominent_elements or []) + (broad_elements or [])
+        if not elements:
+            continue
+        logger.info(
+            "%r%s: Overpass returned %d prominent + %d broad elements",
+            destination, f" [{area_name}]" if area_name else "",
+            len(prominent_elements or []), len(broad_elements or []),
+        )
+
+        area_pois: list[dict] = []
+        for element in elements:
+            poi = _element_to_poi(element, destination)
+            # Dedupe across areas as well as within one: overlapping radii
+            # legitimately return the same place twice, and a duplicate would
+            # otherwise consume a slot the interleave owes to another area.
+            if poi is None or poi["name"] in seen_names:
+                continue
+            seen_names.add(poi["name"])
+            area_pois.append(poi)
+        if area_pois:
+            pools.append(_prioritize_landmarks(area_pois))
+
+    if not pools:
+        return [], prominence_ok, geocode_degraded
+
+    cap = settings.osm_poi_max_results
+    if len(pools) == 1:
+        return pools[0][:cap], prominence_ok, geocode_degraded
+    return _interleave_by_area(pools, cap), prominence_ok, geocode_degraded
 
 
 async def fetch_osm_pois(
@@ -546,7 +609,7 @@ async def fetch_osm_pois(
     block comment above `_PROMINENCE_FILTER_TAG` for why it has to be two
     queries rather than one widened one.
     """
-    pois, _ = await _fetch_osm_pois_with_meta(destination, lat, lon, radius_m)
+    pois, _, _ = await _fetch_osm_pois_with_meta(destination, lat, lon, radius_m)
     return pois
 
 
@@ -664,11 +727,132 @@ _MAX_CATEGORY_SHARE_BEFORE_EXPANSION = 0.5
 # replaced by worse data" failure this file already guards against elsewhere.
 _OSM_RADIUS_OVERRIDES_M: dict[str, int] = {
     "bali": 30000,
+    # Goa is a ~105km-long STATE, and pinning it to Panaji (its hub, which
+    # `GEOCODE_QUERY_OVERRIDES` now does so the geocode stops depending on
+    # Overpass being healthy) makes it *look* like a city to every size check —
+    # Panaji's own bbox is a few km across. Declaring the extent here is what
+    # tells the pipeline otherwise. Measured 2026-08-05 at the 5km default:
+    # 5 North Goa POIs, ZERO from South Goa, and Baga + Vagator the only
+    # recognisable beach names in all 60, with Agonda 52.6km and Palolem
+    # 57.4km structurally unreachable.
+    "goa": 55000,
 }
+
+
+# ── Large destinations are sampled from several centres, not one ─────────────
+#
+# A single centre plus a radius encodes an assumption that a destination is
+# roughly disc-shaped and small. Measured on Goa (2026-08-05), which is a
+# ~105km-long state: from Panaji at the default 5km radius the stored pool held
+# 5 North Goa POIs and **zero** from South Goa, and the only recognisable beach
+# names in all 60 were Baga and Vagator — Agonda (52.6km), Palolem (57.4km) and
+# Colva (25.6km) were structurally unreachable, not out-ranked.
+#
+# Simply widening the circle does not fix it, and the measurement says so: at
+# 60km Goa reached South Goa but also pulled POIs 83.7km out (past the state
+# border entirely) and refilled 15 of 60 slots with train stations — the same
+# category starvation `_prioritize_landmarks` exists to prevent, reappearing
+# geographically. So the fix is more centres, not a bigger one.
+#
+# Centres come from OSM's own settlement data (services/geocode.py::
+# area_centroids), so they are places a traveller would name — Panaji,
+# Calangute, Margao, Palolem — rather than arbitrary grid points that can land
+# in the sea. This matters beyond coverage: services/gems.py can only surface a
+# hidden gem whose POI is in the pool, so an unreachable area's gems could
+# never appear no matter how much community signal mentioned them.
+#
+# Cost is the binding constraint — every centre is two more Overpass passes, on
+# a shared public instance we are already careful with — hence the low cap.
+_MULTI_AREA_MIN_SPAN_KM = 40.0     # below this, one centre genuinely covers it
+_MAX_AREA_CENTROIDS = 4            # incl. the primary centre; 4 => <= 8 passes
+_MIN_KM_BETWEEN_CENTROIDS = 18.0   # keep samples from re-covering each other
+_AREA_RADIUS_M = 15000
+
+
+def _haversine_km(a: tuple[float, float], b: tuple[float, float]) -> float:
+    from math import asin, cos, radians, sin, sqrt
+    lat1, lon1, lat2, lon2 = map(radians, [a[0], a[1], b[0], b[1]])
+    h = sin((lat2 - lat1) / 2) ** 2 + cos(lat1) * cos(lat2) * sin((lon2 - lon1) / 2) ** 2
+    return 2 * 6371 * asin(sqrt(h))
+
+
+def _bbox_span_km(bbox: tuple[float, float, float, float]) -> float:
+    """Diagonal of the destination's bounding box — how big this place is."""
+    south, north, west, east = bbox
+    return _haversine_km((south, west), (north, east))
+
+
+def _pick_spread_centroids(
+    primary: tuple[float, float],
+    towns: list[tuple[str, float, float]],
+    bbox: tuple[float, float, float, float],
+) -> list[tuple[str, float, float]]:
+    """Choose up to `_MAX_AREA_CENTROIDS` well-separated sampling centres.
+
+    `towns` arrives most-populous-first. Taking the top N by population alone
+    would cluster: Goa's four biggest settlements are all within ~15km of
+    Panaji, which is the very failure being fixed. So a town is only accepted
+    when it is at least `_MIN_KM_BETWEEN_CENTROIDS` from every centre already
+    chosen — population picks *which* places, distance picks *where*.
+    """
+    south, north, west, east = bbox
+    chosen: list[tuple[str, float, float]] = [("", primary[0], primary[1])]
+    for name, lat, lon in towns:
+        if len(chosen) >= _MAX_AREA_CENTROIDS:
+            break
+        # Nominatim bboxes can be generous; a town outside it is not this
+        # destination and would drag the pool across a border.
+        if not (south <= lat <= north and west <= lon <= east):
+            continue
+        if all(_haversine_km((lat, lon), (c[1], c[2])) >= _MIN_KM_BETWEEN_CENTROIDS
+               for c in chosen):
+            chosen.append((name, lat, lon))
+    return chosen
+
+
+def _interleave_by_area(pools: list[list[dict]], cap: int) -> list[dict]:
+    """Round-robin across AREAS, then truncate.
+
+    `_prioritize_landmarks` already stops one *category* crowding out the rest.
+    Sampling several centres reintroduces the identical starvation one
+    dimension over: concatenating the pools and truncating would let the
+    densest area (Panaji, or a city centre) fill the cap and leave the outer
+    areas with nothing — which is the bug this whole change exists to fix.
+    Each pool is pre-prioritised, so taking one at a time preserves that
+    ranking within each area while guaranteeing every area is represented.
+    """
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for tier in range(max((len(p) for p in pools), default=0)):
+        for pool in pools:
+            if tier >= len(pool):
+                continue
+            poi = pool[tier]
+            key = (poi.get("name") or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(poi)
+            if len(merged) >= cap:
+                return merged
+    return merged
 
 
 def _radius_override_for(destination: str) -> int | None:
     return _OSM_RADIUS_OVERRIDES_M.get(destination.strip().lower())
+
+
+def _bbox_around(lat: float, lon: float, radius_m: int) -> tuple[float, float, float, float]:
+    """A (south, north, west, east) box of `radius_m` around a point.
+
+    Used when a destination's declared extent, not Nominatim's bbox, is what
+    says how big it is — which is every destination pinned to its hub town,
+    because the hub's own bbox describes the town and not the region.
+    """
+    from math import cos, radians
+    dlat = radius_m / 111_320.0
+    dlon = radius_m / (111_320.0 * max(cos(radians(lat)), 0.01))
+    return lat - dlat, lat + dlat, lon - dlon, lon + dlon
 
 
 def _is_thin_or_dominated(pois: list[dict]) -> bool:
@@ -697,12 +881,16 @@ async def ingest_osm_pois(destination: str) -> int:
     override_radius = _radius_override_for(destination)
     if override_radius:
         logger.info(
-            "%r: region-scale destination, using %dm radius instead of the %dm default",
+            "%r: region-scale destination (declared extent %dm) — sampling several "
+            "areas rather than widening the default %dm circle",
             destination, override_radius, settings.osm_poi_radius_m,
         )
-    pois, prominence_ok = await _fetch_osm_pois_with_meta(
-        destination, radius_m=override_radius
-    )
+    # Deliberately NOT passed as `radius_m`: the extent describes how far the
+    # destination reaches, not how big one query should be. Handing it over as
+    # a radius would rebuild the single oversized circle this replaces — which
+    # measured worse, pulling POIs past Goa's border and refilling the pool
+    # with train stations.
+    pois, prominence_ok, geocode_degraded = await _fetch_osm_pois_with_meta(destination)
     # Thin/single-category-dominated results are common for small towns and
     # "hidden gem" destinations whose few landmark/nature POIs are spread
     # wider than the default 5km while restaurants cluster densely near the
@@ -716,17 +904,18 @@ async def ingest_osm_pois(destination: str) -> int:
     # smaller than what we just fetched, and re-fetching at it would quietly
     # drop the very landmarks the override exists to reach. Widen from
     # whatever radius actually ran, never from the city-shaped default.
-    expanded_radius = max(settings.osm_poi_radius_expanded_m, override_radius or 0)
-    if pois and _is_thin_or_dominated(pois) and expanded_radius > (
-        override_radius or settings.osm_poi_radius_m
-    ):
-        expanded_pois, expanded_prominence_ok = await _fetch_osm_pois_with_meta(
+    # A destination sampled across several areas has already searched far
+    # wider than the expanded radius; re-fetching at 15km from one centre would
+    # narrow it, and that is how the outer areas get lost again.
+    expanded_radius = settings.osm_poi_radius_expanded_m
+    if pois and _is_thin_or_dominated(pois) and not override_radius:
+        expanded_pois, expanded_prominence_ok, _ = await _fetch_osm_pois_with_meta(
             destination, radius_m=expanded_radius
         )
         if expanded_pois and (len(expanded_pois) > len(pois) or not _is_thin_or_dominated(expanded_pois)):
             logger.info(
                 "%r: %dm radius was thin/dominated (%d POIs), expanded to %dm radius (%d POIs)",
-                destination, override_radius or settings.osm_poi_radius_m,
+                destination, settings.osm_poi_radius_m,
                 len(pois), expanded_radius, len(expanded_pois),
             )
             pois, prominence_ok = expanded_pois, expanded_prominence_ok
@@ -756,6 +945,30 @@ async def ingest_osm_pois(destination: str) -> int:
     # stored data with it would be a silent regression, so keep what's there
     # and let the caller retry. For a destination with nothing stored yet,
     # degraded data still beats no data, so this only guards overwrites.
+    # 🔴 The geocode itself is unverified: this is a region centroid we wanted
+    # to correct to its hub town but couldn't, because that correction is an
+    # Overpass call and Overpass was throttling. The fetch will look perfectly
+    # healthy — right count, well-spread categories, prominence pass fine — and
+    # be centred tens of km from what the destination name means. Bali's 25
+    # stored POIs sat 48km from Denpasar, in the wrong half of the island,
+    # written by exactly this path (2026-08-05).
+    #
+    # Same contract as the prominence guard below: only ever protects an
+    # OVERWRITE. With nothing stored yet, wrong-place data still beats no data
+    # and the destination stays flagged for a later pass.
+    if geocode_degraded:
+        existing_count = count_destination_points(
+            get_qdrant(), settings.qdrant_collection_osm, destination
+        )
+        if existing_count:
+            logger.warning(
+                "%r: geocode fell back to an unverified region centroid (hub-town "
+                "lookup failed), so the %d fetched POIs may be for the wrong area — "
+                "keeping the %d already stored rather than overwriting them.",
+                destination, len(pois), existing_count,
+            )
+            return existing_count
+
     if not prominence_ok:
         existing_count = count_destination_points(
             get_qdrant(), settings.qdrant_collection_osm, destination

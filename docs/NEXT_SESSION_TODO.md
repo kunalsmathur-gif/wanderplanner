@@ -2,6 +2,85 @@
 
 ---
 
+## 🔴 P0 — RE-INGEST AND VALIDATE EVERY DESTINATION (opened 2026-08-05)
+
+**Nothing is fixed in the data yet.** v10.72.0 changed how large destinations
+are *fetched*; every stored pool was still written single-centre. Until each
+destination is re-ingested, the coverage gaps below are live in production.
+
+Measured on Goa, which is what opened this: at the 5km default its stored pool
+had **5 North Goa POIs and ZERO from South Goa**, and the only recognisable
+beach names in all 60 were Baga and Vagator — Agonda (52.6km), Palolem
+(57.4km) and Colva (25.6km) were structurally unreachable. After multi-area
+sampling: North 18 / Central 28 / **South 14**. Every other large destination
+is presumed to have an equivalent gap until measured.
+
+**This is not only a coverage problem — it is a hidden-gems problem.**
+`services/gems.py` can only surface a gem whose POI is in the pool, so an
+unreachable area's gems can never appear no matter how much community signal
+mentions them. Sparsely-populated outskirts are exactly where the gems are.
+
+### Order of work
+
+1. **Extend `_OSM_RADIUS_OVERRIDES_M`** (`scrapers/osm.py`) for every
+   destination that is a region rather than a city. Only `bali` (30km) and
+   `goa` (55km) are declared today. **Measure each one the way Goa was
+   measured** — pick 8-12 places a traveller would name, compute their
+   distance from the hub, and check how many appear — rather than guessing a
+   number. Known candidates, all unmeasured:
+   - **Mumbai** — suburban districts, plus Alibaug across the harbour
+   - **London** — the exteriors; huge without being a region
+   - **Kerala, Rajasthan, Ladakh, Spiti, Coorg, Zanzibar, Sri Lanka**
+2. **Re-ingest all 171 destinations** and verify each landed correctly.
+3. **Re-run `scripts/audit_poi_geocode.py`** afterwards — it catches a wrong
+   *centre*, and step 2 is the moment a wrong centre would be written.
+
+### 🔴 Island countries and far-flung archipelagos — the worst case, and
+### currently NOT handled
+
+Where islands are hundreds of km apart and travellers cover several of them,
+one centre plus a radius cannot work at all, and **the current multi-area code
+does not rescue it.** Three concrete blockers, all in code today:
+
+- **`_MAX_HUB_TOWN_BBOX_DEGREES = 6.0`** (`services/geocode.py`) makes
+  `_towns_in_bbox` return nothing for any destination whose bbox exceeds 6° on
+  either axis. The Maldives spans ~8° of latitude. **So the largest, most
+  spread-out destinations — precisely the ones that need area sampling most —
+  silently get none of it** and fall back to single-centre. The cap exists
+  because a country-sized Overpass query reliably 504s (live-confirmed
+  2026-07-23 on Tokyo's prefecture bbox), so raising it is not free; splitting
+  the bbox into quadrants and querying each is the likelier fix.
+- **`_MIN_KM_BETWEEN_CENTROIDS = 18.0`** was tuned for a state where towns
+  cluster. Atolls hundreds of km apart need no such guard, and
+  **`_MAX_AREA_CENTROIDS = 4` is almost certainly too few** for an archipelago
+  a traveller island-hops across.
+- **A centroid can land in open water.** Town discovery avoids this by using
+  real settlements, but only where discovery runs at all — see the first
+  blocker.
+
+Destinations to check first: **Maldives, Andaman, Fiji, Hawaii, Zanzibar,
+Bali, Sri Lanka, Philippines-style multi-island entries**, plus any large
+sparsely-populated region where the interesting places are far from the hub
+(Ladakh, Spiti). Several are pinned to a single hub town in
+`GEOCODE_QUERY_OVERRIDES` (Male, Port Blair, Nadi, Honolulu) — which fixes
+*where the centre is* and does nothing about *how far the destination reaches*.
+
+### Validation each destination must pass
+
+- POI centroid within ~25km of the expected hub (`scripts/audit_poi_geocode.py`)
+- POIs distributed across the destination's real extent, not clustered at the
+  hub — the Goa North/Central/South split is the template
+- A hand-listed set of places a traveller would name is actually present
+- Top-category share under `MAX_CATEGORY_SHARE` (0.5); watch for train
+  stations, which is how the single-wide-circle attempt failed
+
+⚠️ **Cost.** Multi-area is up to 4 centres x 2 Overpass passes = 8 queries per
+destination, against a public instance that 504'd repeatedly throughout
+2026-08-05. A full re-ingestion is a multi-hour run and should be a deliberate
+batch, not folded into other work.
+
+---
+
 ## 📌 SESSION OF 2026-08-05 — demo-script validation (v10.71.0)
 
 Validated every claim in `docs/video-script-4min.md` against live production

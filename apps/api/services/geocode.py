@@ -103,6 +103,42 @@ GEOCODE_QUERY_OVERRIDES: dict[str, str] = {
     # so no importance/country heuristic disambiguates. Live-confirmed
     # 2026-07-23 (was silently ingesting 60 POIs for the Venezuelan city).
     "valencia": "Valencia, Spain",
+    # Found by scripts/audit_poi_geocode.py, 2026-08-05, and the audit caught
+    # them the *opposite* way round from the bug it was written for: the STORED
+    # POIs are correct (Medellín, Colombia and Amalfi, Italy) and the live
+    # geocode is what drifted — a bare "Medellin" now resolves to a municipality
+    # in the PHILIPPINES 17,113km away, and a bare "Amalfi" to a town in
+    # COLOMBIA 9,480km from the Italian coast. Both are real places, so neither
+    # the importance nor the Wikipedia country cross-check flags them; same
+    # class as Cartagena/La Paz/Austin/Valencia above.
+    #
+    # ⚠️ Without these pins, the next scheduled refresh would have quietly
+    # replaced two correct 60-POI pools with data for the wrong continent —
+    # and every existing guard would have let it, because the fetch looks
+    # perfectly healthy. The unaccented "Medellin" spelling is what the
+    # catalogue uses, so pinning the accented, country-qualified form is what
+    # makes it deterministic.
+    "medellin": "Medellín, Colombia",
+    "amalfi": "Amalfi, Italy",
+    # The one destination the same audit found genuinely mis-ingested, and a
+    # confirmed casualty of the throttle bug rather than a name collision: a
+    # bare "Sri Lanka" is a country, so the hub-town lookup is what turns it
+    # into Colombo — and that lookup 504'd on every attempt on 2026-08-05. Its
+    # 60 stored POIs sat 112km away around Matale, the island's geographic
+    # centre, and were obscure rural sites (Koholanwela Temple, Wedda peni
+    # ella, Karagahatenna Transmission Station) rather than anything a
+    # traveller means by "Sri Lanka". Same country-name shape as Maldives and
+    # Fiji above; pinning the hub makes it deterministic instead of dependent
+    # on Overpass being healthy at that moment.
+    "sri lanka": "Colombo, Sri Lanka",
+    # Goa is a state, so a bare query returns its administrative centroid and
+    # the hub-town lookup is what turns it into Panaji — and that lookup 504'd
+    # repeatedly on 2026-08-05, leaving an inland centroid that fetched 24 POIs
+    # with ZERO from North Goa and not one recognisable beach name. Pinned for
+    # determinism; the state's real 105km extent is declared separately in
+    # scrapers/osm.py::_OSM_RADIUS_OVERRIDES_M, because a hub pin necessarily
+    # makes a region look town-sized to every automatic size check.
+    "goa": "Panaji, Goa, India",
 }
 
 
@@ -241,42 +277,49 @@ async def _wikipedia_disambiguate(client: httpx.AsyncClient, query: str) -> tupl
         return None
 
 
-async def _hub_town_in_bbox(client: httpx.AsyncClient, bbox: list[str]) -> str | None:
-    """Given a Nominatim `boundingbox` ([south, north, west, east] as
-    strings) for a region/country-sized hit, finds the most populous actual
-    town/city inside it via Overpass — a generic way to answer "what's the
-    real hub travellers base themselves in" for a destination name that only
-    resolves to a large administrative area (e.g. "Ladakh", "Maldives"),
-    without needing a hand-picked per-destination override."""
+async def _towns_in_bbox(
+    client: httpx.AsyncClient, bbox: list[str], limit: int = 30
+) -> tuple[list[tuple[str, float, float]], bool]:
+    """The settlements inside `bbox`, most populous first, as (name, lat, lon).
+
+    Shared by two callers with different needs, which is why it returns a list
+    rather than one answer: `_hub_town_in_bbox` wants the single biggest town
+    (to correct a region name to its hub), while `scrapers/osm.py` wants
+    several (to sample a large destination from more than one centre — a
+    105km-long state has no single point that reaches its far end).
+
+    Same `(value, degraded)` contract as everything else on this path:
+    `degraded` is True only when Overpass errored, never when it answered that
+    there is nothing here.
+    """
     try:
         south, north, west, east = (float(v) for v in bbox)
     except (TypeError, ValueError):
-        return None
-    # A country-sized (or larger) bbox makes for an expensive, slow Overpass
-    # query that's prone to timing out on the shared public instance — and
-    # doing that for every large-region miss would add exactly the kind of
-    # extra Overpass load we've been trying to avoid this session. Cap it to
-    # genuinely region-sized areas (live-confirmed 2026-07-23: "Tokyo"'s
-    # administrative bbox spans ~15x18 degrees and reliably 504s; "Ladakh"
-    # spans ~3x4 degrees and returns quickly).
+        return [], False
     if (north - south) > _MAX_HUB_TOWN_BBOX_DEGREES or (east - west) > _MAX_HUB_TOWN_BBOX_DEGREES:
-        return None
+        # A deliberate decision not to ask, not a failure to get an answer.
+        return [], False
     query = f"""
 [out:json][timeout:20];
 (
   node["place"~"^(city|town)$"]({south},{west},{north},{east});
 );
-out body 30;
+out body {limit};
 """.strip()
     try:
         resp = await client.post(settings.osm_overpass_url, data={"data": query}, timeout=25)
         resp.raise_for_status()
         elements = resp.json().get("elements", [])
     except Exception as e:
-        logger.warning("Hub-town Overpass lookup failed for bbox %s: %s", bbox, e)
-        return None
+        logger.warning(
+            "Hub-town Overpass lookup FAILED for bbox %s (%s) — the region centroid "
+            "is now unverified; anything ingested against it may be in the wrong "
+            "place. See GeocodeResponse.hub_lookup_degraded.",
+            bbox, e,
+        )
+        return [], True
     if not elements:
-        return None
+        return [], False
 
     def _pop(el: dict) -> int:
         try:
@@ -285,8 +328,46 @@ out body 30;
             return 0
 
     elements.sort(key=lambda el: (_pop(el), el.get("tags", {}).get("place") == "city"), reverse=True)
-    name = elements[0].get("tags", {}).get("name")
-    return name
+    towns: list[tuple[str, float, float]] = []
+    for el in elements:
+        name = el.get("tags", {}).get("name")
+        lat, lon = el.get("lat"), el.get("lon")
+        if name and lat is not None and lon is not None:
+            towns.append((name, float(lat), float(lon)))
+    return towns, False
+
+
+async def _hub_town_in_bbox(
+    client: httpx.AsyncClient, bbox: list[str]
+) -> tuple[str | None, bool]:
+    """The single most populous town inside `bbox`, for correcting a region
+    name to the hub travellers actually base themselves in (e.g. "Ladakh" ->
+    Leh). Thin wrapper over `_towns_in_bbox`; see it for the `degraded` half.
+    """
+    towns, degraded = await _towns_in_bbox(client, bbox)
+    return (towns[0][0] if towns else None), degraded
+
+
+async def area_centroids(bbox: list[str], limit: int) -> list[tuple[str, float, float]]:
+    """Public entry point for sampling a large destination from several
+    centres. Best-effort: any failure returns an empty list, and the caller
+    falls back to single-centre behaviour rather than ingesting nothing.
+    """
+    headers = {"User-Agent": settings.nominatim_user_agent, "Accept-Language": "en"}
+    async with httpx.AsyncClient(timeout=30, headers=headers) as client:
+        towns, _ = await _towns_in_bbox(client, bbox, limit=max(limit * 4, 30))
+    return towns
+
+
+def _parse_bbox(raw: object) -> tuple[float, float, float, float] | None:
+    """Nominatim's `boundingbox` is [south, north, west, east] as strings."""
+    if not isinstance(raw, list | tuple) or len(raw) != 4:
+        return None
+    try:
+        south, north, west, east = (float(v) for v in raw)
+    except (TypeError, ValueError):
+        return None
+    return south, north, west, east
 
 
 def _hit_to_response(hit: dict, fallback_name: str, is_country: bool | None = None) -> GeocodeResponse:
@@ -308,6 +389,7 @@ def _hit_to_response(hit: dict, fallback_name: str, is_country: bool | None = No
         lon=float(hit.get("lon", 0)),
         country_code=address.get("country_code", ""),
         is_country=_is_country_like(hit) if is_country is None else is_country,
+        bbox=_parse_bbox(hit.get("boundingbox")),
     )
 
 
@@ -339,7 +421,7 @@ async def geocode_city(city: str, countrycodes: str = "") -> GeocodeResponse:
         if _is_country_like(hit):
             # Resolves to a country/region, not a settlement — find the real
             # hub town inside it instead of trusting the region's centroid.
-            hub_name = await _hub_town_in_bbox(client, hit.get("boundingbox", []))
+            hub_name, hub_degraded = await _hub_town_in_bbox(client, hit.get("boundingbox", []))
             if hub_name:
                 country = hit.get("address", {}).get("country", "")
                 requery = f"{hub_name}, {country}" if country else hub_name
@@ -347,8 +429,19 @@ async def geocode_city(city: str, countrycodes: str = "") -> GeocodeResponse:
                 if hub_data:
                     return _hit_to_response(_pick_best_hit(hub_data), city, is_country=False)
             # No hub town found (or re-query failed) — fall back to the
-            # region-level hit as before rather than erroring out.
-            return _hit_to_response(hit, city, is_country=True)
+            # region-level hit as before rather than erroring out, but say so
+            # when the reason was a failed lookup rather than a real absence.
+            # A caller that persists data keyed on these coordinates must not
+            # treat the two the same (scrapers/osm.py::ingest_osm_pois).
+            if hub_degraded:
+                logger.warning(
+                    "Geocode for %r fell back to the region centroid (%s) because the "
+                    "hub-town lookup failed, not because there is no hub.",
+                    city, hit.get("display_name", ""),
+                )
+            response = _hit_to_response(hit, city, is_country=True)
+            response.hub_lookup_degraded = hub_degraded
+            return response
 
         if _needs_second_opinion(hit):
             wiki_hit = await _wikipedia_disambiguate(client, city)
