@@ -1318,7 +1318,7 @@
           <div style="font-family:var(--sans);font-weight:200;font-size:min(4.6vw,8vh);color:var(--accent);line-height:.9">01</div>
           <div>
             <h4 class="t-body-emp" style="font-size:max(18px,1.4vw)">The agent &mdash; Anya</h4>
-            <p class="body-sm" style="margin-top:.6vh">Understands the trip brief, the budget, and the pins you lock in &mdash; and remembers them across every refinement in the session.</p>
+            <p class="body-sm" style="margin-top:.6vh">Powered by Gemini 2.5 Flash &mdash; understands the trip brief, the budget, and the pins you lock in, and remembers them across every refinement in the session.</p>
           </div>
         </div>
         <div class="card-fill" style="display:grid;grid-template-columns:auto 1fr;gap:2vw;align-items:center;padding:2.4vh 2vw">
@@ -1396,7 +1396,7 @@
       <div>
         <div style="height:2px;background:var(--accent-bright);width:100%"></div>
         <div class="kpi-num" style="margin-top:1.6vh;font-family:var(--sans);font-weight:200;font-size:min(3.6vw,6.4vh);color:var(--accent-bright)">0.992</div>
-        <div class="t-meta" style="margin-top:.8vh">Fidelity score (vs ChatGPT 0.74 unverifiable)</div>
+        <div class="t-meta" style="margin-top:.8vh">Fidelity score (vs ChatGPT 0.74)</div>
         <div style="margin-top:.4vh;font-family:var(--sans),var(--sans-zh);font-size:max(11px,.66vw);line-height:1.4;color:rgba(255,255,255,.5)">Right places, verified, not invented.</div>
       </div>
       <div>
@@ -1486,24 +1486,26 @@
       <div class="h-xl" style="font-size:min(3vw,5.4vh)">Phase 1 is shipping. The unit economics already work.</div>
     </div>
     <div data-anim="ledger" class="stacked-ledger" style="flex:1;display:flex;flex-direction:column;justify-content:center">
+      <div class="t-meta" style="opacity:.7;margin-bottom:.4vh">ROADMAP</div>
       <div class="ledger-row" style="display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:2vw;padding:1.6vh 0;border-bottom:1px solid var(--border-subtle)">
         <div class="ledger-label body">Phase 1 &mdash; B2C soft launch, live at wanderplanner.org &mdash; shipped; Product Hunt listing going live soon</div>
         <div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(3.6vw,5vh)">DONE</div>
         <i class="ledger-icon" data-lucide="check-circle" style="width:1.6vw;height:1.6vw;color:var(--accent)"></i>
       </div>
       <div class="ledger-row" style="display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:2vw;padding:1.6vh 0;border-bottom:1px solid var(--border-subtle)">
-        <div class="ledger-label body">Phase 2, next 6 months &mdash; onboard paying local travel agencies, agent copilot + live budget grounding</div>
-        <div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(3.6vw,5vh)">M0&ndash;6</div>
+        <div class="ledger-label body">Phase 2, next 3 months &mdash; onboard paying local travel agencies, agent copilot + live budget grounding</div>
+        <div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(3.6vw,5vh)">M0&ndash;3</div>
         <i class="ledger-icon" data-lucide="repeat" style="width:1.6vw;height:1.6vw"></i>
       </div>
+      <div class="t-meta" style="opacity:.7;margin-top:1.8vh;margin-bottom:.4vh">UNIT ECONOMICS</div>
       <div class="ledger-row" style="display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:2vw;padding:1.6vh 0;border-bottom:1px solid var(--border-subtle)">
         <div class="ledger-label body">Cost per itinerary generation &mdash; LLM only (Gemini 2.5 Flash, happy path); paid data APIs (Foursquare/Skyscanner-class) not yet integrated</div>
         <div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(3.6vw,5vh)">$0.003&ndash;0.007</div>
         <i class="ledger-icon" data-lucide="cpu" style="width:1.6vw;height:1.6vw"></i>
       </div>
       <div class="ledger-row" style="display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:2vw;padding:1.6vh 0;border-bottom:1px solid var(--border-subtle)">
-        <div class="ledger-label body">Year-3 paid agents &times; $24/mo &asymp; $145K ARR (gate: 5 paying &rarr; multi-tenant)</div>
-        <div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(3.6vw,5vh);color:var(--accent)">500 agents</div>
+        <div class="ledger-label body">Year-2 target: 500 paying travel agents on the $24/mo tier &mdash; unlocked once the first 5 agents pay (that's the gate for building multi-tenant support)</div>
+        <div class="ledger-num" style="font-family:var(--sans);font-weight:200;font-size:min(3.6vw,5vh);color:var(--accent)">$145K ARR</div>
         <i class="ledger-icon" data-lucide="users" style="width:1.6vw;height:1.6vw;color:var(--accent)"></i>
       </div>
       <div class="ledger-row" style="display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:2vw;padding:1.6vh 0">
@@ -1529,7 +1531,7 @@
         <div class="t-meta" style="opacity:.7;color:var(--accent)">SOM</div>
         <div style="font-family:var(--sans);font-weight:200;font-size:min(2.2vw,3.6vh);color:var(--accent)">$500K</div>
         <div class="bar-row" style="grid-template-columns:1fr;margin-top:.6vh"><div class="bar-track"><div class="bar-fill" style="width:2%"></div></div></div>
-        <div class="t-meta" style="opacity:.55;margin-top:.4vh;font-size:12px">Realistic Year-3 B2B ARR</div>
+        <div class="t-meta" style="opacity:.55;margin-top:.4vh;font-size:12px">Realistic Year-2 B2B ARR</div>
       </div>
     </div>
     <div class="t-meta" style="margin-top:1.2vh">Source: scaling-tech-challenges.md (LLM cost) &middot; MARKET_RESEARCH.md (agency count, pricing &amp; TAM/SAM/SOM) &mdash; directional, not audited, not narrated on camera</div>
@@ -1572,13 +1574,13 @@
           <div style="display:grid;grid-template-columns:auto 1fr;gap:2vw;align-items:start;padding:2.6vh 0;border-top:1px solid var(--border-subtle)">
             <div style="font-family:var(--sans);font-weight:200;font-size:min(4.4vw,7.8vh);line-height:.9;color:var(--accent)">&rarr;</div>
             <div>
-              <p style="font-family:var(--sans),var(--sans-zh);font-size:max(16px,.94vw);line-height:1.6;color:var(--text-secondary);font-weight:400">"Before you try this, one honest note: I went looking for ways it could put your data at risk &mdash; found a spot where a stranger's data could've leaked, and closed it, so you don't have to wonder."</p>
+              <p style="font-family:var(--sans),var(--sans-zh);font-size:max(16px,.94vw);line-height:1.6;color:var(--text-secondary);font-weight:400">"This isn't running on my laptop &mdash; it's live, right now, at wanderplanner dot org. Go try it yourself."</p>
             </div>
           </div>
           <div style="display:grid;grid-template-columns:auto 1fr;gap:2vw;align-items:start;padding:2.6vh 0;border-top:1px solid var(--border-subtle);border-bottom:2px solid var(--accent)">
             <div style="font-family:var(--sans);font-weight:200;font-size:min(4.4vw,7.8vh);line-height:.9;color:var(--accent)">&rarr;</div>
             <div>
-              <p style="font-family:var(--sans),var(--sans-zh);font-size:max(16px,.94vw);line-height:1.6;color:var(--text-secondary);font-weight:400">"And unlike most cohort demos, this isn't running on my laptop &mdash; it's live, right now, at wanderplanner dot org. Go try it yourself."</p>
+              <p style="font-family:var(--sans),var(--sans-zh);font-size:max(16px,.94vw);line-height:1.6;color:var(--text-secondary);font-weight:400">"Before you try this, one honest note: I went looking for ways it could put your data at risk &mdash; found a spot where a stranger's data could've leaked, and closed it, so you don't have to wonder."</p>
             </div>
           </div>
         </div>

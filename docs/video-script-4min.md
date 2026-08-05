@@ -172,11 +172,11 @@ Cost per itinerary is a fraction of a cent — margins hold comfortably even at 
 
 > **SCREEN:** Deck slide 7 — closing manifesto, with the `wanderplanner.org` live badge visible.
 
-**SAY** *(66 words)*
+**SAY** *(64 words)*
+
+This isn't running on my laptop — it's live, right now, at wanderplanner dot org. Go try it yourself.
 
 Before you try this, one honest note: I went looking for ways it could put your data at risk — found a spot where a stranger's data could've leaked, and closed it, so you don't have to wonder.
-
-And unlike most cohort demos, this isn't running on my laptop — it's live, right now, at wanderplanner dot org. Go try it yourself.
 
 Wanderplanner. Real budgets. Real places. Real plans.
 
