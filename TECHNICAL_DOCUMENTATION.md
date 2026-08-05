@@ -1551,12 +1551,24 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.70, v10.69, v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.73, v10.70, v10.69, v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
 
 > ⚠️ **v10.63.0 and v10.64.0 shipped code and tests but have no entry in this
 > section** (visa cost exclusion + corpus-gated `visa_inr`, and the analytics
 > event fix). This is the known changelog-reconciliation backlog, not an
 > omission specific to v10.65.0.
+
+### v10.73.0 Changes (August 2026) — Fidelity figure published (0.983 → 0.992), demo-deck clarity fixes, and a handful of small correctness fixes
+
+| Change | Detail |
+|---|---|
+| **PUBLISHED** the 0.992 fidelity number | Real but unpublished — measured on this machine (`eval/out/refinement_fidelity_report.md`, mtime 2026-08-04) and never copied into the repo because `eval/out/` is gitignored. Copied as the dated pair `docs/eval-results/refinement_fidelity_report_2026-08-04.md` / `refinement_fidelity_results_2026-08-04.json`. Added a new dated row/section to `docs/eval-set.md` §4V and `docs/eval-results/README.md` rather than overwriting the existing 2026-07-14/2026-07-15 records — those remain the accurate history of what the v10.20.0/v10.23.0 reruns actually measured. Appended (not rewrote) a short addendum to the v10.23.0 entry below and in `docs/system-design.md` pointing at the new number. |
+| **FIXED** pitch deck copy (`demo-deck.html`, `index.html`) | Swept the "current state" KPIs (not historical milestones) from 0.983 → 0.992. Slide 4's "0.74" now reads "0.74 unverifiable" (it's ChatGPT's unverifiable-suggestion rate, not a fidelity score); "Pin inclusion & stability · 20/20" corrected to "16/16 positive cases" (stability/inclusion are only defined on the 16 positive cases, not the 4 honesty cases). |
+| **ADDED** per-KPI explainer captions to slide 4 | Silent, not voiced (see `docs/video-script-4min.md` Beat ④) — a viewer unfamiliar with "fidelity"/"pin inclusion" has no other way to know what they mean: "Right places, verified, not invented." / "Must-visit picks survive later edits." / "Never invents a place that doesn't exist." |
+| **DOCUMENTED (not wired in)** `chains/itinerary_chain.py` cost-guard gap | The cost-sanity guard's per-person-per-day bounds only catch gross unit/direction errors, not a plausible-looking wrong number (~1 in 5 runs). `core.budget_estimator.estimate_bare_minimum_budget` is the natural second anchor; left as a design-note comment since wiring it in is a behavior change needing its own eval pass. |
+| **FIXED** pre-existing `tsc` error | `apps/web/__tests__/hooks/useVoice.test.tsx` called `TtsRequestError` with 2 args; the constructor only ever took 1. `tsc` clean, 35/35 tests pass. |
+| **CLARIFIED** `ExpenseBreakupCard.tsx` | Added a comment: a genuine `0` (e.g. Bali's visa-free entry) hides its category row exactly like an empty one, so copy must not assume a fixed category count. |
+| **VERIFIED** the geocode-throttle silent-failure item from `docs/NEXT_SESSION_TODO.md` | Already fully resolved by v10.72.0's `hub_lookup_degraded` guard — no code change needed, confirmed via `TestIngestGuardsAgainstDegradedGeocode` and `scripts/audit_poi_geocode.py`. |
 
 ### v10.72.0 Changes (August 2026) — The geocode could be wrong and nothing noticed; large destinations were only ever sampled from their centre
 
@@ -4022,6 +4034,7 @@ Follow-up to v10.20.0's published live run. The published report's 3 recall miss
 | **Live rerun** (gemini-2.5-flash, 2026-07-15, after founder raised the Gemini spend cap) | **Fidelity 0.983 (was 0.975) · recall 0.958 (was 0.938) · inclusion 1.000 · stability 1.000 · precision 0.979 · honesty 4/4.** RF-009 and RF-012 (the rule-caused misses) now score 1.00. RF-001 still missed one place and a new miss appeared at RF-015 (Amritsar Sikh heritage, missing "Golden Temple") — re-probing both directly afterward confirmed they succeed in isolation, i.e. these are `temperature=0.1` sampling-variance misses, not a residual defect in the tuned rule. The aggregate trend (0.975→0.983, 0.938→0.958) is real; which specific 3 cases miss on any single run is noisy by design. |
 | **PUBLISHED** `docs/eval-results/` updated | `README.md` rewritten with the 2026-07-15 numbers, the tuning rationale, the 3-way validation done before publishing, and an explicit honest explanation of why the miss set shifted case-by-case. New dated verbatim reports `report_vs_chatgpt_2026-07-15.md` / `report_vs_claude_sonnet_2026-07-15.md` added alongside the original 2026-07-14 pair (kept for the historical record). Propagated the before/after numbers into `docs/GTM_STRATEGY.md` §5 Phase 1 item 4, `docs/eval-set.md` §4V, and the pitch deck (`docs/pitch-deck/index.html`, which had drifted to a stale pre-v10.20 figure). |
 | **Verified** | See validation row above; no frontend changes this entry, `tsc`/web suite not applicable. |
+| **Update (2026-08-04)** | A same-suite, no-code-change live rerun scored **fidelity 0.992** (recall 0.979, inclusion/stability 1.000, precision 0.951, honesty 4/4) — one miss (RF-001 London, same failure mode as before). Published as `docs/eval-results/refinement_fidelity_report_2026-08-04.md` / `refinement_fidelity_results_2026-08-04.json`; this is now the current headline number in the pitch deck and `docs/eval-set.md` §4V. The 0.983 figure above remains the accurate record of what the v10.23.0 rerun itself measured. |
 
 ### v10.22.0 Changes (July 2026) — UI/UX audit §2.3–§2.5: on-demand PDF, one currency/date formatter app-wide, BestTime label clarity
 

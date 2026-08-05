@@ -87,6 +87,12 @@ export function ExpenseBreakupCard() {
                   </div>
                 )
               }
+              // A genuine 0 (e.g. visa-free destinations like Bali) hides its
+              // row entirely, same as any other empty category — so this card
+              // can render fewer than CATEGORIES.length rows. Any copy that
+              // claims a fixed category count (e.g. "eight categories") is
+              // wrong for destinations with a free category; write copy off
+              // the rendered rows, not this constant.
               if (!raw) return null
               return (
                 <div

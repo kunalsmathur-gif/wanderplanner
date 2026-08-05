@@ -1,6 +1,6 @@
 # Can your AI travel planner prove it listened?
 
-**WanderPlanner vs ChatGPT vs Claude on refinement fidelity — published eval, 2026-07-14, updated 2026-07-15**
+**WanderPlanner vs ChatGPT vs Claude on refinement fidelity — published eval, 2026-07-14, updated 2026-07-15, updated 2026-08-04**
 
 Every AI travel tool demos well. You say "I'm a huge Harry Potter fan", it says "Sure!", and something plausible appears. The question that actually matters: **did the right places make it into the plan, are they real, and does the plan stay intact when you keep refining it?**
 
@@ -10,7 +10,7 @@ We built an eval for exactly that, ran our own product through it live, ran Chat
 
 | Metric | WanderPlanner | ChatGPT (free tier) | Claude Sonnet |
 |---|---|---|---|
-| Verified-POI recall | 0.96 | **1.00** | 0.98 |
+| Verified-POI recall | 0.98 | **1.00** | 0.98 |
 | Unverifiable suggestions | **0.00** (dropped by design) | 0.74 | 0.79 |
 | Pinned place appears exactly once in the itinerary | **1.00** | n/a¹ | n/a¹ |
 | Pins survive an unrelated follow-up refinement | **1.00** | n/a¹ | n/a¹ |
@@ -46,6 +46,16 @@ Fidelity score = 0.4·recall + 0.4·inclusion + 0.2·stability.
 RF-009 (Los Angeles) and RF-012 (Mumbai) — the two misses attributable to the actual rule, not chance — now both score a clean 1.00.
 
 Every place that *was* pinned appeared in the itinerary exactly once and survived further refinement, on every case, in both runs. Full per-case tables: latest — [report_vs_chatgpt.md](report_vs_chatgpt_2026-07-15.md) · [report_vs_claude_sonnet.md](report_vs_claude_sonnet_2026-07-15.md); original 2026-07-14 run (kept for the record) — [report_vs_chatgpt.md](report_vs_chatgpt_2026-07-14.md) · [report_vs_claude_sonnet.md](report_vs_claude_sonnet_2026-07-14.md).
+
+## WanderPlanner live results (2026-08-04 rerun, gemini-2.5-flash) — current headline number
+
+**Fidelity 0.992 · recall 0.979 · inclusion 1.000 · stability 1.000 · precision 0.951 · honesty 4/4.**
+
+No prompt or code change from the 2026-07-15 run above — this is the same suite, same model, rerun cold. 15 of 16 positive cases scored a perfect 1.00. The single miss:
+
+- **RF-001 London (Harry Potter)** — recall 0.67, same case and same failure mode as the 2026-07-15 run (Platform 9¾ not proposed). This is the one case that has now missed on every live run recorded to date; worth a closer look next time rather than writing it off as pure sampling variance.
+
+Two cases each pinned one extra distractor this run (RF-002 Edinburgh, RF-011 Delhi), which is why precision (0.951) dipped slightly even as recall improved — both are still 1.00 on recall and inclusion/stability. Full report: [refinement_fidelity_report_2026-08-04.md](refinement_fidelity_report_2026-08-04.md), raw results [refinement_fidelity_results_2026-08-04.json](refinement_fidelity_results_2026-08-04.json). No baseline (ChatGPT/Claude) rerun was done alongside this one — the 2026-07-15 baseline comparison above is still the most recent apples-to-apples figure against them.
 
 ## How the baselines were recorded (protocol)
 

@@ -1,0 +1,329 @@
+{
+  "mode": "live",
+  "aggregate": {
+    "n_positive": 16,
+    "n_negative": 4,
+    "n_errored": 0,
+    "expansion_recall": 1.0,
+    "pin_recall": 0.9791666666666666,
+    "pin_precision": 0.9510416666666667,
+    "inclusion_rate": 1.0,
+    "stability_rate": 1.0,
+    "fidelity": 0.9916666666666667,
+    "honesty_rate": 1.0
+  },
+  "baseline": null,
+  "results": [
+    {
+      "id": "RF-001",
+      "destination": "London",
+      "interest": "Harry Potter",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 0.6666666666666666,
+      "pin_precision": 0.6666666666666666,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 0.8666666666666667,
+      "pins": [
+        "Warner Bros. Studio Tour London",
+        "Borough Market",
+        "Leadenhall Market"
+      ]
+    },
+    {
+      "id": "RF-002",
+      "destination": "Edinburgh",
+      "interest": "Harry Potter",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 1.0,
+      "pin_precision": 0.8,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 1.0,
+      "pins": [
+        "The Elephant House",
+        "Greyfriars Kirkyard",
+        "Victoria Street",
+        "Victoria Street",
+        "Edinburgh Castle"
+      ]
+    },
+    {
+      "id": "RF-003",
+      "destination": "Tokyo",
+      "interest": "anime",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 1.0,
+      "pin_precision": 1.0,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 1.0,
+      "pins": [
+        "Ghibli Museum",
+        "Akihabara Electric Town",
+        "Nakano Broadway"
+      ]
+    },
+    {
+      "id": "RF-004",
+      "destination": "Kyoto",
+      "interest": "zen gardens",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 1.0,
+      "pin_precision": 1.0,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 1.0,
+      "pins": [
+        "Ryoan-ji",
+        "Ginkaku-ji",
+        "Kinkaku-ji"
+      ]
+    },
+    {
+      "id": "RF-005",
+      "destination": "Paris",
+      "interest": "Impressionist art",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 1.0,
+      "pin_precision": 1.0,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 1.0,
+      "pins": [
+        "Musee d'Orsay",
+        "Musee de l'Orangerie"
+      ]
+    },
+    {
+      "id": "RF-006",
+      "destination": "Rome",
+      "interest": "ancient Roman history",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 1.0,
+      "pin_precision": 1.0,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 1.0,
+      "pins": [
+        "Colosseum",
+        "Roman Forum",
+        "Pantheon"
+      ]
+    },
+    {
+      "id": "RF-007",
+      "destination": "Barcelona",
+      "interest": "Gaudi architecture",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 1.0,
+      "pin_precision": 1.0,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 1.0,
+      "pins": [
+        "Sagrada Familia",
+        "Park Guell",
+        "Casa Batllo"
+      ]
+    },
+    {
+      "id": "RF-008",
+      "destination": "Liverpool",
+      "interest": "The Beatles",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 1.0,
+      "pin_precision": 1.0,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 1.0,
+      "pins": [
+        "The Cavern Club",
+        "Strawberry Field",
+        "Penny Lane"
+      ]
+    },
+    {
+      "id": "RF-009",
+      "destination": "Los Angeles",
+      "interest": "movie studios",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 1.0,
+      "pin_precision": 1.0,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 1.0,
+      "pins": [
+        "Universal Studios Hollywood",
+        "Warner Bros. Studio Tour Hollywood",
+        "Hollywood Walk of Fame"
+      ]
+    },
+    {
+      "id": "RF-010",
+      "destination": "Singapore",
+      "interest": "hawker food",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 1.0,
+      "pin_precision": 1.0,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 1.0,
+      "pins": [
+        "Lau Pa Sat",
+        "Maxwell Food Centre",
+        "Newton Food Centre"
+      ]
+    },
+    {
+      "id": "RF-011",
+      "destination": "Delhi",
+      "interest": "Mughal history",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 1.0,
+      "pin_precision": 0.75,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 1.0,
+      "pins": [
+        "Humayun's Tomb",
+        "Red Fort",
+        "India Gate",
+        "Jama Masjid"
+      ]
+    },
+    {
+      "id": "RF-012",
+      "destination": "Mumbai",
+      "interest": "Bollywood",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 1.0,
+      "pin_precision": 1.0,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 1.0,
+      "pins": [
+        "Film City",
+        "Prithvi Theatre",
+        "Mannat"
+      ]
+    },
+    {
+      "id": "RF-013",
+      "destination": "Jaipur",
+      "interest": "royal Rajput heritage",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 1.0,
+      "pin_precision": 1.0,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 1.0,
+      "pins": [
+        "Amber Fort",
+        "Hawa Mahal",
+        "City Palace Jaipur"
+      ]
+    },
+    {
+      "id": "RF-014",
+      "destination": "Goa",
+      "interest": "Portuguese heritage",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 1.0,
+      "pin_precision": 1.0,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 1.0,
+      "pins": [
+        "Basilica of Bom Jesus",
+        "Se Cathedral",
+        "Fontainhas"
+      ]
+    },
+    {
+      "id": "RF-015",
+      "destination": "Amritsar",
+      "interest": "Sikh heritage",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 1.0,
+      "pin_precision": 1.0,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 1.0,
+      "pins": [
+        "Golden Temple",
+        "Akal Takht",
+        "Jallianwala Bagh"
+      ]
+    },
+    {
+      "id": "RF-016",
+      "destination": "Bengaluru",
+      "interest": "historic palaces and gardens",
+      "negative": false,
+      "expansion_recall": 1.0,
+      "pin_recall": 1.0,
+      "pin_precision": 1.0,
+      "inclusion_rate": 1.0,
+      "stability_rate": 1.0,
+      "fidelity": 1.0,
+      "pins": [
+        "Bangalore Palace",
+        "Tipu Sultan's Summer Palace",
+        "Lalbagh Botanical Garden"
+      ]
+    },
+    {
+      "id": "RF-017",
+      "destination": "Goa",
+      "interest": "Harry Potter",
+      "negative": true,
+      "honest": true,
+      "pins": [],
+      "leaked": []
+    },
+    {
+      "id": "RF-018",
+      "destination": "Jaipur",
+      "interest": "Formula 1",
+      "negative": true,
+      "honest": true,
+      "pins": [],
+      "leaked": []
+    },
+    {
+      "id": "RF-019",
+      "destination": "Amritsar",
+      "interest": "Studio Ghibli",
+      "negative": true,
+      "honest": true,
+      "pins": [],
+      "leaked": []
+    },
+    {
+      "id": "RF-020",
+      "destination": "Kyoto",
+      "interest": "scuba diving",
+      "negative": true,
+      "honest": true,
+      "pins": [],
+      "leaked": []
+    }
+  ],
+  "baseline_results": null
+}

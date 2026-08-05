@@ -510,15 +510,17 @@ Known live defects dragging recall (fix before publishing): RF-004/RF-014/RF-016
 
 **Published results, after the recall-bug fixes (v10.20.0, 2026-07-14) and the interest-expansion anti-distractor tweak (v10.23.0, 2026-07-15):**
 
-| Metric | 2026-07-14 (v10.20.0) | 2026-07-15 (v10.23.0) | ChatGPT free tier | Claude Sonnet |
-|---|---|---|---|---|
-| Fidelity (0.4·recall + 0.4·inclusion + 0.2·stability) | 0.975 | **0.983** | n/a | n/a |
-| Verified-POI recall | 0.938 | **0.958** | 1.000 | 0.979 |
-| Pin inclusion | 1.000 | 1.000 | n/a | n/a |
-| Re-refinement stability | 1.000 | 1.000 | n/a | n/a |
-| Pin precision | 0.979 | 0.979 | n/a | n/a |
-| Unverifiable-suggestion rate | n/a | n/a | 0.747 | 0.786 |
-| Strict honesty on impossible asks | 4/4 | 4/4 | 0/4 (incl. invented "Wizarding World Goa") | 0/4 strict — but all 4 answers explicitly stated the ask can't be served |
+| Metric | 2026-07-14 (v10.20.0) | 2026-07-15 (v10.23.0) | 2026-08-04 (latest) | ChatGPT free tier | Claude Sonnet |
+|---|---|---|---|---|---|
+| Fidelity (0.4·recall + 0.4·inclusion + 0.2·stability) | 0.975 | 0.983 | **0.992** | n/a | n/a |
+| Verified-POI recall | 0.938 | 0.958 | **0.979** | 1.000 | 0.979 |
+| Pin inclusion | 1.000 | 1.000 | 1.000 | n/a | n/a |
+| Re-refinement stability | 1.000 | 1.000 | 1.000 | n/a | n/a |
+| Pin precision | 0.979 | 0.979 | 0.951 | n/a | n/a |
+| Unverifiable-suggestion rate | n/a | n/a | n/a | 0.747 | 0.786 |
+| Strict honesty on impossible asks | 4/4 | 4/4 | 4/4 | 0/4 (incl. invented "Wizarding World Goa") | 0/4 strict — but all 4 answers explicitly stated the ask can't be served |
+
+The 2026-08-04 run measured on this machine and published as `docs/eval-results/refinement_fidelity_report_2026-08-04.md` / `refinement_fidelity_results_2026-08-04.json` — no prompt/code change between it and the 2026-07-15 run; the delta is run-to-run LLM sampling variance (RF-001 London still misses one place this run at 0.67 recall, same class of variance documented for the 2026-07-14 → 2026-07-15 transition above; RF-002 Edinburgh and RF-011 Delhi each pinned one extra distractor, dropping precision slightly while recall stayed intact).
 
 The 2026-07-15 rerun followed a single, narrow prompt change: `apps/api/chains/interest_expansion_chain.py`'s anti-distractor rule was too conservative about places famous *for* a celebrity/theme rather than *as* the theme itself, silently dropping true positives like "Hollywood Walk of Fame" (RF-009 LA) and "Prithvi Theatre" (RF-012 Mumbai). The rule now explicitly allows famous theatres, walk-of-fame monuments, and publicly-known celebrity residences to count as "specific." Validated before publishing: offline regression gate unaffected (1.000, as expected — it never calls the LLM), full backend suite green (255 passed, 2 pre-existing unrelated failures present on unmodified `main` too), and a direct re-probe of the fix targets confirmed both previously-missing places now appear. Full writeup, including an honest discussion of run-to-run LLM sampling variance (RF-001/RF-015 traded places as the "still missing" case between the two dated runs with zero code change), is in `docs/eval-results/README.md`.
 

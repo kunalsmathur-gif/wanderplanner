@@ -107,19 +107,21 @@ CI mypy back to green. Suite **1224 passed / 6 skipped**.
    country/hub, the way v10.37.0's geocode spot-check did for the mis-geocoded
    trio (Austin/La Paz/Valencia).
 
-2. **The deck's `0.992` fidelity figure is unpublished.** It came from a live
-   run on another machine and is real, but `apps/api/eval/out/` is gitignored,
-   so every committed artifact still says **0.983** — including
-   `docs/eval-results/report_vs_chatgpt_2026-07-15.md`, `eval-set.md` §509,
-   `system-design.md`, `TECHNICAL_DOCUMENTATION.md` and the pitch deck's own
-   `index.html` (×3). On a slide captioned "a published eval suite", the
-   headline should be a number the repo can show a source for. **This is a
-   publishing job, not a re-measure** — copy that machine's
-   `refinement_fidelity_report.md` + `refinement_fidelity_results.json` into
-   `docs/eval-results/` as a dated pair, then sweep 0.983 → 0.992.
-   ⚠️ **Copy the raw JSON off that machine before running anything else there**
-   — any subsequent run overwrites it in place, including the free offline
-   gate. That is how the 2026-07-14 live results were lost.
+2. ~~**The deck's `0.992` fidelity figure is unpublished.**~~ **RESOLVED
+   2026-08-05.** Copied `eval/out/refinement_fidelity_report.md` +
+   `refinement_fidelity_results.json` into `docs/eval-results/` as the dated
+   pair `refinement_fidelity_report_2026-08-04.md` /
+   `refinement_fidelity_results_2026-08-04.json` (exact fidelity 0.9916667 →
+   0.992). Added a new dated column/section to `docs/eval-set.md` §509 and
+   `docs/eval-results/README.md` rather than overwriting the existing
+   2026-07-14/2026-07-15 historical rows — those remain the accurate record
+   of what each specific versioned rerun (v10.20.0/v10.23.0) measured at the
+   time. Appended a short addendum (not a rewrite) to the v10.23 changelog
+   entries in `system-design.md` and `TECHNICAL_DOCUMENTATION.md` pointing to
+   the new number. The pitch deck's "current state" KPIs (not historical
+   milestones) were swept to 0.992 in `demo-deck.html` and `index.html`
+   (×3 spots each); `index.html`'s v10.20→v10.23 timeline milestone node was
+   deliberately left at 0.983 since it names that specific historical gate.
 
 3. **Deck slide 4 compares two different metrics.** It reads "0.992 — Fidelity
    score (vs ChatGPT 0.74)", but **0.74 is ChatGPT's unverifiable-suggestion

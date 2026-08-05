@@ -603,7 +603,7 @@ describe('useVoice — server-synthesized voice', () => {
   })
 
   it('surfaces a text notice and stays silent on synthesis failure, without falling back to speechSynthesis', async () => {
-    mockedSynthesizeVoice.mockRejectedValue(new TtsRequestError('tts_unavailable', 'nope'))
+    mockedSynthesizeVoice.mockRejectedValue(new TtsRequestError('tts_unavailable'))
     const onNotice = vi.fn()
     const { result } = renderHook(() => useVoice({ onTranscript: vi.fn(), onNotice }))
     act(() => { result.current.toggleVoiceMode() })

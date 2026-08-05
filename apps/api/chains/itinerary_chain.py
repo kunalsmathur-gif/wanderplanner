@@ -961,6 +961,19 @@ async def _generate_itinerary_inner(
 _MAX_PLAUSIBLE_INR_PER_PERSON_PER_DAY = 500_000
 _MIN_PLAUSIBLE_INR_PER_PERSON_PER_DAY = 200
 
+# 🔵 KNOWN GAP (2026-08-05): these bounds only catch gross unit/direction
+# errors, not a plausible-looking wrong number — live eval showed ~1 in 5
+# runs slip through with a total that is off by 2-3x but still inside
+# [_MIN_PLAUSIBLE, _MAX_PLAUSIBLE]. `core.budget_estimator
+# .estimate_bare_minimum_budget` is the obvious second anchor: it already
+# derives a deterministic flights+stay+food floor for this exact
+# destination/group/duration, independent of the model's own number, so a
+# total far below (or absurdly above a reasonable multiple of) that floor
+# would be a much tighter check than a fixed per-person-per-day band. Not
+# wired in yet — it costs an extra call on the generation path, and is only
+# worth it once costs are user-facing beyond an estimate (see
+# docs/NEXT_SESSION_TODO.md).
+
 
 def _cost_sanity_problem(raw: dict, trip_config: TripConfig) -> str | None:
     """Describe what is wrong with this itinerary's costs, or None if fine.

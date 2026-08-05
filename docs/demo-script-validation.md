@@ -396,6 +396,10 @@ Defensible narration, from the **published** `report_vs_chatgpt_2026-07-15.md`:
 "Pins hold across every test case" ✅ (inclusion 1.00 and stability 1.00, 16/16).
 "Beats a general model badly on saying only what's true" ✅ (0.00 vs 0.74 unverifiable; 100% vs 0% honesty).
 **Do not say 0.992.** Say 0.983 (published live) — or re-run live and publish the new number first.
+✅ **RESOLVED 2026-08-05:** the 0.992 run's raw files were found still on this
+machine and published (`docs/eval-results/refinement_fidelity_report_2026-08-04.md`).
+The deck now correctly says **0.992** — this line is kept for the historical
+record of what was and wasn't sourced at the time this validation pass ran.
 
 ### 3.8 TC-8 · Security disclosure (beat ⑦) — this one is solid
 
@@ -427,7 +431,12 @@ Ordered by how badly they'd hurt on camera.
 1. **Beat ③, drop "make day 3 cheaper"** → use `cut my budget to 1,20,000 rupees` + confirm (TC-4). This is the only way to get the what-changed summary the beat is built around.
 2. **Beat ③, move Tanah Lot into refinement** → `we're really into iconic Balinese temples and sunset views` (TC-3). Rewrite "the place I locked in at the very start" — nothing is locked in at the start. The honest and stronger line is *"I asked for temples; she pinned the two she could verify and told me she couldn't verify eight others."*
 3. **Beat ④, cut or reword the live refusal.** She doesn't refuse. Either fix the `if not candidates: return resp` early return first, or narrate what actually happens: nothing fabricated, zero pins.
-4. **Deck slide 4 — publish the 0.992 run** (copy the other machine's report + raw JSON into `docs/eval-results/`, then sweep 0.983 → 0.992 across `eval-set.md`, `system-design.md`, `TECHNICAL_DOCUMENTATION.md` and pitch-deck `index.html`). Until that lands, the deck contradicts every committed source. Separately, restore the "unverifiable" qualifier on 0.74 — it is not a fidelity score.
+4. ~~**Deck slide 4 — publish the 0.992 run**~~ ✅ **DONE 2026-08-05** — copied
+   the raw report/JSON into `docs/eval-results/`, swept the deck's current-state
+   KPIs to 0.992, restored the "unverifiable" qualifier on 0.74, and fixed
+   "Pin inclusion & stability · 20/20" to "16/16 positive cases." Historical
+   dated rows in `eval-set.md`/`system-design.md`/`TECHNICAL_DOCUMENTATION.md`
+   were preserved (new rows added alongside, not overwritten).
 5. **Beat ①, stop quoting exact rupee figures.** Leave the departure city blank and describe the shape.
 6. **Beat ②/⑤, say "a human backstop" not "two triggers."** One exists.
 7. **Beat ③, drop "eight categories"** or pick a destination with a non-zero visa cost.

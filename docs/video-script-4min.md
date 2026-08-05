@@ -136,6 +136,7 @@ And the total is recalculated and re-checked against my budget, not left stale.
 
 > **SCREEN:** Deck slide 4 — eval-suite numbers, with a small inset video slot (`beat4-honesty-inset`) showing the live refusal in the corner while the numbers hold the main frame.
 > Inset action: type `plan me a trip to Wizarding World Goa` and show the refusal.
+> **On-screen only, not voiced:** each KPI now has a short caption underneath (Fidelity/Pin inclusion/Honesty) explaining what it means in a few words — left silent deliberately so it doesn't compete with the 47-word VO below; let it sit on screen for the viewer to read.
 
 **SAY** *(47 words)*
 
