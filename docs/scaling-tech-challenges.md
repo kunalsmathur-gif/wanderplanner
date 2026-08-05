@@ -224,7 +224,7 @@ Current baseline: `KNOWN_DESTINATIONS` (`apps/api/scrapers/reddit.py`) is a cura
 |---|---|---|
 | Storage (vectors + HNSW index + payload, ~2–4KB/point) | ~1–3GB | **~1–3 TB** |
 | Qdrant Cloud free tier (1GB) | Fits | Breaks by ~1,000–3,000x |
-| OSM ingestion time (`osm_ingest_delay_seconds`, serial, polite to the free Overpass API) | 134 × 2s ≈ 4.5 min | 150,000 × 2s ≈ **83+ hours continuous — Overpass will very likely rate-limit/IP-ban long before this completes** |
+| OSM ingestion time (serial, polite to the free Overpass API) | **Measured 2026-08-05: 2–4 min/destination, ≈7–11 hours for 171** — not the 4.5 min this row used to claim. Two compounding causes: v10.72 samples large destinations from up to 4 centres (**up to 9 Overpass queries each**, vs 2), and the public instance 504s/429s constantly, so most of the wall-clock is retry backoff (`5+10+20+40s` per failing pass) and mirror rotation. | 150,000 destinations is not reachable on free Overpass at any delay — this is a paid-provider or self-hosted-Overpass problem long before that scale |
 | Embedding + corpus-extraction compute (Gemini calls, `all-MiniLM-L6-v2` batches) | Minutes, near-free | Real, sustained $ and hours — comparable to embedding a large slice of Wikipedia |
 | Qdrant Cloud monthly cost at that storage tier | $0 | Likely **$1,000s–$10,000s/month** — this is enterprise-tier pricing, not "the next plan up" |
 
