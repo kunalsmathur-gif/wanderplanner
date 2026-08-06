@@ -264,3 +264,127 @@ class TestRetryCascadeAgainstTheWallClock:
         assert fields["llm_retries"] == 3
         assert fields["llm_retry_sleep_ms"] == 15000.0
         assert fields["llm_api_ms"] < 100
+
+
+class TestRetryCascadeRespectsTheDeadline:
+    """`_gemini_itinerary` now aborts its own retry cascade before a scheduled
+    backoff sleep would run past the router's `asyncio.wait_for` deadline,
+    instead of sleeping anyway and getting cancelled mid-sleep into a bare
+    `LLM_TIMEOUT` — a live prod trace showed exactly the old failure: 7+
+    filler-message ticks, no `_fallback_itinerary()`, then a 120s timeout.
+    These tests exercise the real function with a mocked, always-transient
+    Gemini client rather than just re-deriving the backoff schedule."""
+
+    @staticmethod
+    def _install_fake_genai(monkeypatch, error_message: str = "503 UNAVAILABLE"):
+        """Every call to the fake client's generate_content raises a
+        transient-classified error, forcing the cascade to keep retrying
+        until it should hit the deadline check."""
+        import sys
+        import types
+
+        class _FakeModels:
+            def generate_content(self, model, contents, config):
+                raise RuntimeError(error_message)
+
+        class _FakeClient:
+            def __init__(self, api_key):
+                self.models = _FakeModels()
+
+        fake_genai = types.ModuleType("google.genai")
+        fake_genai.Client = _FakeClient
+        fake_genai_types = types.ModuleType("google.genai.types")
+        fake_genai_types.GenerateContentConfig = lambda **kw: kw
+        fake_google = types.ModuleType("google")
+        fake_google.genai = fake_genai
+
+        monkeypatch.setitem(sys.modules, "google", fake_google)
+        monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
+        monkeypatch.setitem(sys.modules, "google.genai.types", fake_genai_types)
+
+    @pytest.mark.asyncio
+    async def test_cascade_aborts_before_a_sleep_would_exceed_the_deadline(self, monkeypatch):
+        from chains import itinerary_chain
+        from core.config import settings
+        from models.trip import TripConfig
+
+        self._install_fake_genai(monkeypatch)
+        monkeypatch.setattr(settings, "gemini_api_key", "fake-key")
+        # A tight but nonzero budget: enough for the first (5s) sleep, not
+        # enough for the second (10s) one, given the 10s safety margin the
+        # cascade reserves for the fallback path + response serialisation.
+        monkeypatch.setattr(settings, "llm_timeout_seconds", 20)
+
+        async def _no_context(*args, **kwargs):
+            return []
+
+        async def _no_sleep(seconds):
+            return None
+
+        monkeypatch.setattr(itinerary_chain, "retrieve_context", _no_context)
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+
+        async def _empty_examples(*args, **kwargs):
+            return ""
+
+        monkeypatch.setattr(itinerary_chain, "_itinerary_examples_block", _empty_examples)
+        monkeypatch.setattr(itinerary_chain, "_gem_guidance_block", _empty_examples)
+        monkeypatch.setattr(itinerary_chain, "_budget_guidance_block", _empty_examples)
+
+        trip_config = TripConfig()
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await itinerary_chain._gemini_itinerary(trip_config)
+
+        # It must give up with a message that says "aborted before deadline",
+        # not silently succeed and not run every model's full schedule.
+        assert "deadline" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_cascade_never_sleeps_past_the_router_timeout(self, monkeypatch):
+        """Regression guard for the exact prod failure: sum of all sleeps the
+        cascade actually attempts must stay under the router's wait_for
+        timeout, so `_fallback_itinerary()` is reachable in time instead of
+        the whole request being cancelled mid-cascade. Uses a fake clock (real
+        `asyncio.sleep` doesn't cost wall-clock time in a test, so the
+        deadline check — which reads `loop.time()` — needs a clock that
+        actually advances the way it would in production)."""
+        from chains import itinerary_chain
+        from core.config import settings
+        from models.trip import TripConfig
+
+        self._install_fake_genai(monkeypatch)
+        monkeypatch.setattr(settings, "gemini_api_key", "fake-key")
+        monkeypatch.setattr(settings, "llm_timeout_seconds", 120)
+
+        async def _no_context(*args, **kwargs):
+            return []
+
+        async def _empty_examples(*args, **kwargs):
+            return ""
+
+        fake_clock = {"now": 0.0}
+        total_slept = 0.0
+
+        async def _track_sleep(seconds):
+            nonlocal total_slept
+            total_slept += seconds
+            fake_clock["now"] += seconds
+
+        loop = asyncio.get_event_loop()
+        monkeypatch.setattr(loop, "time", lambda: fake_clock["now"])
+        monkeypatch.setattr(itinerary_chain, "retrieve_context", _no_context)
+        monkeypatch.setattr(itinerary_chain, "_itinerary_examples_block", _empty_examples)
+        monkeypatch.setattr(itinerary_chain, "_gem_guidance_block", _empty_examples)
+        monkeypatch.setattr(itinerary_chain, "_budget_guidance_block", _empty_examples)
+        monkeypatch.setattr(asyncio, "sleep", _track_sleep)
+
+        trip_config = TripConfig()
+
+        with pytest.raises(RuntimeError):
+            await itinerary_chain._gemini_itinerary(trip_config)
+
+        # 120s timeout minus the 10s safety margin = 110s of budget for
+        # sleeping; the old code would have attempted 75s per model, times up
+        # to 3 models (225s total) with no deadline check at all.
+        assert total_slept < settings.llm_timeout_seconds

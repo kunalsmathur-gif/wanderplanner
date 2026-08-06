@@ -405,3 +405,94 @@ class TestCentroidCandidatesNeedAPopulation:
         name, degraded = await _hub_town_in_bbox(client, ["33.0", "35.0", "76.0", "78.0"])
         assert name == "Leh"
         assert degraded is False
+
+
+class TestGeocodeCache:
+    """`geocode_city()` used to have a `_cached_geocode` helper that was
+    `@lru_cache`-decorated but always returned None — a guaranteed miss, i.e.
+    no real cache at all despite ~10 call sites sharing one global 1 req/sec
+    Nominatim rate limiter. Replaced with a real process-wide TTL cache;
+    these tests prove a second lookup for the same city is served from
+    memory rather than hitting the network again."""
+
+    def setup_method(self):
+        from services.geocode import _geocode_cache
+        _geocode_cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_second_lookup_for_the_same_city_is_served_from_cache(self):
+        search_resp = _json_response([_place_hit(name="Bengaluru", country="India", cc="in", importance=0.8)])
+        client = _mock_client(get_side_effect=[search_resp])
+
+        with patch("services.geocode.httpx.AsyncClient", return_value=client), \
+             patch("services.geocode.asyncio.sleep", new=AsyncMock()):
+            first = await geocode_city("Bengaluru")
+            second = await geocode_city("Bengaluru")
+
+        assert first.display_name == second.display_name == "Bengaluru, India"
+        # Only ONE real network call across both lookups.
+        assert client.get.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_cache_key_is_case_and_whitespace_insensitive(self):
+        search_resp = _json_response([_place_hit(name="Bengaluru", country="India", cc="in", importance=0.8)])
+        client = _mock_client(get_side_effect=[search_resp])
+
+        with patch("services.geocode.httpx.AsyncClient", return_value=client), \
+             patch("services.geocode.asyncio.sleep", new=AsyncMock()):
+            await geocode_city("Bengaluru")
+            await geocode_city("  BENGALURU  ")
+
+        assert client.get.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_different_countrycodes_are_cached_separately(self):
+        search_resp_1 = _json_response([_place_hit(name="Springfield", country="USA", cc="us", importance=0.8)])
+        search_resp_2 = _json_response([_place_hit(name="Springfield", country="Australia", cc="au", importance=0.8)])
+        client = _mock_client(get_side_effect=[search_resp_1, search_resp_2])
+
+        with patch("services.geocode.httpx.AsyncClient", return_value=client), \
+             patch("services.geocode.asyncio.sleep", new=AsyncMock()):
+            us_hit = await geocode_city("Springfield", countrycodes="us")
+            au_hit = await geocode_city("Springfield", countrycodes="au")
+
+        assert us_hit.display_name == "Springfield, USA"
+        assert au_hit.display_name == "Springfield, Australia"
+        assert client.get.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_expired_cache_entry_triggers_a_fresh_lookup(self):
+        import time as real_time
+        from services import geocode as geocode_module
+
+        search_resp = _json_response([_place_hit(name="Bengaluru", country="India", cc="in", importance=0.8)])
+        client = _mock_client(get_side_effect=[search_resp, search_resp])
+
+        with patch("services.geocode.httpx.AsyncClient", return_value=client), \
+             patch("services.geocode.asyncio.sleep", new=AsyncMock()):
+            await geocode_city("Bengaluru")
+            # Force the cached entry to look expired without sleeping in the
+            # test for real hours.
+            cache_key = ("bengaluru", "")
+            cached_at, response = geocode_module._geocode_cache[cache_key]
+            geocode_module._geocode_cache[cache_key] = (
+                cached_at - geocode_module._GEOCODE_CACHE_TTL_SECONDS - 1, response
+            )
+            await geocode_city("Bengaluru")
+
+        assert client.get.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_a_failed_lookup_is_not_cached(self):
+        """A location that genuinely can't be found (bad input, transient
+        Nominatim/Wikipedia issue) must not poison the cache for 6 hours —
+        every retry should get a fresh live attempt."""
+        not_found_resp = _json_response([])
+        with patch("services.geocode.httpx.AsyncClient", return_value=_mock_client(get_side_effect=[not_found_resp])), \
+             patch("services.geocode._wikipedia_disambiguate", new=AsyncMock(return_value=None)), \
+             patch("services.geocode.asyncio.sleep", new=AsyncMock()):
+            with pytest.raises(ValueError):
+                await geocode_city("Nonexistentplacenamexyz")
+
+        from services.geocode import _geocode_cache
+        assert ("nonexistentplacenamexyz", "") not in _geocode_cache

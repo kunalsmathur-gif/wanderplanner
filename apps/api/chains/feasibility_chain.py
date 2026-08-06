@@ -72,8 +72,70 @@ ENTRY COSTS (`visa_inr`) — the traveller holds an INDIAN passport:
 """
 
 
-async def check_feasibility(trip_config: TripConfig) -> FeasibilityResponse:
+async def _check_destination_exists(trip_config: TripConfig) -> bool | None:
+    """Geocode-validate the destination as a cheap, early "does this place
+    exist at all" check — distinct from and prior to budget feasibility,
+    since a nonexistent destination (the deck's "Wizarding World Goa" case)
+    has no meaningful cost to estimate. Returns None when there's no single
+    named place to check yet (destination_mode "country"/"exploring" — those
+    describe a whole country or nothing at all, not a geocodable point) OR
+    when the destination already carries real lat/lon.
+
+    That last skip matters for latency: by the time this runs, the wizard
+    chat flow (wizard_chat_chain.py::_resolve_origin_destination_coords) has
+    almost always already geocoded this exact destination and stored real
+    coordinates on it — Nominatim's own usage policy caps every call
+    (search + reverse) at 1 req/sec process-wide (services/geocode.py's
+    _rate_limited_get), so redundantly re-geocoding an already-resolved
+    destination on every feasibility check serialises a live network round
+    trip in front of the LLM call for no new information. Only destinations
+    that reach here with (0, 0) — meaning nothing has resolved them yet —
+    pay the live lookup cost.
+
+    Reuses the same geocode_city() lookup (Nominatim + Wikipedia fallback)
+    already used everywhere else in the app, so a "yes, real" or "no" here
+    means the same thing it would to destination ingestion. Never raises —
+    a geocoding hiccup must not block the feasibility check; it degrades to
+    "not checked" (None), not a false failure."""
+    if trip_config.destination_mode and trip_config.destination_mode != "fixed":
+        return None
+    dest = trip_config.destination
+    city = dest.city if dest else ""
+    if not city:
+        return None
+    if dest and (dest.lat != 0.0 or dest.lon != 0.0):
+        # Already resolved to real coordinates elsewhere in the flow — that
+        # only happens for a destination Nominatim/Wikipedia could find.
+        return True
+    from services.geocode import geocode_city
+
+    try:
+        await geocode_city(city)
+        return True
+    except Exception:
+        return False
+
+
+async def check_feasibility(
+    trip_config: TripConfig, skip_destination_check: bool = False
+) -> FeasibilityResponse:
     """Call Gemini to estimate trip costs and check budget feasibility."""
+    destination_verified: bool | None = None
+    if not skip_destination_check:
+        destination_verified = await _check_destination_exists(trip_config)
+        if destination_verified is False:
+            dest_name = trip_config.destination.city if trip_config.destination else "this place"
+            return FeasibilityResponse(
+                feasible=False,
+                verdict=(
+                    f"We could not verify that \"{dest_name}\" is a real place — it may be "
+                    "misspelled, or it may not exist. You can go back and check the spelling, "
+                    "or continue anyway if you're confident it's right."
+                ),
+                budget_inr=int(trip_config.budget.amount),
+                breakdown=CostBreakdown(),
+                destination_verified=False,
+            )
 
     # Calculate total people
     group = trip_config.group if isinstance(trip_config.group, dict) else trip_config.group.__dict__
@@ -191,7 +253,12 @@ async def check_feasibility(trip_config: TripConfig) -> FeasibilityResponse:
     data = json.loads(cleaned)
     bare_minimum = await _safe_bare_minimum(trip_config)
     return _build_response(
-        data, budget_inr, bare_minimum, trip_config, entry_grounded=entry_grounded
+        data,
+        budget_inr,
+        bare_minimum,
+        trip_config,
+        entry_grounded=entry_grounded,
+        destination_verified=destination_verified,
     )
 
 
@@ -225,6 +292,7 @@ def _build_response(
     trip_config: TripConfig | None = None,
     *,
     entry_grounded: bool = False,
+    destination_verified: bool | None = None,
 ) -> FeasibilityResponse:
     llm_flights = int(data.get("flights_inr", 0))
     llm_accommodation = int(data.get("accommodation_inr", 0))
@@ -301,6 +369,7 @@ def _build_response(
         buffer_inr=buffer,
         bare_minimum_inr=bare_minimum_inr,
         alternatives=alternatives,
+        destination_verified=destination_verified,
     )
 
 

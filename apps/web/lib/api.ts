@@ -122,8 +122,11 @@ export async function recommendCities(
 }
 
 // ── Feasibility check ────────────────────────────────────────────────────
-export async function checkFeasibility(tripConfig: TripConfig) {
-  const { data } = await api.post('/api/feasibility-check', { trip_config: tripConfig })
+export async function checkFeasibility(tripConfig: TripConfig, skipDestinationCheck = false) {
+  const { data } = await api.post('/api/feasibility-check', {
+    trip_config: tripConfig,
+    skip_destination_check: skipDestinationCheck,
+  })
   return data as FeasibilityResponse
 }
 

@@ -594,6 +594,12 @@ export function LLMWizard() {
   const START_OVER_CHIP = 'Start over 🔄'
   const SHOW_BREAKDOWN_CHIP = 'Show budget breakdown 📊'
   const HUMAN_HELP_CHIP = 'Talk to a human instead 🧑‍💼'
+  // Deliberately distinct from the budget gate's (banned) "proceed anyway":
+  // a nonexistent-destination check has a much higher false-negative rate
+  // (real places routinely miss our geocoder) than a budget shortfall does,
+  // so overriding it is reasonable here in a way it never is for money.
+  const CONTINUE_ANYWAY_CHIP = "It's a real place, continue anyway ➡️"
+  const FIX_DESTINATION_CHIP = 'Let me fix the destination'
 
   /** Best-effort trip summary for the human-handoff lead, built straight
    * from the in-progress wizard config — there is no itinerary yet (that's
@@ -686,11 +692,29 @@ export function LLMWizard() {
     lastFeasibilityResultRef.current = null
   }
 
-  async function runFeasibilityGate(fullConfig: TripConfig) {
+  async function runFeasibilityGate(fullConfig: TripConfig, skipDestinationCheck = false) {
     lastFeasibilityConfigRef.current = fullConfig
     setFeasibilityState('checking')
     try {
-      const result = await checkFeasibility(fullConfig)
+      const result = await checkFeasibility(fullConfig, skipDestinationCheck)
+      if (result.destination_verified === false) {
+        // Distinct, earlier check than budget feasibility — a nonexistent
+        // destination has no meaningful cost to estimate. NOT a hard block
+        // (unlike budget infeasibility): real places are routinely missing
+        // from our geocoder, so offer both "fix it" and "continue anyway".
+        setFeasibilityState('blocked')
+        lastFeasibilityResultRef.current = result
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nextId(),
+            role: 'assistant',
+            content: result.verdict,
+            chips: [CONTINUE_ANYWAY_CHIP, FIX_DESTINATION_CHIP, HUMAN_HELP_CHIP],
+          },
+        ])
+        return
+      }
       if (result.feasible) {
         setFeasibilityState('feasible')
         setTimeout(() => handleGenerate(), 1200)

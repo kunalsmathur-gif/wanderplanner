@@ -702,21 +702,24 @@ async def _gemini_itinerary(trip_config: TripConfig, cost_correction: str = "") 
     models_to_try = list(dict.fromkeys(
         [settings.gemini_model, "gemini-2.5-flash", "gemini-2.0-flash"]
     ))
-    # ⚠️ This cascade cannot run to completion in a request. `routers/
-    # itinerary.py` wraps the whole call in `asyncio.wait_for(...,
-    # settings.llm_timeout_seconds)`, and the backoff schedule alone spends
-    # 5+10+20+40 = 75s of *sleeping* before the first model gives up — already
-    # past the 30s code default, and 62% of the 120s both local and Railway
-    # actually set. So under sustained transient errors the request is
-    # cancelled mid-cascade and the user gets LLM_TIMEOUT, rather than the
-    # graceful `_fallback_itinerary()` (cache → RAG skeleton → mock) that
-    # exists precisely for this case and is only reached once every model has
-    # been exhausted. `tests/unit/test_itinerary_timing.py` measures the
-    # schedule rather than restating it. Changing it is a product call — a
-    # shorter schedule, a deadline passed into the cascade, or a smaller
-    # `max_attempts` — deliberately left for the data this instrumentation
-    # now produces.
+    # ⚠️ Deadline-aware cascade (⭐ FIXED — was previously able to spend
+    # 5+10+20+40 = 75s of *sleeping* per model, 225s across all three, against
+    # a 120s request timeout — a live prod trace showed exactly this: 7+
+    # filler-message ticks before a guaranteed `LLM_TIMEOUT`, `_fallback_itinerary()`
+    # (cache → RAG skeleton → mock) never reached at all. We now track wall-clock
+    # elapsed against `settings.llm_timeout_seconds` (minus a safety margin so the
+    # fallback call itself, and response serialisation, still have time to run)
+    # and break out of the whole cascade — not just the current model — the
+    # moment a scheduled sleep would blow the budget, raising so the caller's
+    # `except Exception` in `_generate_itinerary_inner` reaches the graceful
+    # fallback instead of running out the router's clock.
+    # `tests/unit/test_itinerary_timing.py` measures the schedule rather than
+    # restating it.
     max_attempts = 5
+    _deadline_margin_seconds = 10.0
+    _cascade_deadline = (
+        loop.time() + max(settings.llm_timeout_seconds - _deadline_margin_seconds, 0)
+    )
 
     last_error: Exception | None = None
     for model_name in models_to_try:
@@ -764,13 +767,28 @@ async def _gemini_itinerary(trip_config: TripConfig, cost_correction: str = "") 
                 kind = _classify_gemini_error(str(e))
                 if kind == "transient" and attempt < max_attempts - 1:
                     wait_time = min(5 * (2 ** attempt), 60)  # 5s, 10s, 20s, 40s, 60s cap
+                    # Deadline check BEFORE sleeping: if this sleep would run
+                    # past the budget, stop retrying now — surfacing to
+                    # `_generate_itinerary_inner`'s except block for the
+                    # graceful fallback — rather than sleeping anyway and
+                    # having the router's `asyncio.wait_for` cancel us
+                    # mid-sleep, which produces a bare `LLM_TIMEOUT` instead.
+                    if loop.time() + wait_time >= _cascade_deadline:
+                        logger.error(
+                            "Gemini transient error on %s (attempt %d/%d); next backoff "
+                            "(%ds) would exceed the request deadline — aborting cascade "
+                            "for graceful fallback instead of timing out.",
+                            model_name, attempt + 1, max_attempts, wait_time,
+                        )
+                        last_error = e
+                        raise RuntimeError(
+                            f"Gemini itinerary generation aborted before deadline: {last_error}"
+                        ) from last_error
                     logger.warning("Gemini transient error on %s (attempt %d/%d). Retrying in %ds…", model_name, attempt + 1, max_attempts, wait_time)
                     # Backoff is tracked apart from `llm_api` on purpose: "the
                     # provider was slow" and "we chose to wait" need different
                     # fixes, and this schedule (5/10/20/40s) can dominate a
-                    # request without a single slow call. See the note above
-                    # `max_attempts` on how it interacts with the router's
-                    # wall-clock timeout.
+                    # request without a single slow call.
                     with timing.stage("llm_retry_sleep"):
                         await asyncio.sleep(wait_time)
                     timing.increment("llm_retries")
@@ -791,6 +809,12 @@ async def _gemini_itinerary(trip_config: TripConfig, cost_correction: str = "") 
                     raise  # fatal (auth/invalid request): propagate immediately
         else:
             continue  # inner loop completed without break → success already returned
+        # Deadline check between models too — no point trying the next model
+        # if we're already out of budget for even a single fresh attempt.
+        if loop.time() >= _cascade_deadline:
+            raise RuntimeError(
+                f"Gemini itinerary generation aborted before deadline: {last_error}"
+            )
         continue   # model failed, try next model
 
     raise RuntimeError(f"Gemini itinerary generation failed on all models: {last_error}")
@@ -979,7 +1003,17 @@ async def _generate_itinerary_inner(
         # cost a Qdrant round-trip to confirm what's already guaranteed.
         if not raw.get("_from_fallback") or raw.get("_from_fallback") == "live_unverified":
             with timing.stage("item_verification"):
-                days = await _flag_unverified_items(days, trip_config)
+                try:
+                    # Bounded so a slow/stalled Qdrant round-trip degrades to
+                    # "not checked this time" instead of adding open-ended
+                    # latency to every live generation — this pass is a
+                    # disclosure nicety, never worth blocking the response
+                    # travellers are waiting on.
+                    days = await asyncio.wait_for(
+                        _flag_unverified_items(days, trip_config), timeout=3.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("Item-title verification timed out; leaving items unflagged")
         # Geo out-of-bounds check runs on every tier — pure CPU, no I/O, and
         # a coordinate glitch is worth catching even in mock/cache data.
         days = _flag_out_of_bounds_items(days, trip_config)

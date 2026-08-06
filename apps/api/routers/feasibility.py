@@ -26,7 +26,9 @@ async def feasibility_check(
 ) -> FeasibilityResponse:
     reset_usage()
     try:
-        return await check_feasibility(body.trip_config)
+        return await check_feasibility(
+            body.trip_config, skip_destination_check=body.skip_destination_check
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=sanitize_error(e, context="feasibility-check"))
     finally:

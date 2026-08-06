@@ -213,6 +213,12 @@ export interface FeasibilityResponse {
   bare_minimum_inr: number | null
   alternatives: AlternativeDestination[]
   disclaimer: string
+  // null = destination existence wasn't checked (e.g. destination_mode is
+  // "country"/"exploring"). false = we couldn't geocode-verify this place —
+  // it may be misspelled or may not exist at all. Unlike budget infeasibility,
+  // this is NOT a hard block: real places are routinely missing from our
+  // geocoder, so the user is told and can choose to continue anyway.
+  destination_verified: boolean | null
 }
 
 // City recommendations (R15)

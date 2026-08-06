@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from functools import lru_cache
 
 import httpx
 
@@ -142,9 +141,24 @@ GEOCODE_QUERY_OVERRIDES: dict[str, str] = {
 }
 
 
-@lru_cache(maxsize=512)
-def _cached_geocode(city: str, lang: str = "en") -> dict | None:
-    return None
+# ⭐ FIXED — this used to be `@lru_cache`-decorated but its body unconditionally
+# `return None`, so every call was a guaranteed cache miss: there was no actual
+# geocoding cache anywhere in the app, despite ~10 call sites (destination
+# ingestion, the wizard's origin/destination resolution, feasibility's
+# destination-existence check, best_time/comparison, the wikivoyage/osm
+# scrapers) each paying a live Nominatim round-trip serially through the
+# single global 1 req/sec rate limiter on every single call — including
+# repeat lookups of the same city within the same request or across
+# concurrent users. Replaced with a real process-wide TTL cache keyed on the
+# normalised query (post `GEOCODE_QUERY_OVERRIDES` substitution) +
+# countrycodes, so a popular destination is geocoded live once per TTL window
+# and served from memory afterward — cutting straight into the rate limiter's
+# queue depth under concurrent load, not just single-request latency.
+_GEOCODE_CACHE_TTL_SECONDS = 6 * 60 * 60  # 6h: destinations don't move; long
+                                           # enough to matter under load, short
+                                           # enough that a genuine Nominatim
+                                           # data correction isn't stuck for days.
+_geocode_cache: dict[tuple[str, str], tuple[float, "GeocodeResponse"]] = {}
 
 
 def _pick_best_hit(hits: list[dict]) -> dict:
@@ -417,6 +431,22 @@ def _hit_to_response(hit: dict, fallback_name: str, is_country: bool | None = No
 
 
 async def geocode_city(city: str, countrycodes: str = "") -> GeocodeResponse:
+    import time as _time
+
+    cache_key = (city.strip().lower(), countrycodes.strip().lower())
+    cached = _geocode_cache.get(cache_key)
+    if cached is not None:
+        cached_at, response = cached
+        if _time.monotonic() - cached_at < _GEOCODE_CACHE_TTL_SECONDS:
+            return response
+        del _geocode_cache[cache_key]
+
+    response = await _geocode_city_uncached(city, countrycodes)
+    _geocode_cache[cache_key] = (_time.monotonic(), response)
+    return response
+
+
+async def _geocode_city_uncached(city: str, countrycodes: str = "") -> GeocodeResponse:
     query_city = GEOCODE_QUERY_OVERRIDES.get(city.strip().lower(), city)
     headers = {
         "User-Agent": settings.nominatim_user_agent,

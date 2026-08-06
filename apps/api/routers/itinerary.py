@@ -26,14 +26,30 @@ router = APIRouter()
 # fresh, engaging progress instead of sitting static for 30-90s. These are
 # intentionally vague/varied (not tied to real internal steps) since the LLM
 # call itself is a single opaque request with no granular progress signal.
+#
+# ⭐ FIXED — was only 6 messages ticking every 3s, so any generation past
+# ~18s (common — see chains/itinerary_chain.py's retry cascade, and cost-
+# sanity retries) visibly replayed the identical sequence a second time,
+# which read as "the same action happening twice" rather than progress.
+# Expanded to enough distinct lines, and slowed to a 5s tick, that a full
+# loop only repeats after ~100s — past the vast majority of real requests —
+# and even then a "still working" suffix makes a second pass read as
+# continued effort rather than a glitchy restart.
 _GENERATION_FILLER_MESSAGES = [
     "Mapping out your days...",
     "Matching activities to your pace...",
     "Balancing everything within budget...",
     "Adding a few local favourites...",
-    "Double-checking timings & logistics...",
-    "Putting the finishing touches on your plan...",
+    "Cross-checking opening hours & logistics...",
+    "Weighing hidden gems against the classics...",
+    "Sequencing activities to minimise backtracking...",
+    "Fitting meals around your itinerary...",
+    "Sanity-checking costs against your budget...",
+    "Sprinkling in a few local favourites...",
+    "Polishing the final schedule...",
+    "Almost there — putting the finishing touches on...",
 ]
+_FILLER_TICK_SECONDS = 5.0
 
 
 async def _stream_generation(trip_config: TripConfig, db: AsyncSession, user: User) -> AsyncGenerator[str, None]:
@@ -59,14 +75,21 @@ async def _stream_generation(trip_config: TripConfig, db: AsyncSession, user: Us
             step = 2
             msg_idx = 0
             while not task.done():
-                done, _pending = await asyncio.wait({task}, timeout=3.0)
+                done, _pending = await asyncio.wait({task}, timeout=_FILLER_TICK_SECONDS)
                 if task in done:
                     break
                 step = min(step + 1, total_steps - 1)
+                message = _GENERATION_FILLER_MESSAGES[msg_idx % len(_GENERATION_FILLER_MESSAGES)]
+                # On a second pass through the list (rare — only past ~100s of
+                # generation), append a suffix so a repeated line reads as "yes,
+                # this is taking a while" rather than looking like the loader
+                # silently reset.
+                if msg_idx >= len(_GENERATION_FILLER_MESSAGES):
+                    message = f"{message} (still working — thanks for your patience)"
                 yield await send(
                     "status",
                     {
-                        "message": _GENERATION_FILLER_MESSAGES[msg_idx % len(_GENERATION_FILLER_MESSAGES)],
+                        "message": message,
                         "step": step,
                         "total_steps": total_steps,
                     },
