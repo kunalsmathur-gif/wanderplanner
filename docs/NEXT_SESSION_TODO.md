@@ -17,15 +17,36 @@
 | `degraded_geocode` (skipped early) | 5 | nothing written, correctly pending |
 | `geocode_failed` | 1 | `Skeleton Test City` (fixture data, see below) |
 
-🔴 **THE STATE FILE LIES ABOUT 22 OF THEM, AND A PLAIN RE-RUN WILL SKIP THEM.**
-The runner's done-rule at the time asked "does the pool have POIs and is it
-well-centred" — which the destinations' **old** data already satisfied — so a
-guard-rejected fetch was recorded as `ok`. Fixed now (the runner requires
-`INGEST_WRITTEN`), but the *existing* `scripts/out/reingest_multi_area.jsonl`
-still carries those 22 `ok` lines. Before re-running, either delete those lines
-or drive the subset explicitly with `--only`. Same proxy trap as the v10.40
+✅ **THE STATE FILE HAS BEEN PRUNED — just run it, no flags.** The done-rule at
+the time asked "does the pool have POIs and is it well-centred", which the
+destinations' **old** data already satisfied, so 25 guard-rejected fetches were
+recorded as `ok`. The rule is fixed (the runner now requires `INGEST_WRITTEN`)
+*and* those 25 stale lines were removed from
+`scripts/out/reingest_multi_area.jsonl` on 2026-08-06, with a backup at
+`reingest_multi_area.jsonl.bak-before-prune`. Same proxy trap as the v10.40
 prominence run reporting 169/169 with 29 destinations carrying no prominence
 signal.
+
+### ▶️ TO RESUME (on the laptop that holds the state file)
+
+```bash
+cd apps/api && venv/Scripts/python.exe scripts/reingest_multi_area.py
+```
+
+No flags. **Never `--fresh`** — that deletes the state and restarts all 171.
+Queue as of the prune: **140 done · 31 pending**, roughly 1–2 hours at the
+measured 2–4 min/destination. Re-run until it reports 0 pending.
+
+Pending: Agra, Amsterdam, Baku, Barcelona, Boston, Brussels, Cusco, Darjeeling,
+Denver, Florence, Hanoi, Hong Kong, Honolulu, Krakow, Kuala Lumpur, Kyoto,
+Ladakh, Lonavala, Medellin, Mexico City, Munich, Oaxaca, Osaka, Oslo, Phuket,
+Porto, Seattle, Skeleton Test City, Vilnius, Warsaw, Washington DC.
+
+Expect and ignore: frequent Overpass 504/429 lines (mirror rotation is what
+makes the run work), `degraded_geocode` entries (the guard working — those keep
+their existing POIs and stay pending), and `ingest_failed` on a Qdrant write
+timeout (transient; stays pending). `Skeleton Test City` will fail every run —
+it needs deleting, not ingesting.
 
 ⚠️ **The resume state is gitignored and lives only on the laptop that ran it**
 (`apps/api/scripts/out/`, 56KB). Another machine starts from zero — harmless,
@@ -48,14 +69,16 @@ first, or it will re-break Bali the same way.**
 single area, because no discovered town was ≥18km from the centre
 (`_MIN_KM_BETWEEN_CENTROIDS`). Only 16 destinations got 2–4 areas.
 
-### Outstanding subsets (~43 destinations, ~2h — not another full pass)
+### Outstanding subsets (31 in the run queue + 15 to inspect — not another full pass)
 
-1. **Kept by the prominence guard, never re-fetched (22)** — Agra, Amsterdam,
-   Baku, Barcelona, Boston, Brussels, Cusco, Darjeeling, Denver, Florence,
-   Hanoi, Honolulu, Kyoto, Ladakh, Lonavala, Medellin, Munich, Osaka, Porto,
-   Seattle, Vilnius, Washington DC. Their stored data is intact and correctly
-   centred — it is simply *old*. Overpass 504s on the prominence pass are the
-   cause, so these need a calmer moment rather than a code change.
+1. **Never re-fetched (25)** — 22 kept by the prominence guard (Agra,
+   Amsterdam, Baku, Barcelona, Boston, Brussels, Cusco, Darjeeling, Denver,
+   Florence, Hanoi, Honolulu, Kyoto, Ladakh, Lonavala, Medellin, Munich, Osaka,
+   Porto, Seattle, Vilnius, Washington DC) and 3 by the degraded-geocode guard
+   (Krakow, Oslo, Phuket). **Already back in the run queue after the prune** —
+   just run the command above. Their stored data is intact and correctly
+   centred, it is simply *old*; Overpass 504s on the prominence pass are the
+   cause, so they need a calmer moment rather than a code change.
 2. **Got multi-area, need verifying (15 of 16; Bali done)** — Agra, Athens,
    Budapest, Darjeeling, Gangtok, Haridwar, Ho Chi Minh City, Kochi, Madrid,
    Melbourne, Nairobi, Pondicherry, Rio de Janeiro, Seoul, São Paulo. Some
@@ -68,11 +91,6 @@ single area, because no discovered town was ≥18km from the centre
    Warsaw, and `Skeleton Test City`. **The last one is test-fixture data in the
    PRODUCTION cluster and should be deleted, not ingested** — it was deleted
    once before (2026-07-23) and has come back, so find what recreates it.
-
-```bash
-# targeted re-run once the 22 stale `ok` lines are pruned from the state file
-cd apps/api && venv/Scripts/python.exe scripts/reingest_multi_area.py --only "..."
-```
 
 ### Original scope (still open)
 
