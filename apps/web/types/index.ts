@@ -122,6 +122,18 @@ export interface ItineraryItem {
   youtube_search_query?: string // Pre-built YouTube search phrase
   alignment_score: number
   warnings: string[]
+  // False when the post-generation verification pass couldn't match this
+  // item's title against our ingested OSM/wiki corpus for the destination —
+  // the LLM likely recalled it from training data, not from anything
+  // Wanderplanner has verified. Defaults true server-side for paths that
+  // never run the check (mock/cache/rag_skeleton, already curated/OSM-
+  // sourced by construction), so only omit-safe here too.
+  verified?: boolean
+  // True when this item's coordinates sit implausibly far from the trip's
+  // destination — a real place, but the wrong one (e.g. a London landmark
+  // suggested for a Bali trip). Distinct from `verified` because it's a
+  // higher-confidence, differently-worded defect.
+  out_of_bounds?: boolean
 }
 
 export interface ItineraryDay {
@@ -140,13 +152,23 @@ export interface ItineraryResponse {
   alignment_score: number
   warnings: string[]
   expense_breakdown: ExpenseBreakdown
-  // "live" = real LLM generation. Anything else means the backend degraded
-  // to a fallback tier (cache / rag_skeleton / enhanced_mock / mock) — the
-  // UI must disclose this rather than present it as a verified plan.
+  // "live" = real LLM generation, grounded in retrieved destination research.
+  // "live_unverified" = the LLM call succeeded but there was no ingested
+  // OSM/wiki/Reddit data for this destination at all, so the whole plan
+  // came from the model's own training knowledge with nothing to check it
+  // against. Anything else means the backend degraded to a fallback tier
+  // (cache / rag_skeleton / enhanced_mock / mock) — the UI must disclose
+  // this rather than present it as a verified plan.
   generation_tier?: GenerationTier
 }
 
-export type GenerationTier = 'live' | 'cache' | 'rag_skeleton' | 'enhanced_mock' | 'mock'
+export type GenerationTier =
+  | 'live'
+  | 'live_unverified'
+  | 'cache'
+  | 'rag_skeleton'
+  | 'enhanced_mock'
+  | 'mock'
 
 // Expense breakdown types
 export interface ExpenseBreakdown {

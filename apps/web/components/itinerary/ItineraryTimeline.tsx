@@ -126,6 +126,22 @@ function ActivityCard({ item, isActive, onHover, onSelect }: {
             {tag === 'instaworthy' ? '📸 ' : tag === 'hidden_gem' ? '💎 ' : tag === 'pinned' ? '📌 ' : ''}{tag.replace(/_/g, ' ')}
           </span>
         ))}
+        {item.verified === false && (
+          <span
+            title="This place couldn't be matched against Wanderplanner's verified destination research — it may be based on general AI knowledge."
+            className="rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-medium text-orange-700 dark:bg-orange-950/40 dark:text-orange-400"
+          >
+            ⚠ unverified
+          </span>
+        )}
+        {item.out_of_bounds && (
+          <span
+            title="This place is far from your destination — it may be a mix-up with a different city or country."
+            className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:bg-red-950/40 dark:text-red-400"
+          >
+            ⚠ wrong location?
+          </span>
+        )}
         {videoHref && (
           <a
             href={videoHref}

@@ -21,6 +21,7 @@ import { TripFeedbackPopup } from '@/components/itinerary/TripFeedbackPopup'
 // skeleton / (enhanced) mock data (docs §4) — never present that as a fully
 // verified, freshly-generated plan without saying so.
 const TIER_COPY: Record<string, string> = {
+  live_unverified: 'This plan is based on general AI knowledge — Wanderplanner has no verified local research for this destination yet, so details may be less accurate.',
   cache: 'Showing a previously generated plan for a similar trip — live generation was unavailable.',
   rag_skeleton: 'Built from verified places only, without AI narration — live generation was unavailable.',
   enhanced_mock: 'This is a backup sample plan with real destination tips spliced in — live generation failed.',

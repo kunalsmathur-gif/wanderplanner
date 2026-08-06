@@ -180,6 +180,64 @@ def verify_candidates_sync(
     return pins, dropped
 
 
+def verify_item_titles_sync(titles: list[str], destination: str) -> set[str]:
+    """Cheaper sibling of verify_candidates_sync for per-item itinerary
+    provenance tagging (not refinement pins): just "does this title
+    correspond to something in our ingested OSM POIs or get mentioned in a
+    wiki chunk for this destination", no source-interest co-occurrence check
+    (there is no single "reason" for an item the way there is for a
+    refinement candidate). Returns the set of normalized input titles that
+    matched — callers diff against their original list to find the rest.
+    Same bounded scrolls/matcher as verify_candidates_sync, so same
+    zero-LLM, zero-external-API cost profile.
+    """
+    if not titles or not destination:
+        return set()
+
+    client = get_qdrant()
+    pois = _scroll_destination(client, settings.qdrant_collection_osm, destination, _MAX_POIS)
+    poi_index = [
+        (_normalize(p.get("name") or ""), p) for p in pois if (p.get("name") or "").strip()
+    ]
+
+    wiki_chunk_texts: list[str] | None = None
+
+    def _wiki_chunks() -> list[str]:
+        nonlocal wiki_chunk_texts
+        if wiki_chunk_texts is None:
+            chunks = _scroll_destination(
+                client, settings.qdrant_collection_wiki, destination, _MAX_CHUNKS
+            )
+            wiki_chunk_texts = [
+                _normalize(c.get("text") or c.get("text_preview") or "") for c in chunks
+            ]
+        return wiki_chunk_texts
+
+    verified: set[str] = set()
+    for title in titles:
+        norm = _normalize(title)
+        if not norm:
+            continue
+        if _best_osm_match(norm, poi_index) is not None:
+            verified.add(title)
+            continue
+        if len(norm) >= 6 and any(norm in chunk for chunk in _wiki_chunks()):
+            verified.add(title)
+    return verified
+
+
+async def verify_item_titles(titles: list[str], destination: str) -> set[str]:
+    """Async wrapper for verify_item_titles_sync — Qdrant scrolls + string
+    matching off the event loop, same failure discipline as
+    verify_candidates: a lookup failure must never crash generation, it just
+    means nothing gets marked verified this time."""
+    try:
+        return await asyncio.to_thread(verify_item_titles_sync, titles, destination)
+    except Exception:
+        logger.warning("Item-title verification failed; leaving all unverified", exc_info=True)
+        return set()
+
+
 async def verify_candidates(
     candidates: list[str], destination: str, source_interest: str = ""
 ) -> tuple[list[PinnedPOI], list[str]]:

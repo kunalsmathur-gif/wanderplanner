@@ -30,6 +30,12 @@ class AgentLead(Base):
     )
     email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     destination: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    # "itinerary" (post-generation "Get Quotation" CTA) or "infeasible_budget"
+    # (pre-generation "talk to a human" handoff from the feasibility gate) —
+    # lets the admin console tell the two flows apart, and is one half of the
+    # per-day duplicate-request guard in routers/agent_leads.py (the other
+    # half is user_id/email + destination).
+    source: Mapped[str] = mapped_column(String(40), nullable=False, server_default="itinerary")
     trip_config_summary: Mapped[dict] = mapped_column(
         JSONB().with_variant(JSON(), "sqlite"),
         nullable=False,

@@ -56,6 +56,7 @@ export function AgentHandoffCard() {
   const [error, setError] = useState<string | null>(null)
   const [whatsAppUrl, setWhatsAppUrl] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
+  const [alreadySentToday, setAlreadySentToday] = useState(false)
 
   const notesWordCount = countWords(notes)
 
@@ -156,9 +157,10 @@ export function AgentHandoffCard() {
         buildItineraryPdfBase64(),
       ])
 
-      await createAgentLead({
+      const result = await createAgentLead({
         email,
         destination: tripSummary.destination,
+        source: 'itinerary',
         trip_config_summary: tripSummary,
         custom_notes: notes.trim() || null,
         itinerary_html: itineraryHtml,
@@ -167,6 +169,7 @@ export function AgentHandoffCard() {
 
       const nextUrl = buildWhatsAppUrl()
       setWhatsAppUrl(nextUrl)
+      setAlreadySentToday(result.duplicate)
       setState('success')
       // Close on success so the confirmation (and the WhatsApp follow-up) is
       // read on the card itself rather than behind a dialog the user still
@@ -204,7 +207,9 @@ export function AgentHandoffCard() {
       {sent ? (
         <div className="mt-3 rounded-xl border border-[var(--_success)]/25 bg-[var(--_success)]/10 p-3">
           <p className="text-sm font-medium text-[var(--_fg)]">
-            ✅ Request sent — expect a reply within 24 hours
+            {alreadySentToday
+              ? 'ℹ️ You already sent a request today — no need to resend, expect a reply within 24 hours'
+              : '✅ Request sent — expect a reply within 24 hours'}
           </p>
           <button
             type="button"

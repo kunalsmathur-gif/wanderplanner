@@ -213,12 +213,17 @@ CI mypy back to green. Suite **1224 passed / 6 skipped**.
    (×3 spots each); `index.html`'s v10.20→v10.23 timeline milestone node was
    deliberately left at 0.983 since it names that specific historical gate.
 
-3. **Deck slide 4 compares two different metrics.** It reads "0.992 — Fidelity
-   score (vs ChatGPT 0.74)", but **0.74 is ChatGPT's unverifiable-suggestion
-   rate**, not a fidelity score. The older `pitch-deck/index.html` says "vs
-   ChatGPT 0.74 unverifiable"; the new `demo-deck.html` dropped the qualifier.
-   Also on that slide: "Pin inclusion & stability · 20/20" — both metrics are
-   only defined on the 16 positive cases; the other 4 are honesty cases.
+3. ~~**Deck slide 4 compares two different metrics.**~~ **NOT AN ISSUE —
+   confirmed 2026-08-06.** The concern was that "0.992 — Fidelity score (vs
+   ChatGPT 0.74)" implies 0.74 is a fidelity score when it's actually
+   ChatGPT's unverifiable-suggestion rate, and that "Pin inclusion &
+   stability" was being reported as 20/20 across cases that mix positive and
+   honesty scenarios. Checked `demo-deck.html` slide 4 directly: pin
+   inclusion is already labelled "1.000 — Pin inclusion & stability · 16/16
+   positive cases" and honesty is its own separate KPI ("4/4 — Honesty score
+   (vs ChatGPT 0/4)"), each with its own one-line explainer underneath. The
+   metrics are correctly separated and scoped in the current deck; no change
+   needed.
 
 4. **Cost estimates can still be wrong ~1 in 5 runs without the guard firing
    on scale.** The guard catches gross unit errors and direction violations,

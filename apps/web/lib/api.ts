@@ -170,13 +170,14 @@ export async function getSharedTrip(slug: string): Promise<{
 export async function createAgentLead(payload: {
   email: string
   destination: string
+  source?: 'itinerary' | 'infeasible_budget'
   trip_config_summary: Record<string, unknown>
   custom_notes?: string | null
   itinerary_html?: string | null
   pdf_base64?: string | null
-}): Promise<{ id: string }> {
+}): Promise<{ id: string; duplicate: boolean }> {
   const { data } = await api.post('/api/agent-leads', payload)
-  return data as { id: string }
+  return data as { id: string; duplicate: boolean }
 }
 
 // ── Itinerary feedback ───────────────────────────────────────────────────

@@ -69,6 +69,7 @@ def _lead_to_response(lead: AgentLead) -> AgentLeadAdminResponse:
         user_id=str(lead.user_id) if lead.user_id else None,
         email=lead.email,
         destination=lead.destination,
+        source=lead.source,
         trip_config_summary=lead.trip_config_summary,
         custom_notes=lead.custom_notes,
         created_at=lead.created_at.isoformat(),

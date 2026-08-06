@@ -1,15 +1,23 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 _MAX_NOTES_WORDS = 100
 
+# "itinerary": the happy-path "Get this itinerary booked" CTA on an
+# already-generated itinerary. "infeasible_budget": the "talk to a human"
+# option offered when the feasibility gate blocks generation outright. Kept
+# as a closed set so a typo/new caller can't silently create an untracked
+# lead type that the admin console and per-day dedup guard don't know about.
+AgentLeadSource = Literal["itinerary", "infeasible_budget"]
+
 
 class AgentLeadCreateRequest(BaseModel):
     email: EmailStr
     destination: str = Field(min_length=1, max_length=120)
+    source: AgentLeadSource = "itinerary"
     trip_config_summary: dict[str, Any] = Field(default_factory=dict)
     # Free-text ask from the traveler, capped at 100 words so the email stays
     # a quick brief rather than a full re-statement of the trip.
@@ -37,6 +45,11 @@ class AgentLeadCreateRequest(BaseModel):
 
 class AgentLeadCreateResponse(BaseModel):
     id: str
+    # True when this call was a same-day repeat of the same source type from
+    # the same requester — no new lead/email was created, `id` refers to the
+    # existing one from earlier today. Lets the caller show "already sent"
+    # instead of a second false "request sent" confirmation.
+    duplicate: bool = False
 
 
 class AgentLeadAdminResponse(BaseModel):
@@ -44,6 +57,7 @@ class AgentLeadAdminResponse(BaseModel):
     user_id: str | None
     email: str
     destination: str
+    source: str
     trip_config_summary: dict[str, Any]
     custom_notes: str | None
     created_at: str

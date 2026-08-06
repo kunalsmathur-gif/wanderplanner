@@ -137,6 +137,16 @@ function leadStatusLabel(status: AdminLead['status']): string {
   }
 }
 
+function leadSourceBadge(source: AdminLead['source']): string {
+  return source === 'infeasible_budget'
+    ? 'rounded-full bg-[#D97706]/15 px-2.5 py-1 text-xs font-semibold text-[#D97706]'
+    : 'rounded-full bg-[var(--_accent)]/15 px-2.5 py-1 text-xs font-semibold text-[var(--_accent)]'
+}
+
+function leadSourceLabel(source: AdminLead['source']): string {
+  return source === 'infeasible_budget' ? 'Budget infeasible' : 'Itinerary'
+}
+
 function slaBreachStyle(rate: number | null): React.CSSProperties | undefined {
   if (rate == null) return undefined
   if (rate > 0.25) return { color: 'var(--_destructive)' }
@@ -429,6 +439,7 @@ export default function AdminDashboardPage() {
                   <thead className="text-[var(--_muted-fg)]">
                     <tr className="border-b border-[var(--_border)]">
                       <th scope="col" className="px-4 py-3 font-medium">Destination</th>
+                      <th scope="col" className="px-4 py-3 font-medium">Source</th>
                       <th scope="col" className="px-4 py-3 font-medium">Created</th>
                       <th scope="col" className="px-4 py-3 font-medium">Status</th>
                       <th scope="col" className="px-4 py-3 font-medium">Response time</th>
@@ -438,7 +449,7 @@ export default function AdminDashboardPage() {
                   <tbody>
                     {leads.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-4 py-6 text-center text-[var(--_muted-fg)]">
+                        <td colSpan={6} className="px-4 py-6 text-center text-[var(--_muted-fg)]">
                           No leads yet.
                         </td>
                       </tr>
@@ -450,6 +461,9 @@ export default function AdminDashboardPage() {
                               <p className="font-medium text-[var(--_fg)]">{lead.destination}</p>
                               <p className="text-xs text-[var(--_muted-fg)]">{lead.email}</p>
                             </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={leadSourceBadge(lead.source)}>{leadSourceLabel(lead.source)}</span>
                           </td>
                           <td className="px-4 py-3 text-[var(--_muted-fg)]" title={lead.created_at}>
                             {formatRelativeTime(lead.created_at)}

@@ -107,7 +107,10 @@ export default async function SharedTripPage({ params }: { params: Promise<{ slu
               </div>
               {data.itinerary.generation_tier && data.itinerary.generation_tier !== 'live' && (
                 <div className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-amber-300/60 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-400">
-                  ⚠️ This plan uses backup data — some details may be less current
+                  ⚠️{' '}
+                  {data.itinerary.generation_tier === 'live_unverified'
+                    ? 'Based on general AI knowledge — no verified local research for this destination yet'
+                    : 'This plan uses backup data — some details may be less current'}
                 </div>
               )}
             </div>
@@ -131,13 +134,29 @@ export default async function SharedTripPage({ params }: { params: Promise<{ slu
                             {item.description && (
                               <p className="mt-0.5 text-sm text-[var(--_muted-fg)]">{item.description}</p>
                             )}
-                            {extraTags.length > 0 && (
+                            {(extraTags.length > 0 || item.verified === false || item.out_of_bounds) && (
                               <div className="mt-1.5 flex flex-wrap gap-1">
                                 {extraTags.map((tag) => (
                                   <span key={tag} className={TAG_BADGE[tag].className}>
                                     {TAG_BADGE[tag].emoji} {tag.replace(/_/g, ' ')}
                                   </span>
                                 ))}
+                                {item.verified === false && (
+                                  <span
+                                    title="This place couldn't be matched against Wanderplanner's verified destination research — it may be based on general AI knowledge."
+                                    className="rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-medium text-orange-700 dark:bg-orange-950/40 dark:text-orange-400"
+                                  >
+                                    ⚠ unverified
+                                  </span>
+                                )}
+                                {item.out_of_bounds && (
+                                  <span
+                                    title="This place is far from your destination — it may be a mix-up with a different city or country."
+                                    className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:bg-red-950/40 dark:text-red-400"
+                                  >
+                                    ⚠ wrong location?
+                                  </span>
+                                )}
                               </div>
                             )}
                           </div>

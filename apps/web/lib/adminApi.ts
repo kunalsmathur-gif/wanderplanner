@@ -58,6 +58,7 @@ export interface AdminLead {
   user_id: string | null
   email: string
   destination: string
+  source: 'itinerary' | 'infeasible_budget'
   trip_config_summary: Record<string, unknown>
   custom_notes: string | null
   created_at: string

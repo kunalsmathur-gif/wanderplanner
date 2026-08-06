@@ -7,13 +7,14 @@ import { useChatStore } from '@/store/chatStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useAppStore } from '@/store/appStore'
-import { chatRefine, streamItinerary } from '@/lib/api'
+import { chatRefine, streamItinerary, checkFeasibility } from '@/lib/api'
 import { savePendingGeneration } from '@/lib/pendingGeneration'
 import { diffItineraries, isEmptyDiff } from '@/lib/itineraryDiff'
+import { formatFeasibilityBreakdown, suggestedFeasibleBudget, formatFeasibilityBreakdownDetailed } from '@/lib/feasibilityFormat'
 import { MAX_CHAT_MESSAGE_LEN } from '@/lib/limits'
 import { ChatMessage } from './ChatMessage'
 import { ThemeToggle } from '@/components/common/ThemeToggle'
-import type { ChatRefineResponse, TripConfig } from '@/types'
+import type { ChatRefineResponse, TripConfig, FeasibilityResponse } from '@/types'
 
 const WELCOME =
   "Hi! I'm Anya ✈️\n\nAsk me anything about your trip, or tell me to change your destination, dates, budget, or preferences and I'll update your plan!"
@@ -27,6 +28,18 @@ export function ChatPanel() {
   const [input, setInput] = useState('')
   const [pendingAction, setPendingAction] = useState<ChatRefineResponse | null>(null)
   const [regenNote, setRegenNote] = useState<string | null>(null)
+  // Mirrors LLMWizard's initial-generation feasibility gate for in-chat
+  // regeneration (pin commits, "make day 3 cheaper", confirmed major
+  // changes) — this path used to call streamItinerary directly with no
+  // check at all, so a budget-busting edit landed on the itinerary page
+  // with no warning until "Edit Trip", same bug class as the initial
+  // generation path had before its gate was added.
+  const [pendingFeasibility, setPendingFeasibility] = useState<{
+    config: TripConfig
+    kind: 'infeasible' | 'error'
+    result?: FeasibilityResponse
+    suggestedBudget?: number
+  } | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const cancelRegenRef = useRef<(() => void) | null>(null)
@@ -41,11 +54,11 @@ export function ChatPanel() {
 
   useEffect(() => () => cancelRegenRef.current?.(), [])
 
-  /** Regenerate the itinerary in place with the (already-updated) config and
-   * post a visible diff of what changed as chips in the chat. The old
-   * itinerary stays on screen until the new one lands — a failed refinement
-   * never destroys a working plan. */
-  function regenerateInPlace(config: TripConfig) {
+  /** Actually stream the regenerated itinerary — split out from
+   * `regenerateInPlace` so the feasibility gate below can call this only
+   * once a check has passed (or been explicitly bypassed), without
+   * duplicating the streaming/diff/error-handling logic. */
+  function runRegeneration(config: TripConfig) {
     const oldDays = useItineraryStore.getState().days
     setRegenNote('Updating your itinerary…')
 
@@ -95,6 +108,39 @@ export function ChatPanel() {
         })
       },
     )
+  }
+
+  /** Regenerate the itinerary in place with the (already-updated) config,
+   * verifying the budget still covers the trip first — mirrors LLMWizard's
+   * initial-generation feasibility gate. No "proceed anyway" bypass: the
+   * only ways forward on an infeasible budget are raising it, viewing the
+   * breakdown to decide what to cut, or keeping the current itinerary. */
+  async function regenerateInPlace(config: TripConfig) {
+    try {
+      const result = await checkFeasibility(config)
+      if (result.feasible) {
+        runRegeneration(config)
+        return
+      }
+      const minBudget = suggestedFeasibleBudget(result)
+      const breakdownText = formatFeasibilityBreakdown(result)
+      addMessage({
+        role: 'assistant',
+        content: `${result.verdict} Breakdown: ${breakdownText}. This is a bare-minimum estimate (activities/shopping extra). Your current itinerary is untouched — increase the budget to around ₹${minBudget.toLocaleString('en-IN')}, see the full breakdown to decide what to cut, or keep what you have.`,
+      })
+      setPendingFeasibility({ config, kind: 'infeasible', result, suggestedBudget: minBudget })
+    } catch {
+      // Feasibility check itself failed (network/server) — this used to
+      // fall straight through to streamItinerary with no check at all,
+      // the same "generated anyway" bug the initial-generation gate fixed.
+      // Stop here instead: no regeneration until the user says how to
+      // proceed.
+      addMessage({
+        role: 'assistant',
+        content: "I couldn't verify whether this still fits your budget just now (a connection hiccup on my end) — I won't regenerate without checking. Your current itinerary is untouched.",
+      })
+      setPendingFeasibility({ config, kind: 'error' })
+    }
   }
 
   async function handleSend() {
@@ -254,6 +300,84 @@ export function ChatPanel() {
                 Just noting it
               </button>
             </div>
+          </div>
+        )}
+
+        {pendingFeasibility && (
+          <div className="mx-1 space-y-2 rounded-xl border border-[var(--_warning,#F59E0B)]/40 bg-amber-50 p-3 dark:bg-amber-950/30">
+            <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">
+              {pendingFeasibility.kind === 'error'
+                ? "⚠️ Couldn't verify this budget still fits"
+                : '⚠️ This budget may not cover the trip'}
+            </p>
+            {pendingFeasibility.kind === 'error' ? (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    const cfg = pendingFeasibility.config
+                    setPendingFeasibility(null)
+                    regenerateInPlace(cfg)
+                  }}
+                  className="flex-1 rounded-lg bg-[var(--_primary)] py-1.5 text-xs font-semibold text-white hover:opacity-90"
+                >
+                  Retry check
+                </button>
+                <button
+                  onClick={() => {
+                    setPendingFeasibility(null)
+                    addMessage({ role: 'assistant', content: 'Okay — keeping your current itinerary as-is.' })
+                  }}
+                  className="flex-1 rounded-lg border border-[var(--_border)] py-1.5 text-xs font-semibold text-[var(--_fg)] hover:bg-[var(--_card-elevated)]"
+                >
+                  Keep current itinerary
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => {
+                    const cfg = pendingFeasibility.config
+                    const minBudget = pendingFeasibility.suggestedBudget
+                    if (minBudget == null) return
+                    const updatedConfig: TripConfig = { ...cfg, budget: { ...cfg.budget, amount: minBudget } }
+                    updateConfig({ budget: updatedConfig.budget })
+                    setPendingFeasibility(null)
+                    addMessage({
+                      role: 'assistant',
+                      content: `Updated budget to ₹${minBudget.toLocaleString('en-IN')} — rebuilding your itinerary…`,
+                    })
+                    regenerateInPlace(updatedConfig)
+                  }}
+                  className="rounded-lg bg-[var(--_primary)] py-1.5 text-xs font-semibold text-white hover:opacity-90"
+                >
+                  Set budget to ₹{pendingFeasibility.suggestedBudget?.toLocaleString('en-IN')}
+                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      if (pendingFeasibility.result) {
+                        addMessage({
+                          role: 'assistant',
+                          content: formatFeasibilityBreakdownDetailed(pendingFeasibility.result),
+                        })
+                      }
+                    }}
+                    className="flex-1 rounded-lg border border-[var(--_border)] py-1.5 text-xs font-semibold text-[var(--_fg)] hover:bg-[var(--_card-elevated)]"
+                  >
+                    Show budget breakdown
+                  </button>
+                  <button
+                    onClick={() => {
+                      setPendingFeasibility(null)
+                      addMessage({ role: 'assistant', content: 'Okay — keeping your current itinerary as-is.' })
+                    }}
+                    className="flex-1 rounded-lg border border-[var(--_border)] py-1.5 text-xs font-semibold text-[var(--_fg)] hover:bg-[var(--_card-elevated)]"
+                  >
+                    Keep current itinerary
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
         <div ref={bottomRef} />

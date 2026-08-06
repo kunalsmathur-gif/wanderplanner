@@ -199,6 +199,83 @@ def _enforce_pins(days: list[ItineraryDay], trip_config: TripConfig) -> list[Iti
     return days
 
 
+async def _flag_unverified_items(
+    days: list[ItineraryDay], trip_config: TripConfig
+) -> list[ItineraryDay]:
+    """Mark items whose title doesn't correspond to anything in our ingested
+    OSM/wiki corpus for the destination as unverified (GTM follow-up to
+    _enforce_pins): the system prompt only forbids inventing a *hidden_gem*
+    tag not on the verified candidate list — nothing stops the model from
+    including an ordinary, untagged item it recalled from training data
+    rather than the retrieved research. Pinned items are always verified by
+    construction (_enforce_pins only tags/injects real, coordinate-bearing
+    places) so they're skipped here rather than re-checked."""
+    dest = trip_config.destination.city if trip_config.destination else ""
+    if not dest:
+        return days
+    titles = [
+        item.title for day in days for item in day.items
+        if "pinned" not in item.tags and (item.title or "").strip()
+    ]
+    if not titles:
+        return days
+    from services.poi_pinning import verify_item_titles
+
+    verified_titles = await verify_item_titles(titles, dest)
+    for day in days:
+        for item in day.items:
+            if "pinned" in item.tags:
+                continue
+            item.verified = (item.title or "") in verified_titles
+    return days
+
+
+# Generous enough to cover a legitimate long day-trip within the same
+# country/region (e.g. Edinburgh → Isle of Skye is ~400km one-way, still
+# Scotland; Paris → Versailles or Bali's own Nusa Penida hop are much
+# shorter), but tight enough to catch the actual failure mode observed live:
+# the model naming a landmark from a totally different country/continent
+# than the trip (e.g. "Warner Bros Studio Tour, London" — several thousand
+# km — suggested for a Bali itinerary). This is a coarse geographic sanity
+# check, not a country-border lookup: we don't reverse-geocode item
+# coordinates, so a same-country distance this size and a wrong-country jump
+# are the two cases it actually needs to tell apart, not "same city vs.
+# next city over".
+_OUT_OF_BOUNDS_KM = 450.0
+
+
+def _flag_out_of_bounds_items(
+    days: list[ItineraryDay], trip_config: TripConfig
+) -> list[ItineraryDay]:
+    """Flag items whose coordinates sit implausibly far from every place the
+    user actually configured for this trip — a distinct, higher-confidence
+    defect than "unverified": this is a real, matchable place that is simply
+    the wrong place. Checked against the primary destination AND all hops
+    (multi-stop trips, e.g. Edinburgh + Glasgow, are common and legitimate —
+    an item near either counts as in-bounds), using the closest of them, so
+    a multi-city trip is never penalised for visiting more than one of its
+    own named cities. Runs on real lat/lon only; an item with no coordinates
+    (0, 0 — never a real destination) is left unflagged rather than
+    guessed at."""
+    anchors = [
+        (d.lat, d.lon)
+        for d in [trip_config.destination, *trip_config.hops]
+        if d and not (d.lat == 0.0 and d.lon == 0.0)
+    ]
+    if not anchors:
+        return days
+    from core.distance_pricing import haversine_km
+
+    for day in days:
+        for item in day.items:
+            loc = item.location
+            if loc.lat == 0.0 and loc.lon == 0.0:
+                continue
+            closest = min(haversine_km(lat, lon, loc.lat, loc.lon) for lat, lon in anchors)
+            item.out_of_bounds = closest > _OUT_OF_BOUNDS_KM
+    return days
+
+
 async def _itinerary_examples_block(trip_config: TripConfig) -> str:
     """Few-shot grounding from the itinerary_corpus collection (docs §9).
     Best-effort: any retrieval failure degrades to the explicit "none
@@ -249,11 +326,11 @@ RULES:
 
 USING DESTINATION RESEARCH (below):
 - The DESTINATION RESEARCH section contains real, retrieved traveler content (guides, forum tips, local advice). Treat it as more current and specific than your own training knowledge.
-- Actively mine it for concrete, named venues, neighborhoods, and local tips — prefer these over generic or invented place names when the research supports them.
+- Actively mine it for concrete, named venues, neighborhoods, and local tips — prefer these over generic or invented place names when the research supports them. When a well-covered, research-backed place and a place you only recall from training knowledge could both fill the same slot, always choose the research-backed one.
 - If DESTINATION RESEARCH conflicts with what you already know (e.g. a venue it mentions as closed, or a changed price/season), prefer the research — it reflects more recent traveler reports.
 - Do not fabricate specific details (exact prices, addresses, opening hours) beyond what the research or your general knowledge reasonably supports. When uncertain, keep descriptions general rather than inventing precise figures.
 - If DESTINATION RESEARCH says "No pre-fetched research available", rely on your own destination knowledge as normal — do not mention the absence of research to the user.
-- DESTINATION RESEARCH is a supplement, not an exhaustive source — you may still use well-established general knowledge about the destination for anything the research doesn't cover.
+- DESTINATION RESEARCH is a supplement, not an exhaustive source — you may still use well-established general knowledge about the destination for anything the research doesn't cover, but every place you name must be a real place that actually exists — never invent a venue, attraction, or business, and never place a real venue in the wrong city/country from another destination entirely (e.g. suggesting a London studio tour for a Bali trip). If you cannot think of a genuine place for what a slot calls for, use a more general activity instead of inventing one.
 
 USING REAL TRAVELLER ITINERARIES (below):
 - The REAL TRAVELLER ITINERARIES section contains day-by-day trips actually taken by other travellers with a similar trip shape, retrieved from blogs/forums. Use them as grounding for realistic pacing, day sequencing, and which places are commonly combined on the same day — not as text to copy verbatim.
@@ -671,7 +748,14 @@ async def _gemini_itinerary(trip_config: TripConfig, cost_correction: str = "") 
                     cleaned = "\n".join(cleaned.split("\n")[1:])
                 if cleaned.endswith("```"):
                     cleaned = "\n".join(cleaned.split("\n")[:-1])
-                return json.loads(cleaned)
+                parsed = json.loads(cleaned)
+                # Threaded through so _generate_itinerary_inner can mark the
+                # whole response "live_unverified" instead of "live" when
+                # there was nothing in our corpus to ground this destination
+                # at all — a live call with no context is not the same
+                # guarantee as one grounded in retrieved research.
+                parsed["_context_grounded"] = bool(context_docs)
+                return parsed
 
             except json.JSONDecodeError as e:
                 raise RuntimeError(f"Gemini returned invalid JSON: {e}") from e
@@ -752,7 +836,7 @@ async def _langchain_itinerary(trip_config: TripConfig, cost_correction: str = "
     timing.increment("llm_attempts")
     timing.label("llm_model", settings.llm_provider)
     with timing.stage("llm_api"):
-        return await chain.ainvoke({
+        result = await chain.ainvoke({
             "context": context_text,
             "itinerary_examples": itinerary_examples,
             "gem_guidance": gem_guidance,
@@ -761,6 +845,10 @@ async def _langchain_itinerary(trip_config: TripConfig, cost_correction: str = "
             "budget_guidance": neutralize(budget_guidance, context="budget tier + cost grounding guidance"),
             "trip_config": trip_json + (f"\n\n{cost_correction}" if cost_correction else ""),
         })
+    # See _gemini_itinerary's identical marker — same "live but ungrounded"
+    # signal, needed on both live-generation paths.
+    result["_context_grounded"] = bool(context_docs)
+    return result
 
 
 async def _fallback_itinerary(trip_config: TripConfig, error: Exception) -> dict:
@@ -863,6 +951,12 @@ async def _generate_itinerary_inner(
                     logger.warning("Regenerated itinerary still fails cost sanity: %s", retry_problem)
                     timing.increment("cost_sanity_retries_failed")
             cost_warning = problem
+            # A live call that had nothing in our corpus to ground itself in
+            # is not the same guarantee as a normal live generation — mark it
+            # before caching so the disclosure survives into any later
+            # cache-served response for this trip shape too.
+            if raw.get("_context_grounded") is False:
+                raw.setdefault("_from_fallback", "live_unverified")
         except Exception as llm_error:
             with timing.stage("fallback"):
                 raw = await _fallback_itinerary(trip_config, llm_error)
@@ -878,6 +972,17 @@ async def _generate_itinerary_inner(
         days = inject_persona_modules(days, trip_config)
         # After the filters so an enforced pin can't be re-dropped downstream.
         days = _enforce_pins(days, trip_config)
+        # Per-item provenance: only meaningful on a genuine live LLM call —
+        # mock/cache/rag_skeleton items are already either curated or
+        # OSM-sourced by construction, so ItineraryItem.verified's default of
+        # True is correct for them without running a check that would just
+        # cost a Qdrant round-trip to confirm what's already guaranteed.
+        if not raw.get("_from_fallback") or raw.get("_from_fallback") == "live_unverified":
+            with timing.stage("item_verification"):
+                days = await _flag_unverified_items(days, trip_config)
+        # Geo out-of-bounds check runs on every tier — pure CPU, no I/O, and
+        # a coordinate glitch is worth catching even in mock/cache data.
+        days = _flag_out_of_bounds_items(days, trip_config)
 
         scored_days = []
         for day in days:

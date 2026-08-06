@@ -44,6 +44,25 @@ class ItineraryItem(BaseModel):
     youtube_search_query: str = ""
     alignment_score: float = 0.0
     warnings: list[str] = Field(default_factory=list)
+    # True unless the live-generation post-processing pass could not match this
+    # item's title against our ingested OSM/wiki corpus for the destination —
+    # meaning the LLM likely recalled it from training data, not from anything
+    # Wanderplanner has verified. Defaults to True (not False) so items from
+    # paths that never run the check (mock, cache, rag_skeleton — all already
+    # either curated or OSM-sourced by construction) read as verified rather
+    # than silently "unknown", mirroring the visa_inr null-vs-zero discipline:
+    # a field must never look ambiguous between "checked and fine" and
+    # "never checked at all".
+    verified: bool = True
+    # True when this item's coordinates sit implausibly far from the trip's
+    # destination (e.g. "Warner Bros Studio Tour, London" suggested for a
+    # Bali trip) — a stronger, more specific defect than plain "verified":
+    # this is a real, matchable place that is simply the wrong place, not an
+    # unconfirmed one. Kept as its own flag rather than folded into
+    # `verified=False` because the two need different user-facing language
+    # (and different confidence — this one is a near-certain geocoding/LLM
+    # mistake, not "we just haven't ingested this yet").
+    out_of_bounds: bool = False
 
 
 class ItineraryDay(BaseModel):
@@ -94,10 +113,16 @@ class ItineraryResponse(BaseModel):
     alignment_score: float
     warnings: list[str] = Field(default_factory=list)
     expense_breakdown: ExpenseBreakdown = Field(default_factory=ExpenseBreakdown)
-    # "live" = real LLM generation (the verified-data path). Anything else
+    # "live" = real LLM generation, grounded in retrieved destination research
+    # (the verified-data path). "live_unverified" = the LLM call itself
+    # succeeded, but retrieve_context() came back empty for this destination
+    # (no ingested OSM/wiki/Reddit data), so the model fell back to its own
+    # training knowledge for the entire itinerary with no corpus to check it
+    # against — never present that as equivalent to "live". Anything else
     # means generate_itinerary degraded to a fallback tier (docs §4) — the
     # client must disclose this, never present a fallback plan as verified.
-    # One of: "live", "cache", "rag_skeleton", "enhanced_mock", "mock".
+    # One of: "live", "live_unverified", "cache", "rag_skeleton",
+    # "enhanced_mock", "mock".
     generation_tier: str = "live"
 
 

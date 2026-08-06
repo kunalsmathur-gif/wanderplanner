@@ -10,13 +10,14 @@ import { useWizardChatStore } from '@/store/wizardChatStore'
 import { useAuthStore } from '@/store/authStore'
 import { useFeedbackPromptStore } from '@/store/feedbackPromptStore'
 import { wizardChat } from '@/lib/api'
-import { streamItinerary, checkFeasibility } from '@/lib/api'
+import { streamItinerary, checkFeasibility, createAgentLead } from '@/lib/api'
+import { formatFeasibilityBreakdown, suggestedFeasibleBudget, formatFeasibilityBreakdownDetailed } from '@/lib/feasibilityFormat'
 import { savePendingGeneration, getPendingGeneration, clearPendingGeneration } from '@/lib/pendingGeneration'
 import { formatCurrency } from '@/lib/format'
 import { MAX_CHAT_MESSAGE_LEN } from '@/lib/limits'
 import { VOICE_LANGS, type VoiceLang } from '@/lib/voice'
 import { useVoice } from '@/hooks/useVoice'
-import type { TripConfig } from '@/types'
+import type { TripConfig, FeasibilityResponse } from '@/types'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -131,6 +132,7 @@ export function LLMWizard() {
   const clearPreload      = useAppStore((s) => s.clearWizardPreload)
   const setDays           = useItineraryStore((s) => s.setDays)
   const updateConfig      = useTripConfigStore((s) => s.updateConfig)
+  const resetConfig       = useTripConfigStore((s) => s.resetConfig)
   const wizardReset       = useWizardChatStore((s) => s.reset)
   const authStatus        = useAuthStore((s) => s.status)
 
@@ -160,6 +162,19 @@ export function LLMWizard() {
   const voiceLangAskedRef = useRef(false)
   // Per-message selection set, only used for multi-select theme chip groups
   const [themeSelections, setThemeSelections] = useState<Record<string, Set<string>>>({})
+  // Gates the "Generate my itinerary" button, which used to call
+  // handleGenerate() directly and so bypassed the feasibility check
+  // entirely — a user could click it the instant the trip-summary card
+  // appeared, before the automatic check even returned, or after it came
+  // back infeasible/errored and the chips were showing. 'checking' is the
+  // default (matches the card appearing exactly when the automatic check
+  // starts); only 'feasible' enables the button.
+  const [feasibilityState, setFeasibilityState] = useState<'checking' | 'feasible' | 'blocked'>('checking')
+  // True while we're waiting on the user to type an email so the human
+  // handoff (agent lead) can go out — only needed when they aren't signed
+  // in, since a signed-in email is already known. See handleRequestHumanHelp.
+  const [awaitingHandoffEmail, setAwaitingHandoffEmail] = useState(false)
+  const [handoffSending, setHandoffSending] = useState(false)
   // Header copy only. This wizard and the orb chat are both "Anya", both
   // change the trip, and until now both introduced themselves with the same
   // words — so nothing told the user which surface they were in or what it
@@ -188,6 +203,13 @@ export function LLMWizard() {
   const messagesEndRef  = useRef<HTMLDivElement>(null)
   const inputRef        = useRef<HTMLInputElement>(null)
   const cancelStreamRef = useRef<(() => void) | null>(null)
+  // The exact config the last feasibility check was run against, so "Retry
+  // check" re-verifies the same trip instead of re-reading whatever the
+  // store happens to hold by the time the user clicks it.
+  const lastFeasibilityConfigRef = useRef<TripConfig | null>(null)
+  // The last infeasible result, so "Show budget breakdown" can render the
+  // per-category detail without an extra round-trip to the API.
+  const lastFeasibilityResultRef = useRef<FeasibilityResponse | null>(null)
   // Focus management for the modal dialog: `dialogRef` scopes the Tab trap
   // to content actually inside the card, and `previouslyFocusedRef` is
   // whatever had focus the instant this component mounted — i.e. whichever
@@ -560,56 +582,155 @@ export function LLMWizard() {
   }
 
   // ── Budget feasibility gate ─────────────────────────────────────────────────
-  const PROCEED_ANYWAY_CHIP = 'Proceed anyway 🚀'
+  // No "proceed anyway" bypass here on purpose — a gate that can be
+  // overridden with one click isn't a gate. The only ways forward on an
+  // infeasible budget are raising it (the suggested-budget chip), viewing
+  // the breakdown to decide what to cut, changing the trip (freeform
+  // "adjust something else"), or asking a human — the deck's "can't safely
+  // price it → hands to a human" claim needs a real path here, not just on
+  // the (unreachable, since we now block generation) itinerary page's
+  // "Get Quotation" card.
+  const RETRY_CHECK_CHIP = 'Retry check 🔁'
+  const START_OVER_CHIP = 'Start over 🔄'
+  const SHOW_BREAKDOWN_CHIP = 'Show budget breakdown 📊'
+  const HUMAN_HELP_CHIP = 'Talk to a human instead 🧑‍💼'
+
+  /** Best-effort trip summary for the human-handoff lead, built straight
+   * from the in-progress wizard config — there is no itinerary yet (that's
+   * the whole reason this option exists), so unlike AgentHandoffCard on the
+   * itinerary page, itinerary_html/pdf_base64 are simply omitted (both are
+   * optional on the backend). */
+  function buildHandoffTripSummary() {
+    const cfg = partialConfigRef.current
+    return {
+      destination: cfg.destination?.city || cfg.destination_country || '',
+      dates: cfg.dates,
+      budget: cfg.budget,
+      group: cfg.group,
+      purpose: cfg.purpose,
+      pace: cfg.pace,
+    }
+  }
+
+  async function submitHumanHandoff(email: string) {
+    const summary = buildHandoffTripSummary()
+    setAwaitingHandoffEmail(false)
+    if (!summary.destination) {
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId(), role: 'assistant', content: "I don't have a destination to send yet — let's finish that first." },
+      ])
+      return
+    }
+    setHandoffSending(true)
+    try {
+      const result = await createAgentLead({
+        email,
+        destination: summary.destination,
+        source: 'infeasible_budget',
+        trip_config_summary: summary,
+        custom_notes: 'Requested from the trip-planning chat — the stated budget did not cover the trip and the traveller asked for a human instead of raising it.',
+      })
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: nextId(),
+          role: 'assistant',
+          content: result.duplicate
+            ? "You've already sent this request today — a destination specialist will still reply to you within 24 hours, no need to resend."
+            : '✅ Request sent — a destination specialist will reply to you within 24 hours.',
+        },
+      ])
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId(), role: 'assistant', content: "⚠️ Couldn't send that request just now — please try again in a moment.", chips: [HUMAN_HELP_CHIP] },
+      ])
+    } finally {
+      setHandoffSending(false)
+    }
+  }
+
+  /** Entry point for the "Talk to a human instead" chip — uses the
+   * signed-in user's email if we already have one, otherwise asks for it
+   * as a plain chat reply (captured by the awaitingHandoffEmail branch in
+   * handleSubmit) before submitting the lead. */
+  function handleRequestHumanHelp() {
+    const knownEmail = useAuthStore.getState().user?.email
+    if (knownEmail) {
+      submitHumanHandoff(knownEmail)
+      return
+    }
+    setAwaitingHandoffEmail(true)
+    setMessages((prev) => [
+      ...prev,
+      { id: nextId(), role: 'assistant', content: "What's the best email for the specialist to reach you at?" },
+    ])
+  }
+
+  /** Wipes chat + config back to a blank wizard — the "discard and start
+   * fresh" option offered when we can't verify feasibility and won't let
+   * the user proceed blind. Distinct from `closeWizard()`: this keeps the
+   * wizard open, ready for a brand-new trip, rather than dismissing it. */
+  function handleStartOver() {
+    wizardReset()
+    resetConfig()
+    setMessages([])
+    setPartialConfig({})
+    setSummary(null)
+    setThemeSelections({})
+    setError('')
+    setFeasibilityState('checking')
+    setAwaitingHandoffEmail(false)
+    lastFeasibilityConfigRef.current = null
+    lastFeasibilityResultRef.current = null
+  }
 
   async function runFeasibilityGate(fullConfig: TripConfig) {
+    lastFeasibilityConfigRef.current = fullConfig
+    setFeasibilityState('checking')
     try {
       const result = await checkFeasibility(fullConfig)
       if (result.feasible) {
+        setFeasibilityState('feasible')
         setTimeout(() => handleGenerate(), 1200)
         return
       }
       // Infeasible — surface the real shortfall + a real suggested minimum
       // (never silently generate against a budget that can't cover the trip).
       // IMPORTANT: always suggest the SAME total the verdict/shortfall was
-      // computed against (breakdown.total_estimated_inr, which already
-      // folds in the deterministic floor when it's the binding constraint —
-      // see chains/feasibility_chain.py::_build_response). Do NOT use
-      // bare_minimum_inr here: it's a separate, often-lower reference figure
-      // that can disagree with the verdict, which produced a confusing
-      // "Set budget to ₹X" suggestion that didn't match the stated shortfall.
-      const minBudget = result.breakdown.total_estimated_inr
-      const b = result.breakdown
-      const breakdownText = [
-        b.flights_inr > 0 ? `flights ₹${b.flights_inr.toLocaleString('en-IN')}` : null,
-        // Three states, deliberately distinct (see CostBreakdown.visa_inr):
-        //   null -> we could not look it up; say so, because an omitted line
-        //           reads as "free" and the total genuinely understates the
-        //           trip, which is how ₹41,000 of invented Bhutan visa got
-        //           taken seriously in the first place;
-        //   0    -> looked it up, entry really is free — worth stating;
-        //   > 0  -> a real, grounded figure.
-        b.visa_inr == null
-          ? 'visa/entry cost not available — check officially'
-          : b.visa_inr > 0
-            ? `visa/entry ₹${b.visa_inr.toLocaleString('en-IN')}`
-            : 'no visa/entry fee',
-        b.accommodation_inr > 0 ? `stay ₹${b.accommodation_inr.toLocaleString('en-IN')}` : null,
-        b.daily_expenses_inr > 0 ? `food/local transport ₹${b.daily_expenses_inr.toLocaleString('en-IN')}` : null,
-      ].filter(Boolean).join(', ')
+      // computed against — see suggestedFeasibleBudget's docstring.
+      setFeasibilityState('blocked')
+      lastFeasibilityResultRef.current = result
+      const minBudget = suggestedFeasibleBudget(result)
+      const breakdownText = formatFeasibilityBreakdown(result)
       setMessages((prev) => [
         ...prev,
         {
           id: nextId(),
           role: 'assistant',
-          content: `${result.verdict} Breakdown: ${breakdownText}. This is a bare-minimum estimate (activities/shopping extra). Want to increase your budget to around ₹${minBudget.toLocaleString('en-IN')}, or shall I go ahead with what you have?`,
-          chips: [`Set budget to ₹${minBudget.toLocaleString('en-IN')}`, PROCEED_ANYWAY_CHIP, 'Let me adjust something else'],
+          content: `${result.verdict} Breakdown: ${breakdownText}. This is a bare-minimum estimate (activities/shopping extra). Increase your budget to around ₹${minBudget.toLocaleString('en-IN')}, see the full breakdown to decide what to cut, tell me what to change, or talk to a human instead.`,
+          chips: [`Set budget to ₹${minBudget.toLocaleString('en-IN')}`, SHOW_BREAKDOWN_CHIP, HUMAN_HELP_CHIP, 'Let me adjust something else'],
         },
       ])
     } catch {
-      // Feasibility check itself failed (network/server) — don't block the
-      // user's trip on an infra hiccup, fall back to the original behaviour.
-      setTimeout(() => handleGenerate(), 1200)
+      // Feasibility check itself failed (network/server) — this used to
+      // silently fall back to generating anyway, which meant a budget that
+      // could genuinely be short (or wildly short, per the live example
+      // that surfaced this) landed on an itinerary page with no warning
+      // until "Edit Trip" — after the fact. We cannot claim a budget is
+      // fine when we couldn't check it, so stop here instead: no
+      // itinerary until the user explicitly says how to proceed.
+      setFeasibilityState('blocked')
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: nextId(),
+          role: 'assistant',
+          content: "I couldn't verify whether this budget realistically covers the trip just now (a connection hiccup on my end) — I won't generate an itinerary without checking that first. Want to retry the check, adjust something (budget, dates, destination) yourself, talk to a human, or start over completely?",
+          chips: [RETRY_CHECK_CHIP, HUMAN_HELP_CHIP, START_OVER_CHIP],
+        },
+      ])
     }
   }
 
@@ -618,11 +739,62 @@ export function LLMWizard() {
   async function handleSubmit(text?: string) {
     const value = (text ?? input).trim()
     if (!value || isSending || sendingLockRef.current || phase !== 'chatting') return
-    if (value === PROCEED_ANYWAY_CHIP) {
-      // Bypass the chat round-trip entirely — the user has explicitly
-      // confirmed they want to proceed despite the flagged shortfall.
+    if (value === HUMAN_HELP_CHIP) {
       setMessages((prev) => [...prev, { id: nextId(), role: 'user', content: value }])
-      handleGenerate()
+      setInput('')
+      handleRequestHumanHelp()
+      return
+    }
+    if (awaitingHandoffEmail) {
+      // The previous turn asked for an email to send the human-handoff
+      // lead to — treat this reply as that email rather than routing it
+      // through the normal wizard chat turn.
+      setMessages((prev) => [...prev, { id: nextId(), role: 'user', content: value }])
+      setInput('')
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+        setMessages((prev) => [
+          ...prev,
+          { id: nextId(), role: 'assistant', content: "That doesn't look like a valid email — could you try again?" },
+        ])
+        return
+      }
+      await submitHumanHandoff(value)
+      return
+    }
+    if (value === SHOW_BREAKDOWN_CHIP) {
+      // Render the per-category detail from the already-fetched result —
+      // no extra API round-trip — so the user has something concrete to
+      // point at ("cut accommodation") instead of just a total shortfall.
+      setMessages((prev) => [...prev, { id: nextId(), role: 'user', content: value }])
+      const lastResult = lastFeasibilityResultRef.current
+      if (lastResult) {
+        const minBudget = suggestedFeasibleBudget(lastResult)
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nextId(),
+            role: 'assistant',
+            content: formatFeasibilityBreakdownDetailed(lastResult),
+            chips: [`Set budget to ₹${minBudget.toLocaleString('en-IN')}`, 'Let me adjust something else'],
+          },
+        ])
+      }
+      return
+    }
+    if (value === RETRY_CHECK_CHIP) {
+      // Re-verify the same trip the failed check was run against, rather
+      // than silently generating — see runFeasibilityGate's catch block.
+      setMessages((prev) => [...prev, { id: nextId(), role: 'user', content: value }])
+      const retryConfig = lastFeasibilityConfigRef.current
+      if (retryConfig) {
+        await runFeasibilityGate(retryConfig)
+      }
+      return
+    }
+    if (value === START_OVER_CHIP) {
+      // No point echoing the user's chip choice first — handleStartOver
+      // wipes the whole message list immediately after anyway.
+      handleStartOver()
       return
     }
     setInput('')
@@ -1064,13 +1236,34 @@ export function LLMWizard() {
           <div className="shrink-0 border-t border-[var(--_border)] bg-[var(--_card)] px-4 py-3">
             <p className="mb-2 text-xs font-semibold text-[var(--_muted-fg)]">Trip summary</p>
             {summary && <p className="mb-3 text-sm font-medium text-[var(--_fg)]">{summary}</p>}
+            {/* Disabled until the automatic feasibility check comes back
+                feasible — this button used to call handleGenerate()
+                directly, bypassing the check entirely regardless of
+                whether it was still running, had failed, or had come back
+                infeasible (in which case the chips above are the intended
+                way forward, not this button). */}
             <button
               type="button"
               onClick={handleGenerate}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--_primary)] py-3 text-sm font-bold text-white shadow transition-opacity hover:opacity-90"
+              disabled={feasibilityState !== 'feasible'}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--_primary)] py-3 text-sm font-bold text-white shadow transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Plane size={15} />
-              Generate my itinerary
+              {feasibilityState === 'checking' ? (
+                <>
+                  <Loader2 size={15} className="animate-spin" />
+                  Checking your budget…
+                </>
+              ) : feasibilityState === 'blocked' ? (
+                <>
+                  <Plane size={15} />
+                  Resolve the budget check above first
+                </>
+              ) : (
+                <>
+                  <Plane size={15} />
+                  Generate my itinerary
+                </>
+              )}
             </button>
           </div>
         )}
@@ -1109,7 +1302,7 @@ export function LLMWizard() {
                 // Only blocked while the mic is actually open. Disabling for
                 // the whole voice-mode session meant switching to voice took
                 // typing away entirely, with no way back but toggling off.
-                disabled={isSending || voice.isListening}
+                disabled={isSending || voice.isListening || handoffSending}
                 className="flex-1 rounded-xl border border-[var(--_border)] bg-[var(--_bg)] px-3 py-2.5 text-sm text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none disabled:opacity-50"
                 aria-label="Message to Anya"
               />

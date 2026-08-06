@@ -176,6 +176,7 @@ async def send_agent_lead_request_email(
     lead_id: str,
     lead_email: str,
     destination: str,
+    source: str,
     trip_config_summary: dict,
     custom_notes: str | None,
     itinerary_html: str | None,
@@ -207,9 +208,19 @@ async def send_agent_lead_request_email(
         if itinerary_html
         else "<p><em>No itinerary preview was attached — see the PDF, if attached, for the full plan.</em></p>"
     )
+    # Surfaces which flow the lead came from at a glance in the inbox — an
+    # "infeasible_budget" lead has no itinerary attached by definition (the
+    # feasibility gate blocked generation before one existed), so callers
+    # shouldn't be surprised by the empty itinerary_section above.
+    source_label = (
+        "⚠️ Budget infeasible — no itinerary generated"
+        if source == "infeasible_budget"
+        else "Post-itinerary quotation request"
+    )
 
     html = f"""
     <p><strong>New quotation request — {escape(destination)}</strong></p>
+    <p><strong>Source:</strong> {escape(source_label)}</p>
     <p>Reply to the traveler at: <a href="mailto:{escape(lead_email)}">{escape(lead_email)}</a></p>
     <p>Reply within 24 hours to stay inside the promised SLA.</p>
     {notes_html}
@@ -227,7 +238,8 @@ async def send_agent_lead_request_email(
 
     ok = await _send_resend_email(
         to=to_emails,
-        subject=f"New quotation request — {destination}",
+        subject=f"New quotation request — {destination}"
+        + (" [Budget infeasible]" if source == "infeasible_budget" else ""),
         html=html,
         attachments=attachments,
     )
