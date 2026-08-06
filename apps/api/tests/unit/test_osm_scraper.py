@@ -1012,3 +1012,75 @@ class TestMultiAreaSampling:
         state is 105km long."""
         from scrapers.osm import _radius_override_for
         assert _radius_override_for("Goa") == 55000
+
+
+class TestIngestOutcomeIsReported:
+    """🔴 Every guard returns the EXISTING stored count when it declines to
+    overwrite, which makes the count ambiguous: 60 could mean 60 were just
+    written, or 60 were already there and the fetch was rejected.
+
+    A batch runner cannot tell those apart from a count, and one already got it
+    wrong — the 2026-08-06 overnight re-ingestion reported 163 "ok" while 25 had
+    never been re-fetched at all. Same proxy trap as the v10.40 prominence run
+    reporting 169/169 complete with 29 destinations carrying no prominence
+    signal.
+    """
+
+    def _pool(self) -> list[dict]:
+        return [
+            {"destination": "X", "name": f"POI {i}",
+             "poi_type": ["attraction", "museum", "park", "beach"][i % 4],
+             "lat": 1.0, "lon": 1.0, "text": f"POI {i}"}
+            for i in range(60)
+        ]
+
+    async def _run(self, meta, existing):
+        from scrapers.osm import ingest_osm_pois_with_outcome
+        mock_qdrant = MagicMock()
+        with patch("scrapers.osm._fetch_osm_pois_with_meta", new=AsyncMock(return_value=meta)), \
+             patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 60), \
+             patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.count_destination_points", return_value=existing), \
+             patch("scrapers.osm.delete_stale_destination_points", return_value=0):
+            return await ingest_osm_pois_with_outcome("X")
+
+    @pytest.mark.asyncio
+    async def test_a_real_write_is_reported_as_written(self):
+        from scrapers.osm import INGEST_WRITTEN
+        count, outcome = await self._run((self._pool(), True, False), 60)
+        assert (count, outcome) == (60, INGEST_WRITTEN)
+
+    @pytest.mark.asyncio
+    async def test_degraded_geocode_is_distinguishable_from_a_write(self):
+        from scrapers.osm import INGEST_KEPT_DEGRADED_GEOCODE
+        count, outcome = await self._run((self._pool(), True, True), 60)
+        assert count == 60                       # same number as a success...
+        assert outcome == INGEST_KEPT_DEGRADED_GEOCODE   # ...different meaning
+
+    @pytest.mark.asyncio
+    async def test_prominence_failure_is_distinguishable(self):
+        from scrapers.osm import INGEST_KEPT_PROMINENCE_FAILED
+        count, outcome = await self._run((self._pool(), False, False), 60)
+        assert (count, outcome) == (60, INGEST_KEPT_PROMINENCE_FAILED)
+
+    @pytest.mark.asyncio
+    async def test_empty_fetch_with_nothing_stored(self):
+        from scrapers.osm import INGEST_EMPTY_NOTHING
+        count, outcome = await self._run(([], True, False), 0)
+        assert (count, outcome) == (0, INGEST_EMPTY_NOTHING)
+
+    @pytest.mark.asyncio
+    async def test_the_int_wrapper_still_works_for_every_existing_caller(self):
+        """A dozen scripts, the scheduler and destination_ingestion all expect
+        a bare int — the richer function must not change their contract."""
+        from scrapers.osm import ingest_osm_pois
+        mock_qdrant = MagicMock()
+        with patch("scrapers.osm._fetch_osm_pois_with_meta",
+                   new=AsyncMock(return_value=(self._pool(), True, False))), \
+             patch("scrapers.osm.embed", return_value=[[0.1] * 384] * 60), \
+             patch("scrapers.osm.get_qdrant", return_value=mock_qdrant), \
+             patch("scrapers.osm.count_destination_points", return_value=0), \
+             patch("scrapers.osm.delete_stale_destination_points", return_value=0):
+            result = await ingest_osm_pois("X")
+        assert result == 60
+        assert isinstance(result, int)

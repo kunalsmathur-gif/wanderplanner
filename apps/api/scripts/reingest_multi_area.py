@@ -70,7 +70,11 @@ from qdrant_client import models as qm
 from core.config import settings
 from core.logging_config import configure_script_logging
 from core.qdrant import get_qdrant
-from scrapers.osm import _radius_override_for, ingest_osm_pois
+from scrapers.osm import (
+    INGEST_WRITTEN,
+    _radius_override_for,
+    ingest_osm_pois_with_outcome,
+)
 from services.geocode import geocode_city
 
 logger = logging.getLogger(__name__)
@@ -122,7 +126,7 @@ def _load_state() -> tuple[set[str], Counter]:
         # do — the fetch never ran against a trustworthy centre. Counting it
         # would let three throttled minutes retire a destination that has
         # never actually been re-ingested.
-        if record.get("outcome") != "degraded_geocode":
+        if record.get("outcome") not in ("degraded_geocode", "kept_existing"):
             attempts[destination] += 1
         if record.get("outcome") == "ok" or (
             record.get("osm_count") and attempts[destination] >= MAX_ATTEMPTS_PER_DESTINATION
@@ -213,10 +217,11 @@ async def _reingest_one(destination: str) -> dict:
 
     centre = (geo.lat, geo.lon)
     try:
-        count = await ingest_osm_pois(destination)
+        count, ingest_outcome = await ingest_osm_pois_with_outcome(destination)
     except Exception as e:
         entry.update(outcome="ingest_failed", error=f"{type(e).__name__}: {e}")
         return entry
+    entry["ingest_outcome"] = ingest_outcome
 
     after_count, after_centroid, categories = _stored_pool(destination)
     entry.update(osm_count=count, after_count=after_count,
@@ -236,9 +241,16 @@ async def _reingest_one(destination: str) -> dict:
         entry["top_category"] = top
         entry["top_category_share"] = round(n / max(after_count, 1), 3)
 
-    # The real bar: POIs exist AND they are near the centre we ingested
-    # against. Either half alone has previously reported success on data that
-    # was wrong.
+    # 🔴 The real bar is three things, and the first was missing until
+    # 2026-08-06: the pool must actually have been REWRITTEN this run. Without
+    # that check, a destination whose fetch was rejected by a guard still
+    # passed — its existing data was already well-centred — and the overnight
+    # run reported 163 "ok" while 25 had never been re-fetched at all. A count
+    # plus a plausible centroid is a proxy; "did we write it" is the property.
+    if ingest_outcome != INGEST_WRITTEN:
+        entry["outcome"] = "kept_existing"
+        entry["note"] = f"guard declined the overwrite ({ingest_outcome}); stored data untouched"
+        return entry
     entry["outcome"] = "ok" if (after_count and drift <= MAX_CENTROID_DRIFT_KM) else "mis_centred"
     return entry
 
@@ -283,6 +295,8 @@ async def main() -> None:
                       f"{entry.get('moved_km')}km · {entry['elapsed_s']}s")
         elif outcome == "degraded_geocode":
             detail = "hub lookup throttled — nothing written, will retry"
+        elif outcome == "kept_existing":
+            detail = str(entry.get("note", ""))
         else:
             detail = str(entry.get("error") or entry.get("note") or
                          entry.get("centroid_drift_km", ""))

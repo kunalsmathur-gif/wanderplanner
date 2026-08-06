@@ -330,3 +330,78 @@ class TestHubLookupDegradedSignal:
 
         r = GeocodeResponse(display_name="Jaipur", lat=26.9, lon=75.8, country_code="in")
         assert r.hub_lookup_degraded is False
+
+
+class TestCentroidCandidatesNeedAPopulation:
+    """🔴 Regression (2026-08-06 overnight run). `_towns_in_bbox` ranked by the
+    OSM `population` tag — but outside major cities most settlements do not
+    carry one, so `_pop` returned 0 for every element and the sort silently
+    degenerated into arbitrary order.
+
+    Bali's area sampling therefore picked Marga, Sidemen and Selemadeg Barat —
+    three small inland villages — over Ubud and the southern coast, and the
+    re-ingested pool LOST Tanah Lot and Uluwatu entirely. "Most populous" has
+    to mean something; an untagged element is not a candidate, and an empty
+    list correctly tells the caller to fall back to a single centre.
+    """
+
+    def _resp(self, elements):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"elements": elements}
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=resp)
+        return client
+
+    @pytest.mark.asyncio
+    async def test_untagged_settlements_are_not_candidates(self):
+        from services.geocode import _towns_in_bbox
+
+        client = self._resp([
+            {"lat": -8.5, "lon": 115.1, "tags": {"name": "Marga", "place": "village"}},
+            {"lat": -8.4, "lon": 115.4, "tags": {"name": "Sidemen", "place": "village"}},
+        ])
+        towns, degraded = await _towns_in_bbox(client, ["-9.0", "-8.0", "114.9", "115.5"])
+        assert towns == []
+        assert degraded is False       # Overpass answered; this is not a failure
+
+    @pytest.mark.asyncio
+    async def test_population_tagged_settlements_rank_normally(self):
+        from services.geocode import _towns_in_bbox
+
+        client = self._resp([
+            {"lat": 1.0, "lon": 1.0,
+             "tags": {"name": "Small", "place": "town", "population": "9000"}},
+            {"lat": 2.0, "lon": 2.0,
+             "tags": {"name": "Big", "place": "city", "population": "800000"}},
+        ])
+        towns, _ = await _towns_in_bbox(client, ["0", "3", "0", "3"])
+        assert [t[0] for t in towns] == ["Big", "Small"]
+
+    @pytest.mark.asyncio
+    async def test_untagged_are_dropped_but_tagged_survive(self):
+        """A mixed response must not let an untagged village outrank a real
+        city just because it came back first."""
+        from services.geocode import _towns_in_bbox
+
+        client = self._resp([
+            {"lat": 1.0, "lon": 1.0, "tags": {"name": "Nowhere", "place": "village"}},
+            {"lat": 2.0, "lon": 2.0,
+             "tags": {"name": "Real City", "place": "city", "population": "500000"}},
+        ])
+        towns, _ = await _towns_in_bbox(client, ["0", "3", "0", "3"])
+        assert [t[0] for t in towns] == ["Real City"]
+
+    @pytest.mark.asyncio
+    async def test_hub_lookup_still_works_through_the_same_path(self):
+        """`_hub_town_in_bbox` wraps `_towns_in_bbox`, so the population rule
+        must not break region-name correction (Ladakh -> Leh)."""
+        from services.geocode import _hub_town_in_bbox
+
+        client = self._resp([
+            {"lat": 34.16, "lon": 77.58,
+             "tags": {"name": "Leh", "place": "town", "population": "30870"}},
+        ])
+        name, degraded = await _hub_town_in_bbox(client, ["33.0", "35.0", "76.0", "78.0"])
+        assert name == "Leh"
+        assert degraded is False

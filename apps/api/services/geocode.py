@@ -327,9 +327,32 @@ out body {limit};
         except (TypeError, ValueError):
             return 0
 
-    elements.sort(key=lambda el: (_pop(el), el.get("tags", {}).get("place") == "city"), reverse=True)
+    # 🔴 Sorting by population is only meaningful for elements that HAVE a
+    # population tag, and outside major cities most do not. When none of them
+    # do, `_pop` returns 0 for every element and the sort silently degenerates
+    # into arbitrary order — which is how Bali's area sampling picked Marga,
+    # Sidemen and Selemadeg Barat (three small inland villages) over Ubud and
+    # the southern coast, and lost Tanah Lot and Uluwatu from the pool
+    # entirely (2026-08-06 overnight run).
+    #
+    # An untagged element is therefore not a candidate. "Most populous" has to
+    # mean something, and a caller sampling a region is asking for its
+    # significant settlements — not for whichever village Overpass happened to
+    # return first. Callers treat an empty list as "no usable areas" and fall
+    # back to a single centre, which is the honest outcome.
+    ranked = sorted(
+        (el for el in elements if _pop(el) > 0),
+        key=lambda el: (_pop(el), el.get("tags", {}).get("place") == "city"),
+        reverse=True,
+    )
+    if not ranked:
+        logger.info(
+            "Hub-town lookup found %d settlements in bbox %s but none carry a "
+            "population tag — declining to rank them arbitrarily.",
+            len(elements), bbox,
+        )
     towns: list[tuple[str, float, float]] = []
-    for el in elements:
+    for el in ranked:
         name = el.get("tags", {}).get("name")
         lat, lon = el.get("lat"), el.get("lon")
         if name and lat is not None and lon is not None:

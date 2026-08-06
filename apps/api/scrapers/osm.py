@@ -516,6 +516,7 @@ async def _fetch_osm_pois_with_meta(
     # Panaji, every automatic size check sees a small town, so the table is the
     # only thing left that knows the state is 105km long.
     declared_extent = _radius_override_for(destination)
+    single_area_radius: int | None = None
     area_bbox = bbox
     if declared_extent:
         area_bbox = _bbox_around(lat, lon, declared_extent)
@@ -528,18 +529,36 @@ async def _fetch_osm_pois_with_meta(
                 logger.warning("%r: area-centroid lookup failed", destination, exc_info=True)
                 towns = []
             centroids = _pick_spread_centroids((lat, lon), towns, area_bbox)
-            logger.info(
-                "%r: %.0fkm across — sampling %d areas: %s",
-                destination, span, len(centroids),
-                ", ".join(c[0] or "primary" for c in centroids),
-            )
+            if len(centroids) == 1 and declared_extent:
+                # 🔴 Area discovery found nothing usable, and falling through
+                # here would query the DEFAULT 5km radius for a destination we
+                # have explicitly declared to reach much further — strictly
+                # worse than the single wide circle this replaced. Measured
+                # 2026-08-06: Bali lost Tanah Lot and Uluwatu exactly this way.
+                # The declared extent is a statement about reach, so honour it
+                # as a radius when there are no areas to sample instead.
+                single_area_radius = declared_extent
+                logger.info(
+                    "%r: %.0fkm across but no usable area centroids — falling back "
+                    "to a single %dm-radius pass.",
+                    destination, span, declared_extent,
+                )
+            else:
+                logger.info(
+                    "%r: %.0fkm across — sampling %d areas: %s",
+                    destination, span, len(centroids),
+                    ", ".join(c[0] or "primary" for c in centroids),
+                )
 
     # Each centre contributes its own independently-prioritised pool, so the
     # interleave below can guarantee every area is represented.
     pools: list[list[dict]] = []
     prominence_ok = False
     seen_names: set[str] = set()
-    per_area_radius = _AREA_RADIUS_M if len(centroids) > 1 else radius
+    per_area_radius = (
+        _AREA_RADIUS_M if len(centroids) > 1
+        else (single_area_radius or radius)
+    )
 
     for area_name, alat, alon in centroids:
         area_prominence_radius = max(per_area_radius, settings.osm_prominence_radius_m)
@@ -871,12 +890,48 @@ def _is_thin_or_dominated(pois: list[dict]) -> bool:
     return top_share > _MAX_CATEGORY_SHARE_BEFORE_EXPANSION
 
 
+# Why an ingestion has to report HOW it ended, not just a count.
+#
+# Every guard below returns the EXISTING stored count when it declines to
+# overwrite — which is the right behaviour, but makes "60" ambiguous: it could
+# mean 60 POIs were just written, or that 60 were already there and the fetch
+# was rejected. A caller cannot tell the two apart, and at least one already
+# got this wrong: `scripts/reingest_multi_area.py`'s overnight run of
+# 2026-08-06 reported 163 "ok" while 25 of those had never been re-fetched at
+# all (22 prominence-pass failures, 3 unverified centroids). It was measuring
+# "the stored pool looks fine", which their OLD data already satisfied.
+#
+# This is the same proxy trap as the v10.40 prominence run reporting 169/169
+# complete with 29 destinations carrying no prominence signal. A batch runner
+# must be able to ask "did this actually get rewritten?" and get a real answer.
+INGEST_WRITTEN = "written"
+INGEST_KEPT_DEGRADED_GEOCODE = "kept_degraded_geocode"
+INGEST_KEPT_PROMINENCE_FAILED = "kept_prominence_failed"
+INGEST_KEPT_THIN = "kept_thin"
+INGEST_EMPTY_KEPT = "kept_empty_fetch"
+INGEST_EMPTY_NOTHING = "empty"
+
+
 async def ingest_osm_pois(destination: str) -> int:
     """Fetch and upsert POIs for `destination` into the osm_pois collection.
 
     Returns the number of POIs ingested. Safe to re-run — point IDs are a
     stable hash of (destination, name), so re-ingestion updates in place
     rather than duplicating.
+
+    Thin wrapper over `ingest_osm_pois_with_outcome` so the dozen existing
+    callers keep their `int` contract; batch runners that need to know whether
+    a write actually happened should call that instead.
+    """
+    count, _ = await ingest_osm_pois_with_outcome(destination)
+    return count
+
+
+async def ingest_osm_pois_with_outcome(destination: str) -> tuple[int, str]:
+    """`ingest_osm_pois`, plus which of the guards (if any) declined the write.
+
+    The second value is one of the `INGEST_*` constants above. Only
+    `INGEST_WRITTEN` means the stored pool was actually replaced this call.
     """
     override_radius = _radius_override_for(destination)
     if override_radius:
@@ -936,8 +991,8 @@ async def ingest_osm_pois(destination: str) -> int:
                 "already stored rather than reporting an empty result.",
                 destination, existing_count,
             )
-            return existing_count
-        return 0
+            return existing_count, INGEST_EMPTY_KEPT
+        return 0, INGEST_EMPTY_NOTHING
 
     # A broad-pass-only result looks perfectly healthy to every other check
     # here — right count, well-spread categories — while containing none of
@@ -967,7 +1022,7 @@ async def ingest_osm_pois(destination: str) -> int:
                 "keeping the %d already stored rather than overwriting them.",
                 destination, len(pois), existing_count,
             )
-            return existing_count
+            return existing_count, INGEST_KEPT_DEGRADED_GEOCODE
 
     if not prominence_ok:
         existing_count = count_destination_points(
@@ -979,7 +1034,7 @@ async def ingest_osm_pois(destination: str) -> int:
                 "ranking — keeping the %d POIs already stored rather than overwriting them.",
                 destination, len(pois), existing_count,
             )
-            return existing_count
+            return existing_count, INGEST_KEPT_PROMINENCE_FAILED
 
     # A non-empty but severely degraded fetch (e.g. Overpass silently
     # returning a near-empty/truncated result after exhausting retries,
@@ -998,7 +1053,7 @@ async def ingest_osm_pois(destination: str) -> int:
                 "stored — keeping existing data instead of overwriting it.",
                 destination, len(pois), existing_count,
             )
-            return existing_count
+            return existing_count, INGEST_KEPT_THIN
 
     from qdrant_client.models import PointStruct
 
@@ -1023,4 +1078,4 @@ async def ingest_osm_pois(destination: str) -> int:
     if stale_count:
         logger.info("Deleted %d stale OSM points for %r before re-ingestion", stale_count, destination)
     client.upsert(collection_name=settings.qdrant_collection_osm, points=points)
-    return len(points)
+    return len(points), INGEST_WRITTEN
