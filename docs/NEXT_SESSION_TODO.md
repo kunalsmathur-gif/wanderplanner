@@ -4,9 +4,81 @@
 
 ## 🔴 P0 — RE-INGEST AND VALIDATE EVERY DESTINATION (opened 2026-08-05)
 
-**Nothing is fixed in the data yet.** v10.72.0 changed how large destinations
-are *fetched*; every stored pool was still written single-centre. Until each
-destination is re-ingested, the coverage gaps below are live in production.
+### ⏱️ STATUS AFTER THE 2026-08-06 OVERNIGHT RUN — READ THIS FIRST
+
+`scripts/reingest_multi_area.py` ran over 169 destinations overnight
+(~7h). **It reported "163 ok". The number actually re-fetched was 138.**
+
+| Outcome | Count | Meaning |
+|---|---|---|
+| genuinely re-written | **138** | done |
+| kept by the prominence guard | **22** | fetch rejected, OLD data still stored |
+| kept by the degraded-geocode guard | **3** | ditto |
+| `degraded_geocode` (skipped early) | 5 | nothing written, correctly pending |
+| `geocode_failed` | 1 | `Skeleton Test City` (fixture data, see below) |
+
+🔴 **THE STATE FILE LIES ABOUT 22 OF THEM, AND A PLAIN RE-RUN WILL SKIP THEM.**
+The runner's done-rule at the time asked "does the pool have POIs and is it
+well-centred" — which the destinations' **old** data already satisfied — so a
+guard-rejected fetch was recorded as `ok`. Fixed now (the runner requires
+`INGEST_WRITTEN`), but the *existing* `scripts/out/reingest_multi_area.jsonl`
+still carries those 22 `ok` lines. Before re-running, either delete those lines
+or drive the subset explicitly with `--only`. Same proxy trap as the v10.40
+prominence run reporting 169/169 with 29 destinations carrying no prominence
+signal.
+
+⚠️ **The resume state is gitignored and lives only on the laptop that ran it**
+(`apps/api/scripts/out/`, 56KB). Another machine starts from zero — harmless,
+every write path is guarded, but it re-does ~7h of work. Copy the file across
+if the job moves.
+
+🔴 **The run REGRESSED Bali, and the cause is fixed but the lesson stands.**
+Area sampling picked `Marga, Sidemen, Selemadeg Barat` — three small inland
+villages — and the re-ingested pool **lost Tanah Lot and Uluwatu entirely**,
+back to wiki-only pins with no coordinates. Two defects, both now fixed:
+`_towns_in_bbox` ranked by the OSM `population` tag and most settlements
+outside major cities do not carry one, so the sort degenerated into arbitrary
+order; and when discovery found nothing usable the fetch fell through to the
+**5km default** for a destination whose declared extent was 30km. Bali has been
+re-ingested since: marquee landmarks **3 → 12**, both temples pinning via OSM
+with real coordinates. **Any machine re-running ingestion MUST pull that fix
+first, or it will re-break Bali the same way.**
+
+**Multi-area barely fires as tuned:** 70 of 86 sampling decisions returned a
+single area, because no discovered town was ≥18km from the centre
+(`_MIN_KM_BETWEEN_CENTROIDS`). Only 16 destinations got 2–4 areas.
+
+### Outstanding subsets (~43 destinations, ~2h — not another full pass)
+
+1. **Kept by the prominence guard, never re-fetched (22)** — Agra, Amsterdam,
+   Baku, Barcelona, Boston, Brussels, Cusco, Darjeeling, Denver, Florence,
+   Hanoi, Honolulu, Kyoto, Ladakh, Lonavala, Medellin, Munich, Osaka, Porto,
+   Seattle, Vilnius, Washington DC. Their stored data is intact and correctly
+   centred — it is simply *old*. Overpass 504s on the prominence pass are the
+   cause, so these need a calmer moment rather than a code change.
+2. **Got multi-area, need verifying (15 of 16; Bali done)** — Agra, Athens,
+   Budapest, Darjeeling, Gangtok, Haridwar, Ho Chi Minh City, Kochi, Madrid,
+   Melbourne, Nairobi, Pondicherry, Rio de Janeiro, Seoul, São Paulo. Some
+   picks look sound (São Paulo's satellites, Melbourne's outer towns, Kochi →
+   Aluva). **Check Ho Chi Minh City first — it sampled Vũng Tàu, which is a
+   separate beach destination ~100km away, not a suburb.** Several picks also
+   came back in local script (`부천시`, `Αγία Μαρίνα`), which is cosmetic but
+   makes the logs hard to sanity-check.
+3. **Explicitly pending (6)** — Hong Kong, Kuala Lumpur, Mexico City, Oaxaca,
+   Warsaw, and `Skeleton Test City`. **The last one is test-fixture data in the
+   PRODUCTION cluster and should be deleted, not ingested** — it was deleted
+   once before (2026-07-23) and has come back, so find what recreates it.
+
+```bash
+# targeted re-run once the 22 stale `ok` lines are pruned from the state file
+cd apps/api && venv/Scripts/python.exe scripts/reingest_multi_area.py --only "..."
+```
+
+### Original scope (still open)
+
+v10.72.0 changed how large destinations are *fetched*; extents are still
+declared for only **two** destinations, so everything else re-ingested as
+single-centre and the coverage gaps below remain live in production.
 
 Measured on Goa, which is what opened this: at the 5km default its stored pool
 had **5 North Goa POIs and ZERO from South Goa**, and the only recognisable
