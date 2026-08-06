@@ -36,7 +36,7 @@ export function ChatPanel() {
   // generation path had before its gate was added.
   const [pendingFeasibility, setPendingFeasibility] = useState<{
     config: TripConfig
-    kind: 'infeasible' | 'error'
+    kind: 'infeasible' | 'error' | 'destination_unverified'
     result?: FeasibilityResponse
     suggestedBudget?: number
   } | null>(null)
@@ -111,13 +111,27 @@ export function ChatPanel() {
   }
 
   /** Regenerate the itinerary in place with the (already-updated) config,
-   * verifying the budget still covers the trip first — mirrors LLMWizard's
-   * initial-generation feasibility gate. No "proceed anyway" bypass: the
-   * only ways forward on an infeasible budget are raising it, viewing the
-   * breakdown to decide what to cut, or keeping the current itinerary. */
-  async function regenerateInPlace(config: TripConfig) {
+   * verifying the destination exists and the budget still covers the trip
+   * first — mirrors LLMWizard's initial-generation feasibility gate,
+   * including the destination-existence check (⭐ NEW — this was the one
+   * entry point where a destination edit landed on the itinerary page with
+   * no check at all, since only the initial-generation wizard flow had it).
+   * No "proceed anyway" bypass for budget infeasibility: the only ways
+   * forward are raising it, viewing the breakdown to decide what to cut, or
+   * keeping the current itinerary. The destination check DOES allow an
+   * explicit override — same high-false-negative-rate reasoning as
+   * LLMWizard's CONTINUE_ANYWAY_CHIP. */
+  async function regenerateInPlace(config: TripConfig, skipDestinationCheck = false) {
     try {
-      const result = await checkFeasibility(config)
+      const result = await checkFeasibility(config, skipDestinationCheck)
+      if (result.destination_verified === false) {
+        addMessage({
+          role: 'assistant',
+          content: `${result.verdict} Your current itinerary is untouched — you can confirm it's a real place and continue, or tell me the right destination.`,
+        })
+        setPendingFeasibility({ config, kind: 'destination_unverified', result })
+        return
+      }
       if (result.feasible) {
         runRegeneration(config)
         return
@@ -308,9 +322,33 @@ export function ChatPanel() {
             <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">
               {pendingFeasibility.kind === 'error'
                 ? "⚠️ Couldn't verify this budget still fits"
-                : '⚠️ This budget may not cover the trip'}
+                : pendingFeasibility.kind === 'destination_unverified'
+                  ? "⚠️ We couldn't verify this destination"
+                  : '⚠️ This budget may not cover the trip'}
             </p>
-            {pendingFeasibility.kind === 'error' ? (
+            {pendingFeasibility.kind === 'destination_unverified' ? (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    const cfg = pendingFeasibility.config
+                    setPendingFeasibility(null)
+                    regenerateInPlace(cfg, true)
+                  }}
+                  className="flex-1 rounded-lg bg-[var(--_primary)] py-1.5 text-xs font-semibold text-white hover:opacity-90"
+                >
+                  It&apos;s real, continue anyway
+                </button>
+                <button
+                  onClick={() => {
+                    setPendingFeasibility(null)
+                    addMessage({ role: 'assistant', content: "No problem — what's the correct destination?" })
+                  }}
+                  className="flex-1 rounded-lg border border-[var(--_border)] py-1.5 text-xs font-semibold text-[var(--_fg)] hover:bg-[var(--_card-elevated)]"
+                >
+                  Let me fix it
+                </button>
+              </div>
+            ) : pendingFeasibility.kind === 'error' ? (
               <div className="flex gap-2">
                 <button
                   onClick={() => {

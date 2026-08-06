@@ -169,7 +169,7 @@ export function LLMWizard() {
   // back infeasible/errored and the chips were showing. 'checking' is the
   // default (matches the card appearing exactly when the automatic check
   // starts); only 'feasible' enables the button.
-  const [feasibilityState, setFeasibilityState] = useState<'checking' | 'feasible' | 'blocked'>('checking')
+  const [feasibilityState, setFeasibilityState] = useState<'checking' | 'feasible' | 'blocked' | 'idle'>('checking')
   // True while we're waiting on the user to type an email so the human
   // handoff (agent lead) can go out — only needed when they aren't signed
   // in, since a signed-in email is already known. See handleRequestHumanHelp.
@@ -819,6 +819,39 @@ export function LLMWizard() {
       // No point echoing the user's chip choice first — handleStartOver
       // wipes the whole message list immediately after anyway.
       handleStartOver()
+      return
+    }
+    if (value === CONTINUE_ANYWAY_CHIP) {
+      // User asserts the destination IS real despite our geocoder missing
+      // it — high false-negative-rate check (see runFeasibilityGate), so
+      // this is a legitimate override, unlike the budget gate's "Proceed
+      // anyway" which was removed entirely. Re-run the SAME config with
+      // skip_destination_check so the rest of the gate (budget) still runs.
+      setMessages((prev) => [...prev, { id: nextId(), role: 'user', content: value }])
+      const retryConfig = lastFeasibilityConfigRef.current
+      if (retryConfig) {
+        await runFeasibilityGate(retryConfig, true)
+      }
+      return
+    }
+    if (value === FIX_DESTINATION_CHIP) {
+      // Clear the unverified destination so the wizard re-asks for it on
+      // the next turn, instead of leaving the stale (unverified) value in
+      // partialConfig where a later "Generate" could silently reuse it.
+      setMessages((prev) => [...prev, { id: nextId(), role: 'user', content: value }])
+      lastFeasibilityConfigRef.current = null
+      lastFeasibilityResultRef.current = null
+      setFeasibilityState('idle')
+      const { destination: _dest, ...rest } = partialConfigRef.current
+      setPartialConfig(rest)
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: nextId(),
+          role: 'assistant',
+          content: 'No problem — where would you like to go instead?',
+        },
+      ])
       return
     }
     setInput('')
