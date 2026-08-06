@@ -28,12 +28,14 @@ interface ItineraryStore {
   alignmentScore: number
   expenseBreakdown: ExpenseBreakdown | null
   generationTier: GenerationTier
+  warnings: string[]
 
   setDays: (
     days: ItineraryDay[],
     score: number,
     breakdown?: ExpenseBreakdown,
     generationTier?: GenerationTier,
+    warnings?: string[],
   ) => void
   setActiveDay: (day: number) => void
   setHoveredItem: (id: string | null) => void
@@ -67,8 +69,9 @@ export const useItineraryStore = create<ItineraryStore>()(persist((set) => ({
   alignmentScore: 0,
   expenseBreakdown: null,
   generationTier: 'live',
+  warnings: [],
 
-  setDays: (days, score, breakdown, generationTier) => {
+  setDays: (days, score, breakdown, generationTier, warnings) => {
     // A fresh itinerary deserves its own feedback opportunity — clear any
     // vote/prompt state left over from the previous one so the widget/popup
     // don't show a stale "already answered" state for a plan the user
@@ -81,6 +84,7 @@ export const useItineraryStore = create<ItineraryStore>()(persist((set) => ({
       status: 'success',
       expenseBreakdown: breakdown ?? null,
       generationTier: generationTier ?? 'live',
+      warnings: warnings ?? [],
     })
   },
   setActiveDay: (activeDay) => set({ activeDay }),
@@ -92,6 +96,7 @@ export const useItineraryStore = create<ItineraryStore>()(persist((set) => ({
     days: [], activeDay: 0, hoveredItemId: null,
     status: 'idle', progress: { message: '', step: 0, total: 4 },
     error: null, alignmentScore: 0, expenseBreakdown: null, generationTier: 'live',
+    warnings: [],
   }),
 }), {
   name: 'wanderplanner-itinerary',
@@ -102,6 +107,7 @@ export const useItineraryStore = create<ItineraryStore>()(persist((set) => ({
     alignmentScore: state.alignmentScore,
     expenseBreakdown: state.expenseBreakdown,
     generationTier: state.generationTier,
+    warnings: state.warnings,
     // A restored itinerary is a finished one; without this the route guard
     // would see days but a stale 'idle' status.
     status: 'success' as const,

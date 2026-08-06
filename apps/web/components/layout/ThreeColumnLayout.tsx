@@ -43,6 +43,32 @@ function GenerationTierBanner() {
   )
 }
 
+// ── Item-removal disclosure banner ────────────────────────────────────────────
+// The backend now actively drops items it can't stand behind — a fabricated
+// "must-visit" place with no match anywhere in a well-covered destination
+// corpus, or a place too far from the trip to be a realistic stop — rather
+// than showing them as-is. That removal must never be silent: it's shown
+// here exactly like the generation-tier banner above, but one warning per
+// removed item so the user knows the itinerary was already adjusted for
+// them.
+function ItineraryWarningsBanner() {
+  const warnings = useItineraryStore((state) => state.warnings)
+  if (!warnings.length) return null
+  return (
+    <div
+      role="status"
+      className="flex shrink-0 flex-col gap-1 border-b border-amber-300/60 bg-amber-50 px-4 py-1.5 text-xs font-medium text-amber-800 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-400 sm:px-6"
+    >
+      {warnings.map((message, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <span aria-hidden="true">⚠️</span>
+          <span>{message}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ── Shared title bar ──────────────────────────────────────────────────────────
 function TitleBar({ destination, days }: { destination: { city: string; country: string } | null; days: number }) {
   return (
@@ -58,6 +84,7 @@ function TitleBar({ destination, days }: { destination: { city: string; country:
         </div>
       </div>
       <GenerationTierBanner />
+      <ItineraryWarningsBanner />
     </div>
   )
 }

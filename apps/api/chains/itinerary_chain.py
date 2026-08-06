@@ -201,7 +201,7 @@ def _enforce_pins(days: list[ItineraryDay], trip_config: TripConfig) -> list[Iti
 
 async def _flag_unverified_items(
     days: list[ItineraryDay], trip_config: TripConfig
-) -> list[ItineraryDay]:
+) -> tuple[list[ItineraryDay], list[str]]:
     """Mark items whose title doesn't correspond to anything in our ingested
     OSM/wiki corpus for the destination as unverified (GTM follow-up to
     _enforce_pins): the system prompt only forbids inventing a *hidden_gem*
@@ -209,25 +209,58 @@ async def _flag_unverified_items(
     including an ordinary, untagged item it recalled from training data
     rather than the retrieved research. Pinned items are always verified by
     construction (_enforce_pins only tags/injects real, coordinate-bearing
-    places) so they're skipped here rather than re-checked."""
+    places) so they're skipped here rather than re-checked.
+
+    Enforcement, not just disclosure: an unmatched item is either dropped
+    or kept-and-tagged depending on WHY it didn't match, because those are
+    two different failure modes with different risk —
+    - Destination corpus is well-populated (>= _SPARSE_CORPUS_THRESHOLD OSM
+      POIs) and this title still doesn't match anything in it: the model
+      most likely invented a specific place ("fabricated must-visit"). The
+      user never asked for this exact name, so silently keeping it is a
+      trust risk with no upside — drop it outright and let the itinerary
+      stand without it, same as an out-of-bounds item.
+    - Destination corpus is thin (< _SPARSE_CORPUS_THRESHOLD OSM POIs): a
+      real place legitimately may not be in our ingest yet, so an unmatched
+      title here isn't good evidence of fabrication. This is the safe
+      LLM-fallback case — keep the item, tag verified=False, and let the
+      frontend disclose it rather than lose real content for a
+      thinly-mapped destination.
+
+    Returns (days, dropped_titles) — dropped_titles feeds a user-visible
+    warning in the final response so a removal is disclosed, not silent."""
     dest = trip_config.destination.city if trip_config.destination else ""
     if not dest:
-        return days
+        return days, []
     titles = [
         item.title for day in days for item in day.items
         if "pinned" not in item.tags and (item.title or "").strip()
     ]
     if not titles:
-        return days
+        return days, []
     from services.poi_pinning import verify_item_titles
 
-    verified_titles = await verify_item_titles(titles, dest)
+    verified_titles, corpus_populated = await verify_item_titles(titles, dest)
+    dropped: list[str] = []
     for day in days:
+        kept_items = []
         for item in day.items:
             if "pinned" in item.tags:
+                kept_items.append(item)
                 continue
             item.verified = (item.title or "") in verified_titles
-    return days
+            if not item.verified and corpus_populated:
+                # Well-covered destination, still no match anywhere in it —
+                # treat as fabricated and drop rather than disclose.
+                logger.info(
+                    "Dropping likely-fabricated item %r for %s (well-populated corpus, no match)",
+                    item.title, dest,
+                )
+                dropped.append(item.title)
+                continue
+            kept_items.append(item)
+        day.items = kept_items
+    return days, dropped
 
 
 # Generous enough to cover a legitimate long day-trip within the same
@@ -246,34 +279,55 @@ _OUT_OF_BOUNDS_KM = 450.0
 
 def _flag_out_of_bounds_items(
     days: list[ItineraryDay], trip_config: TripConfig
-) -> list[ItineraryDay]:
-    """Flag items whose coordinates sit implausibly far from every place the
+) -> tuple[list[ItineraryDay], list[str]]:
+    """Drop items whose coordinates sit implausibly far from every place the
     user actually configured for this trip — a distinct, higher-confidence
     defect than "unverified": this is a real, matchable place that is simply
-    the wrong place. Checked against the primary destination AND all hops
-    (multi-stop trips, e.g. Edinburgh + Glasgow, are common and legitimate —
-    an item near either counts as in-bounds), using the closest of them, so
-    a multi-city trip is never penalised for visiting more than one of its
-    own named cities. Runs on real lat/lon only; an item with no coordinates
-    (0, 0 — never a real destination) is left unflagged rather than
-    guessed at."""
+    the wrong place, so there is no safe partial state to leave it in.
+    Checked against the primary destination AND all hops (multi-stop trips,
+    e.g. Edinburgh + Glasgow, are common and legitimate — an item near
+    either counts as in-bounds), using the closest of them, so a multi-city
+    trip is never penalised for visiting more than one of its own named
+    cities. Runs on real lat/lon only; an item with no coordinates (0, 0 —
+    never a real destination) is left in place rather than guessed at.
+
+    Enforcement, not just disclosure: the user should never be able to keep
+    an out-of-bounds item in the itinerary as-is, so a flagged item is
+    removed outright here rather than left for the frontend to merely
+    badge. `item.out_of_bounds` is still set immediately before removal so
+    any pre-removal logging/telemetry keeps seeing the same signal as
+    before. Returns (days, dropped_titles) — dropped_titles feeds a
+    user-visible warning in the final response so a removal is disclosed,
+    not silent."""
     anchors = [
         (d.lat, d.lon)
         for d in [trip_config.destination, *trip_config.hops]
         if d and not (d.lat == 0.0 and d.lon == 0.0)
     ]
     if not anchors:
-        return days
+        return days, []
     from core.distance_pricing import haversine_km
 
+    dropped: list[str] = []
     for day in days:
+        kept_items = []
         for item in day.items:
             loc = item.location
             if loc.lat == 0.0 and loc.lon == 0.0:
+                kept_items.append(item)
                 continue
             closest = min(haversine_km(lat, lon, loc.lat, loc.lon) for lat, lon in anchors)
             item.out_of_bounds = closest > _OUT_OF_BOUNDS_KM
-    return days
+            if item.out_of_bounds and "pinned" not in item.tags:
+                logger.info(
+                    "Dropping out-of-bounds item %r (%.0fkm from nearest anchor)",
+                    item.title, closest,
+                )
+                dropped.append(item.title)
+                continue
+            kept_items.append(item)
+        day.items = kept_items
+    return days, dropped
 
 
 async def _itinerary_examples_block(trip_config: TripConfig) -> str:
@@ -996,6 +1050,10 @@ async def _generate_itinerary_inner(
         days = inject_persona_modules(days, trip_config)
         # After the filters so an enforced pin can't be re-dropped downstream.
         days = _enforce_pins(days, trip_config)
+        # Names dropped by the checks below are surfaced as a user-visible
+        # warning further down — a removal must be disclosed, never silent.
+        dropped_fabricated: list[str] = []
+        dropped_out_of_bounds: list[str] = []
         # Per-item provenance: only meaningful on a genuine live LLM call —
         # mock/cache/rag_skeleton items are already either curated or
         # OSM-sourced by construction, so ItineraryItem.verified's default of
@@ -1009,14 +1067,14 @@ async def _generate_itinerary_inner(
                     # latency to every live generation — this pass is a
                     # disclosure nicety, never worth blocking the response
                     # travellers are waiting on.
-                    days = await asyncio.wait_for(
+                    days, dropped_fabricated = await asyncio.wait_for(
                         _flag_unverified_items(days, trip_config), timeout=3.0
                     )
                 except asyncio.TimeoutError:
                     logger.warning("Item-title verification timed out; leaving items unflagged")
         # Geo out-of-bounds check runs on every tier — pure CPU, no I/O, and
         # a coordinate glitch is worth catching even in mock/cache data.
-        days = _flag_out_of_bounds_items(days, trip_config)
+        days, dropped_out_of_bounds = _flag_out_of_bounds_items(days, trip_config)
 
         scored_days = []
         for day in days:
@@ -1066,6 +1124,20 @@ async def _generate_itinerary_inner(
          "as rough — the plan itself is unaffected."]
         if cost_warning else []
     )
+    if dropped_fabricated:
+        names = ", ".join(dropped_fabricated)
+        warnings.append(
+            f"We removed {names} from this itinerary — we couldn't verify "
+            "it's a real place at this destination, so we left it out rather "
+            "than risk sending you somewhere that doesn't exist."
+        )
+    if dropped_out_of_bounds:
+        names = ", ".join(dropped_out_of_bounds)
+        warnings.append(
+            f"We removed {names} from this itinerary — it's too far from "
+            "your trip's destination to be a realistic stop, so we left it "
+            "out rather than include an unworkable plan."
+        )
 
     return ItineraryResponse(
         days=scored_days,

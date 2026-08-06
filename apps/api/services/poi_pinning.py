@@ -180,25 +180,43 @@ def verify_candidates_sync(
     return pins, dropped
 
 
-def verify_item_titles_sync(titles: list[str], destination: str) -> set[str]:
+# Below this many ingested OSM POIs for a destination, we treat the corpus
+# as too thin to conclude anything about a specific unmatched title — a
+# destination this sparsely mapped legitimately has real places our OSM
+# ingest never captured, so an unmatched item there is "unverified" (safe
+# LLM-fallback, keep + tag), not "fabricated" (drop). At/above this count the
+# destination is well-enough covered that an item still failing both OSM and
+# wiki checks is far more likely to be something the model invented outright
+# than a real place we simply missed — e.g. a well-mapped city like Paris or
+# Bali with hundreds of ingested POIs vs. a thinly-covered small town with a
+# handful. Chosen well below _MAX_POIS (300) so "well covered" doesn't
+# require near-total corpus saturation to qualify.
+_SPARSE_CORPUS_THRESHOLD = 15
+
+
+def verify_item_titles_sync(titles: list[str], destination: str) -> tuple[set[str], bool]:
     """Cheaper sibling of verify_candidates_sync for per-item itinerary
     provenance tagging (not refinement pins): just "does this title
     correspond to something in our ingested OSM POIs or get mentioned in a
     wiki chunk for this destination", no source-interest co-occurrence check
     (there is no single "reason" for an item the way there is for a
-    refinement candidate). Returns the set of normalized input titles that
-    matched — callers diff against their original list to find the rest.
-    Same bounded scrolls/matcher as verify_candidates_sync, so same
-    zero-LLM, zero-external-API cost profile.
+    refinement candidate). Returns (verified titles, corpus_populated) —
+    callers diff titles against the verified set to find the rest, and use
+    corpus_populated to decide whether an unmatched title is "fabricated"
+    (well-covered destination, still no match — drop it) or merely
+    "unverified" (thin destination corpus — keep it, tag it, LLM fallback is
+    the safe call). Same bounded scrolls/matcher as verify_candidates_sync,
+    so same zero-LLM, zero-external-API cost profile.
     """
     if not titles or not destination:
-        return set()
+        return set(), False
 
     client = get_qdrant()
     pois = _scroll_destination(client, settings.qdrant_collection_osm, destination, _MAX_POIS)
     poi_index = [
         (_normalize(p.get("name") or ""), p) for p in pois if (p.get("name") or "").strip()
     ]
+    corpus_populated = len(poi_index) >= _SPARSE_CORPUS_THRESHOLD
 
     wiki_chunk_texts: list[str] | None = None
 
@@ -223,19 +241,21 @@ def verify_item_titles_sync(titles: list[str], destination: str) -> set[str]:
             continue
         if len(norm) >= 6 and any(norm in chunk for chunk in _wiki_chunks()):
             verified.add(title)
-    return verified
+    return verified, corpus_populated
 
 
-async def verify_item_titles(titles: list[str], destination: str) -> set[str]:
+async def verify_item_titles(titles: list[str], destination: str) -> tuple[set[str], bool]:
     """Async wrapper for verify_item_titles_sync — Qdrant scrolls + string
     matching off the event loop, same failure discipline as
     verify_candidates: a lookup failure must never crash generation, it just
-    means nothing gets marked verified this time."""
+    means nothing gets marked verified this time, and the corpus is reported
+    as not-populated so callers fail safe (keep + tag rather than drop) when
+    the lookup itself couldn't run."""
     try:
         return await asyncio.to_thread(verify_item_titles_sync, titles, destination)
     except Exception:
         logger.warning("Item-title verification failed; leaving all unverified", exc_info=True)
-        return set()
+        return set(), False
 
 
 async def verify_candidates(
