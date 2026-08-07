@@ -100,9 +100,12 @@ class TestOutOfBoundsEnforcement:
 
 class TestUnverifiedItemEnforcement:
     @pytest.mark.asyncio
-    async def test_drops_item_when_corpus_well_populated(self, monkeypatch):
-        """Well-covered destination, item still unmatched: treat as
-        fabricated and drop it."""
+    async def test_keeps_item_when_corpus_well_populated(self, monkeypatch):
+        """Well-covered destination, item still unmatched: keep it, only
+        tag verified=False — never drop (disclosure-only, not enforcement).
+        A well-populated corpus used to be treated as evidence of
+        fabrication, but compound/logistics titles routinely fail literal
+        matching even for real places, so dropping was too aggressive."""
         async def fake_verify(titles, destination):
             return set(), True  # nothing verified, corpus IS populated
 
@@ -117,8 +120,9 @@ class TestUnverifiedItemEnforcement:
 
         result_days, dropped = await _flag_unverified_items(days, trip_config)
 
-        assert result_days[0].items == []
-        assert dropped == ["Wizarding World of Goa"]
+        assert len(result_days[0].items) == 1
+        assert result_days[0].items[0].verified is False
+        assert dropped == []
 
     @pytest.mark.asyncio
     async def test_keeps_item_when_corpus_sparse(self, monkeypatch):

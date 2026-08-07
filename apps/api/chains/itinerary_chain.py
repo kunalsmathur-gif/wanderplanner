@@ -211,24 +211,24 @@ async def _flag_unverified_items(
     construction (_enforce_pins only tags/injects real, coordinate-bearing
     places) so they're skipped here rather than re-checked.
 
-    Enforcement, not just disclosure: an unmatched item is either dropped
-    or kept-and-tagged depending on WHY it didn't match, because those are
-    two different failure modes with different risk —
-    - Destination corpus is well-populated (>= _SPARSE_CORPUS_THRESHOLD OSM
-      POIs) and this title still doesn't match anything in it: the model
-      most likely invented a specific place ("fabricated must-visit"). The
-      user never asked for this exact name, so silently keeping it is a
-      trust risk with no upside — drop it outright and let the itinerary
-      stand without it, same as an out-of-bounds item.
-    - Destination corpus is thin (< _SPARSE_CORPUS_THRESHOLD OSM POIs): a
-      real place legitimately may not be in our ingest yet, so an unmatched
-      title here isn't good evidence of fabrication. This is the safe
-      LLM-fallback case — keep the item, tag verified=False, and let the
-      frontend disclose it rather than lose real content for a
-      thinly-mapped destination.
+    Disclosure only, never removal: an unmatched title is tagged
+    verified=False and left in the itinerary — the frontend renders an
+    "unverified" badge for it (ItineraryTimeline.tsx). A prior version of
+    this function dropped unmatched items outright on well-populated
+    destination corpora (">= _SPARSE_CORPUS_THRESHOLD" OSM POIs), reasoning
+    that a well-covered destination still missing a match was likely a
+    fabricated place. Live use on Bali showed this was too aggressive:
+    itinerary titles are routinely compound phrases ("Kecak Fire Dance at
+    Uluwatu") or pure logistics ("Hotel Check-out", "Airport Transfer") that
+    were never going to literal-match a corpus POI name, so even a
+    well-covered destination had most of its itinerary stripped and
+    replaced with a wall of "we removed X" warnings instead of an
+    itinerary. Better to show an unverifiable item honestly badged than to
+    decide for the traveller that it doesn't exist and remove it silently
+    from view.
 
-    Returns (days, dropped_titles) — dropped_titles feeds a user-visible
-    warning in the final response so a removal is disclosed, not silent."""
+    Returns (days, dropped_titles) — dropped_titles is always empty now (see
+    below) but kept in the return shape so callers don't need to change."""
     dest = trip_config.destination.city if trip_config.destination else ""
     if not dest:
         return days, []
@@ -240,27 +240,25 @@ async def _flag_unverified_items(
         return days, []
     from services.poi_pinning import verify_item_titles
 
-    verified_titles, corpus_populated = await verify_item_titles(titles, dest)
-    dropped: list[str] = []
+    verified_titles, _corpus_populated = await verify_item_titles(titles, dest)
+    # Disclosure, not enforcement: an item that can't be matched against the
+    # corpus is tagged verified=False and left in the itinerary — the
+    # frontend already renders an "unverified" badge for this (see
+    # ItineraryTimeline.tsx). Dropping outright (the previous behaviour) was
+    # too aggressive in practice: itinerary titles are routinely compound
+    # phrases ("Kecak Fire Dance at Uluwatu") or pure logistics ("Hotel
+    # Check-out") that were never going to literal-match a corpus POI name,
+    # so even well-covered destinations like Bali had most of their
+    # itinerary stripped and replaced with a wall of "we removed X" warnings
+    # instead of an itinerary. A real place we simply couldn't verify is
+    # still worth showing the traveller — we just say so, rather than
+    # silently deciding for them that it doesn't exist.
     for day in days:
-        kept_items = []
         for item in day.items:
             if "pinned" in item.tags:
-                kept_items.append(item)
                 continue
             item.verified = (item.title or "") in verified_titles
-            if not item.verified and corpus_populated:
-                # Well-covered destination, still no match anywhere in it —
-                # treat as fabricated and drop rather than disclose.
-                logger.info(
-                    "Dropping likely-fabricated item %r for %s (well-populated corpus, no match)",
-                    item.title, dest,
-                )
-                dropped.append(item.title)
-                continue
-            kept_items.append(item)
-        day.items = kept_items
-    return days, dropped
+    return days, []
 
 
 # Generous enough to cover a legitimate long day-trip within the same
