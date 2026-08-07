@@ -50,9 +50,21 @@ async function withDayPhotos(
 ): Promise<{ days: ItineraryDay[]; photosAttached: boolean }> {
   if (!days.length) return { days, photosAttached: false }
 
+  // `/api/day-photos` validates every query against the shared 60-char
+  // ShortLabel limit (models/itinerary.py) and rejects the WHOLE batch with
+  // a 422 if even one entry is too long — a real destination + real theme
+  // ("Bali, Indonesia" + "Liverpool's Musical & Maritime Heritage") easily
+  // exceeds 60 chars. Because a rejected batch surfaces here as "photos
+  // unavailable" (see the catch below), one over-length day silently wiped
+  // out hero images for every day in the PDF, not just the long one. Trim
+  // client-side before sending so a long theme only loses its own search
+  // specificity, never the whole request.
+  const MAX_QUERY_LEN = 60
   let photos: DayPhoto[]
   try {
-    photos = await getDayPhotos(days.map((d) => `${destinationLabel} ${d.theme}`))
+    photos = await getDayPhotos(
+      days.map((d) => `${destinationLabel} ${d.theme}`.slice(0, MAX_QUERY_LEN).trim()),
+    )
   } catch {
     // Pexels down, our endpoint 500ing, rate-limited (429), session expired
     // (401), offline, or past PHOTO_FETCH_TIMEOUT_MS — all the same outcome.

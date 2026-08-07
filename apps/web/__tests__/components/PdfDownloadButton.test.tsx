@@ -85,6 +85,28 @@ describe('PdfDownloadButton — day photos are fetched at download time', () => 
     await waitFor(() => expect(getDayPhotos).toHaveBeenCalledWith(['India beaches', 'India forts']))
   })
 
+  it('truncates a query to 60 chars so one long day cannot 422 the whole batch', async () => {
+    // /api/day-photos rejects the ENTIRE request if any single query exceeds
+    // the shared 60-char ShortLabel limit — a real destination + real theme
+    // easily does. That used to silently wipe out hero images for every day
+    // in the PDF, not just the long one.
+    getDayPhotos.mockResolvedValue([])
+    useTripConfigStore.setState({
+      config: { destination: { city: 'Bali, Indonesia', country: 'Indonesia' } },
+    } as never)
+    useItineraryStore.getState().setDays(
+      [day(1, "Liverpool's Musical & Maritime Heritage Full Day Explorer Tour")] as never,
+      80,
+    )
+    render(<PdfDownloadButton />)
+
+    await clickDownload()
+
+    await waitFor(() => expect(getDayPhotos).toHaveBeenCalled())
+    const [queries] = getDayPhotos.mock.calls[0] as [string[]]
+    expect(queries[0].length).toBeLessThanOrEqual(60)
+  })
+
   it('attaches returned photos to the rendered document', async () => {
     getDayPhotos.mockResolvedValue([
       { url: 'https://img/1.jpg', photographer: 'Ada', photographer_url: 'https://p/ada' },

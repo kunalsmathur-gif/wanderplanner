@@ -168,6 +168,15 @@ async def check_feasibility(
     dest = trip_config.destination.city if trip_config.destination else "the destination"
     budget_inr = int(trip_config.budget.amount)
 
+    # Deliberately excludes budget_inr — this JSON is what the LLM sees to
+    # produce its own INDEPENDENT cost estimate, and the prompt tells it to
+    # "be conservative (lean slightly higher)". Showing it the user's stated
+    # budget let it anchor its estimate just above whatever number it saw,
+    # so raising the budget after a shortfall verdict just pushed the
+    # model's next estimate up to match it — a moving goalpost that took two
+    # user turns to resolve every time (bump budget -> new, higher shortfall
+    # -> bump again). budget_inr is only used locally below, to compare
+    # against the model's anchor-free estimate.
     trip_summary = {
         "destination": dest,
         "origin": trip_config.origin.city,
@@ -177,7 +186,6 @@ async def check_feasibility(
         "kids_count": kids,
         "seniors": seniors,
         "accommodation_style": trip_config.accommodation.style[0] if trip_config.accommodation.style else "mid-range hotel",
-        "budget_inr": budget_inr,
         "purpose": trip_config.purpose,
     }
 
