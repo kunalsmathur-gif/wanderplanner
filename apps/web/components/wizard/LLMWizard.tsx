@@ -230,6 +230,9 @@ export function LLMWizard() {
   // as an intentional cancel and never reports as an error. Reset on every
   // status/data/error event; if it ever fires, that means total silence.
   const generationWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Fires once, at the soft threshold, to swap the loader copy to a "hang
+  // tight" reassurance without touching the stream — see armGenerationWatchdog.
+  const generationSoftWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // True while `error` holds a generate-itinerary failure (vs. a chat-turn
   // failure) — lets the shared error banner's Retry button re-run
   // generation instead of blindly resending the last chat message, which
@@ -865,21 +868,39 @@ export function LLMWizard() {
       clearTimeout(generationWatchdogRef.current)
       generationWatchdogRef.current = null
     }
+    if (generationSoftWatchdogRef.current !== null) {
+      clearTimeout(generationSoftWatchdogRef.current)
+      generationSoftWatchdogRef.current = null
+    }
   }
 
-  // (Re)arms the stuck-generation watchdog. Called on start and after every
-  // status update, so it only ever fires on total silence, never mid-progress.
+  // (Re)arms the stuck-generation watchdogs. Called on start and after every
+  // status update, so they only ever fire on total silence, never mid-progress.
+  //
+  // Two stages, not one: a cold-cache destination's live Wikivoyage/OSM/
+  // YouTube scrape (plus embedding work that can briefly block the event
+  // loop — see docs/scaling-tech-challenges.md's single-process note) can
+  // legitimately run close to the backend's own 120s LLM_TIMEOUT_SECONDS
+  // ceiling, and it usually *does* still land a 200 — retrying a request
+  // that's actually about to succeed just makes the user wait through the
+  // same slow path twice. The old single 60s timeout cancelled the stream
+  // and forced a retry well before that ceiling, on a request that was
+  // still working. Soft stage now just reassures the user in place while
+  // the stream keeps listening; only the hard stage (past the backend's own
+  // ceiling, with margin) gives up and offers Retry.
   function armGenerationWatchdog() {
     clearGenerationWatchdog()
+    generationSoftWatchdogRef.current = setTimeout(() => {
+      setProgress((prev) => ({ ...prev, message: 'Still working — this destination is taking a bit longer than usual. Hang tight…' }))
+    }, 60_000)
     generationWatchdogRef.current = setTimeout(() => {
       cancelStreamRef.current?.()
       generationErrorRef.current = true
       setError('Generation is taking much longer than expected and may have stalled. Please try again.')
       setPhase('chatting')
-    }, 60_000) // user-facing cap — shorter than backend's own 90s LLM_TIMEOUT_SECONDS
-               // ceiling is fine: it just means a genuinely-slow-but-still-working
-               // generation gets cut off client-side with a retry prompt instead
-               // of the user waiting in silence.
+    }, 150_000) // margin past the backend's 120s LLM_TIMEOUT_SECONDS ceiling, so a
+                // genuinely still-working request finishes (or the backend's own
+                // LLM_TIMEOUT error event arrives) before this ever fires.
   }
 
   function startGeneration(fullConfig: TripConfig) {
