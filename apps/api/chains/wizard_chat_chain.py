@@ -841,6 +841,27 @@ def _is_group_type_chip_tap(last_user_text: str | None) -> bool:
     return stripped in canonical
 
 
+# Keywords identifying the one-off "which city will you be flying out of?"
+# question (see budget_estimate_prompt_hint's departure-city gate). This
+# question has no canonical chip set of its own — the answer is a free-form
+# city name — but it fires *before* pace is known, so the generic "field is
+# missing -> backfill its canonical chips" and "chips look stale" safety
+# nets below both mistake it for the pace question and attach
+# Relaxed/Moderate/Packed chips underneath it (see bug: pace chips shown
+# under the departure-city question).
+_DEPARTURE_CITY_QUESTION_KEYWORDS = frozenset({
+    "departure city", "flying out of", "flying from", "fly out of",
+    "fly from", "which city will you", "which airport",
+})
+
+
+def _is_departure_city_question(reply_text: str) -> bool:
+    """True if `reply_text` is asking the user for their departure/origin
+    city (the budget-estimate flight-cost gate), which takes free-form text
+    and has no chips of its own."""
+    return has_keyword(reply_text or "", _DEPARTURE_CITY_QUESTION_KEYWORDS)
+
+
 def _is_stale_chips(chips: list[str], config: dict[str, Any]) -> bool:
     """True if `chips` matches a field's canonical set but CURRENT_STATE says
     that field is already filled — i.e. the model echoed an old question's
@@ -1481,6 +1502,14 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             _, fresh_chips = _next_missing_field_prompt(merged)
             chips_list = fresh_chips
 
+        # Bug fix: the reply text is asking for the departure city (a
+        # free-form answer, no chips of its own) — drop any chips the LLM
+        # attached, most commonly stale Pace chips, since pace isn't
+        # "filled" yet at this point in the conversation and so isn't
+        # caught by the stale-chips check above.
+        if chips_list and _is_departure_city_question(reply_text):
+            chips_list = []
+
         # Bug fix: the user just tapped a destination-MODE chip ("Suggest
         # me!" / "I have a destination in mind") — the very next question
         # ("Where are you thinking of going?" / "Could you tell me the
@@ -1516,7 +1545,7 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # answered), so it would otherwise re-suggest the group-type
         # question/chips even though the reply text has already moved on to
         # asking for counts.
-        if not chips_list and not ready:
+        if not chips_list and not ready and not _is_departure_city_question(reply_text):
             _, fallback_chips = _next_missing_field_prompt(merged)
             is_destination_mode_fallback = frozenset(fallback_chips) == _FIELD_CHIP_SETS["destination"]
             is_group_fallback = frozenset(fallback_chips) == _FIELD_CHIP_SETS["group"]
@@ -1615,7 +1644,7 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # path above (this fallback fires whenever the LLM's raw response
         # wasn't valid JSON at all, so it never had a `chips` field to begin
         # with; the fixed-enum fields still deserve their canonical chips).
-        if not extracted_chips:
+        if not extracted_chips and not _is_departure_city_question(clean_raw):
             _, fallback_chips = _next_missing_field_prompt(fallback_config)
             is_destination_mode_fallback = frozenset(fallback_chips) == _FIELD_CHIP_SETS["destination"]
             is_group_fallback = frozenset(fallback_chips) == _FIELD_CHIP_SETS["group"]
@@ -1641,6 +1670,12 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # old chip set embedded in the leaked text.
         if extracted_chips and _is_stale_chips(extracted_chips, fallback_config):
             _, extracted_chips = _next_missing_field_prompt(fallback_config)
+
+        # Bug fix (see JSON-success path above): the reply is asking for the
+        # departure city (free-form answer) — drop any stray chips (most
+        # commonly stale Pace chips, since pace isn't filled yet here).
+        if extracted_chips and _is_departure_city_question(clean_raw):
+            extracted_chips = []
 
         # Bug fix (see JSON-success path above): don't echo the destination
         # MODE chips right back after the user just tapped one of them.
