@@ -518,7 +518,12 @@ Stage 2 -- "Anything else?" checkpoint.
   Ask one warm round of optional preferences:
     "Awesome! I have everything locked in. Anything special to add -- like pure-veg food,
     adventure activities, a specific departure city, or any accessibility needs?"
-  Offer chips: "Just generate it!", "Add themes", "Add departure city", "Pure veg food"
+  Offer chips, but ONLY for optional fields CURRENT_STATE does NOT already show a value for:
+    "Just generate it!" (always), "Add themes" (always -- themes can always be added to),
+    "Add departure city" (omit if origin/departure city is already known),
+    "Pure veg food" (omit if vegetarian_food is already in themes).
+  Never re-offer a chip for an optional field the user has already answered -- chips should
+  only repeat mid-flow inside a feasibility-adjustment or itinerary-edit exchange, not here.
 
 Stage 3 -- Generate signal.
   Set ready_to_generate: true ONLY when ALL of these are true:
@@ -860,6 +865,30 @@ def _is_departure_city_question(reply_text: str) -> bool:
     city (the budget-estimate flight-cost gate), which takes free-form text
     and has no chips of its own."""
     return has_keyword(reply_text or "", _DEPARTURE_CITY_QUESTION_KEYWORDS)
+
+
+def _filter_answered_checkpoint_chips(chips: list[str], config: dict[str, Any]) -> list[str]:
+    """Drops Stage 2 "anything else?" checkpoint chips that invite the user
+    to fill an optional field they've already answered (e.g. "Add departure
+    city" once `origin.city` is known, "Pure veg food" once vegetarian_food
+    is already in themes) -- these chips should only repeat inside a
+    feasibility-adjustment or itinerary-edit exchange, never at the
+    checkpoint itself. "Add themes"/"Just generate it!" always survive:
+    themes are open-ended (more can always be added) and generate is the
+    perpetual call-to-action, not a one-off field prompt."""
+    if not chips:
+        return chips
+    has_origin = bool((config.get("origin") or {}).get("city"))
+    has_veg = "vegetarian_food" in (config.get("themes") or [])
+    kept = []
+    for chip in chips:
+        low = chip.lower()
+        if has_origin and "departure city" in low:
+            continue
+        if has_veg and ("veg" in low and "food" in low):
+            continue
+        kept.append(chip)
+    return kept
 
 
 def _is_stale_chips(chips: list[str], config: dict[str, Any]) -> bool:
@@ -1510,6 +1539,14 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         if chips_list and _is_departure_city_question(reply_text):
             chips_list = []
 
+        # Bug fix: don't re-offer Stage 2 "anything else?" checkpoint chips
+        # for optional fields the user already answered (e.g. "Add
+        # departure city" once origin.city is known) — this flow never
+        # revisits already-filled optional fields outside a feasibility-
+        # adjustment/itinerary-edit exchange, which live in separate chains.
+        if chips_list:
+            chips_list = _filter_answered_checkpoint_chips(chips_list, merged)
+
         # Bug fix: the user just tapped a destination-MODE chip ("Suggest
         # me!" / "I have a destination in mind") — the very next question
         # ("Where are you thinking of going?" / "Could you tell me the
@@ -1676,6 +1713,11 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # commonly stale Pace chips, since pace isn't filled yet here).
         if extracted_chips and _is_departure_city_question(clean_raw):
             extracted_chips = []
+
+        # Bug fix (see JSON-success path above): don't re-offer Stage 2
+        # checkpoint chips for optional fields already answered.
+        if extracted_chips:
+            extracted_chips = _filter_answered_checkpoint_chips(extracted_chips, fallback_config)
 
         # Bug fix (see JSON-success path above): don't echo the destination
         # MODE chips right back after the user just tapped one of them.
