@@ -797,12 +797,141 @@ def _strip_emoji(text: str) -> str:
 def _infer_purpose_from_chip_tap(last_user_text: str | None) -> str | None:
     """Deterministically resolve a purpose value from a user message that's
     just a canonical purpose-chip tap (emoji and case aside). Returns None
-    for free-form text — the LLM remains responsible for extracting purpose
-    from longer, descriptive answers."""
+    for free-form text — see _infer_purpose_from_free_text below for that."""
     if not last_user_text:
         return None
     stripped = _strip_emoji(last_user_text).strip().lower()
     return _PURPOSE_CHIP_VALUES.get(stripped)
+
+
+# Word-boundary keywords for inferring purpose from a full descriptive
+# sentence (e.g. "A 6 day bali family trip for 2 people") rather than a bare
+# chip tap. Checked in this order — most specific first — because a couple
+# of these overlap in ordinary English ("family vacation" contains
+# "vacation", which would otherwise also fire the generic leisure case).
+# Bug fix: the LLM occasionally omits `purpose` from config_patch even when
+# the user's own sentence states it in plain words (not just a chip tap),
+# leaving CURRENT_STATE never recording it — same failure shape as
+# _infer_purpose_from_chip_tap's bug, but for prose instead of a tap. Once
+# purpose looks "missing" for the rest of the conversation, the purpose
+# chips keep reappearing under every later question (budget, budget
+# adjustment, ...) because `_next_missing_field_prompt`'s fallback treats
+# it as still the next thing to ask.
+_PURPOSE_FREE_TEXT_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("honeymoon", ["honeymoon", "newlywed", "newly wed"]),
+    ("family vacation", ["family"]),
+    ("friends trip", ["friends", "buddies", "girls trip", "guys trip"]),
+    ("solo", ["solo trip", "solo travel", "traveling alone", "travelling alone", "by myself", "on my own"]),
+    ("adventure", ["adventure", "trekking", "hiking"]),
+    ("leisure", ["leisure"]),
+]
+
+
+def _infer_purpose_from_free_text(last_user_text: str | None) -> str | None:
+    """Deterministically resolve a purpose value from a full sentence that
+    states it in plain words, not just a chip tap (see
+    _infer_purpose_from_chip_tap for that narrower case). Word-boundary
+    matched (core/keyword_match.has_keyword) so e.g. "family" doesn't fire on
+    an unrelated word containing it as a substring. Returns None if no
+    keyword matches — the LLM remains responsible for anything less literal."""
+    if not last_user_text:
+        return None
+    for value, keywords in _PURPOSE_FREE_TEXT_KEYWORDS:
+        if has_keyword(last_user_text, keywords):
+            return value
+    return None
+
+
+# Same failure shape as purpose (see above), but for pace: "Relaxed 🧘" /
+# "Moderate 🚶" / "Packed 🏃" chip taps and their equivalent plain-English
+# phrasing (e.g. "keep it relaxed", "a packed schedule"). Checked most
+# specific first so "packed"/"relaxed" (which imply a clear preference) take
+# priority over the more generic "moderate".
+_PACE_CHIP_VALUES: dict[str, str] = {
+    "relaxed": "relaxed",
+    "moderate": "moderate",
+    "packed": "packed",
+}
+
+_PACE_FREE_TEXT_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("relaxed", ["relaxed", "laid back", "laid-back", "chill", "easy going", "easy-going", "slow paced", "slow-paced", "leisurely pace"]),
+    ("packed", ["packed", "action packed", "action-packed", "jam packed", "jam-packed", "fast paced", "fast-paced", "hectic"]),
+    ("moderate", ["moderate", "balanced pace", "medium pace"]),
+]
+
+
+def _infer_pace_from_chip_tap(last_user_text: str | None) -> str | None:
+    """Deterministically resolve a pace value from a user message that's just
+    a canonical pace-chip tap (emoji and case aside). Returns None for
+    free-form text — see _infer_pace_from_free_text below for that."""
+    if not last_user_text:
+        return None
+    stripped = _strip_emoji(last_user_text).strip().lower()
+    return _PACE_CHIP_VALUES.get(stripped)
+
+
+def _infer_pace_from_free_text(last_user_text: str | None) -> str | None:
+    """Deterministically resolve a pace value from a full sentence that
+    states it in plain words, not just a chip tap. Word-boundary matched
+    (core/keyword_match.has_keyword). Returns None if no keyword matches —
+    the LLM remains responsible for anything less literal."""
+    if not last_user_text:
+        return None
+    for value, keywords in _PACE_FREE_TEXT_KEYWORDS:
+        if has_keyword(last_user_text, keywords):
+            return value
+    return None
+
+
+# Same failure shape as purpose/pace above, but for budget: the wizard prompt
+# (Section 2) already teaches the LLM to convert "25k" / "1 lakh" / "3 Cr"
+# shorthand into config_patch.budget.amount, but the LLM occasionally
+# acknowledges the figure in its reply text and moves on without actually
+# emitting it in config_patch — leaving CURRENT_STATE never recording a
+# budget, which then re-triggers the budget question (and, per the bug this
+# was written for, restarts the purpose-chip fallback chain) on later turns.
+# Deliberately requires an explicit currency marker (₹ / rupees / rs / inr /
+# lakh / crore) rather than firing on any bare number, since a plain digit in
+# a sentence is far more likely to be a day count, headcount, or date than an
+# unmarked rupee amount.
+_INR_AMOUNT_PATTERN = re.compile(
+    r"(?:₹\s*(?P<sym_amt>\d[\d,]*(?:\.\d+)?)(?:\s*(?P<sym_mult>lakhs?|lacs?|crores?|cr|k))?)"
+    r"|(?:(?P<unit_amt>\d[\d,]*(?:\.\d+)?)\s*(?P<unit_mult>lakhs?|lacs?|crores?|cr)\b)"
+    # word-after-number ("50000 INR", "3 lakh rupees") or word-before-number
+    # ("INR 20,000", "Rs 50000") — users phrase this either way.
+    r"|(?:(?P<rs_amt>\d[\d,]*(?:\.\d+)?)\s*(?P<rs_mult>k)?\s*(?:rupees?|rs\.?|inr)\b)"
+    r"|(?:\b(?:rupees?|rs\.?|inr)\s*(?P<rs_amt2>\d[\d,]*(?:\.\d+)?)(?:\s*(?P<rs_mult2>lakhs?|lacs?|crores?|cr|k))?)",
+    re.IGNORECASE,
+)
+
+_INR_MULTIPLIERS: dict[str, int] = {
+    "k": 1_000,
+    "lakh": 100_000, "lakhs": 100_000, "lac": 100_000, "lacs": 100_000,
+    "crore": 10_000_000, "crores": 10_000_000, "cr": 10_000_000,
+}
+
+
+def _infer_budget_amount_from_free_text(last_user_text: str | None) -> int | None:
+    """Deterministically extracts an INR budget amount (e.g. "₹1.5 lakh",
+    "3 lakh rupees", "2 Cr", "50000 INR") from a full sentence. Returns None
+    if nothing matches an explicit rupee marker — the LLM remains
+    responsible for anything less literal, and foreign-currency amounts are
+    handled separately by core/currency_convert.py."""
+    if not last_user_text:
+        return None
+    match = _INR_AMOUNT_PATTERN.search(last_user_text)
+    if not match:
+        return None
+    amount_str = match.group("sym_amt") or match.group("unit_amt") or match.group("rs_amt") or match.group("rs_amt2")
+    mult_str = (match.group("sym_mult") or match.group("unit_mult") or match.group("rs_mult") or match.group("rs_mult2") or "").lower()
+    if not amount_str:
+        return None
+    try:
+        amount = float(amount_str.replace(",", ""))
+    except ValueError:
+        return None
+    amount *= _INR_MULTIPLIERS.get(mult_str, 1)
+    return int(amount) if amount > 0 else None
 
 
 def _is_destination_mode_chip_tap(last_user_text: str | None) -> bool:
@@ -1487,18 +1616,39 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             merged[k] = {**merged.get(k, {}), **coords}
             patch[k] = {**patch.get(k, {}), **coords} if isinstance(patch.get(k), dict) else coords
 
-        # Safety net: the LLM occasionally acknowledges a purpose-chip tap in
+        # Safety net: the LLM occasionally acknowledges a purpose-chip tap (or
+        # a purpose stated in plain prose, e.g. "a family trip to Bali") in
         # its reply text and moves on to the next question, without actually
         # emitting `purpose` in config_patch — leaving CURRENT_STATE never
         # recording it. Since _is_stale_chips (below) only replaces stale
         # chips when the field looks filled, this silently reproduces the
-        # purpose chips under a reply that already asked about destination.
-        # Deterministically backfill from the raw chip tap when possible.
+        # purpose chips under a reply that already moved past purpose (e.g.
+        # asking about budget, or a budget-adjustment follow-up), and keeps
+        # doing so on every subsequent turn until something backfills it.
+        # Deterministically backfill from the raw chip tap, then from a
+        # plain-English purpose keyword in the message, when possible.
         if not merged.get("purpose"):
-            inferred_purpose = _infer_purpose_from_chip_tap(last_user_text)
+            inferred_purpose = _infer_purpose_from_chip_tap(last_user_text) or _infer_purpose_from_free_text(last_user_text)
             if inferred_purpose:
                 merged["purpose"] = inferred_purpose
                 patch["purpose"] = inferred_purpose
+
+        # Same backfill, same reason, for pace (chip tap, then plain prose).
+        if not merged.get("pace"):
+            inferred_pace = _infer_pace_from_chip_tap(last_user_text) or _infer_pace_from_free_text(last_user_text)
+            if inferred_pace:
+                merged["pace"] = inferred_pace
+                patch["pace"] = inferred_pace
+
+        # Same backfill, same reason, for budget — only from an explicit
+        # rupee marker (₹ / rupees / rs / inr / lakh / crore), never a bare
+        # number, to avoid misreading an unrelated digit (day count,
+        # headcount, date) as a budget figure.
+        if not (merged.get("budget") or {}).get("amount"):
+            inferred_amount = _infer_budget_amount_from_free_text(last_user_text)
+            if inferred_amount:
+                merged["budget"] = {**(merged.get("budget") or {}), "amount": inferred_amount, "currency": "INR"}
+                patch["budget"] = {**(patch.get("budget") or {}), "amount": inferred_amount, "currency": "INR"}
 
         # Server-side override: only allow ready=true if all required fields present
         ready = data.get("ready_to_generate", False) and _has_all_required(merged)
@@ -1621,10 +1771,23 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             fallback_config[k] = {**fallback_config.get(k, {}), **coords}
             fallback_patch[k] = coords
         if not fallback_config.get("purpose"):
-            inferred_purpose = _infer_purpose_from_chip_tap(last_user_text)
+            inferred_purpose = _infer_purpose_from_chip_tap(last_user_text) or _infer_purpose_from_free_text(last_user_text)
             if inferred_purpose:
                 fallback_config["purpose"] = inferred_purpose
                 fallback_patch["purpose"] = inferred_purpose
+
+        # Same backfill, same reason, for pace and budget (see JSON-success
+        # path above for the full rationale).
+        if not fallback_config.get("pace"):
+            inferred_pace = _infer_pace_from_chip_tap(last_user_text) or _infer_pace_from_free_text(last_user_text)
+            if inferred_pace:
+                fallback_config["pace"] = inferred_pace
+                fallback_patch["pace"] = inferred_pace
+        if not (fallback_config.get("budget") or {}).get("amount"):
+            inferred_amount = _infer_budget_amount_from_free_text(last_user_text)
+            if inferred_amount:
+                fallback_config["budget"] = {**(fallback_config.get("budget") or {}), "amount": inferred_amount, "currency": "INR"}
+                fallback_patch["budget"] = {**(fallback_patch.get("budget") or {}), "amount": inferred_amount, "currency": "INR"}
 
         # Pattern 1: Chips: ["A", "B"]
         chips_match = _re_fb.search(r'\s*(?:Chips?|Options?|chip\s*options?):\s*(\[[\s\S]*?\])', clean_raw, flags=_re_fb.IGNORECASE)
