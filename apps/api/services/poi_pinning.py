@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from difflib import SequenceMatcher
 
 from core.config import settings
@@ -194,6 +195,65 @@ def verify_candidates_sync(
 _SPARSE_CORPUS_THRESHOLD = 15
 
 
+# Words that mark a title as pure trip logistics — a meal, transfer, hotel
+# check-in/out, packing, or shopping errand — rather than a claim that a
+# specific named venue exists. These were never meant to correspond to an
+# OSM POI (there is no place literally named "Hotel Check-out"), so checking
+# them against the corpus at all was the bug: on a well-populated corpus
+# (corpus_populated=True) every one of these failed to match anything and
+# got dropped as "fabricated", which is how a whole itinerary — "Airport
+# Transfer & Hotel Check-in", "Leisurely Breakfast & Packing", "Last-minute
+# Souvenir Shopping", ... — ended up gutted for a single well-covered
+# destination (Bali) instead of the rare one-off fabricated landmark this
+# check was built for. Exempted outright rather than verified.
+_LOGISTICS_TITLE_KEYWORDS = [
+    "check-in", "check in", "checkin", "check-out", "check out", "checkout",
+    "transfer", "transit", "departure", "arrival",
+    "breakfast", "lunch", "dinner", "meal",
+    "packing", "pack", "unpack",
+    "shopping", "souvenir",
+    "relax", "unwind", "free time", "leisure time", "rest", "downtime",
+]
+
+
+def _is_logistics_title(title: str) -> bool:
+    """True when a title is pure trip logistics (meal/transfer/check-in-out/
+    packing/shopping/downtime) rather than a claim that a specific named
+    venue exists — see _LOGISTICS_TITLE_KEYWORDS for why these are exempted
+    from verification entirely instead of being checked against the corpus."""
+    return has_keyword(title, _LOGISTICS_TITLE_KEYWORDS)
+
+
+# Splits a compound title ("Kelingking Beach & T-Rex Cliff", "Kecak Fire
+# Dance at Uluwatu", "Transfer to Sanur Port") into its candidate venue
+# phrases. Itinerary items are routinely titled as an activity plus a place
+# ("... at/in/near/to Place") or two places joined by "&"/"and" — verifying
+# the FULL title as one string against corpus POI names, as the original
+# version of this check did, means a real, well-ingested place like
+# "Uluwatu" or "Kelingking Beach" never gets credit because the literal POI
+# name is only ever a fragment of the generated title, not the whole thing.
+_TITLE_SPLIT_PATTERN = re.compile(
+    r"\s*(?:&|,|\band\b|\bat\b|\bin\b|\bnear\b|\bto\b|\bfrom\b|\bon\b|\bvia\b)\s*",
+    re.IGNORECASE,
+)
+
+
+def _title_components(title: str) -> list[str]:
+    """Full title first (preserves any existing exact/fuzzy match), then its
+    candidate venue-phrase fragments split on common joiners/prepositions,
+    each checked independently against the corpus."""
+    parts = [title, *_TITLE_SPLIT_PATTERN.split(title)]
+    seen: set[str] = set()
+    out: list[str] = []
+    for part in parts:
+        part = part.strip(" -\u2013\u2014")
+        if len(part) < 3 or part.lower() in seen:
+            continue
+        seen.add(part.lower())
+        out.append(part)
+    return out
+
+
 def verify_item_titles_sync(titles: list[str], destination: str) -> tuple[set[str], bool]:
     """Cheaper sibling of verify_candidates_sync for per-item itinerary
     provenance tagging (not refinement pins): just "does this title
@@ -233,14 +293,26 @@ def verify_item_titles_sync(titles: list[str], destination: str) -> tuple[set[st
 
     verified: set[str] = set()
     for title in titles:
-        norm = _normalize(title)
-        if not norm:
-            continue
-        if _best_osm_match(norm, poi_index) is not None:
+        if _is_logistics_title(title):
+            # Not a venue claim at all — see _is_logistics_title. Verified
+            # outright so it's never flagged/dropped by the caller.
             verified.add(title)
             continue
-        if len(norm) >= 6 and any(norm in chunk for chunk in _wiki_chunks()):
-            verified.add(title)
+        # Check the full title, then each split-out venue-phrase fragment
+        # (see _title_components) — a compound title only needs ONE real
+        # component to be considered grounded, since the rest may be an
+        # ordinary activity word ("Fast Boat to Sanur" is verified by
+        # "Sanur" alone).
+        for component in _title_components(title):
+            norm = _normalize(component)
+            if not norm:
+                continue
+            if _best_osm_match(norm, poi_index) is not None:
+                verified.add(title)
+                break
+            if len(norm) >= 6 and any(norm in chunk for chunk in _wiki_chunks()):
+                verified.add(title)
+                break
     return verified, corpus_populated
 
 
