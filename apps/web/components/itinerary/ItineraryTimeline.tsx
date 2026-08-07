@@ -110,6 +110,7 @@ function ActivityCard({ item, isActive, onHover, onSelect }: {
         videoHref={videoHref}
         isActive={isActive}
         onClick={() => onSelect(item.id)}
+        verified={item.verified}
       />
       <div className="-mt-1 mb-2 flex flex-wrap gap-1 px-1">
         {extraTags.map((tag) => (

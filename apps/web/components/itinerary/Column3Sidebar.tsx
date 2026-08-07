@@ -1,11 +1,9 @@
 'use client'
 
-import Image from 'next/image'
 import { useEffect, useState } from 'react'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useWizardChatStore } from '@/store/wizardChatStore'
 import { getTravelTips, type TravelTip } from '@/lib/api'
-import { logClientEvent } from '@/lib/analyticsBeacon'
 import { MapWrapper } from '@/components/map/MapWrapper'
 import { BestTimeWidget } from '@/components/dashboard/BestTimeWidget'
 
@@ -32,26 +30,8 @@ export function Column3Sidebar() {
     setLoadingTips(true)
 
     getTravelTips(destination)
-      .then(async (data) => {
-        if (cancelled) return
-        
-        // Fetch YouTube thumbnails for each tip
-        const tipsWithThumbnails = await Promise.all(
-          data.map(async (tip) => {
-            try {
-              const searchQuery = `${destination} ${tip.title.slice(0, 50)}`
-              const res = await fetch(`/api/youtube-thumbnail?q=${encodeURIComponent(searchQuery)}`)
-              const { thumbnailUrl } = await res.json()
-              logClientEvent('youtube_thumbnail_call', { found: Boolean(thumbnailUrl) })
-              return { ...tip, thumbnailUrl }
-            } catch {
-              logClientEvent('youtube_thumbnail_failed')
-              return { ...tip, thumbnailUrl: null }
-            }
-          })
-        )
-        
-        if (!cancelled) setTips(tipsWithThumbnails)
+      .then((data) => {
+        if (!cancelled) setTips(data)
       })
       .catch(() => { if (!cancelled) setTips([]) })
       .finally(() => { if (!cancelled) setLoadingTips(false) })
@@ -91,57 +71,25 @@ export function Column3Sidebar() {
           <p className="text-xs text-[var(--_muted-fg)]">No tips found for this destination yet.</p>
         ) : (
           <div className="space-y-2">
-            {tips.map((tip, idx) => {
-              const body = (
-                <>
-                  {tip.thumbnailUrl && (
-                    <div className="relative h-24 w-full overflow-hidden">
-                      <Image
-                        src={tip.thumbnailUrl}
-                        alt={tip.title}
-                        fill
-                        sizes="(max-width: 768px) 100vw, 360px"
-                        className="object-cover"
-                      />
-                    </div>
+            {tips.map((tip, idx) => (
+              <div
+                key={`${tip.title}-${idx}`}
+                className="overflow-hidden rounded-xl border border-[var(--_border)] bg-[var(--_card)] p-3"
+              >
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <span className="rounded-full bg-[var(--_muted)] px-2 py-0.5 text-[11px] font-semibold text-[var(--_primary)]">
+                    {tip.source}
+                  </span>
+                  {tip.score > 0 && (
+                    <span className="text-[11px] font-medium text-[var(--_muted-fg)]">↑ {tip.score}</span>
                   )}
-                  <div className="p-3">
-                    <div className="mb-1.5 flex items-center justify-between gap-2">
-                      <span className="rounded-full bg-[var(--_muted)] px-2 py-0.5 text-[11px] font-semibold text-[var(--_primary)]">
-                        {tip.source}
-                      </span>
-                      {tip.score > 0 && (
-                        <span className="text-[11px] font-medium text-[var(--_muted-fg)]">↑ {tip.score}</span>
-                      )}
-                    </div>
-                    <p className="line-clamp-2 text-sm font-semibold text-[var(--_fg)]">{tip.title}</p>
-                    {tip.text_preview && (
-                      <p className="mt-1 line-clamp-3 text-xs text-[var(--_muted-fg)]">{tip.text_preview}</p>
-                    )}
-                  </div>
-                </>
-              )
-              const cardClass =
-                'block overflow-hidden rounded-xl border border-[var(--_border)] bg-[var(--_card)]'
-
-              // Real community tips link to their source; general tips have no
-              // source page to link to, so they render as plain cards.
-              return tip.post_url ? (
-                <a
-                  key={`${tip.title}-${idx}`}
-                  href={tip.post_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`${cardClass} transition-colors hover:border-[var(--_primary)]`}
-                >
-                  {body}
-                </a>
-              ) : (
-                <div key={`${tip.title}-${idx}`} className={cardClass}>
-                  {body}
                 </div>
-              )
-            })}
+                <p className="line-clamp-2 text-sm font-semibold text-[var(--_fg)]">{tip.title}</p>
+                {tip.text_preview && (
+                  <p className="mt-1 line-clamp-3 text-xs text-[var(--_muted-fg)]">{tip.text_preview}</p>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>

@@ -347,7 +347,6 @@ export interface TravelTip {
   post_url: string
   source: string
   score: number
-  thumbnailUrl?: string | null  // YouTube thumbnail URL
 }
 
 export async function getTravelTips(destination: string, limit = 6): Promise<TravelTip[]> {
