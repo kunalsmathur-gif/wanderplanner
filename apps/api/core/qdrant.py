@@ -33,6 +33,13 @@ _DESTINATION_INDEXED_COLLECTIONS = (
     # visa_info filters by "destination" too — it just stores a country name
     # there rather than a city (see scrapers/visa_info.py).
     "qdrant_collection_visa_info",
+    # itinerary_cache (services/itinerary_cache.py) must hard-filter by
+    # destination before ranking by cosine similarity — the cache-key text
+    # is mostly shared boilerplate ("<n>d <pace> <purpose> trip"), so an
+    # embedding-only lookup can return an entirely different destination's
+    # cached itinerary when duration/pace/purpose happen to match (observed
+    # in prod: a Bali request served a cached Liverpool itinerary).
+    "qdrant_collection_itinerary_cache",
 )
 
 

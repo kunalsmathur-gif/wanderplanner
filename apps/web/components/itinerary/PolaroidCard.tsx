@@ -128,7 +128,10 @@ export function PolaroidCard({
       {verified === true && (
         <span
           title="Verified against Wanderplanner's destination research"
-          className="absolute right-1.5 top-1.5 z-20 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[9px] font-bold text-white shadow"
+          // Bottom-right (not top-right) — top-right overlapped the
+          // category tag chip (e.g. "CULTURE") rendered in the content
+          // header on the same corner.
+          className="absolute bottom-1.5 right-1.5 z-20 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[9px] font-bold text-white shadow"
         >
           ✓
         </span>

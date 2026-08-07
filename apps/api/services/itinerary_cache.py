@@ -35,15 +35,30 @@ def _cache_key_text(trip_config: TripConfig) -> str:
 
 
 async def get_cached_itinerary(trip_config: TripConfig) -> dict | None:
-    """Look up a semantically similar cached itinerary (cosine >= threshold)."""
+    """Look up a semantically similar cached itinerary (cosine >= threshold).
+
+    Cosine similarity on the short "<dest> <duration>d <pace> <purpose> trip"
+    text alone is NOT a safe uniqueness guarantee — most of that string is
+    shared boilerplate ("6d relaxed leisure trip"), so a past itinerary for
+    an entirely different destination can score above threshold purely on
+    the pace/purpose/duration overlap (observed in prod: a Bali request
+    served a cached Liverpool itinerary). Destination match is therefore
+    enforced as a hard Qdrant payload filter, not left to the embedding
+    alone — the semantic search only ranks among same-destination hits.
+    """
     query = _cache_key_text(trip_config)
+    dest = trip_config.destination.city if trip_config.destination else "general"
     vector = (await asyncio.to_thread(embed, [query]))[0]
     client = get_qdrant()
 
     def _search():
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
         return client.search(
             collection_name=settings.qdrant_collection_itinerary_cache,
             query_vector=vector,
+            query_filter=Filter(
+                must=[FieldCondition(key="destination", match=MatchValue(value=dest))]
+            ),
             limit=1,
             score_threshold=settings.itinerary_cache_score_threshold,
         )
@@ -56,6 +71,12 @@ async def get_cached_itinerary(trip_config: TripConfig) -> dict | None:
         return None
 
     payload = hits[0].payload or {}
+    # Belt-and-braces: even with the hard filter above, double check the
+    # stored destination actually matches before trusting the payload —
+    # guards against any legacy cache entries indexed before this filter
+    # existed (empty/mismatched destination field).
+    if (payload.get("destination") or "").strip().lower() != dest.strip().lower():
+        return None
     raw = payload.get("itinerary_json")
     if not raw:
         return None
