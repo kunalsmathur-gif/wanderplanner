@@ -6,6 +6,8 @@ import {
   AlertTriangle,
   Check,
   Database,
+  Eye,
+  EyeOff,
   Hash,
   Image as ImageIcon,
   IndianRupee,
@@ -43,6 +45,7 @@ import {
   type AdminSummary,
   type AdminTimeseries,
 } from '@/lib/adminApi'
+import { maskEmail } from '@/lib/format'
 import { useAuthStore } from '@/store/authStore'
 
 const ACTIVITY_SERIES = [
@@ -115,6 +118,11 @@ function leadStatusBadge(lead: AdminLead) {
   switch (lead.status) {
     case 'responded':
       return 'rounded-full bg-[var(--_success)]/15 px-2.5 py-1 text-xs font-semibold text-[var(--_success)]'
+    // Deliberately NOT the success green: this one was answered, but late.
+    // A darker amber than `escalated` keeps the two apart in the column
+    // while still reading as "something went wrong here".
+    case 'responded_late':
+      return 'rounded-full bg-[#B45309]/15 px-2.5 py-1 text-xs font-semibold text-[#B45309]'
     case 'escalated':
       return 'rounded-full bg-[#D97706]/15 px-2.5 py-1 text-xs font-semibold text-[#D97706]'
     case 'reassured':
@@ -124,10 +132,15 @@ function leadStatusBadge(lead: AdminLead) {
   }
 }
 
-function leadStatusLabel(status: AdminLead['status']): string {
-  switch (status) {
+function leadStatusLabel(lead: AdminLead): string {
+  switch (lead.status) {
     case 'responded':
       return 'Responded'
+    case 'responded_late':
+      // Escalation is the more specific story — someone had to chase it —
+      // so name it when it happened, and fall back to the bare SLA miss
+      // when the reply landed late without the job ever having escalated.
+      return lead.was_escalated ? 'Responded after escalation' : 'Responded late'
     case 'escalated':
       return 'Escalated (24h)'
     case 'reassured':
@@ -167,6 +180,9 @@ export default function AdminDashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [leadsError, setLeadsError] = useState<string | null>(null)
   const [markingLead, setMarkingLead] = useState<{ id: string; action: 'responded' | 'booked' } | null>(null)
+  // Masked by default, and deliberately not persisted — a reload always
+  // returns to the safe state rather than leaving addresses exposed.
+  const [revealEmails, setRevealEmails] = useState(false)
 
   const [showPurgeConfirm, setShowPurgeConfirm] = useState(false)
   const [purgeText, setPurgeText] = useState('')
@@ -432,7 +448,21 @@ export default function AdminDashboardPage() {
         {summary && (
           <>
             <section className="mt-10">
-              <h2 className="font-display text-xl font-bold text-[var(--_fg)]">Latest lead queue</h2>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="font-display text-xl font-bold text-[var(--_fg)]">Latest lead queue</h2>
+                {/* Addresses are masked by default so this view is safe to
+                    screen-share or record without thinking about it. Revealing
+                    is an explicit, per-session act that resets on reload. */}
+                <button
+                  type="button"
+                  onClick={() => setRevealEmails((shown) => !shown)}
+                  aria-pressed={revealEmails}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[var(--_border)] px-3 py-1.5 text-xs font-semibold text-[var(--_muted-fg)] transition-colors hover:text-[var(--_fg)]"
+                >
+                  {revealEmails ? <EyeOff size={13} /> : <Eye size={13} />}
+                  {revealEmails ? 'Hide emails' : 'Reveal emails'}
+                </button>
+              </div>
               {leadsError && <p className="mt-2 text-sm text-[var(--_destructive)]">{leadsError}</p>}
               <div className="mt-3 overflow-x-auto rounded-2xl border border-[var(--_border)] bg-[var(--_card)]">
                 <table className="min-w-full text-left text-sm">
@@ -459,7 +489,9 @@ export default function AdminDashboardPage() {
                           <td className="px-4 py-3">
                             <div>
                               <p className="font-medium text-[var(--_fg)]">{lead.destination}</p>
-                              <p className="text-xs text-[var(--_muted-fg)]">{lead.email}</p>
+                              <p className="text-xs text-[var(--_muted-fg)]">
+                                {revealEmails ? lead.email : maskEmail(lead.email)}
+                              </p>
                             </div>
                           </td>
                           <td className="px-4 py-3">
@@ -469,7 +501,7 @@ export default function AdminDashboardPage() {
                             {formatRelativeTime(lead.created_at)}
                           </td>
                           <td className="px-4 py-3">
-                            <span className={leadStatusBadge(lead)}>{leadStatusLabel(lead.status)}</span>
+                            <span className={leadStatusBadge(lead)}>{leadStatusLabel(lead)}</span>
                           </td>
                           <td className="px-4 py-3 text-[var(--_muted-fg)]">
                             {lead.response_time_hours != null ? `${lead.response_time_hours.toFixed(1)}h` : '—'}

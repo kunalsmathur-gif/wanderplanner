@@ -66,8 +66,10 @@ export interface AdminLead {
   escalated_at: string | null
   reassurance_sent_at: string | null
   marked_booked_at: string | null
-  status: 'pending' | 'responded' | 'escalated' | 'reassured'
+  status: 'pending' | 'responded' | 'responded_late' | 'escalated' | 'reassured'
   response_time_hours: number | null
+  sla_breached: boolean
+  was_escalated: boolean
 }
 
 export async function getAdminSummary(): Promise<AdminSummary> {

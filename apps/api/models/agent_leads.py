@@ -67,4 +67,11 @@ class AgentLeadAdminResponse(BaseModel):
     marked_booked_at: str | None
     status: str
     response_time_hours: float | None
+    # `status` collapses to a single label for the badge; these two carry the
+    # detail behind a "responded_late", so the dashboard can say *why* it was
+    # late without re-deriving it from the timestamps client-side. They are
+    # meaningful on unresponded leads too: `sla_breached` goes true the moment
+    # the clock passes the SLA, whether or not anyone has replied yet.
+    sla_breached: bool = False
+    was_escalated: bool = False
 

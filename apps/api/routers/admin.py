@@ -45,8 +45,40 @@ def _lead_response_time_hours(lead: AgentLead) -> float | None:
     return round((lead.responded_at - lead.created_at).total_seconds() / 3600, 2)
 
 
+def _as_utc(value: datetime) -> datetime:
+    """SQLite (the test DB) drops tzinfo on round-trip while Postgres keeps it,
+    so a naive value here means "already UTC", not "local time"."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _lead_sla_breached(lead: AgentLead) -> bool:
+    """Did this lead blow the promised-reply window?
+
+    For an answered lead the clock stops at `responded_at`; for one still
+    open it runs to now, so a lead flips to breached the moment the window
+    passes rather than only once someone finally replies.
+    """
+    deadline = _as_utc(lead.created_at) + timedelta(hours=settings.agent_lead_escalation_hours)
+    stopped_at = _as_utc(lead.responded_at) if lead.responded_at is not None else datetime.now(UTC)
+    return stopped_at > deadline
+
+
 def _lead_status(lead: AgentLead) -> str:
+    """Collapses the four lifecycle timestamps into one badge label.
+
+    Answering a lead does not erase the fact that it was answered late —
+    the old version returned a flat "responded" here, which made a reply at
+    2 hours and a reply at 100 hours indistinguishable in the dashboard and
+    hid every SLA breach the moment it was cleaned up.
+
+    Escalation and breach are checked separately on purpose: the escalation
+    job only runs on its own interval (`agent_lead_sla_check_hours`), so a
+    lead answered shortly after the deadline can breach without ever having
+    been escalated. Either one is enough to call the response late.
+    """
     if lead.responded_at is not None:
+        if lead.escalated_at is not None or _lead_sla_breached(lead):
+            return "responded_late"
         return "responded"
     if lead.reassurance_sent_at is not None:
         return "reassured"
@@ -79,6 +111,8 @@ def _lead_to_response(lead: AgentLead) -> AgentLeadAdminResponse:
         marked_booked_at=lead.marked_booked_at.isoformat() if lead.marked_booked_at else None,
         status=_lead_status(lead),
         response_time_hours=_lead_response_time_hours(lead),
+        sla_breached=_lead_sla_breached(lead),
+        was_escalated=lead.escalated_at is not None,
     )
 
 

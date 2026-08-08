@@ -351,6 +351,90 @@ async def test_admin_can_mark_lead_responded_idempotently_and_independently_of_b
     assert first_mark.json()["status"] == "responded"
     assert second_mark.json()["responded_at"] == first_mark.json()["responded_at"]
     assert first_mark.json()["marked_booked_at"] is None
+    # Answered in 2 hours, well inside the 24h SLA — the plain "responded"
+    # badge must stay clean, otherwise the late variants below mean nothing.
+    assert first_mark.json()["sla_breached"] is False
+    assert first_mark.json()["was_escalated"] is False
+
+
+async def test_lead_answered_after_escalation_reports_responded_late(
+    client,
+    db_session_maker,
+    user_factory,
+):
+    """A reply does not erase a missed SLA.
+
+    This used to collapse to a flat "responded", making a 2-hour reply and a
+    100-hour reply indistinguishable in the dashboard and hiding every breach
+    the moment someone cleaned it up.
+    """
+    await user_factory(email="admin@example.com", password="Password123!", is_admin=True)
+    created_at = datetime.now(UTC) - timedelta(hours=120)
+    await _create_lead(
+        db_session_maker,
+        destination="Kyoto",
+        created_at=created_at,
+        escalated_at=created_at + timedelta(hours=24),
+        responded_at=created_at + timedelta(hours=100),
+    )
+    await _login(client, "admin@example.com", "Password123!")
+
+    lead_json = (await client.get("/api/admin/leads")).json()[0]
+
+    assert lead_json["status"] == "responded_late"
+    assert lead_json["was_escalated"] is True
+    assert lead_json["sla_breached"] is True
+    assert lead_json["response_time_hours"] == 100.0
+
+
+async def test_lead_answered_past_sla_without_escalation_is_still_late(
+    client,
+    db_session_maker,
+    user_factory,
+):
+    """The escalation job only runs every `agent_lead_sla_check_hours`, so a
+    lead answered shortly after the deadline can breach the SLA without ever
+    having been escalated. The clock alone has to be enough to call it late —
+    keying off `escalated_at` would silently pass these."""
+    await user_factory(email="admin@example.com", password="Password123!", is_admin=True)
+    created_at = datetime.now(UTC) - timedelta(hours=40)
+    await _create_lead(
+        db_session_maker,
+        destination="Porto",
+        created_at=created_at,
+        responded_at=created_at + timedelta(hours=30),
+    )
+    await _login(client, "admin@example.com", "Password123!")
+
+    lead_json = (await client.get("/api/admin/leads")).json()[0]
+
+    assert lead_json["status"] == "responded_late"
+    assert lead_json["was_escalated"] is False
+    assert lead_json["sla_breached"] is True
+
+
+async def test_unanswered_lead_past_deadline_reports_breach_before_anyone_replies(
+    client,
+    db_session_maker,
+    user_factory,
+):
+    """`sla_breached` runs the clock to *now* while a lead is still open, so
+    the breach surfaces as it happens rather than only in hindsight."""
+    await user_factory(email="admin@example.com", password="Password123!", is_admin=True)
+    created_at = datetime.now(UTC) - timedelta(hours=30)
+    await _create_lead(
+        db_session_maker,
+        destination="Oslo",
+        created_at=created_at,
+        escalated_at=created_at + timedelta(hours=24),
+    )
+    await _login(client, "admin@example.com", "Password123!")
+
+    lead_json = (await client.get("/api/admin/leads")).json()[0]
+
+    assert lead_json["status"] == "escalated"
+    assert lead_json["sla_breached"] is True
+    assert lead_json["response_time_hours"] is None
 
 
 async def test_admin_delete_user_prevents_self_delete_and_cascades_refresh_tokens(

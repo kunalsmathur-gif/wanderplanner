@@ -327,8 +327,8 @@ async def _check_agent_lead_sla(*, now: datetime | None = None):
     from db_models import AgentLead
 
     now = now or datetime.now(UTC)
-    escalation_cutoff = now - timedelta(hours=24)
-    reassurance_cutoff = now - timedelta(hours=48)
+    escalation_cutoff = now - timedelta(hours=settings.agent_lead_escalation_hours)
+    reassurance_cutoff = now - timedelta(hours=settings.agent_lead_reassurance_hours)
 
     async with AsyncSessionLocal() as db:
         leads_to_escalate = (

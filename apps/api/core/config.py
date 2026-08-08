@@ -84,6 +84,16 @@ class Settings(BaseSettings):
     # about staleness, not quota.
     visa_info_refresh_days: int = 30
     agent_lead_sla_check_hours: int = 1
+    # The promised-reply SLA itself, and the second-chance reassurance window.
+    # These were previously hardcoded inside core/scheduler.py, but the admin
+    # dashboard needs the same 24h figure to tell a clean response apart from
+    # one that landed after the SLA had already blown — two copies of the
+    # threshold would drift and quietly disagree about what "late" means.
+    # The user-facing email copy in core/email.py still says "24 hours" in
+    # prose; changing these without updating that copy makes us lie to the
+    # traveler.
+    agent_lead_escalation_hours: int = 24
+    agent_lead_reassurance_hours: int = 48
     # Retrieval side: off switch for the wizard's visa note, matching the
     # pattern of itinerary_corpus_retrieval_enabled.
     visa_info_retrieval_enabled: bool = True
