@@ -1279,7 +1279,7 @@
     </div>
     <div data-anim="up" style="display:grid;grid-template-columns:7fr 5fr;gap:3vw;flex:1;align-items:center">
       <div class="frame-img r-16x9 video-slot" data-video-slot="beat1-cold-open" style="position:relative;border:1px dashed rgba(255,255,255,.35)">
-        <video data-slot-video src="videos/beat1-cold-open.mp4" playsinline muted loop style="display:none;width:100%;height:100%;object-fit:cover"></video>
+        <video data-slot-video src="videos/beat1-cold-open.mp4" preload="auto" playsinline muted loop style="display:none;width:100%;height:100%;object-fit:cover"></video>
         <div class="video-slot-empty" style="display:flex;align-items:center;justify-content:center;flex-direction:column;gap:1.4vh;width:100%;height:100%">
           <i data-lucide="play-circle" style="width:4.4vw;height:4.4vw;color:var(--accent-bright)"></i>
           <div class="t-meta" style="color:rgba(255,255,255,.7)">DROP VIDEO HERE</div>
@@ -1359,7 +1359,7 @@
     </div>
     <div data-anim="up" style="display:grid;grid-template-columns:7fr 5fr;gap:3vw;flex:1;align-items:center">
       <div class="frame-img r-16x9 video-slot" data-video-slot="beat3-the-loop" style="position:relative;border:1px dashed var(--border-strong)">
-        <video data-slot-video src="videos/beat3-the-loop.mp4" playsinline muted loop style="display:none;width:100%;height:100%;object-fit:cover"></video>
+        <video data-slot-video src="videos/beat3-the-loop.mp4" preload="auto" playsinline muted loop style="display:none;width:100%;height:100%;object-fit:cover"></video>
         <div class="video-slot-empty" style="display:flex;align-items:center;justify-content:center;flex-direction:column;gap:1.4vh;width:100%;height:100%">
           <i data-lucide="play-circle" style="width:4.4vw;height:4.4vw;color:var(--accent)"></i>
           <div class="t-meta">DROP VIDEO HERE</div>
@@ -1417,7 +1417,7 @@
     <div data-anim="hero" style="margin-top:auto;padding-top:2.2vh;border-top:1px solid rgba(255,255,255,.22);display:grid;grid-template-columns:1fr auto;gap:2.4vw;align-items:center">
       <div style="font-family:var(--sans),var(--sans-zh);font-size:max(15px,1vw);line-height:1.6;color:rgba(255,255,255,.78)">Live, right now: there's no Wizarding World in Goa. She says so instead of inventing it &mdash; a 100% refusal rate on fabricated destinations.</div>
       <div class="frame-img h-22 video-slot" data-video-slot="beat4-honesty-inset" style="width:22vw;position:relative;border:1px dashed rgba(255,255,255,.35)">
-        <video data-slot-video src="videos/beat4-honesty-inset.mp4" playsinline muted loop style="display:none;width:100%;height:100%;object-fit:cover"></video>
+        <video data-slot-video src="videos/beat4-honesty-inset.mp4" preload="auto" playsinline muted loop style="display:none;width:100%;height:100%;object-fit:cover"></video>
         <div class="video-slot-empty" style="display:flex;align-items:center;justify-content:center;flex-direction:column;gap:.8vh;width:100%;height:100%">
           <i data-lucide="play-circle" style="width:2.4vw;height:2.4vw;color:var(--accent-bright)"></i>
           <div class="t-meta" style="color:rgba(255,255,255,.7);font-size:12px">DROP VIDEO HERE</div>
@@ -1451,7 +1451,7 @@
           <li>Response time is a tracked metric on the admin dashboard</li>
         </ul>
         <div class="frame-img h-18 video-slot" data-video-slot="beat5-accountability-inset" style="margin-top:1.4vh;position:relative;border:1px dashed rgba(255,255,255,.35)">
-          <video data-slot-video src="videos/beat5-accountability-inset.mp4" playsinline muted loop style="display:none;width:100%;height:100%;object-fit:cover"></video>
+          <video data-slot-video src="videos/beat5-accountability-inset.mp4" preload="auto" playsinline muted loop style="display:none;width:100%;height:100%;object-fit:cover"></video>
           <div class="video-slot-empty" style="display:flex;align-items:center;justify-content:center;flex-direction:column;gap:.6vh;width:100%;height:100%">
             <i data-lucide="play-circle" style="width:2vw;height:2vw;color:rgba(255,255,255,.6)"></i>
             <div class="t-meta" style="color:rgba(255,255,255,.6);font-size:12px">DROP VIDEO HERE</div>
@@ -1883,11 +1883,29 @@ document.querySelectorAll('.video-slot').forEach(function(slot){
   slot.appendChild(hint);
   if(!video) return;
 
-  video.addEventListener('loadeddata', function(){
+  function reveal(){
+    if(slot.classList.contains('has-video')) return; // already swapped in
     video.style.display = 'block';
     if(empty) empty.style.display = 'none';
     slot.classList.add('has-video');
-  });
+  }
+
+  // Two separate reasons a present, working clip used to stay hidden behind
+  // the "DROP VIDEO HERE" placeholder:
+  //
+  // 1. `loadeddata` needs readyState >= HAVE_CURRENT_DATA (2), but a <video>
+  //    with no `preload` defaults to metadata-only in Chrome — it settles at
+  //    readyState 1 and that event never fires at all. The elements now carry
+  //    preload="auto" (these load off local disk, so buffering is free), and
+  //    `loadedmetadata` is enough on its own to prove the file is there and
+  //    decodable.
+  // 2. This script runs at the end of the document, so a local file can
+  //    finish loading *before* the listener is attached — the event fires
+  //    into nothing. Hence the synchronous readyState check below.
+  video.addEventListener('loadedmetadata', reveal);
+  video.addEventListener('loadeddata', reveal);
+  if(video.readyState >= 1) reveal();
+
   video.addEventListener('error', function(){
     video.style.display = 'none';
     if(empty) empty.style.display = 'flex';
