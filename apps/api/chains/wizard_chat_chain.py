@@ -934,6 +934,56 @@ def _infer_budget_amount_from_free_text(last_user_text: str | None) -> int | Non
     return int(amount) if amount > 0 else None
 
 
+# Same failure shape as purpose/pace/budget above, but for group composition.
+# Bug fix (2026-08-12): this field previously had NO free-text fallback, so
+# when Gemini's JSON response was malformed for the turn that answers the
+# group-composition follow-up (e.g. "4 couples i.e 8 adults, and 4 kids
+# (aged 8,6,3,3)"), the except-branch below fell back to
+# `request.partial_config` -- which still has `adults: 0` because the client
+# only applies a patch AFTER it receives one -- and `_is_stale_chips` then
+# judged `group` as NOT yet filled. That let the previous turn's stale
+# Solo/Couple/Family/Friends chips leak through under the reply that had
+# already moved on to asking about pace (observed in prod: correct pace
+# *text*, but group-type chips underneath it). Deliberately requires an
+# explicit "adults" marker -- a bare number is far more likely to be a day
+# count or an age -- mirroring the budget parser's explicit-currency-marker
+# requirement.
+_GROUP_ADULTS_PATTERN = re.compile(r"(\d+)\s*adults?\b", re.IGNORECASE)
+_GROUP_SENIORS_PATTERN = re.compile(r"(\d+)\s*seniors?\b", re.IGNORECASE)
+_GROUP_KID_AGES_PATTERN = re.compile(
+    r"(?:kids?|children)\s*\(?\s*aged?\s*:?\s*([\d]+(?:\s*,\s*\d+)*)",
+    re.IGNORECASE,
+)
+
+
+def _infer_group_from_free_text(last_user_text: str | None) -> dict[str, Any] | None:
+    """Deterministically extracts a group-composition patch (adults,
+    optionally kids/seniors) from a full sentence stating it in plain words
+    (e.g. "4 couples i.e 8 adults, and 4 kids (aged 8,6,3,3)"). Returns None
+    if no explicit "adults" marker is found -- the LLM remains responsible
+    for anything less literal. Kid ages outside the valid 2-17 range are
+    dropped rather than raising, since this is a best-effort backfill."""
+    if not last_user_text:
+        return None
+    adults_match = _GROUP_ADULTS_PATTERN.search(last_user_text)
+    if not adults_match:
+        return None
+    patch: dict[str, Any] = {"adults": int(adults_match.group(1))}
+
+    seniors_match = _GROUP_SENIORS_PATTERN.search(last_user_text)
+    if seniors_match:
+        patch["seniors"] = int(seniors_match.group(1))
+
+    ages_match = _GROUP_KID_AGES_PATTERN.search(last_user_text)
+    if ages_match:
+        ages = [int(a) for a in re.findall(r"\d+", ages_match.group(1))]
+        kids = [age for age in ages if 2 <= age <= 17]
+        if kids:
+            patch["kids"] = [{"age": age} for age in kids]
+
+    return patch
+
+
 def _is_destination_mode_chip_tap(last_user_text: str | None) -> bool:
     """True when the user's last message was a tap of one of the destination
     MODE chips ("Suggest me!" / "I have a destination in mind") rather than
@@ -1650,6 +1700,14 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                 merged["budget"] = {**(merged.get("budget") or {}), "amount": inferred_amount, "currency": "INR"}
                 patch["budget"] = {**(patch.get("budget") or {}), "amount": inferred_amount, "currency": "INR"}
 
+        # Same backfill, same reason, for group composition — only from an
+        # explicit "adults" marker (see _infer_group_from_free_text).
+        if not (merged.get("group") or {}).get("adults"):
+            inferred_group = _infer_group_from_free_text(last_user_text)
+            if inferred_group:
+                merged["group"] = {**(merged.get("group") or {}), **inferred_group}
+                patch["group"] = {**(patch.get("group") or {}), **inferred_group}
+
         # Server-side override: only allow ready=true if all required fields present
         ready = data.get("ready_to_generate", False) and _has_all_required(merged)
 
@@ -1788,6 +1846,18 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             if inferred_amount:
                 fallback_config["budget"] = {**(fallback_config.get("budget") or {}), "amount": inferred_amount, "currency": "INR"}
                 fallback_patch["budget"] = {**(fallback_patch.get("budget") or {}), "amount": inferred_amount, "currency": "INR"}
+
+        # Same backfill, same reason, for group composition (see
+        # _infer_group_from_free_text) — this is the fix for the observed
+        # prod bug: without it, `fallback_config` here is just
+        # `request.partial_config` (pre-patch), so a malformed-JSON turn that
+        # answers the group-composition question left `adults` at 0 and
+        # `_is_stale_chips` below never recognised the stale group chips.
+        if not (fallback_config.get("group") or {}).get("adults"):
+            inferred_group = _infer_group_from_free_text(last_user_text)
+            if inferred_group:
+                fallback_config["group"] = {**(fallback_config.get("group") or {}), **inferred_group}
+                fallback_patch["group"] = {**(fallback_patch.get("group") or {}), **inferred_group}
 
         # Pattern 1: Chips: ["A", "B"]
         chips_match = _re_fb.search(r'\s*(?:Chips?|Options?|chip\s*options?):\s*(\[[\s\S]*?\])', clean_raw, flags=_re_fb.IGNORECASE)
