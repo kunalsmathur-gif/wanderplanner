@@ -30,28 +30,92 @@ signal.
 ### ▶️ TO RESUME (on the laptop that holds the state file)
 
 ```bash
-cd apps/api && venv/Scripts/python.exe scripts/reingest_multi_area.py
+cd apps/api && PYTHONPATH=. venv/Scripts/python.exe scripts/reingest_multi_area.py
 ```
 
-No flags. **Never `--fresh`** — that deletes the state and restarts all 171.
-Queue as of the prune: **140 done · 31 pending**, roughly 1–2 hours at the
-measured 2–4 min/destination. Re-run until it reports 0 pending.
+**`PYTHONPATH=.` is required** — running the command as originally written here
+throws `ModuleNotFoundError: No module named 'core'` (confirmed 2026-08-13; the
+script's own docstring has the same bug). Plain `python scripts/foo.py` only
+puts the script's own directory on `sys.path`, not `apps/api`.
 
-Pending: Agra, Amsterdam, Baku, Barcelona, Boston, Brussels, Cusco, Darjeeling,
+No flags. **Never `--fresh`** — that deletes the state and restarts all 171.
+[SUPERSEDED 2026-08-13 — see the status block right below: 2 pending, not 31.]
+~~Queue as of the prune: **140 done · 31 pending**, roughly 1–2 hours at the
+measured 2–4 min/destination. Re-run until it reports 0 pending.~~
+
+~~Pending: Agra, Amsterdam, Baku, Barcelona, Boston, Brussels, Cusco, Darjeeling,
 Denver, Florence, Hanoi, Hong Kong, Honolulu, Krakow, Kuala Lumpur, Kyoto,
 Ladakh, Lonavala, Medellin, Mexico City, Munich, Oaxaca, Osaka, Oslo, Phuket,
-Porto, Seattle, Skeleton Test City, Vilnius, Warsaw, Washington DC.
+Porto, Seattle, Skeleton Test City, Vilnius, Warsaw, Washington DC.~~
 
 Expect and ignore: frequent Overpass 504/429 lines (mirror rotation is what
 makes the run work), `degraded_geocode` entries (the guard working — those keep
 their existing POIs and stay pending), and `ingest_failed` on a Qdrant write
-timeout (transient; stays pending). `Skeleton Test City` will fail every run —
-it needs deleting, not ingesting.
+timeout (transient; stays pending).
 
 ⚠️ **The resume state is gitignored and lives only on the laptop that ran it**
 (`apps/api/scripts/out/`, 56KB). Another machine starts from zero — harmless,
 every write path is guarded, but it re-does ~7h of work. Copy the file across
 if the job moves.
+
+### ⏱️ STATUS AFTER THE 2026-08-13 SESSION — READ THIS FIRST, supersedes the queue above
+
+Ran the resume command above to completion in stages (31 → 10 → 4 → 2
+pending). **28 destinations landed a clean `ok`** this session: Agra,
+Amsterdam, Baku, Barcelona, Boston, Brussels, Cusco, Darjeeling, Denver,
+Florence, Hanoi, Honolulu, Krakow, Kuala Lumpur, Kyoto, Ladakh, Lonavala,
+Medellin, Mexico City, Munich, Osaka, Oslo, Porto, Vilnius, Warsaw,
+Washington DC (Seattle came back `kept_existing` — prominence pass returned 0
+elements, guard correctly declined the overwrite and kept its existing 60
+POIs).
+
+🔴 **New failure mode, not in this doc's expected-outcomes list: `mis_centred`.**
+Unlike `degraded_geocode` (blocks the write *before* it happens), this fires
+*after* a real write: `ingest_outcome == INGEST_WRITTEN` succeeded, but the
+resulting centroid drifted past `MAX_CENTROID_DRIFT_KM` (30km — see
+`scripts/reingest_multi_area.py:254`). **Both Oaxaca (91.5km drift) and Hong
+Kong (49.0km drift, moved 43.3km from its prior centroid) hit this, and both
+now have wrong-location OSM data live in production.** Root cause, read
+straight from the run log in both cases: multi-area town sampling picked a
+real settlement in the wrong country/region as a "satellite" —
+`Izúcar de Matamoros` (Puebla state, not Oaxaca) for Oaxaca, `汕尾市`/Shanwei
+(mainland China, ~220km away) for Hong Kong. **This is the same concern
+already flagged above under "Got multi-area, need verifying" for Ho Chi Minh
+City → Vũng Tàu — two live hits now confirm it's a real, repeating bug, not a
+one-off.** Likely site: `_towns_in_bbox` in `services/geocode.py` — needs a
+same-country/region sanity check on discovered towns, not just
+distance/population ranking. **Deliberately did NOT retry Oaxaca or Hong Kong
+after finding this** — both are holding at 1 real attempt of the 3-attempt
+cap; retrying blind risks the same bad satellite pick again and burning down
+toward a false "done" (the exact Amalfi precedent this doc already records).
+**Fix the sampling bug before retrying either.**
+
+✅ **`Skeleton Test City` fixture data deleted from production** — 428
+`osm_pois` + 248 `youtube_comments` + 8 `youtube_narration` points, via a
+direct Qdrant filter-delete on `destination == "Skeleton Test City"`. 🔴 **The
+recreation source this doc asked to find is now found, and is NOT fixed:**
+`tests/unit/test_rag.py::test_fallback_tier2_rag_skeleton_builds_from_osm_pois`
+(line 610) calls `get_qdrant()` — the real client, not mocked — and
+`client.upsert()`s 4 fixture POIs with random `uuid4()` ids and no teardown.
+Every full-suite run against the live cluster (confirmed local `.env` still
+points at the real Qdrant Cloud cluster, not `:memory:`) silently adds 4 more
+points that are never cleaned up — 428 ≈ 107 accumulated runs. Same
+test-isolation shape as the v10.38.3 lesson already in this doc ("a suite that
+is green because a shared cloud DB happens to be empty is not green"), except
+this one doesn't fail green — it pollutes prod. **Deletion alone will not
+stick; fix the test (mock Qdrant, or add teardown) or it comes back a third
+time.**
+
+**Remaining queue: 2 pending, not 31.**
+- **Phuket** — `degraded_geocode` (Overpass hub-lookup throttled), guard
+  correctly declined the write, existing data untouched. Just needs a calmer
+  retry window:
+  ```bash
+  cd apps/api && PYTHONPATH=. venv/Scripts/python.exe scripts/reingest_multi_area.py --only "Phuket"
+  ```
+- **Hong Kong, Oaxaca** — mis-centred, holding at 1/3 attempts. **Do not
+  retry** until the `_towns_in_bbox` region-sanity fix lands (see above), or a
+  retry may just repeat the bad pick and burn an attempt on more wrong data.
 
 🔴 **The run REGRESSED Bali, and the cause is fixed but the lesson stands.**
 Area sampling picked `Marga, Sidemen, Selemadeg Barat` — three small inland
