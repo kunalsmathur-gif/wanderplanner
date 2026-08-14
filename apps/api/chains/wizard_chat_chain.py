@@ -6,6 +6,7 @@ import copy
 import json
 import logging
 import re
+from datetime import UTC, date, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -984,6 +985,98 @@ def _infer_group_from_free_text(last_user_text: str | None) -> dict[str, Any] | 
     return patch
 
 
+# Same failure shape as purpose/pace/budget/group above, but for dates. Unlike
+# those fields, dates have NO canonical chip set at all (see
+# _next_missing_field_prompt: the dates question returns chips=[]), so the
+# specific "stale chip leaks through" symptom can't manifest here -- but the
+# underlying loss is worse: if the LLM's JSON is malformed on the turn the
+# user states their travel window (e.g. "November 13th to 19th"), the answer
+# vanishes entirely (the except-branch falls back to the pre-patch
+# request.partial_config) and the question is silently re-asked, with no
+# record the user already answered it.
+#
+# Deliberately narrow scope: only the single most common, unambiguous shape --
+# an explicit day-range within one stated month (optionally with an explicit
+# year) -- either "<Month> <day> to <day>" or "<day> to <day> <Month>".
+# Bare numeric date ranges (e.g. "13/11 to 19/11") are deliberately NOT
+# handled, since day/month order is locale-ambiguous and a wrong guess here
+# is worse than asking again. "Next month" / "a week" / "fortnight" / season
+# names etc. (see Field 3 in the system prompt) are left to the LLM -- they
+# require calendar math this deterministic parser isn't attempting to
+# duplicate for every phrasing.
+_MONTH_NAMES: dict[str, int] = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+    "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
+    "october": 10, "oct": 10, "november": 11, "nov": 11, "december": 12, "dec": 12,
+}
+_MONTH_NAMES_RE = "|".join(sorted(_MONTH_NAMES, key=len, reverse=True))
+
+_DATE_RANGE_MONTH_FIRST_RE = re.compile(
+    r"\b(?P<month>" + _MONTH_NAMES_RE + r")\.?\s+(?P<day1>\d{1,2})(?:st|nd|rd|th)?"
+    r"\s*(?:to|-|–|—|through|until)\s*(?P<day2>\d{1,2})(?:st|nd|rd|th)?"
+    r"(?:,?\s*(?P<year>\d{4}))?\b",
+    re.IGNORECASE,
+)
+_DATE_RANGE_DAY_FIRST_RE = re.compile(
+    r"\b(?P<day1>\d{1,2})(?:st|nd|rd|th)?"
+    r"\s*(?:to|-|–|—|through|until)\s*(?:the\s*)?(?P<day2>\d{1,2})(?:st|nd|rd|th)?"
+    r"\s+(?:of\s+)?(?P<month>" + _MONTH_NAMES_RE + r")\.?"
+    r"(?:,?\s*(?P<year>\d{4}))?\b",
+    re.IGNORECASE,
+)
+
+
+def _infer_dates_from_free_text(last_user_text: str | None, reference_date: date | None = None) -> dict[str, Any] | None:
+    """Deterministically extracts a fixed {start, end, flexible: false} dates
+    patch from a sentence naming an explicit day-range within one month (see
+    module comment above for exactly what is and isn't handled). Returns None
+    if nothing matches -- the LLM remains responsible for everything else
+    (bare durations, relative periods, season names, cross-month ranges).
+    `reference_date` defaults to today and exists only so tests don't depend
+    on wall-clock time; when no year is stated, the nearest FUTURE occurrence
+    of that month/day is assumed (a trip dated in the past makes no sense)."""
+    if not last_user_text:
+        return None
+    if reference_date is None:
+        reference_date = datetime.now(UTC).date()
+
+    match = _DATE_RANGE_MONTH_FIRST_RE.search(last_user_text) or _DATE_RANGE_DAY_FIRST_RE.search(last_user_text)
+    if not match:
+        return None
+
+    month = _MONTH_NAMES[match.group("month").lower()]
+    try:
+        day1 = int(match.group("day1"))
+        day2 = int(match.group("day2"))
+    except (TypeError, ValueError):
+        return None
+
+    year_str = match.group("year")
+    if year_str:
+        year = int(year_str)
+    else:
+        # No year stated — pick the nearest future occurrence of this
+        # month/day-1 combination (this year, unless that's already past).
+        year = reference_date.year
+        try:
+            candidate = date(year, month, day1)
+        except ValueError:
+            return None
+        if candidate < reference_date:
+            year += 1
+
+    try:
+        start = date(year, month, day1)
+        end = date(year, month, day2)
+    except ValueError:
+        return None
+    if end < start:
+        return None  # e.g. "the 25th to the 3rd" spans a month boundary — not handled here
+
+    return {"start": start.isoformat(), "end": end.isoformat(), "flexible": False}
+
+
 def _is_destination_mode_chip_tap(last_user_text: str | None) -> bool:
     """True when the user's last message was a tap of one of the destination
     MODE chips ("Suggest me!" / "I have a destination in mind") rather than
@@ -1708,6 +1801,16 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                 merged["group"] = {**(merged.get("group") or {}), **inferred_group}
                 patch["group"] = {**(patch.get("group") or {}), **inferred_group}
 
+        # Same backfill, same reason, for dates — only from an explicit
+        # day-range-within-one-month sentence (see _infer_dates_from_free_text
+        # for exactly what's handled and why the scope is narrow).
+        existing_dates = merged.get("dates") or {}
+        if not (existing_dates.get("start") and existing_dates.get("end")):
+            inferred_dates = _infer_dates_from_free_text(last_user_text)
+            if inferred_dates:
+                merged["dates"] = {**existing_dates, **inferred_dates}
+                patch["dates"] = {**(patch.get("dates") or {}), **inferred_dates}
+
         # Server-side override: only allow ready=true if all required fields present
         ready = data.get("ready_to_generate", False) and _has_all_required(merged)
 
@@ -1858,6 +1961,14 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             if inferred_group:
                 fallback_config["group"] = {**(fallback_config.get("group") or {}), **inferred_group}
                 fallback_patch["group"] = {**(fallback_patch.get("group") or {}), **inferred_group}
+
+        # Same backfill, same reason, for dates (see _infer_dates_from_free_text).
+        existing_fallback_dates = fallback_config.get("dates") or {}
+        if not (existing_fallback_dates.get("start") and existing_fallback_dates.get("end")):
+            inferred_dates = _infer_dates_from_free_text(last_user_text)
+            if inferred_dates:
+                fallback_config["dates"] = {**existing_fallback_dates, **inferred_dates}
+                fallback_patch["dates"] = {**(fallback_patch.get("dates") or {}), **inferred_dates}
 
         # Pattern 1: Chips: ["A", "B"]
         chips_match = _re_fb.search(r'\s*(?:Chips?|Options?|chip\s*options?):\s*(\[[\s\S]*?\])', clean_raw, flags=_re_fb.IGNORECASE)
