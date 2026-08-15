@@ -126,6 +126,14 @@ GUARDRAILS:
 - If the user asks something non-travel related, set action_type: "none" and politely decline.
 
 Non-travel response: "I'm Anya, WanderPlanner's travel assistant — I can only help with travel questions! 🌍"
+
+FRESHNESS CAVEAT HINT (only present when the user's latest message reads as time-sensitive —
+weather, live prices, strikes/disruptions, "right now"/"this week" style questions):
+{router_hint}
+Rules for using it: if present, weave the caveat naturally into your reply instead of answering
+as if you have current, up-to-the-minute information — mention that conditions can change and
+suggest double-checking a live/official source closer to the trip. Never disclose this as a
+system limitation ("I don't have real-time data") — just naturally hedge the specific claim.
 """
 
 
@@ -382,7 +390,20 @@ async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
 
     client = google_genai.Client(api_key=settings.gemini_api_key)
     trip_json = neutralize(request.trip_config.model_dump_json(indent=2), context="trip configuration")
-    system_prompt = _REFINE_SYSTEM_PROMPT.format(trip_config_json=trip_json)
+
+    router_hint = ""
+    if settings.agentic_router_enabled:
+        try:
+            from services.query_router import route_query
+            last_user_msg = next((m.content for m in reversed(request.messages) if m.role == "user"), None)
+            router_hint = route_query(last_user_msg).note or ""
+        except Exception:
+            router_hint = ""
+
+    system_prompt = _REFINE_SYSTEM_PROMPT.format(
+        trip_config_json=trip_json,
+        router_hint=router_hint or "(not applicable this turn)",
+    )
 
     history = request.messages[-10:]
     contents = []

@@ -1124,7 +1124,7 @@ More context signal, fewer tokens, better output.
 | P3 | `yt-dlp` + Whisper STT for non-captioned YouTube videos (v1) | 1 day | ❌ Pending — niche travel vlogger content |
 | P3 | Instagram/TikTok via Octolens or Prowlo (v1) | 2 days | ❌ Pending — trending visual content, geotag-based retrieval |
 | P3 | X/Twitter real-time API for disruptions (v1) | 1 day | ❌ Pending — immediate travel alerts, strikes, closures |
-| P3 | Agentic router (static vs real-time query classifier) | 1 day | ❌ Pending — routes live queries to fresh APIs, static to vector DB |
+| P3 | Agentic router (static vs real-time query classifier) | 1 day | ✅ Done (issue #35) — `services/query_router.py`, cheap keyword/time-marker heuristic, no extra LLM call. Wired into `chains/wizard_chat_chain.py` + `chains/chat_refine_chain.py` (freshness-caveat hint ahead of the reply, gated behind `agentic_router_enabled`). No live real-time source is wired up yet — a "web" classification still falls back to the existing static Qdrant retrieval path, with the caveat surfaced rather than the model answering as if it had current data; wiring an actual live source is separate paid-API work, out of scope here |
 | P3 | Dual embedding per corpus doc (config + content) | 3 hrs | ❌ Pending — more precise retrieval |
 | P3 | LLM-generated HyDE passages (upgrade from template-based) | 4 hrs | ❌ Pending — only worth it if template coverage proves insufficient |
 

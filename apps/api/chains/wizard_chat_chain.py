@@ -647,6 +647,13 @@ Rules for using it:
     point them at the official source. Do not answer from your own knowledge — a wrong visa answer
     costs the user a trip.
 
+## FRESHNESS CAVEAT HINT (only present when the user's latest message reads as time-sensitive)
+{router_hint}
+Rules for using it: if present, weave the caveat naturally into your reply (e.g. mention that
+conditions can change and to double-check a live/official source closer to the trip) instead of
+answering as if you have current, up-to-the-minute information. Never say this out loud as a
+system disclosure like "I don't have real-time data" — just naturally hedge the specific claim.
+
 ## PRELOADED DESTINATION
 {preloaded_destination}
 """
@@ -689,6 +696,20 @@ async def _visa_hint_for(partial_config: dict[str, Any], last_user_text: str | N
 
     from services.visa import retrieve_visa_note
     return await retrieve_visa_note(country, last_user_text or "")
+
+
+def _router_hint_for(last_user_text: str | None) -> str:
+    """Freshness-caveat hint for the wizard prompt (issue #35 agentic
+    router), or "" for "say nothing". Pure heuristic — no I/O, no LLM call,
+    safe to run on every turn. Gated behind `agentic_router_enabled` so it
+    can be turned off independently of the retrieval-path work it's a
+    precursor to."""
+    if not settings.agentic_router_enabled:
+        return ""
+    from services.query_router import route_query
+    route = route_query(last_user_text)
+    return route.note or ""
+
 # ── Required field check ──────────────────────────────────────────────────────
 
 _REQUIRED_KEYS = {
@@ -1552,12 +1573,18 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # computed must not cost the user their turn.
         visa_hint = ""
 
+    try:
+        router_hint = _router_hint_for(last_user_text)
+    except Exception:
+        router_hint = ""
+
     system_prompt = WIZARD_SYSTEM_PROMPT.format(
         preloaded_destination=request.preloaded_destination or "None",
         collected_state=_summarise_state(request.partial_config),
         budget_estimate_hint=budget_hint or "(not applicable this turn)",
         currency_conversion_hint=currency_hint or "(not applicable this turn — user has not stated a foreign-currency amount)",
         visa_hint=visa_hint or "(none on file)",
+        router_hint=router_hint or "(not applicable this turn)",
     )
 
     # Last 20 messages as conversation history

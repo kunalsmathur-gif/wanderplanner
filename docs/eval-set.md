@@ -377,12 +377,12 @@ Covers: 3-tier fallback when the LLM fails: cache lookup → RAG skeleton → en
 
 ---
 
-### 4Q — Agentic Router (`§12`) ❌ NOT YET IMPLEMENTED
+### 4Q — Agentic Router (`§12`) ✅ DONE (classifier only — no live web source wired yet)
 
 | ID | Query type | Expected routing | Pass criteria | Priority | Status |
 |---|---|---|---|---|---|
-| RAG-080 | Static: `"best restaurants in Rome"` | Qdrant only; no live web call | `router.route(q).source == "qdrant"` | P1 | ❌ Pending |
-| RAG-081 | Dynamic: `"flight prices to Tokyo this week"` | Live web search | `router.route(q).source == "web"` | P2 | ❌ Pending |
+| RAG-080 | Static: `"best restaurants in Rome"` | Qdrant only; no live web call | `route_query(q).source == "qdrant"` | P1 | ✅ Done — `services/query_router.py` |
+| RAG-081 | Dynamic: `"flight prices to Tokyo this week"` | Classified for live web search | `route_query(q).source == "web"` | P2 | ✅ Done — classification only; no live web search source is wired up yet (separate paid-API work), so this still falls back to Qdrant retrieval with a freshness caveat surfaced to the user instead of failing |
 
 ---
 

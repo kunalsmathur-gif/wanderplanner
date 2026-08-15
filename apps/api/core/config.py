@@ -183,6 +183,13 @@ class Settings(BaseSettings):
     # losing the stored data.
     generated_itineraries_store_enabled: bool = True
     generated_itineraries_retrieval_enabled: bool = True
+    # Agentic router (issue #35, docs/rag-strategy.md §12): cheap heuristic
+    # classifier that flags time-sensitive queries (weather, live prices,
+    # strikes/disruptions) so the chat/wizard chains can caveat freshness
+    # instead of answering as if a static corpus snapshot were current. No
+    # live source is wired up yet, so this only ever adds a caveat — never
+    # blocks or changes the retrieval path itself.
+    agentic_router_enabled: bool = True
     itinerary_cache_score_threshold: float = 0.88
 
     # OSM POI ingestion (docs §3I)
