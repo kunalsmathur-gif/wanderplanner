@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     # Storing it per-city would mean 170 near-duplicate copies of one country's
     # rules, all drifting apart as they refresh at different times.
     qdrant_collection_visa_info: str = "visa_info"
+    # Learning flywheel (docs/rag-strategy.md roadmap P1, issue #32): every
+    # successful live-generated itinerary is stored here, mirroring
+    # itinerary_corpus's schema/dual-embedding strategy, so real generated
+    # output becomes retrievable few-shot grounding for future generations.
+    qdrant_collection_generated_itineraries: str = "generated_itineraries"
     # Visa rules are low-churn, so a monthly refresh is plenty; and unlike the
     # metered YouTube sources this is a free Wikimedia API, so the cadence is
     # about staleness, not quota.
@@ -171,6 +176,13 @@ class Settings(BaseSettings):
                                           # generation via retrieve_context(enable_reranking=True)
     itinerary_corpus_retrieval_enabled: bool = True  # few-shot grounding from real
                                           # traveller itineraries (docs §9 retrieval)
+    # Learning-flywheel off switches (issue #32), independent so either side
+    # can be disabled without touching the other: writing can be turned off
+    # to pause growing the collection, retrieval separately in case a bad
+    # generation run needs to be excluded from grounding future ones without
+    # losing the stored data.
+    generated_itineraries_store_enabled: bool = True
+    generated_itineraries_retrieval_enabled: bool = True
     itinerary_cache_score_threshold: float = 0.88
 
     # OSM POI ingestion (docs §3I)

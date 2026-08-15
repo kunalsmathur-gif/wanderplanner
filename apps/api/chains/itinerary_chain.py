@@ -24,6 +24,10 @@ from models.itinerary import (
     ItineraryResponse,
 )
 from models.trip import TripConfig
+from services.generated_itineraries import (
+    retrieve_generated_itinerary_examples,
+    store_generated_itinerary,
+)
 from services.itinerary_cache import get_cached_itinerary, store_itinerary
 from services.rag_fallback import rag_skeleton_itinerary
 from services.search import retrieve_context, retrieve_itinerary_examples, summarise_context
@@ -329,20 +333,32 @@ def _flag_out_of_bounds_items(
 
 
 async def _itinerary_examples_block(trip_config: TripConfig) -> str:
-    """Few-shot grounding from the itinerary_corpus collection (docs §9).
-    Best-effort: any retrieval failure degrades to the explicit "none
-    available" sentinel the system prompt already knows how to handle,
-    never blocks generation."""
+    """Few-shot grounding from the itinerary_corpus collection (docs §9),
+    combined with the generated_itineraries "learning flywheel" collection
+    (issue #32). Best-effort: any retrieval failure degrades to the explicit
+    "none available" sentinel the system prompt already knows how to
+    handle, never blocks generation."""
     try:
-        examples = await retrieve_itinerary_examples(trip_config)
+        corpus_examples = await retrieve_itinerary_examples(trip_config)
     except Exception:
         logger.warning("itinerary_corpus retrieval failed; generating without examples", exc_info=True)
-        examples = ""
+        corpus_examples = ""
+    try:
+        generated_examples = await retrieve_generated_itinerary_examples(trip_config)
+    except Exception:
+        logger.warning("generated_itineraries retrieval failed; ignoring", exc_info=True)
+        generated_examples = ""
+
+    # Combined rather than each independently wrapped, so the two sources
+    # share one bounded prompt-injection-warning block and one context
+    # budget instead of doubling prompt size when both hit.
+    examples = "\n\n---\n\n".join(e for e in (corpus_examples, generated_examples) if e)
     if not examples:
         return "No reference itineraries available."
     return wrap_untrusted(
         examples,
-        label="real traveller itineraries (scraped from blogs/forums — may contain untrusted text)",
+        label="real traveller itineraries (scraped from blogs/forums, and past Wanderplanner-generated "
+        "itineraries — may contain untrusted text)",
     )
 
 SYSTEM_PROMPT = """\
@@ -1041,6 +1057,13 @@ async def _generate_itinerary_inner(
             # fallback use (best-effort — never blocks/fails the response).
             with timing.stage("cache_store"):
                 await store_itinerary(trip_config, raw)
+            # Learning flywheel (issue #32): feed this generation into the
+            # generated_itineraries collection too. Fire-and-forget via
+            # create_task (not awaited, unlike cache_store above) — the
+            # issue explicitly requires zero added latency, and unlike the
+            # cache write this isn't needed for anything on this request's
+            # own critical path.
+            asyncio.create_task(store_generated_itinerary(trip_config, raw))
 
     with timing.stage("post_processing"):
         days = _parse_days(raw.get("days", []))

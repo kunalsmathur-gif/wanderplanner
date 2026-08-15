@@ -40,6 +40,9 @@ _DESTINATION_INDEXED_COLLECTIONS = (
     # cached itinerary when duration/pace/purpose happen to match (observed
     # in prod: a Bali request served a cached Liverpool itinerary).
     "qdrant_collection_itinerary_cache",
+    # generated_itineraries (issue #32) is filtered by destination the same
+    # way itinerary_corpus is, for the same reason.
+    "qdrant_collection_generated_itineraries",
 )
 
 
@@ -85,6 +88,19 @@ def _ensure_collections(client: QdrantClient):
     if settings.qdrant_collection_itinerary_corpus not in existing:
         client.create_collection(
             collection_name=settings.qdrant_collection_itinerary_corpus,
+            vectors_config={
+                "config": VectorParams(size=384, distance=Distance.COSINE),
+                "content": VectorParams(size=384, distance=Distance.COSINE),
+            },
+        )
+
+    # generated_itineraries (issue #32 — "learning flywheel") mirrors
+    # itinerary_corpus's dual-named-vector schema exactly: every successful
+    # live-generated itinerary becomes retrievable few-shot grounding for
+    # future generations, the same way scraped traveller itineraries are.
+    if settings.qdrant_collection_generated_itineraries not in existing:
+        client.create_collection(
+            collection_name=settings.qdrant_collection_generated_itineraries,
             vectors_config={
                 "config": VectorParams(size=384, distance=Distance.COSINE),
                 "content": VectorParams(size=384, distance=Distance.COSINE),
