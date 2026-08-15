@@ -1,11 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { AlertTriangle, Loader2 } from 'lucide-react'
+import { AlertTriangle, Loader2, MapPin } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { deleteMyAccount, authErrorMessage } from '@/lib/authApi'
+import { getLastItinerary, type LastItineraryResult } from '@/lib/api'
+import { loadLastItinerary } from '@/lib/resumeLastItinerary'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 
 export default function AccountPage() {
@@ -19,6 +21,24 @@ export default function AccountPage() {
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showConfirm, setShowConfirm] = useState(false)
+
+  // "Continue your last trip" (issue #65) — only ever shown to a signed-in
+  // user with a saved itinerary, never a guest. `undefined` = still
+  // checking, `null` = confirmed none (or the check failed) — kept
+  // distinct so the card doesn't flash empty before the request resolves.
+  const [lastItinerary, setLastItinerary] = useState<LastItineraryResult | null | undefined>(undefined)
+  const [resuming, setResuming] = useState(false)
+
+  useEffect(() => {
+    if (status !== 'authenticated') return
+    let cancelled = false
+    getLastItinerary().then((result) => {
+      if (!cancelled) setLastItinerary(result)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [status])
 
   if (status === 'loading' || status === 'idle') {
     return (
@@ -37,6 +57,30 @@ export default function AccountPage() {
         </Link>
       </div>
     )
+  }
+
+  async function handleResumeLastTrip() {
+    setResuming(true)
+    const resumed = await loadLastItinerary()
+    if (resumed) {
+      router.push('/itinerary')
+    } else {
+      // The saved trip vanished between the check above and the click
+      // (expired, or cleared) — quietly drop the card rather than navigate
+      // to an itinerary page with nothing to show.
+      setLastItinerary(null)
+      setResuming(false)
+    }
+  }
+
+  function formatDateRange(dates: LastItineraryResult['trip_config']['dates']): string {
+    if (!dates?.start || !dates?.end) return ''
+    const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' }
+    try {
+      return `${new Date(dates.start).toLocaleDateString('en-IN', opts)} – ${new Date(dates.end).toLocaleDateString('en-IN', opts)}`
+    } catch {
+      return ''
+    }
   }
 
   async function handleDelete() {
@@ -68,6 +112,32 @@ export default function AccountPage() {
             <p className="font-medium text-[var(--_fg)]">{user.display_name || user.email}</p>
             {user.email && <p className="text-[var(--_muted-fg)]">{user.email}</p>}
           </div>
+
+          {lastItinerary && (
+            <div className="mt-8 rounded-xl border border-[var(--_border)] bg-[var(--_bg)] p-5">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--_primary)]/10">
+                  <MapPin size={16} className="text-[var(--_primary)]" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-base font-semibold text-[var(--_fg)]">Continue your last trip</h2>
+                  <p className="mt-1 text-sm text-[var(--_muted-fg)]">
+                    {lastItinerary.trip_config.destination?.city || lastItinerary.trip_config.destination_country}
+                    {formatDateRange(lastItinerary.trip_config.dates) && ` · ${formatDateRange(lastItinerary.trip_config.dates)}`}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleResumeLastTrip}
+                    disabled={resuming}
+                    className="btn btn-accent mt-3 rounded-xl px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {resuming && <Loader2 size={14} className="mr-1.5 inline animate-spin" />}
+                    {resuming ? 'Loading…' : 'Continue trip'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="mt-8 border-t border-[var(--_border)] pt-6">
             <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--_fg)]">

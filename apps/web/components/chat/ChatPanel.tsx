@@ -7,8 +7,10 @@ import { useChatStore } from '@/store/chatStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useAppStore } from '@/store/appStore'
+import { useAuthStore } from '@/store/authStore'
 import { chatRefine, streamItinerary, checkFeasibility } from '@/lib/api'
 import { savePendingGeneration } from '@/lib/pendingGeneration'
+import { loadLastItinerary } from '@/lib/resumeLastItinerary'
 import { diffItineraries, isEmptyDiff } from '@/lib/itineraryDiff'
 import { formatFeasibilityBreakdown, suggestedFeasibleBudget, formatFeasibilityBreakdownDetailed } from '@/lib/feasibilityFormat'
 import { MAX_CHAT_MESSAGE_LEN } from '@/lib/limits'
@@ -18,6 +20,14 @@ import type { ChatRefineResponse, TripConfig, FeasibilityResponse } from '@/type
 
 const WELCOME =
   "Hi! I'm Anya ✈️\n\nAsk me anything about your trip, or tell me to change your destination, dates, budget, or preferences and I'll update your plan!"
+
+// Natural-language "resume my last trip" intent (issue #65) — deliberately a
+// simple keyword match rather than routing through chatRefine's LLM intent
+// classifier: this only ever needs to catch "show/continue/resume ... last/
+// previous trip/itinerary/plan", and a cheap client-side check means it
+// never depends on (or waits on) a network round trip that could otherwise
+// misclassify it as a regular refine request.
+const RESUME_LAST_ITINERARY_INTENT = /\b(show|continue|resume|pull up|bring back|get)\b.{0,20}\b(my )?(last|previous|recent)\b.{0,20}\b(trip|itinerary|plan)\b/i
 
 export function ChatPanel() {
   const router = useRouter()
@@ -164,6 +174,27 @@ export function ChatPanel() {
 
     setInput('')
     addMessage({ role: 'user', content: text })
+
+    // "Show me my last itinerary" / "continue my trip" (issue #65) —
+    // authenticated users only, checked here (not left to the backend
+    // 401) so a guest never even sees the attempt disclosed in the chat.
+    if (RESUME_LAST_ITINERARY_INTENT.test(text) && useAuthStore.getState().status === 'authenticated') {
+      addMessage({ role: 'assistant', content: '…' })
+      setStatus('sending')
+      const resumed = await loadLastItinerary()
+      if (resumed) {
+        useChatStore.getState().updateLastAssistant(
+          `Found it — here's your ${resumed.destination} trip, loaded back in for you to keep editing.`,
+        )
+      } else {
+        useChatStore.getState().updateLastAssistant(
+          "I don't have a saved trip to bring back yet — generate one and I'll remember it for next time.",
+        )
+      }
+      setStatus('idle')
+      return
+    }
+
     addMessage({ role: 'assistant', content: '…' })
     setStatus('sending')
 

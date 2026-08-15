@@ -131,6 +131,16 @@ class GenerateItineraryRequest(BaseModel):
     trip_config: TripConfig
 
 
+class LastItineraryResponse(BaseModel):
+    """`GET /me/last-itinerary` response — the trip config paired with the
+    itinerary it produced, so the client can load both straight into the
+    existing wizard/edit flow (tripConfigStore + itineraryStore) with no
+    separate lookup."""
+    trip_config: TripConfig
+    itinerary: ItineraryResponse
+    updated_at: str
+
+
 class DayPhotosRequest(BaseModel):
     """Hero photos for the PDF export, fetched on demand.
 

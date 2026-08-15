@@ -2,7 +2,7 @@ import asyncio
 import json
 from collections.abc import AsyncGenerator
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,9 +15,16 @@ from core.llm_usage import reset_usage
 from core.rate_limit import DEFAULT_RATE_LIMIT, LLM_RATE_LIMIT, limiter
 from db import get_db
 from db_models import User
-from models.itinerary import DayPhoto, DayPhotosRequest, GenerateItineraryRequest
+from models.itinerary import (
+    DayPhoto,
+    DayPhotosRequest,
+    GenerateItineraryRequest,
+    ItineraryResponse,
+    LastItineraryResponse,
+)
 from models.trip import TripConfig
 from services.pexels import get_day_photos
+from services.user_last_itinerary import get_user_last_itinerary, store_user_last_itinerary
 
 router = APIRouter()
 
@@ -99,6 +106,14 @@ async def _stream_generation(trip_config: TripConfig, db: AsyncSession, user: Us
             result = await task
             yield await send("status", {"message": "Finalising your schedule...", "step": total_steps, "total_steps": total_steps})
             yield await send("data", result.model_dump())
+            # Resume-last-itinerary (issue #65): best-effort, fire-and-forget
+            # upsert of this user's most recent successfully generated
+            # itinerary — never awaited inline, mirroring
+            # store_generated_itinerary's create_task usage in
+            # chains/itinerary_chain.py, so a write failure or slow DB round
+            # trip can never add latency to (or affect) the response already
+            # streamed above.
+            asyncio.create_task(store_user_last_itinerary(user.id, trip_config, result))
             await log_event(
                 db,
                 "itinerary_generated",
@@ -202,3 +217,22 @@ async def day_photos_endpoint(
     """
     photos = await get_day_photos(list(body.queries))
     return [DayPhoto(**photo) if photo else DayPhoto() for photo in photos]
+
+
+@router.get("/me/last-itinerary", response_model=LastItineraryResponse)
+async def get_last_itinerary_endpoint(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> LastItineraryResponse:
+    """The Account page's "continue your last trip" card and Anya's
+    "show me my last itinerary" chat intent both call this — auth-gated the
+    same way generation itself is, so a guest sees no trace of the feature.
+    """
+    row = await get_user_last_itinerary(db, user.id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="No saved itinerary yet")
+    return LastItineraryResponse(
+        trip_config=TripConfig.model_validate(row.trip_config_json),
+        itinerary=ItineraryResponse.model_validate(row.itinerary_json),
+        updated_at=row.updated_at.isoformat(),
+    )

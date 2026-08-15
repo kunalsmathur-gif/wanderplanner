@@ -221,6 +221,28 @@ export async function updateItineraryFeedback(
   return data as ItineraryFeedbackResult
 }
 
+// ── Resume last itinerary (issue #65) ────────────────────────────────────
+export interface LastItineraryResult {
+  trip_config: TripConfig
+  itinerary: ItineraryResponse
+  updated_at: string
+}
+
+/** The signed-in user's most recently generated itinerary, for the Account
+ * page's "continue your last trip" card and Anya's "show me my last
+ * itinerary" chat intent. Returns null both when there is none yet (404)
+ * and on any other failure (network, session expired) — every caller here
+ * treats "nothing to resume" and "couldn't check" the same way, same as
+ * `authApi.ts`'s null-on-failure convention. */
+export async function getLastItinerary(): Promise<LastItineraryResult | null> {
+  try {
+    const { data } = await api.get('/api/me/last-itinerary')
+    return data as LastItineraryResult
+  } catch {
+    return null
+  }
+}
+
 // ── Itinerary (streaming SSE) ─────────────────────────────────────────────
 export function streamItinerary(
   tripConfig: TripConfig,
