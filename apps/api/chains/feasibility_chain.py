@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import time
 
 from core.budget_estimator import estimate_bare_minimum_budget
 from core.budget_tiers import budget_tier_prompt_hint
@@ -13,6 +15,51 @@ from core.prompt_guard import neutralize
 from models.feasibility import AlternativeDestination, CostBreakdown, FeasibilityResponse
 from models.trip import TripConfig
 from services.visa import entry_cost_grounding
+
+# In-process cache for the LLM cost estimate, keyed on everything the prompt
+# actually varies with (trip_summary + tier/grounding hints), which already
+# deliberately excludes budget_inr (see the comment below). Without this, a
+# user who taps "Set budget to ₹X" gets a brand-new independent Gemini call
+# for an otherwise-unchanged trip — and since the model is sampled (not
+# perfectly deterministic even at low temperature) and is separately told to
+# "lean slightly higher", repeated checks can each land a bit higher than the
+# last with nothing in the trip actually changing, looking exactly like the
+# budget-anchoring loop this reproduces the symptom of (see 2f347ee) even
+# though budget_inr itself is never shown to the model. Caching the raw LLM
+# JSON per unique (trip-minus-budget) signature guarantees the SAME estimate
+# on every retry until something about the trip genuinely changes, which is
+# what "no new additions done in itinerary" should mean to the user.
+_ESTIMATE_CACHE: dict[str, tuple[dict, float]] = {}
+_ESTIMATE_CACHE_TTL_SECONDS = 60 * 30  # 30 minutes — long enough to cover a
+# multi-turn budget-adjustment back-and-forth in one sitting, short enough
+# that stale/live grounding data doesn't linger indefinitely.
+
+
+def _estimate_cache_key(trip_summary: dict, budget_tier_hint: str, cost_grounding_hint: str) -> str:
+    """Stable signature for everything the Gemini prompt varies with, other
+    than budget_inr (which the prompt never sees at all — see below)."""
+    payload = json.dumps(
+        {"trip_summary": trip_summary, "budget_tier_hint": budget_tier_hint, "cost_grounding_hint": cost_grounding_hint},
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _cached_estimate(key: str) -> dict | None:
+    entry = _ESTIMATE_CACHE.get(key)
+    if entry is None:
+        return None
+    data, cached_at = entry
+    if time.monotonic() - cached_at > _ESTIMATE_CACHE_TTL_SECONDS:
+        del _ESTIMATE_CACHE[key]
+        return None
+    return data
+
+
+def _store_estimate(key: str, data: dict) -> None:
+    _ESTIMATE_CACHE[key] = (data, time.monotonic())
+
 
 FEASIBILITY_PROMPT = """\
 You are a travel cost expert. Estimate the realistic total cost (in Indian Rupees) for the
@@ -229,36 +276,43 @@ async def check_feasibility(
         h for h in (flight_hint, accommodation_hint, entry_hint) if h
     )
 
-    client = google_genai.Client(api_key=settings.gemini_api_key)
-    prompt = FEASIBILITY_PROMPT.format(
-        trip_config=neutralize(json.dumps(trip_summary, indent=2), context="trip summary"),
-        budget_tier_hint=neutralize(budget_tier_hint, context="budget tier guidance"),
-        cost_grounding_hint=neutralize(cost_grounding_hint, context="free-tools cost grounding") if cost_grounding_hint else "No community-reported price data available — rely on general market-rate knowledge.",
-    )
-
-    def _call_sync():
-        return client.models.generate_content(
-            model=settings.gemini_model,
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(
-                temperature=0.2,
-                response_mime_type="application/json",
-            ),
+    cache_key = _estimate_cache_key(trip_summary, budget_tier_hint, cost_grounding_hint)
+    cached = _cached_estimate(cache_key)
+    if cached is not None:
+        data, entry_grounded = cached["data"], cached["entry_grounded"]
+    else:
+        client = google_genai.Client(api_key=settings.gemini_api_key)
+        prompt = FEASIBILITY_PROMPT.format(
+            trip_config=neutralize(json.dumps(trip_summary, indent=2), context="trip summary"),
+            budget_tier_hint=neutralize(budget_tier_hint, context="budget tier guidance"),
+            cost_grounding_hint=neutralize(cost_grounding_hint, context="free-tools cost grounding") if cost_grounding_hint else "No community-reported price data available — rely on general market-rate knowledge.",
         )
 
-    loop = asyncio.get_event_loop()
-    response = await loop.run_in_executor(None, _call_sync)
-    track_gemini_usage(response, model=settings.gemini_model, purpose="feasibility_check")
-    text = response.text
+        def _call_sync():
+            return client.models.generate_content(
+                model=settings.gemini_model,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    temperature=0.2,
+                    response_mime_type="application/json",
+                ),
+            )
 
-    # Parse response
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = "\n".join(cleaned.split("\n")[1:])
-    if cleaned.endswith("```"):
-        cleaned = "\n".join(cleaned.split("\n")[:-1])
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(None, _call_sync)
+        track_gemini_usage(response, model=settings.gemini_model, purpose="feasibility_check")
+        text = response.text
 
-    data = json.loads(cleaned)
+        # Parse response
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = "\n".join(cleaned.split("\n")[1:])
+        if cleaned.endswith("```"):
+            cleaned = "\n".join(cleaned.split("\n")[:-1])
+
+        data = json.loads(cleaned)
+        _store_estimate(cache_key, {"data": data, "entry_grounded": entry_grounded})
+
     bare_minimum = await _safe_bare_minimum(trip_config)
     return _build_response(
         data,
@@ -328,6 +382,23 @@ def _build_response(
     if bare_minimum_inr is not None and bare_minimum_inr > total:
         total = bare_minimum_inr
         floor_used = True
+        # Swap the displayed line items to the floor's own breakdown too —
+        # previously only `total` switched to the floor while flights_inr/
+        # accommodation_inr/daily_expenses_inr kept showing the LLM's
+        # (lower, now-superseded) guess, so the per-category numbers never
+        # summed to the total shown next to them. That mismatch was also
+        # the visible face of the flights figure jumping between otherwise
+        # identical retries: the LLM's own flights_inr is resampled fresh
+        # every call and isn't what the floor path's "why is the number
+        # higher" verdict was actually driven by.
+        floor_breakdown = bare_minimum["breakdown"]
+        if prebooked_flights is None:
+            llm_flights = int(floor_breakdown.get("flights_inr", llm_flights))
+        if prebooked_accommodation is None:
+            llm_accommodation = int(floor_breakdown.get("stay_inr", llm_accommodation))
+        floor_food = int(floor_breakdown.get("food_inr", data.get("daily_expenses_inr", 0)))
+    else:
+        floor_food = None
 
     feasible = total <= budget_inr
 
@@ -343,7 +414,7 @@ def _build_response(
         # guessing.
         visa_inr=int(data.get("visa_inr", 0)) if entry_grounded else None,
         accommodation_inr=llm_accommodation,
-        daily_expenses_inr=int(data.get("daily_expenses_inr", 0)),
+        daily_expenses_inr=floor_food if floor_used else int(data.get("daily_expenses_inr", 0)),
         total_estimated_inr=total,
     )
 
