@@ -97,6 +97,8 @@ export default function AccountPage() {
     }
   }
 
+  const initial = (user.display_name || user.email || '?').trim().charAt(0).toUpperCase()
+
   return (
     <div className="min-h-screen bg-[var(--_bg)] px-4 py-12">
       <div className="mx-auto max-w-2xl">
@@ -113,102 +115,114 @@ export default function AccountPage() {
           </Link>
         </div>
 
-        <div className="rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-8 shadow-sm">
-          <h1 className="text-2xl font-bold text-[var(--_fg)] [font-family:var(--font-display)]">Account settings</h1>
+        <h1 className="text-2xl font-bold text-[var(--_fg)] [font-family:var(--font-display)]">Account</h1>
 
-          <div className="mt-6 space-y-1 text-sm">
-            <p className="text-[var(--_muted-fg)]">Signed in as</p>
-            <p className="font-medium text-[var(--_fg)]">{user.display_name || user.email}</p>
-            {user.email && <p className="text-[var(--_muted-fg)]">{user.email}</p>}
+        {/* Identity — who you're signed in as. Kept as its own compact card
+            so it reads as a summary, not the start of a long settings form. */}
+        <div className="mt-6 flex items-center gap-4 rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-6 shadow-sm">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--_primary)]/10 text-base font-semibold text-[var(--_primary)]">
+            {initial}
           </div>
+          <div className="min-w-0">
+            <p className="truncate font-semibold text-[var(--_fg)]">{user.display_name || user.email}</p>
+            {user.email && <p className="truncate text-sm text-[var(--_muted-fg)]">{user.email}</p>}
+          </div>
+        </div>
 
-          {lastItinerary && (
-            <div className="mt-8 rounded-xl border border-[var(--_border)] bg-[var(--_bg)] p-5">
-              <div className="flex items-start gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--_primary)]/10">
-                  <MapPin size={16} className="text-[var(--_primary)]" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-base font-semibold text-[var(--_fg)]">Continue your last trip</h2>
-                  <p className="mt-1 text-sm text-[var(--_muted-fg)]">
-                    {lastItinerary.trip_config.destination?.city || lastItinerary.trip_config.destination_country}
-                    {formatDateRange(lastItinerary.trip_config.dates) && ` · ${formatDateRange(lastItinerary.trip_config.dates)}`}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={handleResumeLastTrip}
-                    disabled={resuming}
-                    className="btn btn-accent mt-3 rounded-xl px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {resuming && <Loader2 size={14} className="mr-1.5 inline animate-spin" />}
-                    {resuming ? 'Loading…' : 'Continue trip'}
-                  </button>
-                </div>
+        {lastItinerary && (
+          <div className="mt-6 flex flex-wrap items-center gap-4 rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-6 shadow-sm">
+            <div className="flex min-w-0 flex-1 items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--_primary)]/10">
+                <MapPin size={16} className="text-[var(--_primary)]" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold text-[var(--_fg)]">Continue your last trip</h2>
+                <p className="mt-1 text-sm text-[var(--_muted-fg)]">
+                  {lastItinerary.trip_config.destination?.city || lastItinerary.trip_config.destination_country}
+                  {formatDateRange(lastItinerary.trip_config.dates) && ` · ${formatDateRange(lastItinerary.trip_config.dates)}`}
+                </p>
               </div>
             </div>
-          )}
+            <button
+              type="button"
+              onClick={handleResumeLastTrip}
+              disabled={resuming}
+              className="btn btn-accent shrink-0 rounded-xl px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {resuming && <Loader2 size={14} className="mr-1.5 inline animate-spin" />}
+              {resuming ? 'Loading…' : 'Continue trip'}
+            </button>
+          </div>
+        )}
 
-          <div className="mt-8 border-t border-[var(--_border)] pt-6">
-            <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--_fg)]">
-              <AlertTriangle size={18} className="text-[var(--_destructive)]" />
-              Manage account
-            </h2>
-            <p className="mt-2 text-sm text-[var(--_muted-fg)]">
-              Permanently delete your account and all personal data (email, password, saved trips). This cannot be
-              undone. Some anonymized, aggregated usage data may be retained — see our{' '}
-              <Link href="/privacy" className="font-medium text-[var(--_primary)] hover:underline">
-                Privacy Policy
-              </Link>
-              .
-            </p>
-
-            {!showConfirm ? (
+        {/* Manage account — visually isolated (own bordered/tinted card) so the
+            destructive action never sits shoulder-to-shoulder with routine
+            CTAs like "Continue trip". */}
+        <div className="mt-6 rounded-2xl border border-[var(--_destructive)]/30 bg-[var(--_destructive)]/5 p-6 shadow-sm">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="min-w-0 flex-1">
+              <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--_destructive)]">
+                <AlertTriangle size={18} />
+                Manage account
+              </h2>
+              <p className="mt-2 text-sm text-[var(--_muted-fg)]">
+                Permanently delete your account and all personal data (email, password, saved trips). This cannot be
+                undone. Some anonymized, aggregated usage data may be retained — see our{' '}
+                <Link href="/privacy" className="font-medium text-[var(--_primary)] hover:underline">
+                  Privacy Policy
+                </Link>
+                .
+              </p>
+            </div>
+            {!showConfirm && (
               <button
                 type="button"
                 onClick={() => setShowConfirm(true)}
-                className="btn btn-outline mt-4 rounded-xl border-[var(--_destructive)] px-4 py-2 text-sm font-semibold text-[var(--_destructive)] hover:bg-[var(--_destructive)] hover:text-white"
+                className="btn btn-outline shrink-0 rounded-xl border-[var(--_destructive)] px-4 py-2 text-sm font-semibold text-[var(--_destructive)] hover:bg-[var(--_destructive)] hover:text-white"
               >
                 Delete my account
               </button>
-            ) : (
-              <div className="mt-4 space-y-3 rounded-xl border border-[var(--_destructive)] bg-[var(--_destructive)]/5 p-4">
-                <p className="text-sm font-medium text-[var(--_fg)]">
-                  Type <span className="font-mono">DELETE</span> to confirm.
-                </p>
-                <label htmlFor={deleteConfirmationInputId} className="block text-sm font-medium text-[var(--_fg)]">
-                  Confirmation phrase
-                </label>
-                <input
-                  id={deleteConfirmationInputId}
-                  type="text"
-                  value={confirmText}
-                  onChange={(e) => setConfirmText(e.target.value)}
-                  placeholder="DELETE"
-                  maxLength={20}
-                  className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 px-3.5 text-sm text-[var(--_fg)] focus:border-[var(--_primary)] focus:outline-none"
-                />
-                {error && <p className="text-sm text-[var(--_destructive)]">{error}</p>}
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    disabled={confirmText !== 'DELETE' || deleting}
-                    onClick={handleDelete}
-                    className="btn rounded-xl bg-[var(--_destructive)] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {deleting && <Loader2 size={14} className="mr-1.5 inline animate-spin" />}
-                    {deleting ? 'Deleting…' : 'Permanently delete'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setShowConfirm(false); setConfirmText('') }}
-                    className="btn btn-outline rounded-xl px-4 py-2 text-sm font-semibold"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
             )}
           </div>
+
+          {showConfirm && (
+            <div className="mt-4 space-y-3 rounded-xl border border-[var(--_destructive)] bg-[var(--_card)] p-4">
+              <p className="text-sm font-medium text-[var(--_fg)]">
+                Type <span className="font-mono">DELETE</span> to confirm.
+              </p>
+              <label htmlFor={deleteConfirmationInputId} className="block text-sm font-medium text-[var(--_fg)]">
+                Confirmation phrase
+              </label>
+              <input
+                id={deleteConfirmationInputId}
+                type="text"
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder="DELETE"
+                maxLength={20}
+                className="input w-full rounded-xl border border-[var(--_border)] bg-[var(--_card)] py-2.5 px-3.5 text-sm text-[var(--_fg)] focus:border-[var(--_primary)] focus:outline-none"
+              />
+              {error && <p className="text-sm text-[var(--_destructive)]">{error}</p>}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={confirmText !== 'DELETE' || deleting}
+                  onClick={handleDelete}
+                  className="btn rounded-xl bg-[var(--_destructive)] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {deleting && <Loader2 size={14} className="mr-1.5 inline animate-spin" />}
+                  {deleting ? 'Deleting…' : 'Permanently delete'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowConfirm(false); setConfirmText('') }}
+                  className="btn btn-outline rounded-xl px-4 py-2 text-sm font-semibold"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
