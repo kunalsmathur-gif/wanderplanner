@@ -3,15 +3,54 @@ from __future__ import annotations
 
 import uuid
 
+import httpx
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import select
 
 from core.auth_dependency import ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE
+from core.config import settings
 from db_models import RefreshToken, User
 from main import app
 
 pytestmark = pytest.mark.asyncio
+
+
+class _StubGoogleClient:
+    """Stands in for `httpx.AsyncClient` inside `google_callback`.
+
+    respx (the usual httpx-mocking lib, pinned in requirements-dev.txt) is
+    incompatible with the installed httpx 0.28.1 — its patched transport
+    never matches, failing every request with `AllMockedAssertionError` even
+    for a bare respx smoke test outside this suite. Monkeypatching the
+    `httpx.AsyncClient` constructor directly sidesteps that mismatch without
+    touching the (unrelated) pinned dependency version.
+    """
+
+    def __init__(self, *, token_response: Response, userinfo_response: Response):
+        self._token_response = token_response
+        self._userinfo_response = userinfo_response
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+    async def post(self, url, **kwargs):
+        assert url == "https://oauth2.googleapis.com/token"
+        return self._token_response
+
+    async def get(self, url, **kwargs):
+        assert url == "https://openidconnect.googleapis.com/v1/userinfo"
+        return self._userinfo_response
+
+
+def _mock_google_client(monkeypatch, *, token_response: Response, userinfo_response: Response):
+    monkeypatch.setattr(
+        "routers.auth.httpx.AsyncClient",
+        lambda *args, **kwargs: _StubGoogleClient(token_response=token_response, userinfo_response=userinfo_response),
+    )
 
 
 async def test_signup_requires_consent_field(client):
@@ -200,3 +239,162 @@ async def test_delete_me_removes_user_and_refresh_tokens(client, db_session_make
         replay_response = await replay_client.get("/api/auth/me")
 
     assert replay_response.status_code == 401
+
+
+# --- Google SSO -------------------------------------------------------------
+# `_test_safe_settings` (conftest, autouse) blanks google_client_id/secret by
+# default so every other test in this module runs with SSO "not configured".
+# These tests explicitly monkeypatch a fake client id/secret back in.
+
+
+async def test_auth_config_reports_google_sso_disabled_by_default(client):
+    response = await client.get("/api/auth/config")
+
+    assert response.status_code == 200
+    assert response.json() == {"google_sso_enabled": False}
+
+
+async def test_auth_config_reports_google_sso_enabled_when_configured(client, monkeypatch):
+    monkeypatch.setattr(settings, "google_client_id", "fake-client-id")
+
+    response = await client.get("/api/auth/config")
+
+    assert response.json() == {"google_sso_enabled": True}
+
+
+async def test_google_start_rejects_when_not_configured(client):
+    response = await client.get("/api/auth/google/start", follow_redirects=False)
+
+    assert response.status_code == 503
+
+
+async def test_google_start_redirects_to_google_with_signed_state(client, monkeypatch):
+    monkeypatch.setattr(settings, "google_client_id", "fake-client-id")
+
+    response = await client.get(
+        "/api/auth/google/start?return_to=/trips/42",
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (302, 307)
+    location = response.headers["location"]
+    assert location.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
+    assert "client_id=fake-client-id" in location
+    assert "scope=openid+email+profile" in location
+    # The state param carries the return_to signed via itsdangerous, not the
+    # raw value — just assert it's present and non-empty.
+    assert "state=" in location
+
+
+async def test_google_callback_rejects_missing_code_or_state(client, monkeypatch):
+    monkeypatch.setattr(settings, "google_client_id", "fake-client-id")
+    monkeypatch.setattr(settings, "google_client_secret", "fake-secret")
+
+    response = await client.get("/api/auth/google/callback", follow_redirects=False)
+
+    assert response.status_code in (302, 307)
+    assert response.headers["location"] == f"{settings.frontend_base_url}/login?error=google_sso_failed"
+
+
+async def test_google_callback_rejects_tampered_state(client, monkeypatch):
+    monkeypatch.setattr(settings, "google_client_id", "fake-client-id")
+    monkeypatch.setattr(settings, "google_client_secret", "fake-secret")
+
+    response = await client.get(
+        "/api/auth/google/callback?code=some-code&state=not-a-real-signed-state",
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (302, 307)
+    assert response.headers["location"] == f"{settings.frontend_base_url}/login?error=google_sso_failed"
+
+
+def _signed_state(return_to: str = "/") -> str:
+    from routers.auth import _state_serializer
+
+    return _state_serializer.dumps({"return_to": return_to})
+
+
+async def test_google_callback_creates_new_user_on_first_sign_in(client, db_session_maker, monkeypatch):
+    monkeypatch.setattr(settings, "google_client_id", "fake-client-id")
+    monkeypatch.setattr(settings, "google_client_secret", "fake-secret")
+    state = _signed_state("/trips/new")
+
+    _mock_google_client(
+        monkeypatch,
+        token_response=Response(200, json={"access_token": "fake-google-access-token"}, request=httpx.Request("POST", "https://oauth2.googleapis.com/token")),
+        userinfo_response=Response(
+            200,
+            json={"sub": "google-sub-123", "email": "newgoogleuser@example.com", "name": "New Googler"},
+            request=httpx.Request("GET", "https://openidconnect.googleapis.com/v1/userinfo"),
+        ),
+    )
+
+    response = await client.get(
+        f"/api/auth/google/callback?code=auth-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (302, 307)
+    assert response.headers["location"] == f"{settings.frontend_base_url}/trips/new"
+    assert client.cookies.get(ACCESS_TOKEN_COOKIE)
+    assert client.cookies.get(REFRESH_TOKEN_COOKIE)
+
+    async with db_session_maker() as session:
+        user = (
+            await session.execute(select(User).where(User.google_sub == "google-sub-123"))
+        ).scalar_one()
+        assert user.email == "newgoogleuser@example.com"
+        assert user.display_name == "New Googler"
+        assert user.password_hash is None
+
+
+async def test_google_callback_links_existing_password_account_by_email(client, db_session_maker, user_factory, monkeypatch):
+    monkeypatch.setattr(settings, "google_client_id", "fake-client-id")
+    monkeypatch.setattr(settings, "google_client_secret", "fake-secret")
+    existing_user = await user_factory(email="already-signed-up@example.com")
+    state = _signed_state("/")
+
+    _mock_google_client(
+        monkeypatch,
+        token_response=Response(200, json={"access_token": "fake-google-access-token"}, request=httpx.Request("POST", "https://oauth2.googleapis.com/token")),
+        userinfo_response=Response(
+            200,
+            json={"sub": "google-sub-456", "email": "already-signed-up@example.com", "name": "Existing User"},
+            request=httpx.Request("GET", "https://openidconnect.googleapis.com/v1/userinfo"),
+        ),
+    )
+
+    response = await client.get(
+        f"/api/auth/google/callback?code=auth-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (302, 307)
+    assert response.headers["location"] == f"{settings.frontend_base_url}/"
+
+    async with db_session_maker() as session:
+        linked_user = await session.get(User, existing_user.id)
+        assert linked_user.google_sub == "google-sub-456"
+        # Original password hash is preserved — linking, not replacing.
+        assert linked_user.password_hash is not None
+
+
+async def test_google_callback_redirects_to_login_error_on_token_exchange_failure(client, monkeypatch):
+    monkeypatch.setattr(settings, "google_client_id", "fake-client-id")
+    monkeypatch.setattr(settings, "google_client_secret", "fake-secret")
+    state = _signed_state("/")
+
+    _mock_google_client(
+        monkeypatch,
+        token_response=Response(400, json={"error": "invalid_grant"}, request=httpx.Request("POST", "https://oauth2.googleapis.com/token")),
+        userinfo_response=Response(200, json={}, request=httpx.Request("GET", "https://openidconnect.googleapis.com/v1/userinfo")),
+    )
+
+    response = await client.get(
+        f"/api/auth/google/callback?code=bad-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (302, 307)
+    assert response.headers["location"] == f"{settings.frontend_base_url}/login?error=google_sso_failed"

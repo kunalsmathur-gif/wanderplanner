@@ -377,7 +377,18 @@ class Settings(BaseSettings):
     # Google OAuth (SSO)
     google_client_id: str = ""
     google_client_secret: str = ""
-    google_redirect_uri: str = "http://localhost:8000/api/auth/google/callback"
+    # Points at the *frontend* origin, not this API directly. The frontend's
+    # next.config.ts rewrites `/api/auth/google/:path*` to this service, so
+    # Google's redirect (and the registered "Authorized redirect URI" in
+    # Google Cloud Console) lands on the frontend's own domain — keeping the
+    # whole OAuth chain to two sites (google.com + the frontend) instead of
+    # three. A third site (this API on its own subdomain) used purely as a
+    # mid-chain "bounce" that sets cookies gets its cookies cleared by
+    # Chrome's Bounce Tracking Mitigations and Safari's ITP — confirmed live
+    # in prod: the callback succeeded every time, but the very next
+    # /auth/me + /auth/refresh both came back 401 because the browser had
+    # already dropped the session cookie.
+    google_redirect_uri: str = "http://localhost:3000/api/auth/google/callback"
 
     # Frontend origin to redirect back to after OAuth / password flows
     frontend_base_url: str = "http://localhost:3000"

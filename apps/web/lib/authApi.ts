@@ -84,8 +84,13 @@ export async function deleteMyAccount(): Promise<void> {
 }
 
 export function googleSignInUrl(returnTo: string = '/'): string {
-  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
-  return `${base}/api/auth/google/start?return_to=${encodeURIComponent(returnTo)}`
+  // Relative, not `${NEXT_PUBLIC_API_URL}/...` — a same-origin path here is
+  // what makes the browser navigate to *this* domain, which Next.js's
+  // rewrite (next.config.ts) proxies to the API server-side. That keeps the
+  // whole OAuth redirect chain down to two sites (google.com, this domain)
+  // instead of three, which is what makes the session cookie survive
+  // Chrome's Bounce Tracking Mitigations / Safari's ITP. See next.config.ts.
+  return `/api/auth/google/start?return_to=${encodeURIComponent(returnTo)}`
 }
 
 /** Extracts a friendly error message from an axios error for form display. */
