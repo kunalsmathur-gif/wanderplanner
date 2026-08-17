@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { AlertTriangle, Loader2, MapPin } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Loader2, MapPin } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { deleteMyAccount, authErrorMessage } from '@/lib/authApi'
 import { getLastItinerary, type LastItineraryResult } from '@/lib/api'
@@ -100,9 +100,18 @@ export default function AccountPage() {
   return (
     <div className="min-h-screen bg-[var(--_bg)] px-4 py-12">
       <div className="mx-auto max-w-2xl">
-        <Link href="/" className="mb-8 inline-block">
-          <WanderplannerLogo size="sm" />
-        </Link>
+        <div className="mb-8 flex items-center justify-between">
+          <Link href="/">
+            <WanderplannerLogo size="sm" />
+          </Link>
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--_primary)] hover:underline"
+          >
+            <ArrowLeft size={16} />
+            Back to home
+          </Link>
+        </div>
 
         <div className="rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-8 shadow-sm">
           <h1 className="text-2xl font-bold text-[var(--_fg)] [font-family:var(--font-display)]">Account settings</h1>

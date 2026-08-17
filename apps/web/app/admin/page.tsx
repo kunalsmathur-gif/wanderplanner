@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
   AlertTriangle,
+  ArrowLeft,
   Check,
   Database,
   Eye,
@@ -366,7 +367,14 @@ export default function AdminDashboardPage() {
       <div className="mx-auto max-w-6xl">
         <div className="mb-8 flex items-center justify-between">
           <Link href="/"><WanderplannerLogo size="sm" /></Link>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--_primary)] hover:underline"
+            >
+              <ArrowLeft size={16} />
+              Back to home
+            </Link>
             <button
               type="button"
               onClick={() => setRange('7d')}

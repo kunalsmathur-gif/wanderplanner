@@ -1,6 +1,7 @@
 'use client'
 
-import { LayoutList, Wallet, Map } from 'lucide-react'
+import Link from 'next/link'
+import { LayoutList, Wallet, Map, Home } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
 import type { MobileTab } from '@/store/appStore'
 import { useItineraryStore } from '@/store/itineraryStore'
@@ -78,6 +79,14 @@ function TitleBar({ destination, days }: { destination: { city: string; country:
           {destination ? `${destination.city}, ${destination.country}` : 'Your Itinerary'} · {days} days
         </p>
         <div className="flex items-center gap-2">
+          <Link
+            href="/"
+            aria-label="Back to home"
+            title="Back to home"
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--_border)] text-[var(--_fg)] transition-colors hover:border-[var(--_primary)] hover:text-[var(--_primary)]"
+          >
+            <Home size={16} aria-hidden="true" />
+          </Link>
           <ThemeToggle className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--_border)] text-[var(--_fg)] transition-colors hover:border-[var(--_primary)] hover:text-[var(--_primary)]" />
           <ShareButton />
           <UserMenu />
