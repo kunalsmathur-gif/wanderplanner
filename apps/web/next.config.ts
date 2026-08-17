@@ -42,6 +42,14 @@ const nextConfig: NextConfig = {
         source: '/api/auth/google/:path*',
         destination: `${apiBase}/api/auth/google/:path*`,
       },
+      // TEMPORARY diagnostic — proxying /login too, to isolate whether
+      // Vercel's external rewrite forwards multiple Set-Cookie headers on a
+      // plain 200 response (unlike google/callback's 3xx redirect). Remove
+      // after diagnosis.
+      {
+        source: '/api/auth/login',
+        destination: `${apiBase}/api/auth/login`,
+      },
     ]
   },
 };
