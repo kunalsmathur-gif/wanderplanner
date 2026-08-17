@@ -224,6 +224,35 @@ async def google_start(request: Request, return_to: str = "/") -> Response:
     return RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}")
 
 
+@router.get("/auth/_diag/redirect-cookie")
+async def _diag_redirect_cookie() -> Response:
+    """TEMPORARY diagnostic endpoint: mimics google_callback's shape (307
+    redirect + Set-Cookie) to isolate whether Vercel's rewrite proxy forwards
+    Set-Cookie headers on a 3xx response. Remove after diagnosis."""
+    from fastapi.responses import RedirectResponse
+
+    resp = RedirectResponse(url="https://wanderplanner.org/diag-landing", status_code=307)
+    resp.set_cookie(
+        "diag_cookie_a",
+        "value_a",
+        max_age=300,
+        httponly=True,
+        samesite="none",
+        secure=True,
+        path="/",
+    )
+    resp.set_cookie(
+        "diag_cookie_b",
+        "value_b",
+        max_age=300,
+        httponly=True,
+        samesite="none",
+        secure=True,
+        path="/",
+    )
+    return resp
+
+
 @router.get("/auth/google/callback")
 @limiter.limit(DEFAULT_RATE_LIMIT)
 async def google_callback(

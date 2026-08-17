@@ -50,6 +50,10 @@ const nextConfig: NextConfig = {
         source: '/api/auth/login',
         destination: `${apiBase}/api/auth/login`,
       },
+      {
+        source: '/api/auth/_diag/:path*',
+        destination: `${apiBase}/api/auth/_diag/:path*`,
+      },
     ]
   },
 };
