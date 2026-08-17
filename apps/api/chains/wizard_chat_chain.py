@@ -1098,6 +1098,72 @@ def _infer_dates_from_free_text(last_user_text: str | None, reference_date: date
     return {"start": start.isoformat(), "end": end.isoformat(), "flexible": False}
 
 
+# Same failure shape as purpose/pace/budget/group/dates above: the LLM
+# occasionally acknowledges a destination stated in prose (in its reply
+# text -- e.g. "Wonderful, Bali for 6 days...") without ever emitting it in
+# config_patch, most often when the opening message packs several fields
+# into one sentence (e.g. "bali 6 days for a family of 4 - leisure -
+# 10-15th nov"). Unlike those fields, a destination is open-vocabulary (any
+# place name worldwide), so it can't be matched against a closed enum --
+# instead this extracts a candidate from one of a few narrow, unambiguous
+# phrasings and only trusts it once Nominatim confirms it's a real place
+# (see services.geocode.geocode_city). Deliberately restricted to the
+# opening turn (see call sites): later turns are answers to whatever
+# question is currently being asked (budget, group, pace, ...), and running
+# this against every one of those would just be wasted geocoding calls with
+# a real (if small) risk of a false-positive place match.
+_DESTINATION_LEADING_PHRASE_RE = re.compile(
+    r"^\s*([A-Za-z][A-Za-z\s]{1,40}?)\s+(?:for\s+)?\d+\s*(?:[-\u2013\u2014]|to)?\s*(?:day|days|night|nights)\b",
+    re.IGNORECASE,
+)
+_DESTINATION_TRIP_TO_RE = re.compile(
+    r"\btrip to\s+([A-Za-z][A-Za-z\s]{1,40}?)(?=[,.;!?]|\s+(?:for|with|in)\b|$)",
+    re.IGNORECASE,
+)
+_DESTINATION_DAYS_IN_RE = re.compile(
+    r"\b(?:day|days|night|nights)\s+(?:in|to)\s+([A-Za-z][A-Za-z\s]{1,40}?)(?=[,.;!?]|\s+(?:for|with)\b|$)",
+    re.IGNORECASE,
+)
+# Candidates made up entirely of these words are never real place names --
+# skip geocoding them rather than burning a Nominatim call (and risking an
+# odd false-positive match) on "we want" or similar filler.
+_DESTINATION_STOPWORDS = {
+    "i", "we", "my", "our", "us", "a", "an", "the", "want", "wanted", "wanting",
+    "looking", "planning", "plan", "need", "needed", "would", "like", "to", "for",
+    "trip", "vacation", "holiday", "go", "going", "book", "booking",
+}
+
+
+async def _infer_destination_from_free_text(last_user_text: str | None) -> dict[str, Any] | None:
+    """Deterministically extracts+geocodes a destination city from a
+    compact trip-brief sentence, trying each candidate phrasing in turn and
+    returning the first one Nominatim confirms is a real place. Returns None
+    (never raises) on no match or an all-candidates geocoding miss/failure --
+    the LLM remains responsible for every other phrasing."""
+    if not last_user_text:
+        return None
+
+    candidates: list[str] = []
+    for pattern in (_DESTINATION_LEADING_PHRASE_RE, _DESTINATION_TRIP_TO_RE, _DESTINATION_DAYS_IN_RE):
+        match = pattern.search(last_user_text)
+        if match:
+            candidate = match.group(1).strip()
+            if len(candidate) >= 2 and set(candidate.lower().split()) - _DESTINATION_STOPWORDS:
+                candidates.append(candidate)
+
+    for candidate in candidates:
+        try:
+            result = await geocode_city(candidate)
+        except Exception:
+            continue
+        parts = [p.strip() for p in result.display_name.split(",") if p.strip()]
+        city = parts[0] if parts else candidate.title()
+        country = parts[-1] if len(parts) > 1 else city
+        return {"city": city, "country": country, "lat": result.lat, "lon": result.lon}
+
+    return None
+
+
 def _is_destination_mode_chip_tap(last_user_text: str | None) -> bool:
     """True when the user's last message was a tap of one of the destination
     MODE chips ("Suggest me!" / "I have a destination in mind") rather than
@@ -1838,6 +1904,22 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                 merged["dates"] = {**existing_dates, **inferred_dates}
                 patch["dates"] = {**(patch.get("dates") or {}), **inferred_dates}
 
+        # Same backfill, same reason, for destination — only from the
+        # opening message (see _infer_destination_from_free_text for why
+        # this is restricted to the first turn), and only when the model
+        # hasn't already put the trip in "exploring"/"country" mode itself.
+        if (
+            len(request.messages) <= 1
+            and not (merged.get("destination") or {}).get("city")
+            and merged.get("destination_mode", "fixed") == "fixed"
+        ):
+            inferred_destination = await _infer_destination_from_free_text(last_user_text)
+            if inferred_destination:
+                merged["destination"] = {**(merged.get("destination") or {}), **inferred_destination}
+                patch["destination"] = {**(patch.get("destination") or {}), **inferred_destination}
+                merged["destination_mode"] = "fixed"
+                patch["destination_mode"] = "fixed"
+
         # Server-side override: only allow ready=true if all required fields present
         ready = data.get("ready_to_generate", False) and _has_all_required(merged)
 
@@ -1996,6 +2078,21 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             if inferred_dates:
                 fallback_config["dates"] = {**existing_fallback_dates, **inferred_dates}
                 fallback_patch["dates"] = {**(fallback_patch.get("dates") or {}), **inferred_dates}
+
+        # Same backfill, same reason, for destination (see JSON-success path
+        # above and _infer_destination_from_free_text for why this is
+        # restricted to the opening turn).
+        if (
+            len(request.messages) <= 1
+            and not (fallback_config.get("destination") or {}).get("city")
+            and fallback_config.get("destination_mode", "fixed") == "fixed"
+        ):
+            inferred_destination = await _infer_destination_from_free_text(last_user_text)
+            if inferred_destination:
+                fallback_config["destination"] = {**(fallback_config.get("destination") or {}), **inferred_destination}
+                fallback_patch["destination"] = {**(fallback_patch.get("destination") or {}), **inferred_destination}
+                fallback_config["destination_mode"] = "fixed"
+                fallback_patch["destination_mode"] = "fixed"
 
         # Pattern 1: Chips: ["A", "B"]
         chips_match = _re_fb.search(r'\s*(?:Chips?|Options?|chip\s*options?):\s*(\[[\s\S]*?\])', clean_raw, flags=_re_fb.IGNORECASE)
