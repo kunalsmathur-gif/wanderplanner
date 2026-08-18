@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     # same "not wired into production" scope as the two keys above. Moonshot's
     # API is OpenAI-SDK-compatible (different base_url only).
     moonshot_api_key: str = ""
+    # Single key for OpenRouter's unified API (proxies Gemini/OpenAI/Anthropic/
+    # Llama/etc. through one OpenAI-compatible endpoint) — same "eval-only, not
+    # wired into production" scope as the keys above, added per
+    # docs/llm-routing-openrouter-analysis.md §3.2b so eval/run_model_comparison.py
+    # can compare direct-provider calls against OpenRouter-routed ones without
+    # needing a separate key per provider.
+    openrouter_api_key: str = ""
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
     # ⚠️ This bounds the WHOLE of generate_itinerary() — routers/itinerary.py

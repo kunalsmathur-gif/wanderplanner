@@ -35,6 +35,18 @@ _PRICING: dict[str, tuple[float, float]] = {
     "claude-3-5-haiku-20241022": (0.80, 4.00),     # Anthropic
     "kimi-k2-0711-preview": (0.60, 2.50),           # Moonshot (published rate card, eval/run_budget_comparison.py, docs/eval-set.md §14)
     "moonshot-v1-8k": (0.20, 1.00),                 # Moonshot
+    # OpenRouter — kept as SEPARATE entries from the direct-provider rows
+    # above (docs/llm-routing-openrouter-analysis.md §3.2c) since OpenRouter
+    # applies its own small markup over upstream list price; these are
+    # OpenRouter's published per-model rates, not the direct-provider ones.
+    # Re-verify against https://openrouter.ai/models before treating a
+    # comparison as final — same directional-signal caveat as the rest of
+    # this table.
+    "openrouter/google/gemini-2.5-flash": (0.30, 2.50),
+    "openrouter/google/gemini-2.0-flash-001": (0.10, 0.40),
+    "openrouter/anthropic/claude-3.5-haiku": (0.80, 4.00),
+    "openrouter/openai/gpt-4o-mini": (0.15, 0.60),
+    "openrouter/meta-llama/llama-3.3-70b-instruct": (0.59, 0.79),
 }
 _DEFAULT_PRICING = (0.10, 0.40)
 

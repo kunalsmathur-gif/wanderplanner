@@ -19,6 +19,15 @@ from core.config import settings
 
 # model_id -> provider. Add entries here as new candidates come up — the
 # call dispatch below is provider-agnostic once registered.
+#
+# OpenRouter model ids are prefixed with "openrouter/" and kept as SEPARATE
+# registry entries from their direct-provider counterparts above (e.g.
+# "openrouter/google/gemini-2.5-flash" vs. "gemini-2.5-flash") even when they
+# resolve to the same underlying model — per
+# docs/llm-routing-openrouter-analysis.md §3.2c, direct-SDK and
+# OpenRouter-routed calls to "the same" model can differ in JSON-mode
+# behavior, latency, and cost (OpenRouter's markup), so results must stay
+# distinguishable rather than collapsing into one row.
 MODEL_REGISTRY: dict[str, str] = {
     "gemini-2.5-flash": "gemini",
     "gemini-2.0-flash": "gemini",
@@ -34,6 +43,16 @@ MODEL_REGISTRY: dict[str, str] = {
     # alongside GPT/Claude/Gemini. Not used by any other eval harness yet.
     "kimi-k2-0711-preview": "moonshot",
     "moonshot-v1-8k": "moonshot",
+    # OpenRouter — one key (settings.openrouter_api_key) reaches all of these,
+    # routed through https://openrouter.ai/api/v1 (OpenAI-Chat-Completions-
+    # compatible). Ids after "openrouter/" are OpenRouter's own model slugs
+    # (see https://openrouter.ai/models) — eval-only, per
+    # docs/llm-routing-openrouter-analysis.md §3.2b.
+    "openrouter/google/gemini-2.5-flash": "openrouter",
+    "openrouter/google/gemini-2.0-flash-001": "openrouter",
+    "openrouter/anthropic/claude-3.5-haiku": "openrouter",
+    "openrouter/openai/gpt-4o-mini": "openrouter",
+    "openrouter/meta-llama/llama-3.3-70b-instruct": "openrouter",
 }
 
 _PROVIDER_KEY_ATTR = {
@@ -42,6 +61,7 @@ _PROVIDER_KEY_ATTR = {
     "openai": "openai_api_key",
     "anthropic": "anthropic_api_key",
     "moonshot": "moonshot_api_key",
+    "openrouter": "openrouter_api_key",
 }
 
 
@@ -144,12 +164,42 @@ def _call_moonshot(model: str, prompt: str, json_mode: bool = True) -> tuple[str
     return resp.choices[0].message.content, usage.prompt_tokens, usage.completion_tokens
 
 
+def _call_openrouter(model: str, prompt: str, json_mode: bool = True) -> tuple[str, int, int]:
+    """OpenRouter's API is OpenAI-SDK-compatible (same client, different
+    base_url) and proxies to whichever upstream provider the model belongs
+    to. `model` here is the registry id INCLUDING the "openrouter/" prefix
+    (e.g. "openrouter/google/gemini-2.5-flash") — strip that prefix before
+    sending, since OpenRouter's own model slug is just "google/gemini-2.5-flash".
+
+    `response_format={"type": "json_object"}` is requested when json_mode is
+    set, but per docs/llm-routing-openrouter-analysis.md §3.3, JSON-mode
+    enforcement quality varies by upstream model when routed through
+    OpenRouter — this is exactly the parity question the eval comparison is
+    meant to surface, not something assumed correct here."""
+    from openai import OpenAI
+    client = OpenAI(api_key=settings.openrouter_api_key, base_url="https://openrouter.ai/api/v1")
+    upstream_model = model.removeprefix("openrouter/")
+    kwargs: dict[str, Any] = {"temperature": 0.4}
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+    resp = client.chat.completions.create(
+        model=upstream_model,
+        messages=[{"role": "user", "content": prompt}],
+        **kwargs,
+    )
+    usage = resp.usage
+    prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0 if usage else 0
+    output_tokens = getattr(usage, "completion_tokens", 0) or 0 if usage else 0
+    return resp.choices[0].message.content, prompt_tokens, output_tokens
+
+
 _PROVIDER_CALLERS = {
     "gemini": _call_gemini,
     "groq": _call_groq,
     "openai": _call_openai,
     "anthropic": _call_anthropic,
     "moonshot": _call_moonshot,
+    "openrouter": _call_openrouter,
 }
 
 
