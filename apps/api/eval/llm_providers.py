@@ -175,11 +175,16 @@ def _call_openrouter(model: str, prompt: str, json_mode: bool = True) -> tuple[s
     set, but per docs/llm-routing-openrouter-analysis.md §3.3, JSON-mode
     enforcement quality varies by upstream model when routed through
     OpenRouter — this is exactly the parity question the eval comparison is
-    meant to surface, not something assumed correct here."""
+    meant to surface, not something assumed correct here.
+
+    `max_tokens` is capped explicitly (matching `_call_anthropic`'s 8192)
+    because OpenRouter otherwise defaults to the upstream model's own max
+    (65535 for gemini-2.5-flash), which a free/low-credit account can't
+    afford and 402s on — confirmed live 2026-08-19."""
     from openai import OpenAI
     client = OpenAI(api_key=settings.openrouter_api_key, base_url="https://openrouter.ai/api/v1")
     upstream_model = model.removeprefix("openrouter/")
-    kwargs: dict[str, Any] = {"temperature": 0.4}
+    kwargs: dict[str, Any] = {"temperature": 0.4, "max_tokens": 8192}
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
     resp = client.chat.completions.create(
