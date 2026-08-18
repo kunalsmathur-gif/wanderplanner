@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import { ArrowLeft } from 'lucide-react'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
 
 export const metadata: Metadata = {
@@ -11,9 +12,27 @@ export default function PrivacyPage() {
   return (
     <div className="min-h-screen bg-[var(--_bg)] px-4 py-12">
       <div className="mx-auto max-w-3xl">
-        <Link href="/" className="mb-8 inline-block">
-          <WanderplannerLogo size="sm" />
-        </Link>
+        <div className="mb-8 flex items-center justify-between">
+          <Link href="/">
+            <WanderplannerLogo size="sm" />
+          </Link>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/account"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--_primary)] hover:underline"
+            >
+              <ArrowLeft size={16} />
+              Back to profile
+            </Link>
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--_primary)] hover:underline"
+            >
+              <ArrowLeft size={16} />
+              Back to home
+            </Link>
+          </div>
+        </div>
 
         <div className="rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-8 shadow-sm">
           <h1 className="text-2xl font-bold text-[var(--_fg)] [font-family:var(--font-display)]">Privacy Policy</h1>
