@@ -2162,17 +2162,28 @@ Reviewed the existing eval harnesses against the standard "Quality Flywheel" met
 
 ## ⏭️ Remaining items (in suggested order — items 1-3 are POC-readiness priorities per 2026-07-16 discussion)
 
-### 0. Run the new LLM model-selection + red-team evals live (harnesses now include a judge metric + compare/analyze tooling, built 2026-07-16 → hardened 2026-07-18, still not run live end-to-end)
+### 0. Run the LLM model-selection + red-team evals live — model-comparison PARTIALLY done 2026-08-19, red-team still not run
 
-In response to a "should we use MMLU/GPQA to pick the LLM?" discussion, two eval harnesses were built 2026-07-16 but **deliberately not run** (live API calls cost real money): `apps/api/eval/run_model_comparison.py` (accuracy/hallucination/latency/cost — and, as of 2026-07-18, LLM-as-judge tone/personalization/coherence — across candidate models on the real production itinerary prompt, see `docs/eval-set.md` §8) and `apps/api/eval/run_red_team_eval.py` (injection/exfiltration/kids-safety-bypass/cost-abuse robustness per model — §9). Both were import/smoke-tested against synthetic data only; the 2026-07-18 session additionally live-verified the new wizard harness and the judge metric individually, but did **not** run a full multi-model sweep with either harness.
+**UPDATE 2026-08-19**: the OpenRouter DLP network block (see issue #66) was lifted this session, and
+`run_model_comparison.py` was run live for the first time — `--runs 1` across the 5
+originally-registered `openrouter/*` models. Full results table + bugs found/fixed:
+`docs/eval-set.md` §8D and `docs/llm-routing-openrouter-analysis.md` §7. Short version: `gpt-4o-mini`
+won on accuracy/cost/reliability; 2 of the 5 registered OpenRouter ids had gone dead (404, model
+generations retired) and were replaced; the registry was expanded to 12 `openrouter/*` models
+(added OpenAI/Kimi/DeepSeek + a low-cost/nano tier) but **the fuller 12-model set has not been run
+yet** — that's the next concrete step, likely still at `--runs 1` first to keep cost down before a
+full `--runs 3` sweep.
 
-To actually run them next session:
-- Add `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` to `.env` for whichever of OpenAI/Anthropic should be in the comparison (Gemini + Groq already have keys configured).
-- `pip install -r requirements-ml.txt` (adds the new optional `groq`/`openai`/`anthropic` SDKs).
-- Run both: `python -m eval.run_model_comparison --models <ids>` and `python -m eval.run_red_team_eval --models <ids>` from `apps/api` (each prints a cost estimate and asks to confirm — pass `--yes` to skip).
-- Review the timestamped `eval/out/model_comparison_report_<ts>.md` and `eval/out/red_team_report_<ts>.md` (or the `_latest`-aliased fixed filenames), decide whether to switch `gemini_model`/`llm_provider` based on the results — the judge's tone/personalization/coherence sub-scores now sit alongside the deterministic accuracy/hallucination numbers, so a cheaper model that's structurally "accurate" but reads generically won't look artificially good.
-- Once a second run exists, try `python eval/compare_results.py <first-run>.json <second-run>.json` and `python eval/analyze_results.py <run>.json` — this session verified both tools against real wizard-eval output and synthetic red-team/model-comparison fixtures, but neither has been exercised against a real multi-model run yet.
-- Related gap surfaced while building this: ~~**no unit test exists for `core/prompt_guard.py`**~~ **✅ done 2026-07-21** — `tests/unit/test_prompt_guard.py` added (28 tests covering `looks_like_injection`/`neutralize`/`wrap_untrusted`).
+`run_red_team_eval.py` (§9) is **still not run live at all** — only import/smoke-tested against
+synthetic data.
+
+To continue next session:
+- Run `python -m eval.run_model_comparison --models openrouter/google/gemini-2.5-flash,openrouter/google/gemini-3.5-flash-lite,openrouter/google/gemini-2.5-flash-lite,openrouter/anthropic/claude-haiku-4.5,openrouter/openai/gpt-4o-mini,openrouter/openai/gpt-5-mini,openrouter/openai/gpt-5-nano,openrouter/meta-llama/llama-3.3-70b-instruct,openrouter/meta-llama/llama-3.1-8b-instruct,openrouter/moonshotai/kimi-k2,openrouter/deepseek/deepseek-chat,openrouter/deepseek/deepseek-v4-flash --runs 1 --yes` from `apps/api` (12 models × 6 cases × 1 run = 72 calls — estimate cost before bumping `--runs`).
+- Also still open from the original plan: add `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` to `.env` if the *direct*-SDK rows (not the `openrouter/*` ones) should join the comparison too — these remain unset, so the parity question in §3.3 of the analysis doc (does OpenRouter routing change the answer vs. calling the provider directly) is still unanswered.
+- Run `python -m eval.run_red_team_eval --models <ids>` (still never run live).
+- Review `eval/out/model_comparison_report_<ts>.md` / `eval/out/red_team_report_<ts>.md`, decide whether to switch `gemini_model`/`llm_provider` based on results — the judge's tone/personalization/coherence sub-scores sit alongside deterministic accuracy/hallucination numbers, so a cheaper model that's structurally "accurate" but reads generically won't look artificially good.
+- **Re-verify any `openrouter/*` id against `https://openrouter.ai/api/v1/models` before adding more** — two ids already went dead once; don't assume a slug that worked in a past session still resolves.
+- Once a second run exists, try `python eval/compare_results.py <first-run>.json <second-run>.json` and `python eval/analyze_results.py <run>.json` — verified against synthetic fixtures only so far, not a real multi-model run.
 
 ### 1. Security checks before any real (even POC) traffic — ✅ done 2026-07-20
 

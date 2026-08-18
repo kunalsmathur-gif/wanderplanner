@@ -42,11 +42,24 @@ _PRICING: dict[str, tuple[float, float]] = {
     # Re-verify against https://openrouter.ai/models before treating a
     # comparison as final — same directional-signal caveat as the rest of
     # this table.
+    # Verified live 2026-08-19 against https://openrouter.ai/api/v1/models
+    # (the actual catalog endpoint, not the docs page) — the two removed
+    # rows (gemini-2.0-flash-001, claude-3.5-haiku) 404 "no endpoints found"
+    # and llama-3.3-70b-instruct's old (0.59, 0.79) entry was stale, no
+    # longer OpenRouter's live rate.
     "openrouter/google/gemini-2.5-flash": (0.30, 2.50),
-    "openrouter/google/gemini-2.0-flash-001": (0.10, 0.40),
-    "openrouter/anthropic/claude-3.5-haiku": (0.80, 4.00),
+    "openrouter/google/gemini-3.5-flash-lite": (0.30, 2.50),
+    "openrouter/anthropic/claude-haiku-4.5": (1.00, 5.00),
     "openrouter/openai/gpt-4o-mini": (0.15, 0.60),
-    "openrouter/meta-llama/llama-3.3-70b-instruct": (0.59, 0.79),
+    "openrouter/openai/gpt-5-mini": (0.25, 2.00),
+    "openrouter/meta-llama/llama-3.3-70b-instruct": (0.10, 0.32),
+    "openrouter/moonshotai/kimi-k2": (0.57, 2.30),
+    "openrouter/deepseek/deepseek-chat": (0.2574, 1.0287),
+    # Lower-cost/nano tier — see matching comment in eval/llm_providers.py.
+    "openrouter/openai/gpt-5-nano": (0.05, 0.40),
+    "openrouter/google/gemini-2.5-flash-lite": (0.10, 0.40),
+    "openrouter/deepseek/deepseek-v4-flash": (0.0798, 0.1596),
+    "openrouter/meta-llama/llama-3.1-8b-instruct": (0.05, 0.08),
 }
 _DEFAULT_PRICING = (0.10, 0.40)
 

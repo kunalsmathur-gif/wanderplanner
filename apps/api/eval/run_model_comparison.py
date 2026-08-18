@@ -58,6 +58,7 @@ from qdrant_client.models import PointStruct  # noqa: E402
 from chains.itinerary_chain import (  # noqa: E402
     SYSTEM_PROMPT,
     _budget_guidance_block,
+    _day_cost_guidance_block,
     _gem_guidance_block,
     _itinerary_examples_block,
     _pinned_guidance_block,
@@ -166,6 +167,7 @@ async def build_prompt(trip_config: TripConfig) -> tuple[str, str]:
         itinerary_examples=itinerary_examples,
         gem_guidance=gem_guidance,
         pinned_guidance=_pinned_guidance_block(trip_config),
+        day_cost_guidance=_day_cost_guidance_block(trip_config),
         budget_guidance=neutralize(budget_guidance, context="budget tier + cost grounding guidance"),
         trip_config=neutralize(trip_config.model_dump_json(indent=2), context="trip configuration"),
     )

@@ -48,11 +48,29 @@ MODEL_REGISTRY: dict[str, str] = {
     # compatible). Ids after "openrouter/" are OpenRouter's own model slugs
     # (see https://openrouter.ai/models) — eval-only, per
     # docs/llm-routing-openrouter-analysis.md §3.2b.
+    #
+    # "openrouter/google/gemini-2.0-flash-001" and "openrouter/anthropic/
+    # claude-3.5-haiku" were REMOVED 2026-08-19 — both now 404 "no endpoints
+    # found" on OpenRouter's live catalog (verified against
+    # https://openrouter.ai/api/v1/models directly, not just the docs site;
+    # those model generations were retired). Replaced with each provider's
+    # current fast/cheap tier below, at or above gemini-2.5-flash's tier.
     "openrouter/google/gemini-2.5-flash": "openrouter",
-    "openrouter/google/gemini-2.0-flash-001": "openrouter",
-    "openrouter/anthropic/claude-3.5-haiku": "openrouter",
+    "openrouter/google/gemini-3.5-flash-lite": "openrouter",
+    "openrouter/anthropic/claude-haiku-4.5": "openrouter",
     "openrouter/openai/gpt-4o-mini": "openrouter",
+    "openrouter/openai/gpt-5-mini": "openrouter",
     "openrouter/meta-llama/llama-3.3-70b-instruct": "openrouter",
+    "openrouter/moonshotai/kimi-k2": "openrouter",
+    "openrouter/deepseek/deepseek-chat": "openrouter",
+    # Lower-cost/nano tier — for simple, non-critical task routing (e.g. a
+    # future wizard_chat/chat_refine purpose that doesn't need full itinerary-
+    # generation quality) rather than the itinerary-comparison eval above.
+    # Cheaper than their mid-tier siblings already registered per provider.
+    "openrouter/openai/gpt-5-nano": "openrouter",
+    "openrouter/google/gemini-2.5-flash-lite": "openrouter",
+    "openrouter/deepseek/deepseek-v4-flash": "openrouter",
+    "openrouter/meta-llama/llama-3.1-8b-instruct": "openrouter",
 }
 
 _PROVIDER_KEY_ATTR = {

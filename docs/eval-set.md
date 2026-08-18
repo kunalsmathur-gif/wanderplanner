@@ -942,21 +942,60 @@ each of 6 dataset cases spanning destination/budget/group/pace variety
 | `llama-3.1-70b-versatile`, `llama-3.3-70b-versatile` | Groq | `GROQ_API_KEY` + `pip install groq` |
 | `gpt-4o`, `gpt-4o-mini` | OpenAI | `OPENAI_API_KEY` + `pip install openai` |
 | `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022` | Anthropic | `ANTHROPIC_API_KEY` + `pip install anthropic` |
+| `kimi-k2-0711-preview`, `moonshot-v1-8k` | Moonshot | `MOONSHOT_API_KEY` |
+| `openrouter/google/gemini-2.5-flash`, `openrouter/google/gemini-3.5-flash-lite`, `openrouter/google/gemini-2.5-flash-lite`, `openrouter/anthropic/claude-haiku-4.5`, `openrouter/openai/gpt-4o-mini`, `openrouter/openai/gpt-5-mini`, `openrouter/openai/gpt-5-nano`, `openrouter/meta-llama/llama-3.3-70b-instruct`, `openrouter/meta-llama/llama-3.1-8b-instruct`, `openrouter/moonshotai/kimi-k2`, `openrouter/deepseek/deepseek-chat`, `openrouter/deepseek/deepseek-v4-flash` | OpenRouter (see `docs/llm-routing-openrouter-analysis.md`) | `OPENROUTER_API_KEY` — one key reaches all of these |
 
 A model whose API key isn't set in `.env` is **skipped automatically** (not
 an error) — the harness runs today with whatever subset of keys exist and
 picks up more models later with zero code changes.
 
-### 8D — Status: ❌ NOT YET RUN
+**OpenRouter model ids drift** — two originally-registered ids
+(`openrouter/google/gemini-2.0-flash-001`, `openrouter/anthropic/claude-3.5-haiku`)
+started 404ing ("no endpoints found") as OpenRouter retired those model
+generations; found and fixed 2026-08-19 by checking the live
+`https://openrouter.ai/api/v1/models` catalog directly rather than trusting
+a cached list. Re-verify ids against that endpoint before trusting a
+comparison that includes OpenRouter rows.
 
-Harness is built and import/smoke-tested (schema validation, accuracy
-scoring, hallucination detection, and report rendering all verified against
-synthetic data — see commit that added this section). **Not yet executed
-live** — it makes real, billed API calls. Needs: (1) `OPENAI_API_KEY` /
-`ANTHROPIC_API_KEY` added to `.env` if those providers are wanted in the
-comparison, (2) `pip install -r requirements-ml.txt` for the new optional
-`groq`/`openai`/`anthropic` SDKs, (3) an explicit run + review of
-`eval/out/model_comparison_report.md`. Tracked in `docs/NEXT_SESSION_TODO.md`.
+### 8D — Status: ✅ FIRST LIVE RUN DONE (2026-08-18/19, partial) — fuller run planned next session
+
+The corporate-network DLP block that previously prevented any OpenRouter
+call was lifted (exemption granted 2026-08-19). First live run used
+`--runs 1` across the 5 originally-registered `openrouter/*` models:
+
+| Model | Accuracy | Hallucination | Judge Quality | p50 Latency | Cost/req | Errors |
+|---|---|---|---|---|---|---|
+| `openrouter/google/gemini-2.5-flash` | 0.64 | 0.64 | 0.87 | 28.7s | $0.0142 | 1/6 |
+| `openrouter/openai/gpt-4o-mini` | 0.71 | 0.56 | 0.67 | 28.1s | $0.0022 | 0/6 |
+| `openrouter/meta-llama/llama-3.3-70b-instruct` | 0.59 | 0.57 | 0.24 | 39.1s (p95 217s) | $0.0037 | 0/6 |
+| `openrouter/google/gemini-2.0-flash-001` | — | — | — | — | — | 6/6 (404, model retired) |
+| `openrouter/anthropic/claude-3.5-haiku` | — | — | — | — | — | 6/6 (404, model retired) |
+
+`gpt-4o-mini` had the best accuracy at the lowest cost with zero errors;
+`llama-3.3-70b-instruct`'s judge-quality score (0.24) and one 217s p95
+latency spike stand out as weak. `gemini-2.5-flash` scored highest on judge
+quality but had one hard failure. Full results:
+`eval/out/model_comparison_results_20260818_194115.json` (gitignored per
+`.gitignore:55` `apps/api/eval/out/` — laptop-local only, not in git).
+
+Two real bugs found and fixed while getting this run to work (neither
+specific to OpenRouter):
+- `_call_openrouter()` left `max_tokens` unset, so OpenRouter defaulted to
+  the upstream model's own max (65535 for gemini-2.5-flash) — exceeded this
+  account's free credit and 402'd every call. Capped at 8192, matching
+  `_call_anthropic`'s existing pattern.
+- `run_model_comparison.py::build_prompt()` was missing the `day_cost_guidance`
+  kwarg that `chains.itinerary_chain.SYSTEM_PROMPT` now requires (added by
+  an unrelated main-branch merge) — `KeyError: 'day_cost_guidance'` on every
+  call, before any model was even reached.
+
+**Registry expanded 2026-08-19** to 12 `openrouter/*` models total — mid/high
+tier (Google, Anthropic, OpenAI, Meta-Llama, Kimi, DeepSeek, each at or above
+gemini-2.5-flash's capability tier) plus a low-cost/nano tier
+(`gpt-5-nano`, `gemini-2.5-flash-lite`, `deepseek-v4-flash`,
+`llama-3.1-8b-instruct`) intended for simple/non-critical task routing once a
+central router exists (§3.2c-A). **Not yet run against this fuller set** —
+planned for next session. Tracked in `docs/NEXT_SESSION_TODO.md` item 0.
 
 ---
 

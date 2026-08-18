@@ -401,3 +401,40 @@ Two phases, in order:
    Options A/B/C (§4) to build. Only at that point does the work become implementable as a scoped,
    incremental migration (one call site at a time, per this repo's existing incremental-
    implementation practice) — not before.
+
+## 7. Live eval progress log (phase 1 execution — see GitHub issue #66)
+
+**2026-08-19 — network exemption granted, first live run done.** The corporate Netskope DLP block
+that stopped every OpenRouter call (documented in issue #66) was lifted. First live smoke test and
+first `run_model_comparison.py` sweep (`--runs 1`, the 5 originally-registered `openrouter/*`
+models) both succeeded end-to-end. Full results table in `docs/eval-set.md` §8D — short version:
+`gpt-4o-mini` won on accuracy/cost/reliability, `llama-3.3-70b-instruct` had a weak judge-quality
+score and one severe latency outlier, `gemini-2.5-flash` had the best judge quality but one hard
+failure, and **2 of the 5 registered ids 404'd every call** (see below).
+
+Two bugs found getting this far, both fixed:
+- `_call_openrouter()` didn't cap `max_tokens`, so OpenRouter defaulted to the upstream model's own
+  max (65535 for gemini-2.5-flash) — exceeded the account's available credit and 402'd every call.
+  Now capped at 8192.
+- `openai==1.51.0` (the `requirements-ml.txt` pin) isn't compatible with the `httpx` already
+  installed in this venv (`proxies` kwarg TypeError) — bumped to `3.2.0`, live-verified against the
+  real OpenRouter API.
+
+**Model-id drift is real and ongoing**: `openrouter/google/gemini-2.0-flash-001` and
+`openrouter/anthropic/claude-3.5-haiku` both now return `404 No endpoints found` — OpenRouter
+retired those model generations since the registry was first written. Confirmed by downloading and
+parsing `https://openrouter.ai/api/v1/models` directly (not a docs page, not an LLM's summary of
+one — summarization of a 414-model JSON page is a real hallucination risk for exact id strings that
+are about to be hardcoded into paid API calls). **Lesson: re-verify OpenRouter ids against the live
+catalog endpoint before trusting a comparison, don't assume a slug that worked once still resolves.**
+
+**Registry expanded same session** to 12 `openrouter/*` models: replaced the two dead ids with each
+provider's current fast/cheap tier (`gemini-3.5-flash-lite`, `claude-haiku-4.5`), and added OpenAI
+(`gpt-5-mini`), Kimi/Moonshot (`kimi-k2`), and DeepSeek (`deepseek-chat`) as new provider rows — all
+at or above gemini-2.5-flash's capability tier — plus a low-cost/nano tier (`gpt-5-nano`,
+`gemini-2.5-flash-lite`, `deepseek-v4-flash`, `llama-3.1-8b-instruct`) for future simple/non-critical
+task routing (§3.2c-A's "mid" tier discussion). Also fixed a stale pricing entry found in the
+process: `openrouter/meta-llama/llama-3.3-70b-instruct` was priced at `(0.59, 0.79)` in
+`core/llm_client.py`, but OpenRouter's live rate is `(0.10, 0.32)` — the earlier comparison's cost
+column for that model was quietly wrong. **Not yet run against the fuller 12-model registry** —
+planned for next session, tracked in `docs/NEXT_SESSION_TODO.md` item 0.
