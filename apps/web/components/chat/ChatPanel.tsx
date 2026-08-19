@@ -211,6 +211,15 @@ export function ChatPanel() {
         content: m.content,
       }))
       const result = await chatRefine(history, tripConfig)
+      // Every chat turn while an itinerary is on screen is engagement with
+      // it — the "post_gen_chat_turns" implicit-quality signal
+      // (docs/rag-strategy.md's Learning Flywheel). Reported against
+      // whichever generation is current *before* this turn potentially
+      // triggers a regeneration below, since the turn itself was about the
+      // plan the user was looking at when they sent it.
+      if (useItineraryStore.getState().days.length > 0) {
+        sendGenerationSignal(useItineraryStore.getState().generationId, 'chat_turn')
+      }
       useChatStore.getState().updateLastAssistant(
         result.reply,
         result.pinned_pois?.length ? { pins: result.pinned_pois } : undefined,

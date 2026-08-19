@@ -49,7 +49,7 @@ async function sendMessage(text: string) {
 }
 
 const NEW_RESULT: ItineraryResponse = {
-  days: [{ day: 1, date: '2026-01-01', title: 'Day 1', items: [] }],
+  days: [{ day_number: 1, date: '2026-01-01', theme: 'Arrival', items: [], transit_warnings: [] }],
   alignment_score: 90,
   warnings: [],
   expense_breakdown: {} as ItineraryResponse['expense_breakdown'],
@@ -61,7 +61,7 @@ describe('ChatPanel — regenerated signal (issue #34)', () => {
     useChatStore.setState({ ...initialChatState, isOpen: true })
     useItineraryStore.setState({
       ...initialItineraryState,
-      days: [{ day: 1, date: '2026-01-01', title: 'Day 1', items: [] }],
+      days: [{ day_number: 1, date: '2026-01-01', theme: 'Arrival', items: [], transit_warnings: [] }],
       generationId: 'gen-old',
       generatedAt: Date.now(),
     })
