@@ -130,7 +130,13 @@ export default function AccountPage() {
         </div>
 
         {lastItinerary && (
-          <div className="mt-6 flex flex-wrap items-center gap-4 rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-6 shadow-sm">
+          // Column on mobile (CTA sits below the text, full-width so it
+          // doesn't get squeezed) — row on sm+ (CTA pinned to the right,
+          // vertically centered against the text). `flex-wrap` alone let the
+          // button wrap onto its own line but kept `items-center`'s
+          // cross-axis centering, which looked off once it was the only
+          // thing on that line instead of intentionally stacked.
+          <div className="mt-6 flex flex-col gap-4 rounded-2xl border border-[var(--_border)] bg-[var(--_card)] p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 flex-1 items-start gap-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--_primary)]/10">
                 <MapPin size={16} className="text-[var(--_primary)]" />
@@ -147,7 +153,7 @@ export default function AccountPage() {
               type="button"
               onClick={handleResumeLastTrip}
               disabled={resuming}
-              className="btn btn-accent shrink-0 rounded-xl px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+              className="btn btn-accent w-full shrink-0 rounded-xl px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
             >
               {resuming && <Loader2 size={14} className="mr-1.5 inline animate-spin" />}
               {resuming ? 'Loading…' : 'Continue trip'}
@@ -159,7 +165,10 @@ export default function AccountPage() {
             destructive action never sits shoulder-to-shoulder with routine
             CTAs like "Continue trip". */}
         <div className="mt-6 rounded-2xl border border-[var(--_destructive)]/30 bg-[var(--_destructive)]/5 p-6 shadow-sm">
-          <div className="flex flex-wrap items-center gap-4">
+          {/* Column on mobile (CTA below the text), row on sm+ (CTA pinned
+              right, vertically centered) — same fix as the "Continue trip"
+              card above. */}
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1">
               <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--_destructive)]">
                 <AlertTriangle size={18} />
@@ -178,7 +187,7 @@ export default function AccountPage() {
               <button
                 type="button"
                 onClick={() => setShowConfirm(true)}
-                className="btn btn-outline shrink-0 rounded-xl border-[var(--_destructive)] px-4 py-2 text-sm font-semibold text-[var(--_destructive)] hover:bg-[var(--_destructive)] hover:text-white"
+                className="btn btn-outline w-full shrink-0 rounded-xl border-[var(--_destructive)] px-4 py-2 text-sm font-semibold text-[var(--_destructive)] hover:bg-[var(--_destructive)] hover:text-white sm:w-auto"
               >
                 Delete my account
               </button>
