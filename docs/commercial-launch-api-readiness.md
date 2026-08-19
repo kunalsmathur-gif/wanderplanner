@@ -19,6 +19,22 @@ own Terms of Service **only permit non-commercial use**, and several others are
 user traffic, regardless of ToS. Both categories are go-live blockers, but for
 different reasons — this doc separates them and gives each a way forward.
 
+## Quick-reference summary
+
+| Currently used API | Issue with commercial go-live | Replacement API |
+|---|---|---|
+| Numbeo | ToS prohibits commercial reuse without a paid Data License | Numbeo commercial Data License (sales quote) |
+| budgetyourtrip.com | ToS prohibits commercial reuse outright, no paid tier offered | None published — re-source via Inside Airbnb / Wikivoyage-grounded estimate |
+| Nominatim | Hard 1 req/sec, no SLA, donated infra — breaks under real traffic | Google Geocoding API (Maps Platform), or self-hosted Nominatim |
+| Overpass API | Free public service, load-based rate limiting, no SLA | Google Places API (New) — Text Search/Place Details, or self-hosted Overpass |
+| OSM tile server | Donated servers, "no SLA... may block access without notice" | Mapbox or MapTiler hosted tiles, or Google Maps JavaScript API |
+| Wikivoyage / Wikimedia API | Free but User-Agent-policy enforced, no commercial SLA (already hit a 403) | No paid tier exists — mitigate via self-hosted Wikimedia mirror if needed |
+| Open-Meteo (free tier) | Free tier is explicitly non-commercial-use only | Open-Meteo Customer API (paid, same shape, +apikey) |
+| Frankfurter.app | Commercial use already permitted — no SLA/support contract only | Not required (self-hostable if availability ever matters) |
+| Pexels API | 200 req/hr, 20,000/mo free cap | Pexels higher-limit grant, or Unsplash+/Shutterstock API |
+| YouTube Data API v3 | `search.list` capped at 100 calls/project/day | Google quota-increase request (free, no purchasable SKU) |
+| Groq (LLM fallback) | Free tier ≈30 req/min | Groq paid/dedicated-throughput tier |
+
 ## How to read the table
 
 - **Blocker type:**
