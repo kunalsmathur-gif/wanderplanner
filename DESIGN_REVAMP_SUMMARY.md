@@ -546,3 +546,66 @@ already held Theme, Share and Account. The answer was size.
 - ⚠️ **Needs a real phone.** jsdom asserts class contracts; it cannot show a
   44px orb against a real 375px viewport or confirm it clears a home
   indicator. `docs/eval-set.md` §7C MOB-011 and MOB-014.
+
+---
+
+## 🧩 Component Updates (August 8–19, 2026) — Account page reorganized into isolated cards; explicit back-to-home/profile nav CTAs; mobile CTA layout fix (v10.74.0)
+
+Backlog reconciliation entry — these landed across several commits in the
+Aug 8–19 run with no changelog entry at the time. Full technical detail:
+`TECHNICAL_DOCUMENTATION.md` §14 v10.74.0.
+
+### Account page reorganized into clear, isolated sections — `app/account/page.tsx`
+The identity summary, the "Continue your last trip" resume card (new,
+issue #65 — see `docs/PRD.md` Clarification #22), and the destructive "Manage
+account" (delete) actions now live in visually distinct cards instead of one
+flat scrolling list. The goal: the delete-account action should never sit
+shoulder-to-shoulder with a routine, frequently-tapped CTA like "Continue
+trip" — a layout that invites mis-taps on a destructive action is a design
+bug, not just an aesthetic one.
+
+### Explicit "Back to home" / "Back to profile" nav CTAs ⭐ NEW
+Added to `/account`, `/admin`, `/privacy`, `/terms`, and the itinerary
+dashboard's title bar. Previously several internal pages had no visible way
+back to the landing page short of the browser's own back button — easy to
+miss on mobile where the browser chrome is often hidden.
+
+### Mobile CTA layout fix — "Continue trip" / "Delete my account" cards
+**Bug (reported live):** on mobile, the CTA buttons in these two account-page
+cards could visually break or fail to resize, instead of the intended
+"stacked below the text on mobile, right-aligned next to the text on
+desktop/tablet" behavior.
+**Fix:** both card containers changed from `flex flex-wrap items-center` to
+`flex flex-col ... sm:flex-row sm:items-center sm:justify-between` — CTAs now
+correctly stack full-width below the card's text at mobile widths, and sit
+right-aligned inline with the text at `sm:` and above.
+
+### Itinerary page: browser-back landing on the wrong page + unwanted theme flip
+**Bug (reported live):** dark mode → Account → "Continue last trip" →
+itinerary page → tap a YouTube thumbnail. If the video loads, browser-back
+correctly returns to the trip page (video goes to PiP). If the thumbnail
+instead led to a failed/blank video page, browser-back incorrectly landed on
+the **profile page** instead of the trip page, and the theme silently flipped
+from dark to light.
+**Root cause:** the itinerary page's empty-state guard redirected to `/`
+(the `<AppShell>`'s light-mode-only landing route) the instant its
+sessionStorage-backed client state was empty, without waiting for
+`authStore`'s async session check (`/api/auth/me` → silent
+`/api/auth/refresh` on a 401) to resolve first — a real race after any
+disruptive external navigation that can plausibly clear or delay client
+state before auth settles.
+**Fix:** the guard now waits for `authStatus` to leave `idle`/`loading`
+before deciding whether to redirect; for authenticated users it re-fetches
+the last itinerary from the server (`loadLastItinerary()`, backed by the new
+`user_last_itinerary` resume feature above) before giving up, and falls back
+to `/account` — not `/` — only if that also returns nothing. This keeps
+signed-in users out of the light-mode landing page entirely in this flow.
+Covered by new tests in `apps/web/__tests__/components/ItineraryPage.test.tsx`
+(5 cases: hydrated render, signed-out redirect, no-premature-redirect while
+auth resolves, re-fetch-and-stay on success, fallback to `/account` on
+failure).
+
+### Regression verification
+- **Frontend:** `tsc --noEmit` clean; `vitest run` full suite — 25 files /
+  223 tests passing, including the 5 new itinerary-page tests.
+- **Backend:** untouched — no `apps/api` changes in this pass.

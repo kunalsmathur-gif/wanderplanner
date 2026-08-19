@@ -495,6 +495,8 @@ The backend stores users in Postgres (`users` table) with:
 
 **Google SSO design note:** the app does **not** use server-side session middleware for OAuth state. Instead, it signs a stateless `state` payload with `itsdangerous.URLSafeTimedSerializer`, exchanges the code with Google's token endpoint, then fetches profile data from `openidconnect.googleapis.com/v1/userinfo` via `httpx`.
 
+**Google OAuth routes proxied through the frontend origin (⭐ NEW, 2026-08-17 — fixes cross-browser cookie loss):** the redirect chain used to be `google.com → api.<domain>` (`/api/auth/google/callback` sets the session cookie there) `→ <domain>` — three distinct sites, with the API subdomain as a pass-through "bounce." Chrome's Bounce Tracking Mitigations and Safari's ITP both specifically clear cookies set on a domain used only as a mid-chain bounce, so the cookie never survived to the next request in *any* modern browser. This was confirmed live in prod: the callback succeeded server-side every time (token exchange + `/userinfo` both `200 OK`, cookie set correctly), but the immediately-following `GET /api/auth/me` and `POST /api/auth/refresh` both came back `401`. **Fix:** `apps/web/next.config.ts` now rewrites `/api/auth/google/:path*` through the frontend's own origin to the API, so the chain is two sites (`google.com` + the frontend) instead of three, and the cookie is set by the domain the browser actually lands on. `GOOGLE_REDIRECT_URI` (both `.env` and Google Cloud Console's registered redirect URI) now points at the frontend origin, not the API directly — all other auth routes are unaffected. Also added integration test coverage for the Google SSO flow (`apps/api/tests/integration/test_auth.py`): `/auth/config` toggling, `/google/start`'s redirect + signed state, and `/google/callback`'s new-user creation, existing-password-account linking, and failure paths.
+
 ### Cookie-based session model
 
 Sessions are stored in **httpOnly cookies**, not localStorage:
@@ -520,6 +522,15 @@ Refresh tokens rotate on every `POST /api/auth/refresh` call. The old token is r
 4. An effect in `LLMWizard.tsx` detects both **authenticated user + pending config** and auto-resumes generation without re-asking the wizard questions.
 
 This design preserves intent even across a full-page Google OAuth round-trip that would otherwise destroy in-memory SPA state.
+
+### Resume last generated itinerary (⭐ NEW, 2026-08-15 — issue #65)
+
+Signed-in users can resume their most recently generated trip from the Account page ("Continue your last trip" card) or by asking Anya directly ("show me my last itinerary" / "continue my trip").
+
+- **Storage:** `user_last_itinerary` table (migration `0010`), upsert-only — one row per user, not a history list. See `docs/system-design.md` §8A for the schema.
+- **Write path:** best-effort, fire-and-forget (`asyncio.create_task`) upsert fired right after every successful live generation in `routers/itinerary.py::_stream_generation`, mirroring `services/generated_itineraries.py`'s discipline — never adds latency or risk to the response already streamed to the client.
+- **Read path:** `GET /api/me/last-itinerary` (auth-gated; `404` if none exists or it has aged past a 30-day TTL, checked lazily on read and deleted at that point — no separate cron job needed for a single-row-per-user table).
+- **Frontend:** `apps/web/lib/resumeLastItinerary.ts` is the single shared helper both entry points call — it loads the saved trip config + itinerary straight into the existing `tripConfigStore`/`itineraryStore` for the wizard/edit flow, so the Account page card and the chat intent never drift out of sync with each other.
 
 ### Password reset flow
 
@@ -638,6 +649,11 @@ Streaming SSE. Generates day-by-day itinerary from `TripConfig`. **Requires auth
 **Response:** Server-Sent Events → final `ItineraryResponse`
 
 Each `ItineraryDay` may now also include optional `image_url`, `image_photographer`, and `image_photographer_url` fields populated by the best-effort Pexels enrichment pass.
+
+### `GET /api/me/last-itinerary` ⭐ NEW (v10.74 — issue #65)
+Returns the signed-in user's most recently generated itinerary, for the Account page's "Continue your last trip" card and Anya's "show me my last itinerary" chat intent. **Requires auth.**
+
+**Response:** `{ trip_config: TripConfig, itinerary: ItineraryResponse, updated_at: "ISO 8601 string" }`, or **404** if the user has never generated one or the saved row has aged past its 30-day TTL.
 
 ### `POST /api/chat-refine`
 Persistent Anya chat handler (used by `ChatPanel`).
@@ -975,11 +991,24 @@ WanderPlanner uses RAG to inject real traveller knowledge from Wikivoyage, YouTu
    └─ Top ≤3 formatted as "[Source: … — 5 days, moderate, cultural, couple]
         Day 1: … Places: …" and wrap_untrusted()'d for prompt injection
 
+3C. GENERATED-ITINERARIES FLYWHEEL RETRIEVAL ⭐ NEW (v10.74, 2026-08-15, issue #32)
+   services/generated_itineraries.py → retrieve_generated_itinerary_examples(trip_config)
+   │    (mirrors 3B's retrieve_itinerary_examples exactly — same 60/40
+   │     config/content weighted merge, quality reranking, case-insensitive
+   │     destination fallback — but against the `generated_itineraries`
+   │     collection instead of the scraped `itinerary_corpus`)
+   │
+   └─ Combined with 3B's corpus examples under one shared prompt-injection
+        wrapper in `_itinerary_examples_block()`, so real past WanderPlanner
+        output becomes additional few-shot grounding — the collection grows
+        organically with usage instead of needing a separate scraping pipeline.
+        Independently toggleable via `generated_itineraries_retrieval_enabled`.
+
 4. AUGMENTATION (itinerary_chain.py)
    context_text = summarise_context(context_docs, max_chars=2400)
    prompt = SYSTEM_PROMPT.format(
        context=context_text,          # ← real traveller data
-       itinerary_examples=...,        # ← ≤3 real traveller itineraries ⭐ NEW (v10.15)
+       itinerary_examples=...,        # ← ≤3 corpus + ≤3 generated-flywheel examples
        trip_config=trip_config_json
    )
    → Gemini generates itinerary grounded in real traveller data; the
@@ -996,7 +1025,14 @@ WanderPlanner uses RAG to inject real traveller knowledge from Wikivoyage, YouTu
            wiki/reddit snippets spliced in as "Local tip: ..." (always succeeds)
    On success, store_itinerary() caches the result (best-effort; strips any "_"-prefixed
    fallback markers so degraded output is never cached and re-served as genuine).
+
+   In parallel, a fire-and-forget write also stores this generation into the
+   `generated_itineraries` collection (see 3C above) for future retrieval —
+   `services/generated_itineraries.py::store_generated_itinerary()`, gated
+   by `generated_itineraries_store_enabled`, never raises.
 ```
+
+**Static-vs-real-time query classifier ⭐ NEW (v10.74, 2026-08-15, issue #35):** `services/query_router.py::route_query()` is a cheap, zero-extra-LLM-call heuristic (keyword + relative-time-marker detection) that flags time-sensitive chat queries — weather, live prices, strikes/disruptions, "right now"/"this week" phrasing — versus general/static travel questions. Wired into `chains/wizard_chat_chain.py` and `chains/chat_refine_chain.py` via a system-prompt hint (gated by `agentic_router_enabled`) that tells Anya to naturally hedge time-sensitive claims. No live real-time source is wired up yet (separate paid-API work, out of scope) — a "web" classification still falls back to the existing static Qdrant retrieval path above, with a freshness caveat surfaced to the user rather than the model answering as if a static corpus snapshot were current. Not to be confused with the still-pending `agentic-router-tool-calling` roadmap item (§14) — that's a separate, larger-scoped tool-calling layer for verified venue selection.
 
 **Latency tradeoff (measured via `apps/api/load_test_rag.py`, concurrency=50):**
 
@@ -1551,12 +1587,31 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.73, v10.70, v10.69, v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.74, v10.73, v10.70, v10.69, v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
 
 > ⚠️ **v10.63.0 and v10.64.0 shipped code and tests but have no entry in this
 > section** (visa cost exclusion + corpus-gated `visa_inr`, and the analytics
 > event fix). This is the known changelog-reconciliation backlog, not an
 > omission specific to v10.65.0.
+
+### v10.74.0 Changes (August 8–19, 2026) — Resume-last-itinerary, learning flywheel, agentic query router, Google SSO cookie fix, account page reorg, OpenRouter eval provider
+
+A backlog reconciliation pass — this run of commits (Aug 8 → Aug 19) shipped several features and fixes with no corresponding changelog entry until now. Consolidated here rather than split into one entry per commit, since several land on the same day/theme.
+
+| Change | Detail |
+|---|---|
+| **NEW** Resume last generated itinerary (issue #65) | Signed-in users can resume their most recent trip from the Account page's "Continue your last trip" card, or by asking Anya ("show me my last itinerary"). New `user_last_itinerary` table (migration `0010`, upsert-only, 30-day lazy TTL), `GET /api/me/last-itinerary`, and `lib/resumeLastItinerary.ts` as the single shared frontend entry point. See §6A and `docs/system-design.md` §8A for the full data model. |
+| **NEW** `generated_itineraries` Qdrant collection — the "learning flywheel" (issue #32) | Every successful live generation is now also written into a new dual-named-vector (`config`+`content`) collection mirroring `itinerary_corpus`'s schema, and retrieved as additional few-shot grounding alongside the scraped corpus. Fire-and-forget write in `chains/itinerary_chain.py`; retrieval merged into `_itinerary_examples_block()`. Independently toggleable store/retrieval flags. Previously tracked as `docs/rag-strategy.md` roadmap item P1 — now shipped; the roadmap table and `TECHNICAL_DOCUMENTATION.md` §15 pending-items table were both still marked "Pending" until this entry, and are now corrected. See §8 (RAG Architecture, step 3C) and `docs/system-design.md` §9. |
+| **NEW** Agentic query router — static vs. real-time classifier (issue #35) | `services/query_router.py::route_query()`: cheap keyword/time-marker heuristic (no extra LLM call) flagging time-sensitive chat queries. Wired into the wizard and post-gen chat system prompts as a freshness-hedge hint. No live real-time source wired up yet — classification alone, falling back to static Qdrant retrieval with a caveat. See §8 for detail. This already had a correct `docs/eval-set.md`/`docs/rag-strategy.md` update at ship time (2026-08-15); it was `TECHNICAL_DOCUMENTATION.md` that was missing an entry. |
+| **FIXED** Google SSO cookie loss on every browser (auth architecture change) | Root cause: the redirect chain was `google.com → api.<domain>` (sets the cookie) `→ <domain>` — a three-site bounce that Chrome's Bounce Tracking Mitigations and Safari's ITP both clear cookies from. Fixed by proxying the two Google OAuth routes through the frontend's own origin (`apps/web/next.config.ts` rewrite), collapsing the chain to two sites. `GOOGLE_REDIRECT_URI` now points at the frontend origin in both `.env` and Google Cloud Console. Added integration test coverage for the SSO flow (previously untested). See §6A and `docs/system-design.md` §3A. |
+| **FIXED** wizard-chat destination backfill | A compound opening message (e.g. combining destination + dates in one turn) could drop the destination on a later turn; `chains/wizard_chat_chain.py` now backfills it from the earlier turn instead of re-asking. |
+| **FIXED** trip-dates free-text fallback | Added a free-text fallback path so dates expressed in prose (not a recognized structured format) still extract correctly, instead of silently failing to populate. |
+| **FIXED** stale group-type chips leaking under the pace question | A follow-up UI bug in the wizard chip flow where a previous turn's group-type chips could still show under an unrelated pace question; scoped chip state correctly per question. |
+| **FIXED** feasibility LLM cost-estimate retry-creep + floor breakdown mismatch | `chains/feasibility_chain.py` now caches the LLM cost estimate to stop repeated re-estimation calls, and fixes a mismatch between the displayed budget floor and its component breakdown. |
+| **CHANGED** Account page reorganized into clear, isolated sections | Identity summary, "Continue your last trip," and the destructive "Manage account" (delete) actions now live in visually distinct cards instead of one flat list, so the delete action never sits shoulder-to-shoulder with routine CTAs. See `DESIGN_REVAMP_SUMMARY.md`. |
+| **NEW** Explicit "Back to home"/"Back to profile" nav CTAs | Added to `/account`, `/admin`, `/privacy`, `/terms`, and the itinerary dashboard's title bar — previously several internal pages had no visible way back to the landing page without using the browser's own back button. See `DESIGN_REVAMP_SUMMARY.md`. |
+| **NEW** OpenRouter as an eval-only model provider | `apps/api/eval/llm_providers.py` + `core/llm_client.py` can now route eval runs through OpenRouter for cross-model comparison, capped at `max_tokens=8192` per call. Eval-only — not wired into the production generation path. See `docs/llm-routing-openrouter-analysis.md` and `docs/eval-set.md`. |
+| **FIXED** admin lead dashboard: late responses shown as late, emails masked by default | `apps/web/app/admin/page.tsx` + `lib/adminApi.ts`/`lib/format.ts`: leads past their SLA window now render with a visible "late" state, and lead emails are masked by default in the admin UI. |
 
 ### v10.73.1 Changes (August 2026) — The first multi-area run picked villages at random, and the runner could not tell a write from a skip
 
@@ -4552,8 +4607,8 @@ Tracked backlog items not yet implemented. All are believed achievable with free
 | `corpus-source-attribution-ui` | Source-attribution UI | Once corpus grounding is live, show a small "Inspired by trip reports from r/solotravel and Nomadic Matt"-style attribution note in the itinerary UI — a key differentiation/marketing signal for "curated, not generic" positioning. Depends on `itinerary-corpus-retrieval`. | Pending |
 | `agentic-router-tool-calling` | Lightweight agentic router / tool-calling layer | Per docs/rag-strategy.md §12: introduce tool-calling for persona-specific verified venue selection (dog-friendly, coworking, romantic dining), reusing the free OSM Overpass API already used elsewhere. Also becomes the primitive the budget optimizer (below) uses for line-item swaps. | Pending |
 | `budget-optimizer-pass` | Keep-structure budget optimizer pass | Tool-calling-based optimizer that re-scores existing itinerary line items (accommodation/activities/dining) against cheaper/pricier alternatives within the same theme/day-structure, instead of a full regeneration. Add a budget-slider UI showing a diff of what changed. Depends on `agentic-router-tool-calling`. | Pending |
-| `generated-itineraries-tracking` | `generated_itineraries` quality-signal tracking (Phase 4) | Per docs/rag-strategy.md §10: store `persona_fingerprint` + implicit quality signals (regenerated, session duration, shared, chat-refine turns) for every generated itinerary once there is real production traffic — pure DB/analytics instrumentation, no paid API. | Pending |
-| `generated-itineraries-retrieval` | Wire `generated_itineraries` flywheel into retrieval | Once ~50–100 quality-scored itineraries exist (via the tracking item above), retrieve similar high-quality past itineraries as a second few-shot source alongside the itinerary corpus. Depends on `generated-itineraries-tracking`. | Pending |
+| `generated-itineraries-tracking` | `generated_itineraries` quality-signal tracking (Phase 4) | **Partially done (v10.74, issue #32):** every generation is now stored with a coarse `quality_score` heuristic (0.75 grounded / 0.55 ungrounded via `_context_grounded`). Still pending: the richer `persona_fingerprint` + implicit signals from docs/rag-strategy.md §10 (regenerated, session duration, shared, chat-refine turns) once there is real production traffic to learn from. | Partially done |
+| `generated-itineraries-retrieval` | Wire `generated_itineraries` flywheel into retrieval | **Done (v10.74, issue #32).** Shipped ahead of the full tracking rollout above, using the coarse quality heuristic as an interim weighting signal (`services/generated_itineraries.py`, retrieval merged in `chains/itinerary_chain.py::_itinerary_examples_block()`). See §8, step 3C. | Done |
 | `booking-accommodation-pricing` | Booking.com affiliate pricing for accommodation costs | Booking.com's affiliate program is free-to-join (no per-call cost), but requires partner account approval — a paid/approval-gated dependency, not achievable purely with free/keyless tools right now. Fallback if unblocked later: use community-reported nightly rates from the same free corpus sources as `itinerary-corpus-scrapers` rather than a paid hotel-price API in the meantime. | **Blocked** — requires Booking.com affiliate partner account, skipped per "free tools only" constraint |
 
 **Completed this session (for context):** `docker-env-updates`, `db-hosting-config`, foreign-currency budget input, `itinerary-corpus-scrapers` (v10.11, raw fetch), `itinerary-corpus-extraction` (v10.12, structuring chain + `itinerary_corpus` Qdrant collection) — see §14 changelog entries v10.9–v10.12 for full detail on each.
