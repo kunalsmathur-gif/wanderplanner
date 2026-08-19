@@ -918,7 +918,7 @@ export function LLMWizard() {
       },
       (result) => {
         clearGenerationWatchdog()
-        setDays(result.days, result.alignment_score, result.expense_breakdown, result.generation_tier, result.warnings)
+        setDays(result.days, result.alignment_score, result.expense_breakdown, result.generation_tier, result.warnings, result.generation_id)
         setPhase('done')
         closeWizard()
         // The itinerary has its own route now, so finishing generation is a
