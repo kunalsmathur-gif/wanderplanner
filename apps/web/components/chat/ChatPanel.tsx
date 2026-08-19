@@ -8,7 +8,7 @@ import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useAppStore } from '@/store/appStore'
 import { useAuthStore } from '@/store/authStore'
-import { chatRefine, streamItinerary, checkFeasibility } from '@/lib/api'
+import { chatRefine, streamItinerary, checkFeasibility, sendGenerationSignal } from '@/lib/api'
 import { savePendingGeneration } from '@/lib/pendingGeneration'
 import { loadLastItinerary } from '@/lib/resumeLastItinerary'
 import { diffItineraries, isEmptyDiff } from '@/lib/itineraryDiff'
@@ -70,6 +70,11 @@ export function ChatPanel() {
    * duplicating the streaming/diff/error-handling logic. */
   function runRegeneration(config: TripConfig) {
     const oldDays = useItineraryStore.getState().days
+    // Capture the outgoing generation's id before it's overwritten below —
+    // this regeneration is exactly the "regenerated" implicit-quality
+    // signal (docs/rag-strategy.md's Learning Flywheel), reported against
+    // the plan being replaced, not the new one.
+    const outgoingGenerationId = useItineraryStore.getState().generationId
     setRegenNote('Updating your itinerary…')
 
     cancelRegenRef.current?.()
@@ -77,6 +82,7 @@ export function ChatPanel() {
       { ...config, pace: useTripConfigStore.getState().effectivePace() },
       (msg) => setRegenNote(msg || 'Updating your itinerary…'),
       (result) => {
+        sendGenerationSignal(outgoingGenerationId, 'regenerated')
         useItineraryStore.getState().setDays(
           result.days,
           result.alignment_score,
