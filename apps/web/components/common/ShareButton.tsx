@@ -26,7 +26,7 @@ export function ShareButton() {
 
     setStatus('loading')
     try {
-      const { days, alignmentScore, expenseBreakdown } = useItineraryStore.getState()
+      const { days, alignmentScore, expenseBreakdown, generationId } = useItineraryStore.getState()
       const { config } = useTripConfigStore.getState()
       const { collectedLabels } = useWizardChatStore.getState()
 
@@ -39,6 +39,7 @@ export function ShareButton() {
         trip_config: config as unknown as object,
         labels: collectedLabels,
         destination_label: destLabel,
+        generation_id: generationId,
       })
 
       setShareUrl(result.url)

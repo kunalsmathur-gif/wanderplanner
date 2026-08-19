@@ -154,6 +154,7 @@ export async function shareTrip(payload: {
   trip_config: object
   labels: object
   destination_label: string
+  generation_id?: string
 }): Promise<{ slug: string; url: string }> {
   const { data } = await api.post('/api/share', payload)
   return data as { slug: string; url: string }
