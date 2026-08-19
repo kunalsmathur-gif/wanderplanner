@@ -110,6 +110,14 @@ An LLM only knows what it was trained on — ask it to plan a trip to a smaller 
 3. Compressed to a ~600-token "briefing note" and injected into the itinerary prompt alongside the trip request.
 4. If the LLM or retrieval fails outright, a 3-tier fallback kicks in: cached similar itinerary → OSM-data-only skeleton → lightly templated itinerary with real tip snippets spliced in — so users essentially never see a hard error.
 
+**⭐ NEW (issue #32): the system now learns from its own output, not just scraped sources.** Every successful live generation is also stored in a second collection, `generated_itineraries` — same schema as our scraped/curated `itinerary_corpus`, but populated by our own past generations. Future requests for similar trips retrieve from *both* as few-shot grounding, weighted by a quality heuristic. It's a genuine flywheel: the more people use WanderPlanner, the better its own reference material gets, independent of any new scraping or paid data source. Still early — the quality signal today is a coarse heuristic, not yet the richer per-itinerary engagement signal (regenerated? shared? session length?) planned in `docs/rag-strategy.md` §10.
+
+**⭐ NEW (issue #35): a cheap classifier flags when a chat question needs fresher-than-our-corpus info.** `services/query_router.py` looks for time-sensitive language ("is it open right now", "current prices") in wizard/post-generation chat and adds a freshness caveat to the response instead of presenting a static-corpus answer as if it were live. This is classification only today — no live data source is wired in yet — but it's an honest signal to the user about what our RAG actually can and can't know, which matters for the same "own our limitations" credibility this cheatsheet leads with.
+
+### Q11a. Can a user resume a trip they generated earlier without starting over?
+
+Yes (⭐ NEW, issue #65). Every generated itinerary for a signed-in user is now durably stored server-side (`user_last_itinerary`), independent of the client-side session state used during an active wizard flow. The Account page surfaces a one-tap "Continue your last trip" card, and Anya recognizes the same intent conversationally. This closes a real gap found in live testing — client-side-only state meant closing the tab, switching devices, or a session simply expiring lost the user's itinerary with no way back except regenerating from scratch.
+
 ### Q12. How do we evaluate RAG performance?
 
 A hand-labeled "golden dataset" (`apps/api/eval/golden_dataset.json`, 20 queries against a 40-chunk curated corpus) with known correct retrievals, scored with standard IR metrics via `apps/api/eval/run_rag_eval.py`:
