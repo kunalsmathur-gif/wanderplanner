@@ -1587,12 +1587,55 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.74, v10.73, v10.70, v10.69, v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.75, v10.74, v10.73, v10.70, v10.69, v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
 
 > ⚠️ **v10.63.0 and v10.64.0 shipped code and tests but have no entry in this
 > section** (visa cost exclusion + corpus-gated `visa_inr`, and the analytics
 > event fix). This is the known changelog-reconciliation backlog, not an
 > omission specific to v10.65.0.
+
+### v10.75.0 Changes (August 2026) — Kaggle pricing plan Workstream B: ingestion/calibration-proposal script + runbook, Workstream D: data-freshness-strategy doc
+
+Closes #52 (Workstream B) and #54 (Workstream D), the two remaining open
+items from the Kaggle pricing plan (Workstreams A and C shipped in v10.70.0).
+
+**Workstream B (#52):** `docs/kaggle-data-runbook.md` — account/token setup
+(access-token-first per #55's live-verified auth-order findings), the
+corporate-TLS/Netskope gotcha, and download + run instructions. New
+`scripts/ingest_kaggle_pricing.py`: reads an already-downloaded
+`shubhambathwal/flight-price-prediction` `economy.csv` (verified live
+2026-08-19 against real Kaggle credentials already configured on this
+machine — actual schema differs from the dataset's older documented shape:
+`date`/`from`/`to`/`price` columns, comma-thousands prices, `DD-MM-YYYY`
+dates, plain "Bangalore" spelling, no `Date_of_Journey` column), buckets
+fares into `core/distance_pricing.py`'s `DISTANCE_BANDS` via haversine
+distance between the dataset's 6 known metro cities, applies
+`core/pricing_multipliers.py`'s inflation multiplier, and emits a JSON
+median/p25/p75 **calibration proposal** — propose-only, never writes to
+`DISTANCE_BANDS` directly, same convention as `scripts/recalibrate_pricing.py`.
+17 new unit tests (`tests/unit/test_ingest_kaggle_pricing.py`) against a
+fixture CSV, no live credentials required. `kaggle` stays out of
+`requirements.txt` by design — the script only ever reads a local CSV.
+
+Ran the script live against the real dataset: domestic-metro fares cluster
+around ₹14,500-15,000 regardless of distance band, which is *below* the
+current `domestic_near_neighbour`/`regional_international` band low ends
+(those bands are anchored to international routes the Kaggle data doesn't
+cover) — flagged in the runbook as calibration evidence for
+`short_domestic_hop` only, not a blind "paste the median" apply. No
+`DISTANCE_BANDS` values were changed; that decision is left to a human per
+the propose-only convention.
+
+**Workstream D (#54):** `docs/data-freshness-strategy.md` — compares all 5
+scoped options (manual Kaggle re-download, scheduled re-pull, Inside-Airbnb-
+style continuously-refreshed open data, Google Places `price_level`, full
+paid live-fare API) on cost/freshness/effort/coverage, explicitly flags the
+free-vs-paid call as pending user sign-off rather than presuming an answer,
+and calls out that only the two paid options (4 and 5) actually close the
+still-open India-hotel-pricing gap.
+
+Suite 1464 passed / 6 skipped (was 1224 pre-v10.71 backlog + subsequent
+growth), ruff and mypy clean on all touched files.
 
 ### v10.74.0 Changes (August 8–19, 2026) — Resume-last-itinerary, learning flywheel, agentic query router, Google SSO cookie fix, account page reorg, OpenRouter eval provider
 
