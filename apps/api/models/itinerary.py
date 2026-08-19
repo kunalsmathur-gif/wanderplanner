@@ -124,6 +124,12 @@ class ItineraryResponse(BaseModel):
     # One of: "live", "live_unverified", "cache", "rag_skeleton",
     # "enhanced_mock", "mock".
     generation_tier: str = "live"
+    # The `generated_itineraries` Qdrant point id this generation was stored
+    # under (issue #34), so the frontend can report later session signals
+    # (regenerated/shared/session-duration/chat-turns) back against this
+    # exact point. None whenever nothing was actually stored (flywheel
+    # disabled, fallback tier, no destination, etc.).
+    generation_id: str | None = None
 
 
 

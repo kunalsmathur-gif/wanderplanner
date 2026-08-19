@@ -16,6 +16,7 @@ from models.trip import DestinationInput, GroupComposition, TripConfig
 from services.generated_itineraries import (
     _content_text_from_raw_days,
     _corpus_days_json,
+    compute_generation_id,
     retrieve_generated_itinerary_examples,
     store_generated_itinerary,
 )
@@ -82,6 +83,26 @@ class TestHelpers:
         ]
 
 
+class TestComputeGenerationId:
+    def test_returns_none_when_disabled(self):
+        with patch("services.generated_itineraries.settings") as mock_settings:
+            mock_settings.generated_itineraries_store_enabled = False
+            assert compute_generation_id(_trip(), _raw()) is None
+
+    def test_returns_none_when_no_destination(self):
+        trip = _trip()
+        trip.destination = None
+        assert compute_generation_id(trip, _raw()) is None
+
+    def test_returns_none_when_no_days(self):
+        assert compute_generation_id(_trip(), _raw(days=[])) is None
+
+    def test_returns_a_stringified_int_id(self):
+        gen_id = compute_generation_id(_trip(), _raw())
+        assert gen_id is not None
+        assert gen_id.isdigit()
+
+
 @pytest.mark.asyncio
 class TestStoreGeneratedItinerary:
     async def _run(self, trip, raw):
@@ -135,6 +156,17 @@ class TestStoreGeneratedItinerary:
              patch("services.generated_itineraries.embed", return_value=[[0.1] * 384, [0.2] * 384]):
             # Must not raise.
             await store_generated_itinerary(_trip(), _raw())
+
+    async def test_uses_precomputed_point_id_when_given(self):
+        """Issue #34: the id handed back to the client as `generation_id`
+        must be the exact same id the Qdrant point is written under, so
+        later session-signal reports can find it again."""
+        client = MagicMock()
+        with patch("services.generated_itineraries.get_qdrant", return_value=client), \
+             patch("services.generated_itineraries.embed", return_value=[[0.1] * 384, [0.2] * 384]):
+            await store_generated_itinerary(_trip(), _raw(), point_id="123456789")
+        point = client.upsert.call_args.kwargs["points"][0]
+        assert point.id == 123456789
 
 
 @pytest.mark.asyncio

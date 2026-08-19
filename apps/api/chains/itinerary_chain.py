@@ -25,6 +25,7 @@ from models.itinerary import (
 )
 from models.trip import TripConfig
 from services.generated_itineraries import (
+    compute_generation_id,
     retrieve_generated_itinerary_examples,
     store_generated_itinerary,
 )
@@ -1063,7 +1064,17 @@ async def _generate_itinerary_inner(
             # issue explicitly requires zero added latency, and unlike the
             # cache write this isn't needed for anything on this request's
             # own critical path.
-            asyncio.create_task(store_generated_itinerary(trip_config, raw))
+            #
+            # The point id is computed synchronously (cheap string hashing,
+            # no I/O) *before* spawning the write so it can be handed back to
+            # the client as `generation_id` (issue #34) — the frontend needs
+            # a stable handle to later report session signals (regenerated,
+            # shared, session duration, chat turns) back against this exact
+            # Qdrant point.
+            generation_id = compute_generation_id(trip_config, raw)
+            if generation_id:
+                raw["_generation_id"] = generation_id
+            asyncio.create_task(store_generated_itinerary(trip_config, raw, point_id=generation_id))
 
     with timing.stage("post_processing"):
         days = _parse_days(raw.get("days", []))
@@ -1168,6 +1179,7 @@ async def _generate_itinerary_inner(
             raw.get("expense_breakdown", {}), trip_config, entry_grounded=entry_grounded
         ),
         generation_tier=raw.get("_from_fallback", "live"),
+        generation_id=raw.get("_generation_id"),
     )
 
 
