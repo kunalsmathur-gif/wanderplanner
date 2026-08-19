@@ -18,6 +18,7 @@ from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.config import settings
 from db import AsyncSessionLocal
 from db_models import GeneratedItinerarySignal
 
@@ -90,6 +91,78 @@ async def record_share_signal(generation_id: str) -> None:
             await record_generation_signal(db, generation_id, "shared")
     except Exception:
         logger.warning("generation signal 'shared' write failed (best-effort, ignored)", exc_info=True)
+
+
+async def score_ready_generation_signals(db: AsyncSession, batch_size: int) -> int:
+    """Score `generated_itinerary_signals` rows whose session looks
+    finished, write the result onto the matching `generated_itineraries`
+    Qdrant point payload, and stamp `scored_at` so they aren't rescored.
+
+    Fetches unscored rows oldest-first (favours rows that have been waiting
+    longest) and applies `_signal_ready_to_score()` in Python rather than in
+    the SQL query — SQLite (local/dev) doesn't round-trip tz-aware
+    datetimes, so a `last_updated_at <= cutoff` comparison against an aware
+    cutoff would be dialect-fragile; filtering in Python via the same
+    helper the unit tests exercise keeps one source of truth for
+    "ready" regardless of backend. Over-fetches a multiple of `batch_size`
+    candidates to have enough ready rows to fill a batch even when most of
+    the oldest rows aren't ready yet.
+
+    Per-row failures (a malformed generation_id, a Qdrant write error) are
+    logged and skipped rather than aborting the whole run — the same
+    resilience contract as the other per-item scheduler jobs in this
+    module (e.g. `_refresh_osm_pois`).
+
+    Returns the number of rows actually scored.
+    """
+    from sqlalchemy import select
+
+    from core.qdrant import get_qdrant
+
+    candidates = (
+        await db.execute(
+            select(GeneratedItinerarySignal)
+            .where(GeneratedItinerarySignal.scored_at.is_(None))
+            .order_by(GeneratedItinerarySignal.last_updated_at.asc())
+            .limit(batch_size * 3)
+        )
+    ).scalars().all()
+
+    now = datetime.now(UTC)
+    scored_count = 0
+    client = get_qdrant()
+
+    for row in candidates:
+        if scored_count >= batch_size:
+            break
+        if not _signal_ready_to_score(row, now=now):
+            continue
+
+        try:
+            score = _compute_quality_score({
+                "regenerated_count": row.regenerated_count,
+                "session_duration_s": row.session_duration_s,
+                "was_shared": row.was_shared,
+                "post_gen_chat_turns": row.post_gen_chat_turns,
+            })
+            client.set_payload(
+                collection_name=settings.qdrant_collection_generated_itineraries,
+                payload={"quality_score": score},
+                points=[int(row.generation_id)],
+            )
+        except Exception:
+            logger.warning(
+                "quality_score write failed for generation_id=%s (best-effort, skipped)",
+                row.generation_id, exc_info=True,
+            )
+            continue
+
+        row.scored_at = now
+        scored_count += 1
+
+    if scored_count:
+        await db.commit()
+    return scored_count
 
 
 def _compute_quality_score(signals: dict) -> float:

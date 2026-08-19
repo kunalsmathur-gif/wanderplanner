@@ -190,6 +190,15 @@ class Settings(BaseSettings):
     # losing the stored data.
     generated_itineraries_store_enabled: bool = True
     generated_itineraries_retrieval_enabled: bool = True
+    # Quality-score background scoring job (issue #34): how often the
+    # scheduler checks for generated_itinerary_signals rows whose session
+    # looks finished and writes a computed quality_score onto the
+    # corresponding generated_itineraries Qdrant point.
+    quality_score_job_interval_minutes: int = 15
+    # Safety cap per run — keeps one run bounded even if a large backlog
+    # piled up (e.g. after downtime), same reasoning as
+    # youtube_refresh_batch_size.
+    quality_score_job_batch_size: int = 200
     # Agentic router (issue #35, docs/rag-strategy.md §12): cheap heuristic
     # classifier that flags time-sensitive queries (weather, live prices,
     # strikes/disruptions) so the chat/wizard chains can caveat freshness

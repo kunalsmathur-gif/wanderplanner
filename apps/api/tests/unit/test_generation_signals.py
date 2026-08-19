@@ -9,11 +9,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import services.generation_signals as generation_signals
+from db_models import GeneratedItinerarySignal
 from services.generation_signals import (
     QUIET_PERIOD,
     _compute_quality_score,
     _signal_ready_to_score,
     record_share_signal,
+    score_ready_generation_signals,
 )
 
 
@@ -132,3 +134,140 @@ class TestRecordShareSignal:
         with patch.object(generation_signals, "AsyncSessionLocal", _boom):
             # Must not raise.
             await record_share_signal("66")
+
+
+@pytest.mark.asyncio
+class TestScoreReadyGenerationSignals:
+    async def _add(self, db_session_maker, **kwargs):
+        async with db_session_maker() as session:
+            row = GeneratedItinerarySignal(**kwargs)
+            session.add(row)
+            await session.commit()
+
+    async def test_scores_row_ready_via_explicit_duration(self, db_session_maker):
+        from sqlalchemy import select
+
+        await self._add(
+            db_session_maker,
+            generation_id="100",
+            regenerated_count=0,
+            session_duration_s=200,
+            was_shared=False,
+            post_gen_chat_turns=0,
+        )
+        mock_client = MagicMock()
+        with patch("core.qdrant.get_qdrant", return_value=mock_client):
+            async with db_session_maker() as session:
+                scored = await score_ready_generation_signals(session, batch_size=200)
+
+        assert scored == 1
+        mock_client.set_payload.assert_called_once()
+        _, call_kwargs = mock_client.set_payload.call_args
+        assert call_kwargs["points"] == [100]
+        assert call_kwargs["payload"]["quality_score"] == pytest.approx(min(0.70 + 0.30 + 0.25, 1.0))
+
+        async with db_session_maker() as session:
+            row = (
+                await session.execute(
+                    select(GeneratedItinerarySignal).where(GeneratedItinerarySignal.generation_id == "100")
+                )
+            ).scalar_one()
+            assert row.scored_at is not None
+
+    async def test_scores_row_ready_via_quiet_period(self, db_session_maker):
+        stale = datetime.now(UTC) - QUIET_PERIOD - timedelta(minutes=1)
+        await self._add(
+            db_session_maker,
+            generation_id="101",
+            regenerated_count=1,
+            session_duration_s=None,
+            was_shared=True,
+            post_gen_chat_turns=2,
+            last_updated_at=stale,
+        )
+        mock_client = MagicMock()
+        with patch("core.qdrant.get_qdrant", return_value=mock_client):
+            async with db_session_maker() as session:
+                scored = await score_ready_generation_signals(session, batch_size=200)
+
+        assert scored == 1
+        mock_client.set_payload.assert_called_once()
+
+    async def test_skips_row_not_ready(self, db_session_maker):
+        await self._add(
+            db_session_maker,
+            generation_id="102",
+            regenerated_count=0,
+            session_duration_s=None,
+            was_shared=False,
+            post_gen_chat_turns=0,
+        )
+        mock_client = MagicMock()
+        with patch("core.qdrant.get_qdrant", return_value=mock_client):
+            async with db_session_maker() as session:
+                scored = await score_ready_generation_signals(session, batch_size=200)
+
+        assert scored == 0
+        mock_client.set_payload.assert_not_called()
+
+    async def test_skips_already_scored_row(self, db_session_maker):
+        await self._add(
+            db_session_maker,
+            generation_id="103",
+            regenerated_count=0,
+            session_duration_s=200,
+            was_shared=False,
+            post_gen_chat_turns=0,
+            scored_at=datetime.now(UTC),
+        )
+        mock_client = MagicMock()
+        with patch("core.qdrant.get_qdrant", return_value=mock_client):
+            async with db_session_maker() as session:
+                scored = await score_ready_generation_signals(session, batch_size=200)
+
+        assert scored == 0
+        mock_client.set_payload.assert_not_called()
+
+    async def test_respects_batch_size_cap(self, db_session_maker):
+        for i in range(5):
+            await self._add(
+                db_session_maker,
+                generation_id=str(200 + i),
+                regenerated_count=0,
+                session_duration_s=200,
+                was_shared=False,
+                post_gen_chat_turns=0,
+            )
+        mock_client = MagicMock()
+        with patch("core.qdrant.get_qdrant", return_value=mock_client):
+            async with db_session_maker() as session:
+                scored = await score_ready_generation_signals(session, batch_size=2)
+
+        assert scored == 2
+        assert mock_client.set_payload.call_count == 2
+
+    async def test_per_row_failure_does_not_abort_batch(self, db_session_maker):
+        await self._add(
+            db_session_maker,
+            generation_id="not-an-int",
+            regenerated_count=0,
+            session_duration_s=200,
+            was_shared=False,
+            post_gen_chat_turns=0,
+        )
+        await self._add(
+            db_session_maker,
+            generation_id="300",
+            regenerated_count=0,
+            session_duration_s=200,
+            was_shared=False,
+            post_gen_chat_turns=0,
+        )
+        mock_client = MagicMock()
+        with patch("core.qdrant.get_qdrant", return_value=mock_client):
+            async with db_session_maker() as session:
+                scored = await score_ready_generation_signals(session, batch_size=200)
+
+        # "not-an-int" can't be cast to int for the Qdrant point id, so it's
+        # skipped; the well-formed row after it is still scored.
+        assert scored == 1
