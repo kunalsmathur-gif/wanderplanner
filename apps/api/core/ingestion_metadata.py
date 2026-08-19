@@ -53,6 +53,7 @@ SOURCE_CONTENT_TYPE: dict[str, ContentType] = {
     "reddit": "review",
     "youtube_comment": "review",
     "youtube_transcript": "vlog_transcript",
+    "youtube_stt_transcript": "vlog_transcript",
     "youtube_description": "vlog_transcript",
     "visa_info": "guide",
 }

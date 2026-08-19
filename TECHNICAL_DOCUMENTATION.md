@@ -1587,12 +1587,75 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.75, v10.74, v10.73, v10.70, v10.69, v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.76, v10.75, v10.74, v10.73, v10.70, v10.69, v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
 
 > ⚠️ **v10.63.0 and v10.64.0 shipped code and tests but have no entry in this
 > section** (visa cost exclusion + corpus-gated `visa_inr`, and the analytics
 > event fix). This is the known changelog-reconciliation backlog, not an
 > omission specific to v10.65.0.
+
+### v10.76.0 Changes (August 19, 2026) — Data/Ingestion backlog: unified-metadata backfill (#61) + YouTube STT fallback for uncaptioned videos (#38)
+
+Closes #61 and #38, the two "🟢 Data/Ingestion Backlog" items.
+
+**#61 — backfill unified metadata onto pre-2026-07-29 Qdrant points:**
+Measured the live legacy-point share per collection before deciding scope:
+`wiki`/`youtube_narration`/`visa_info` were already at 0% (naturally aged out
+via re-ingestion since the 2026-07-29 schema cutover), `reddit` is empty, but
+`osm_pois` (1.0%, 104/10,097) and `youtube_comments` (92.1%, 23,311/25,306 —
+no scheduled re-ingestion job would ever age these out) still had legacy
+points. New `scripts/backfill_ingestion_metadata.py` derives and
+`set_payload`-writes only `language` (via existing `detect_language`),
+`content_type` (via `SOURCE_CONTENT_TYPE`), and, for `osm_pois` only,
+`attraction_type` (via `OSM_POI_TYPE_TO_ATTRACTION`) — all mechanically
+derivable from data already on the point. Deliberately does **not** invent
+`country`, `source_name`, `quality_score`, or `ingested_at`: writing a
+fabricated `ingested_at` would misrepresent the point's real ingestion time
+the same way inventing `country` would misrepresent geography, and no
+consumer currently reads/filters on the other three, so leaving them absent
+is a no-op rather than a data-quality risk. Points are grouped by identical
+computed payload before writing, turning ~23K individual updates into ~7
+batched `set_payload` calls. `--apply`/dry-run gated (dry-run is default) per
+the `backfill_destination_ingestion_state.py` "data run" convention. Ran
+live against production Qdrant Cloud: 104 `osm_pois` + 23,311
+`youtube_comments` points updated; a verification re-run confirms 0 legacy
+points remain in either collection. 13 new unit tests
+(`tests/unit/test_backfill_ingestion_metadata.py`) against a mocked client.
+
+**#38 — yt-dlp + local Whisper STT fallback for un-captioned YouTube videos:**
+Off by default (`settings.youtube_stt_fallback_enabled`, plus
+`youtube_stt_whisper_model` default `"base"` and
+`youtube_stt_max_minutes_per_run` default 30) — genuinely free (no API $
+cost, both tools are open-source/local) but CPU-heavy, so it's opt-in and
+budget-capped per run rather than treated like the metered-but-free caption
+path. `scrapers/youtube_narration.py::_transcript_text` now returns a
+`(text, source)` tuple: captions still win when present; only when a video
+has *no* caption track and the flag is on does it fall through to the new
+`_stt_transcript_sync` (probes duration via a no-download yt-dlp call first,
+reserves it against the per-run minutes budget via `_stt_budget_available`/
+`reset_stt_budget`, downloads audio-only, extracts to mp3 via yt-dlp's
+FFmpeg postprocessor — requires a local `ffmpeg` binary, not a pip package —
+transcribes with a lazily-loaded/cached Whisper model, and cleans up temp
+files in a `finally` block). STT output is tagged with a new
+`"youtube_stt_transcript"` source (mapped to the existing `vlog_transcript`
+content type in `core/ingestion_metadata.py`) rather than reusing
+`"youtube_transcript"`, so it stays traceable back to how the text was
+produced; `destinations_missing_transcripts()`'s retry-scan now treats either
+source as "has a transcript" so STT-covered destinations aren't re-queued.
+Both dependencies are opt-in additions to `requirements-ml.txt` only (not
+the Dockerfile — this mirrors how `sentence-transformers` is the only
+production-required ML dependency actually installed in the image). Like
+every other fetch in this module, all failure modes (missing dependency,
+probe failure, download failure, transcription failure, zero duration,
+budget exhaustion) degrade to `""` rather than raising. 8 new unit tests
+covering the budget tracker, the dependency-missing path (a real, not
+simulated, `ImportError` in this environment), and the fallback wiring.
+
+Suite 1404 passed / 6 skipped (`tests/unit`), ruff clean on all touched
+files; mypy clean per-file (a pre-existing, unrelated numpy-stub/mypy
+version mismatch surfaces only when `scrapers/` or `scripts/` files are
+type-checked together with everything else in one invocation — reproduces
+identically on the pre-change tree, not introduced by this work).
 
 ### v10.75.0 Changes (August 2026) — Kaggle pricing plan Workstream B: ingestion/calibration-proposal script + runbook, Workstream D: data-freshness-strategy doc
 

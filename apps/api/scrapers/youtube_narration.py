@@ -40,7 +40,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import re
+import shutil
+import tempfile
+import threading
 from typing import Any
 
 import httpx
@@ -225,8 +229,13 @@ async def fetch_video_descriptions(video_ids: list[str]) -> dict[str, str]:
     return descriptions
 
 
-async def _transcript_text(video_id: str, title: str) -> str:
-    """Transcript text for one video, or "" if it has no English captions.
+async def _transcript_text(video_id: str, title: str) -> tuple[str, str]:
+    """Transcript text for one video and the source it came from — either
+    `"youtube_transcript"` (official/auto-generated captions) or
+    `"youtube_stt_transcript"` (yt-dlp + local Whisper fallback, issue #38,
+    only attempted when `settings.youtube_stt_fallback_enabled` and no
+    caption track exists). Returns `("", "youtube_transcript")` if nothing
+    is available at all.
 
     `scrapers/itinerary_corpus.py::fetch_youtube_transcript` is declared
     `async` but performs blocking network I/O with no awaits inside it —
@@ -235,7 +244,9 @@ async def _transcript_text(video_id: str, title: str) -> str:
     because the scheduler shares a process with the API server (the same rule
     `embed()` follows; see docs/system-design.md's async-correctness note).
     Driving the coroutine on a worker thread keeps the loop free while still
-    reusing that function rather than duplicating its parsing.
+    reusing that function rather than duplicating its parsing. The STT
+    fallback below is genuinely CPU-bound, so it gets the same worker-thread
+    treatment for the same reason.
     """
     from scrapers.itinerary_corpus import fetch_youtube_transcript
 
@@ -249,8 +260,147 @@ async def _transcript_text(video_id: str, title: str) -> str:
         doc = await asyncio.to_thread(_fetch)
     except Exception as e:
         logger.warning("Transcript fetch failed for %r: %s", video_id, type(e).__name__)
+        doc = None
+
+    caption_text = (doc or {}).get("raw_text", "") or ""
+    if caption_text:
+        return caption_text, "youtube_transcript"
+
+    if not settings.youtube_stt_fallback_enabled:
+        return "", "youtube_transcript"
+
+    stt_text = await asyncio.to_thread(_stt_transcript_sync, video_id)
+    return stt_text, "youtube_stt_transcript"
+
+
+# ---------------------------------------------------------------------------
+# yt-dlp + local Whisper STT fallback (issue #38) — only reached when a video
+# has no caption track at all AND settings.youtube_stt_fallback_enabled is
+# True. Both tools are free/open-source (no API $ cost, unlike the metered
+# YouTube Data API search this module also uses), but genuinely compute-heavy
+# — local CPU (or GPU, if available to the process) transcription time — so
+# this is bounded per-run by `settings.youtube_stt_max_minutes_per_run`
+# rather than treated as free like the caption path above.
+# ---------------------------------------------------------------------------
+
+# Process-global counter, not a rolling window like _search_times above:
+# compute time isn't a quota that resets on a clock, it's a "don't tie up
+# this run's machine indefinitely" bound. Reset explicitly between runs (or
+# left as a test hook — see reset_stt_budget()) rather than self-expiring.
+_stt_minutes_used = 0.0
+_stt_budget_guard = threading.Lock()
+
+# Cached across calls within a process — loading a Whisper model is a
+# multi-second, non-trivial-memory operation; re-loading it per video would
+# dwarf the actual transcription cost for anything but the longest videos.
+_whisper_model: Any | None = None
+
+
+def reset_stt_budget() -> None:
+    """Clear the per-run STT minutes counter. Test hook — production code
+    calls this at the start of a fresh ingestion run/script invocation, same
+    role as `youtube_comments.reset_search_budget()`."""
+    global _stt_minutes_used
+    with _stt_budget_guard:
+        _stt_minutes_used = 0.0
+
+
+def _stt_budget_available(estimated_minutes: float) -> bool:
+    """Reserves `estimated_minutes` of the per-run STT budget, or returns
+    False (leaving the budget untouched) if it would be exceeded."""
+    global _stt_minutes_used
+    with _stt_budget_guard:
+        if _stt_minutes_used + estimated_minutes > settings.youtube_stt_max_minutes_per_run:
+            return False
+        _stt_minutes_used += estimated_minutes
+        return True
+
+
+def _get_whisper_model():
+    global _whisper_model
+    if _whisper_model is None:
+        import whisper
+        _whisper_model = whisper.load_model(settings.youtube_stt_whisper_model)
+    return _whisper_model
+
+
+def _stt_transcript_sync(video_id: str) -> str:
+    """Blocking: probes the video's duration, reserves it against the
+    per-run minutes budget, downloads audio-only via yt-dlp, transcribes it
+    with local Whisper, and cleans up the downloaded file. Returns "" on any
+    failure or if yt-dlp/whisper aren't installed — same best-effort
+    "degrade to no docs" contract as every other fetch in this module (see
+    module docstring). Must only ever be called via `asyncio.to_thread` —
+    this is synchronous, CPU-bound work.
+    """
+    try:
+        import yt_dlp
+    except ImportError:
+        logger.warning(
+            "youtube_stt_fallback_enabled is True but yt-dlp/openai-whisper "
+            "aren't installed — run: pip install -r requirements-ml.txt"
+        )
         return ""
-    return (doc or {}).get("raw_text", "") or ""
+
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    tmp_dir = tempfile.mkdtemp(prefix="yt_stt_")
+    try:
+        probe_opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+        try:
+            with yt_dlp.YoutubeDL(probe_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except Exception as e:
+            logger.warning("yt-dlp probe failed for %r: %s", video_id, type(e).__name__)
+            return ""
+
+        duration_minutes = float((info or {}).get("duration") or 0) / 60.0
+        if duration_minutes <= 0:
+            return ""
+        if not _stt_budget_available(duration_minutes):
+            logger.info(
+                "STT minutes budget (%d/run) exhausted — skipping %r (%.1f min)",
+                settings.youtube_stt_max_minutes_per_run, video_id, duration_minutes,
+            )
+            return ""
+
+        download_opts = {
+            "format": "bestaudio/best",
+            "outtmpl": os.path.join(tmp_dir, "%(id)s.%(ext)s"),
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "64",
+            }],
+        }
+        try:
+            with yt_dlp.YoutubeDL(download_opts) as ydl:
+                ydl.extract_info(url, download=True)
+        except Exception as e:
+            logger.warning("yt-dlp audio download failed for %r: %s", video_id, type(e).__name__)
+            return ""
+
+        audio_path = next(
+            (os.path.join(tmp_dir, f) for f in os.listdir(tmp_dir) if f.startswith(video_id)),
+            None,
+        )
+        if not audio_path:
+            logger.warning("yt-dlp reported success but no audio file found for %r", video_id)
+            return ""
+
+        try:
+            model = _get_whisper_model()
+            result = model.transcribe(audio_path)
+        except Exception as e:
+            logger.warning("Whisper transcription failed for %r: %s", video_id, type(e).__name__)
+            return ""
+
+        return (result.get("text") or "").strip()
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
 
 
 async def ingest_youtube_narration(destination: str) -> int:
@@ -288,12 +438,12 @@ async def ingest_youtube_narration(destination: str) -> int:
                     extra={"video_id": video_id, "video_title": title},
                 ))
 
-        transcript = await _transcript_text(video_id, title)
+        transcript, transcript_source = await _transcript_text(video_id, title)
         if transcript:
             for chunk in _narration_chunks(transcript)[:_MAX_CHUNKS_PER_VIDEO]:
                 docs.append(build_ingestion_payload(
                     destination=destination,
-                    source="youtube_transcript",
+                    source=transcript_source,
                     text=chunk,
                     source_url=url,
                     source_name="YouTube",
@@ -368,7 +518,7 @@ async def destinations_missing_transcripts() -> list[str]:
             if not destination:
                 continue
             has_narration.add(destination)
-            if payload.get("source") == "youtube_transcript":
+            if payload.get("source") in ("youtube_transcript", "youtube_stt_transcript"):
                 has_transcript.add(destination)
         if offset is None:
             break
