@@ -5,7 +5,7 @@ across instances) with an in-process dict fallback for local dev — see
 core/redis_client.py. Links expire after `settings.share_link_ttl_seconds`
 (90 days by default) rather than living forever.
 """
-
+import asyncio
 import secrets
 
 from fastapi import APIRouter, HTTPException, Request
@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from core.config import settings
 from core.rate_limit import DEFAULT_RATE_LIMIT, limiter
 from core.redis_client import get_cache
+from services.generation_signals import record_share_signal
 
 router = APIRouter()
 
@@ -23,6 +24,13 @@ class ShareRequest(BaseModel):
     trip_config: dict
     labels: dict = {}
     destination_label: str = ""
+    # The `generated_itineraries` point id this itinerary was stored under
+    # (ItineraryResponse.generation_id, issue #34) — when present, sharing
+    # is recorded as a "shared" quality signal against that generation, feeding
+    # the learning-flywheel quality_score background job. None whenever the
+    # itinerary wasn't stored in the flywheel (fallback tier, disabled, etc.)
+    # or predates this field.
+    generation_id: str | None = None
 
 
 class ShareResponse(BaseModel):
@@ -50,6 +58,11 @@ async def create_share(request: Request, body: ShareRequest) -> ShareResponse:
         },
         ttl_seconds=settings.share_link_ttl_seconds,
     )
+    if body.generation_id:
+        # Fire-and-forget, own-session write (services/generation_signals.py
+        # opens its own DB session) — a failure here must never affect
+        # share-link creation, and must not add latency to this response.
+        asyncio.create_task(record_share_signal(body.generation_id))
     return ShareResponse(slug=slug, url=f"/t/{slug}")
 
 

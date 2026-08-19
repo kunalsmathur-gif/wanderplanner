@@ -4,12 +4,16 @@ formula and quiet-period readiness check (issue #34), fully offline.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
+
+import services.generation_signals as generation_signals
 from services.generation_signals import (
     QUIET_PERIOD,
     _compute_quality_score,
     _signal_ready_to_score,
+    record_share_signal,
 )
 
 
@@ -101,3 +105,30 @@ class TestSignalReadyToScore:
         stale_naive = datetime.now(UTC).replace(tzinfo=None) - QUIET_PERIOD - timedelta(minutes=1)
         row = self._row(last_updated_at=stale_naive)
         assert _signal_ready_to_score(row) is True
+
+
+@pytest.mark.asyncio
+class TestRecordShareSignal:
+    async def test_sets_was_shared_via_own_session(self, db_session_maker):
+        from sqlalchemy import select
+
+        from db_models import GeneratedItinerarySignal
+
+        with patch.object(generation_signals, "AsyncSessionLocal", db_session_maker):
+            await record_share_signal("55")
+
+        async with db_session_maker() as session:
+            row = (
+                await session.execute(
+                    select(GeneratedItinerarySignal).where(GeneratedItinerarySignal.generation_id == "55")
+                )
+            ).scalar_one()
+            assert row.was_shared is True
+
+    async def test_failure_is_swallowed(self):
+        def _boom():
+            raise RuntimeError("boom")
+
+        with patch.object(generation_signals, "AsyncSessionLocal", _boom):
+            # Must not raise.
+            await record_share_signal("66")
