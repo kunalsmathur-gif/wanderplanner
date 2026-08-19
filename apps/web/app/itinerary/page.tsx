@@ -10,6 +10,7 @@ import { useAppStore } from '@/store/appStore'
 import { useAuthStore } from '@/store/authStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { loadLastItinerary } from '@/lib/resumeLastItinerary'
+import { useSessionDurationSignal } from '@/hooks/useSessionDurationSignal'
 
 /**
  * The generated trip, at its own URL.
@@ -27,6 +28,7 @@ export default function ItineraryPage() {
   const days = useItineraryStore((state) => state.days)
   const hasItinerary = days.length > 0
   const authStatus = useAuthStore((state) => state.status)
+  useSessionDurationSignal()
 
   // 🔴 Hydration state is read in an effect, never during render, and through
   // optional chaining. zustand's `persist` middleware **returns early without

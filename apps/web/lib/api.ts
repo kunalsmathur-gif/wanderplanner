@@ -497,3 +497,35 @@ async function extractTtsErrorCode(e: unknown): Promise<TtsErrorCode> {
   ]
   return (KNOWN as readonly string[]).includes(code ?? '') ? (code as TtsErrorCode) : 'unknown'
 }
+
+// ── Learning-flywheel quality signals (issue #34) ──────────────────────────
+// Fire-and-forget beacons feeding the background quality-score job — see
+// docs/rag-strategy.md's "Learning Flywheel". Callers must not await this
+// for its result; a dropped signal only means a slightly noisier score, not
+// a broken user flow.
+type GenerationSignalEvent = 'regenerated' | 'chat_turn' | 'session_duration'
+
+export function sendGenerationSignal(
+  generationId: string | undefined,
+  event: GenerationSignalEvent,
+  value?: number,
+): void {
+  if (!generationId) return
+
+  const url = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'}/api/generation-signal`
+  const body = JSON.stringify({ generation_id: generationId, event, value })
+
+  // `keepalive: true` (rather than navigator.sendBeacon) lets this beacon
+  // survive page unload *and* carry `credentials: 'include'` the same way
+  // every other authenticated call in this file does — sendBeacon has no
+  // way to opt into cross-origin credentials.
+  fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    keepalive: true,
+    body,
+  }).catch(() => {
+    // Best-effort — nothing to recover from client-side.
+  })
+}
