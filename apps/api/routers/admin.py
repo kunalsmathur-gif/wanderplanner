@@ -39,6 +39,24 @@ async def _count_events(db: AsyncSession, event_type: str, since: datetime | Non
     return (await db.execute(stmt)).scalar_one()
 
 
+async def _event_durations_ms(db: AsyncSession, event_type: str, since: datetime) -> list[float]:
+    """Every `duration_ms` value logged against `event_type` since `since`,
+    for latency aggregation (avg/p50/p90) in `metrics_summary`. Fetched as a
+    plain Python list (like `response_times` below) rather than a SQL AVG so
+    the same `_percentile()` helper can be reused for both — `duration_ms`
+    is only present on events logged after this instrumentation shipped, so
+    older rows (null) are naturally excluded by the `isnot(None)` filter."""
+    stmt = (
+        select(Event.event_metadata["duration_ms"].as_float())
+        .where(
+            Event.event_type == event_type,
+            Event.created_at >= since,
+            Event.event_metadata["duration_ms"].isnot(None),
+        )
+    )
+    return [v for v in (await db.execute(stmt)).scalars().all() if v is not None]
+
+
 def _lead_response_time_hours(lead: AgentLead) -> float | None:
     if lead.responded_at is None:
         return None
@@ -143,6 +161,15 @@ async def metrics_summary(
 
     itineraries_generated_30d = await _count_events(db, "itinerary_generated", d30)
     itineraries_failed_30d = await _count_events(db, "itinerary_failed", d30)
+
+    # Latency metrics (issue: prod itinerary-generation timeouts) — average +
+    # p50/p90 wall-clock duration for the two LLM-backed request paths that
+    # actually matter for perceived speed. Only successful requests are
+    # included (matches how `duration_ms` is logged — see
+    # routers/itinerary.py / routers/feasibility.py); failed/timed-out
+    # requests are already visible separately via the failure counts above.
+    itinerary_durations_ms = await _event_durations_ms(db, "itinerary_generated", d30)
+    feasibility_durations_ms = await _event_durations_ms(db, "feasibility_checked", d30)
 
     # Gemini token/cost usage — each `gemini_usage` event is logged once per
     # request (see core/analytics.flush_llm_usage) and already aggregates
@@ -271,6 +298,15 @@ async def metrics_summary(
         "itineraries": {
             "generated_30d": itineraries_generated_30d,
             "failed_30d": itineraries_failed_30d,
+            "generation_time_avg_ms": round(sum(itinerary_durations_ms) / len(itinerary_durations_ms), 1) if itinerary_durations_ms else None,
+            "generation_time_p50_ms": _percentile(itinerary_durations_ms, 0.5),
+            "generation_time_p90_ms": _percentile(itinerary_durations_ms, 0.9),
+        },
+        "feasibility_checks": {
+            "count_30d": len(feasibility_durations_ms),
+            "check_time_avg_ms": round(sum(feasibility_durations_ms) / len(feasibility_durations_ms), 1) if feasibility_durations_ms else None,
+            "check_time_p50_ms": _percentile(feasibility_durations_ms, 0.5),
+            "check_time_p90_ms": _percentile(feasibility_durations_ms, 0.9),
         },
         "cost_usage": {
             "gemini_requests_30d": gemini_requests_30d,

@@ -118,8 +118,12 @@ async def test_admin_metrics_summary_and_timeseries_return_expected_data(
         await log_event(session, "session_start")
         await log_event(session, "login_success", user_id=member.id, metadata={"provider": "password"})
         await log_event(session, "login_failed", metadata={"email_domain": "example.com"})
-        await log_event(session, "itinerary_generated", user_id=member.id)
+        await log_event(session, "itinerary_generated", user_id=member.id, metadata={"duration_ms": 8000.0})
         await log_event(session, "itinerary_failed", user_id=member.id, metadata={"reason": "timeout"})
+        await log_event(
+            session, "feasibility_checked", user_id=member.id,
+            metadata={"feasible": True, "duration_ms": 2000.0},
+        )
         await log_event(
             session,
             "gemini_usage",
@@ -141,7 +145,19 @@ async def test_admin_metrics_summary_and_timeseries_return_expected_data(
     assert summary["logins"]["success_30d"] == 2
     assert summary["logins"]["failed_30d"] == 1
     assert summary["logins"]["success_rate_30d"] == pytest.approx(2 / 3)
-    assert summary["itineraries"] == {"generated_30d": 1, "failed_30d": 1}
+    assert summary["itineraries"] == {
+        "generated_30d": 1,
+        "failed_30d": 1,
+        "generation_time_avg_ms": 8000.0,
+        "generation_time_p50_ms": 8000.0,
+        "generation_time_p90_ms": 8000.0,
+    }
+    assert summary["feasibility_checks"] == {
+        "count_30d": 1,
+        "check_time_avg_ms": 2000.0,
+        "check_time_p50_ms": 2000.0,
+        "check_time_p90_ms": 2000.0,
+    }
     from core.config import settings as _settings
 
     assert summary["cost_usage"]["gemini_requests_30d"] == 1

@@ -4,8 +4,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import time
 
+from core import timing
 from core.budget_estimator import estimate_bare_minimum_budget
 from core.budget_tiers import budget_tier_prompt_hint
 from core.config import settings
@@ -15,6 +17,8 @@ from core.prompt_guard import neutralize
 from models.feasibility import AlternativeDestination, CostBreakdown, FeasibilityResponse
 from models.trip import TripConfig
 from services.visa import entry_cost_grounding
+
+logger = logging.getLogger(__name__)
 
 # In-process cache for the LLM cost estimate, keyed on everything the prompt
 # actually varies with (trip_summary + tier/grounding hints), which already
@@ -166,10 +170,30 @@ async def _check_destination_exists(trip_config: TripConfig) -> bool | None:
 async def check_feasibility(
     trip_config: TripConfig, skip_destination_check: bool = False
 ) -> FeasibilityResponse:
-    """Call Gemini to estimate trip costs and check budget feasibility."""
+    """Call Gemini to estimate trip costs and check budget feasibility.
+
+    Wrapped in `timing.track()` (mirrors `generate_itinerary` in
+    chains/itinerary_chain.py) so per-stage latency is emitted on every exit
+    path, including exceptions — a stalled Gemini call costs exactly as much
+    wall-clock as a successful one, so timing only the happy path would
+    under-report the latency that actually hurts."""
+    with timing.track("check_feasibility") as timings:
+        try:
+            return await _check_feasibility_inner(trip_config, skip_destination_check, timings)
+        finally:
+            timing.log_timings(
+                logger, timings,
+                slow_threshold_seconds=settings.slow_feasibility_threshold_seconds,
+            )
+
+
+async def _check_feasibility_inner(
+    trip_config: TripConfig, skip_destination_check: bool, timings: timing.RequestTimings
+) -> FeasibilityResponse:
     destination_verified: bool | None = None
     if not skip_destination_check:
-        destination_verified = await _check_destination_exists(trip_config)
+        with timing.stage("destination_check"):
+            destination_verified = await _check_destination_exists(trip_config)
         if destination_verified is False:
             dest_name = trip_config.destination.city if trip_config.destination else "this place"
             return FeasibilityResponse(
@@ -262,16 +286,17 @@ async def check_feasibility(
         or trip_config.destination_country
         or ""
     )
-    try:
-        flight_hint, accommodation_hint, entry = await asyncio.gather(
-            flight_cost_grounding_hint(trip_config),
-            accommodation_cost_grounding_hint(trip_config),
-            entry_cost_grounding(entry_country),
-        )
-        entry_hint, entry_grounded = entry
-    except Exception:
-        flight_hint, accommodation_hint, entry_hint = "", "", ""
-        entry_grounded = False
+    with timing.stage("cost_grounding"):
+        try:
+            flight_hint, accommodation_hint, entry = await asyncio.gather(
+                flight_cost_grounding_hint(trip_config),
+                accommodation_cost_grounding_hint(trip_config),
+                entry_cost_grounding(entry_country),
+            )
+            entry_hint, entry_grounded = entry
+        except Exception:
+            flight_hint, accommodation_hint, entry_hint = "", "", ""
+            entry_grounded = False
     cost_grounding_hint = "\n\n".join(
         h for h in (flight_hint, accommodation_hint, entry_hint) if h
     )
@@ -279,6 +304,7 @@ async def check_feasibility(
     cache_key = _estimate_cache_key(trip_summary, budget_tier_hint, cost_grounding_hint)
     cached = _cached_estimate(cache_key)
     if cached is not None:
+        timings.increment("estimate_cache_hits")
         data, entry_grounded = cached["data"], cached["entry_grounded"]
     else:
         client = google_genai.Client(api_key=settings.gemini_api_key)
@@ -299,7 +325,8 @@ async def check_feasibility(
             )
 
         loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, _call_sync)
+        with timing.stage("llm_api"):
+            response = await loop.run_in_executor(None, _call_sync)
         track_gemini_usage(response, model=settings.gemini_model, purpose="feasibility_check")
         text = response.text
 
@@ -313,7 +340,8 @@ async def check_feasibility(
         data = json.loads(cleaned)
         _store_estimate(cache_key, {"data": data, "entry_grounded": entry_grounded})
 
-    bare_minimum = await _safe_bare_minimum(trip_config)
+    with timing.stage("bare_minimum"):
+        bare_minimum = await _safe_bare_minimum(trip_config)
     return _build_response(
         data,
         budget_inr,

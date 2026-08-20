@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     # Set against the PRD's stated budget rather than measured p95 — revisit
     # once there is real traffic data to set it from.
     slow_itinerary_threshold_seconds: float = 20.0
+    # Same idea for the (much lighter) feasibility check — a single Gemini
+    # call plus free-tools grounding, so a much tighter bar than full
+    # itinerary generation is appropriate.
+    slow_feasibility_threshold_seconds: float = 8.0
 
     # Qdrant
     qdrant_url: str = "http://localhost:6333"

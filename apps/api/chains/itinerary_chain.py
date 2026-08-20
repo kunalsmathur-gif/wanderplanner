@@ -338,17 +338,31 @@ async def _itinerary_examples_block(trip_config: TripConfig) -> str:
     combined with the generated_itineraries "learning flywheel" collection
     (issue #32). Best-effort: any retrieval failure degrades to the explicit
     "none available" sentinel the system prompt already knows how to
-    handle, never blocks generation."""
-    try:
-        corpus_examples = await retrieve_itinerary_examples(trip_config)
-    except Exception:
-        logger.warning("itinerary_corpus retrieval failed; generating without examples", exc_info=True)
+    handle, never blocks generation.
+
+    The two sources are independent Qdrant collections, so they're fetched
+    concurrently via `asyncio.gather` (each one internally issues its own
+    embed + multiple named-vector searches) rather than sequentially — this
+    used to await one after the other, silently doubling this block's
+    latency once the flywheel collection was added, and made it the tail
+    latency of the otherwise-parallelized `guidance_blocks` stage (see the
+    call site's `asyncio.gather` a few lines up the call stack). Production
+    itinerary-generation timeouts were traced to this regression."""
+    corpus_result, generated_result = await asyncio.gather(
+        retrieve_itinerary_examples(trip_config),
+        retrieve_generated_itinerary_examples(trip_config),
+        return_exceptions=True,
+    )
+    if isinstance(corpus_result, Exception):
+        logger.warning("itinerary_corpus retrieval failed; generating without examples", exc_info=corpus_result)
         corpus_examples = ""
-    try:
-        generated_examples = await retrieve_generated_itinerary_examples(trip_config)
-    except Exception:
-        logger.warning("generated_itineraries retrieval failed; ignoring", exc_info=True)
+    else:
+        corpus_examples = corpus_result
+    if isinstance(generated_result, Exception):
+        logger.warning("generated_itineraries retrieval failed; ignoring", exc_info=generated_result)
         generated_examples = ""
+    else:
+        generated_examples = generated_result
 
     # Combined rather than each independently wrapped, so the two sources
     # share one bounded prompt-injection-warning block and one context
