@@ -198,18 +198,38 @@ def _call_openrouter(model: str, prompt: str, json_mode: bool = True) -> tuple[s
     `max_tokens` is capped explicitly (matching `_call_anthropic`'s 8192)
     because OpenRouter otherwise defaults to the upstream model's own max
     (65535 for gemini-2.5-flash), which a free/low-credit account can't
-    afford and 402s on — confirmed live 2026-08-19."""
-    from openai import OpenAI
+    afford and 402s on — confirmed live 2026-08-19.
+
+    Falls back to a prompt-suffix JSON instruction (same approach
+    `_call_moonshot`/`_call_anthropic` use) if the upstream route rejects
+    `response_format` outright — confirmed live 2026-08-20:
+    "moonshotai/kimi-k2" via OpenRouter's Novita route 400s with
+    "does not support feature: structured-outputs". Retrying without
+    `response_format` is the only fix available here since OpenRouter can
+    route the SAME model id to different upstream providers over time, so
+    this can't be hardcoded to specific model ids."""
+    from openai import BadRequestError, OpenAI
     client = OpenAI(api_key=settings.openrouter_api_key, base_url="https://openrouter.ai/api/v1")
     upstream_model = model.removeprefix("openrouter/")
     kwargs: dict[str, Any] = {"temperature": 0.4, "max_tokens": 8192}
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
-    resp = client.chat.completions.create(
-        model=upstream_model,
-        messages=[{"role": "user", "content": prompt}],
-        **kwargs,
-    )
+    try:
+        resp = client.chat.completions.create(
+            model=upstream_model,
+            messages=[{"role": "user", "content": prompt}],
+            **kwargs,
+        )
+    except BadRequestError as e:
+        if not json_mode or "structured-outputs" not in str(e):
+            raise
+        fallback_prompt = prompt + "\n\nRespond with ONLY valid JSON, no markdown fences."
+        resp = client.chat.completions.create(
+            model=upstream_model,
+            messages=[{"role": "user", "content": fallback_prompt}],
+            temperature=0.4,
+            max_tokens=8192,
+        )
     usage = resp.usage
     prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0 if usage else 0
     output_tokens = getattr(usage, "completion_tokens", 0) or 0 if usage else 0

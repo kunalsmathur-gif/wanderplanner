@@ -436,5 +436,39 @@ at or above gemini-2.5-flash's capability tier — plus a low-cost/nano tier (`g
 task routing (§3.2c-A's "mid" tier discussion). Also fixed a stale pricing entry found in the
 process: `openrouter/meta-llama/llama-3.3-70b-instruct` was priced at `(0.59, 0.79)` in
 `core/llm_client.py`, but OpenRouter's live rate is `(0.10, 0.32)` — the earlier comparison's cost
-column for that model was quietly wrong. **Not yet run against the fuller 12-model registry** —
-planned for next session, tracked in `docs/NEXT_SESSION_TODO.md` item 0.
+column for that model was quietly wrong.
+
+**2026-08-19 (later) — first full-registry run invalidated by the account running out of credit
+mid-run.** 6 of the 12 models failed every single call with `402 requires more credits`; models that
+did complete showed latencies inflated to 3-6x normal (retries against a shrinking balance, not real
+model speed). Confirmed via `GET /api/v1/credits`: `total_credits: 0`. **Lesson: check the credits
+endpoint before trusting a multi-model sweep's latency/error numbers — a starved account produces
+data that LOOKS like a real comparison (numbers, not outright failures) but isn't one.** User added
+$10 credit.
+
+**2026-08-20 — clean full run + one more real bug found and fixed.** Re-ran all 12 models with a
+funded account: 10/12 succeeded cleanly (0-33% error rates, real latencies 11-134s p50). Full
+results table in `docs/eval-set.md` §8D. `gpt-4o-mini` remains the strongest all-round pick (highest
+accuracy, zero errors, cheapest of the reliable models); `claude-haiku-4.5`/`kimi-k2`/
+`gemini-2.5-flash-lite` beat it on judge quality at a cost/latency premium; `llama-3.1-8b-instruct`
+is far cheapest/fastest but weakest on judge quality — a candidate for the low-cost tier's intended
+purpose (simple task routing), not itinerary generation.
+
+Two models still failed, for two different real reasons:
+- **`kimi-k2` (fixed)**: 400'd with `"model: moonshotai/kimi-k2-instruct does not support feature:
+  structured-outputs"` — OpenRouter's routing for this model (via the Novita provider) doesn't
+  support `response_format={"type": "json_object"}`. `_call_openrouter()` now catches that specific
+  `BadRequestError` and retries once with a prompt-suffix JSON instruction, the same fallback
+  `_call_anthropic`/`_call_moonshot` already use elsewhere in this file. Live-verified: re-run after
+  the fix succeeded 5/6 (the 1 remaining failure was a genuine malformed-JSON response, an inherent
+  risk of the prompt-suffix fallback vs. structured mode — see §3.3's parity-risk discussion, this
+  IS that risk materializing). **Can't hardcode this per model id** — OpenRouter can route the same
+  id to a different upstream provider over time, so any model could hit this.
+- **`gpt-5-nano` (documented, not fixed)**: returned `content=None` on all 6 calls. It's a reasoning
+  model — even a trivial test prompt spent 192 of 266 completion tokens on hidden `reasoning_tokens`
+  before any visible output. Against the much longer real itinerary prompt it likely burns the whole
+  8192-token cap on reasoning before emitting JSON. Same failure class already known in this project
+  for Gemini's hidden-thinking tokens (§3.3 also flags "different default sampling params...
+  potentially different safety-filter defaults" as an open unknown — add hidden reasoning-token
+  budgets to that list). Real fix needs a reasoning-effort/budget control (OpenRouter exposes a
+  `reasoning` param on some routes) — deferred as a per-model tuning problem, not a shared-code fix.

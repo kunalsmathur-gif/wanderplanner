@@ -957,45 +957,79 @@ generations; found and fixed 2026-08-19 by checking the live
 a cached list. Re-verify ids against that endpoint before trusting a
 comparison that includes OpenRouter rows.
 
-### 8D — Status: ✅ FIRST LIVE RUN DONE (2026-08-18/19, partial) — fuller run planned next session
+### 8D — Status: ✅ FULL 12-MODEL COMPARISON DONE (2026-08-18 → 2026-08-20)
 
-The corporate-network DLP block that previously prevented any OpenRouter
-call was lifted (exemption granted 2026-08-19). First live run used
-`--runs 1` across the 5 originally-registered `openrouter/*` models:
+The corporate-network DLP block that previously prevented any OpenRouter call was lifted 2026-08-19
+(issue #66). First live run (5 originally-registered models, `--runs 1`) found 2 dead ids (see
+below). The registry was then expanded to 12 `openrouter/*` models — mid/high tier (Google,
+Anthropic, OpenAI, Meta-Llama, Kimi, DeepSeek, each at or above gemini-2.5-flash's capability tier)
+plus a low-cost/nano tier (`gpt-5-nano`, `gemini-2.5-flash-lite`, `deepseek-v4-flash`,
+`llama-3.1-8b-instruct`) for future simple/non-critical task routing (§3.2c-A) — and run in full.
+
+**⚠️ First full-registry attempt (2026-08-19) was invalid data, not a real comparison**: the
+OpenRouter account's credit balance hit **$0** partway through (confirmed via
+`GET /api/v1/credits`: `total_credits: 0, total_usage: $0.192`) — 6 of 12 models failed every call
+(402 "requires more credits"), and the models that did complete showed inflated latencies (up to
+173s p50) from repeated failed-then-retried attempts against a shrinking balance, not genuine model
+speed. **Discard those numbers if found in old session output.** User added $10 credit; final clean
+numbers below are from the re-run after that (`eval/out/model_comparison_results_20260820_043357.json`
++ a follow-up single-model re-run for kimi-k2, `..._044925.json`).
+
+**Final results (2026-08-20, clean run, `--runs 1`, 6 cases):**
 
 | Model | Accuracy | Hallucination | Judge Quality | p50 Latency | Cost/req | Errors |
 |---|---|---|---|---|---|---|
-| `openrouter/google/gemini-2.5-flash` | 0.64 | 0.64 | 0.87 | 28.7s | $0.0142 | 1/6 |
-| `openrouter/openai/gpt-4o-mini` | 0.71 | 0.56 | 0.67 | 28.1s | $0.0022 | 0/6 |
-| `openrouter/meta-llama/llama-3.3-70b-instruct` | 0.59 | 0.57 | 0.24 | 39.1s (p95 217s) | $0.0037 | 0/6 |
-| `openrouter/google/gemini-2.0-flash-001` | — | — | — | — | — | 6/6 (404, model retired) |
-| `openrouter/anthropic/claude-3.5-haiku` | — | — | — | — | — | 6/6 (404, model retired) |
+| `openrouter/openai/gpt-4o-mini` | **0.7478** | 0.50 | 0.69 | 32.4s | $0.0023 | 0/6 |
+| `openrouter/anthropic/claude-haiku-4.5` | 0.6902 | 0.59 | 0.87 | 33.1s | $0.0336 | 0/6 |
+| `openrouter/moonshotai/kimi-k2` | 0.6829 | 0.64 | **0.90** | 92.4s | $0.0106 | 1/6 |
+| `openrouter/deepseek/deepseek-v4-flash` | 0.6419 | 0.66 | 0.81 | 133.8s | $0.0012 | 2/6 |
+| `openrouter/google/gemini-2.5-flash-lite` | 0.6392 | 0.64 | 0.93 | 18.1s | $0.0027 | 1/6 |
+| `openrouter/openai/gpt-5-mini` | 0.6383 | 0.54 | 1.0 (n=2) | 79.2s | $0.0157 | 4/6 |
+| `openrouter/google/gemini-2.5-flash` | 0.6281 | 0.64 | 0.81 | 24.7s | $0.0152 | 0/6 |
+| `openrouter/deepseek/deepseek-chat` | 0.6268 | 0.45 | 0.67 | 68.8s | $0.0040 | 0/6 |
+| `openrouter/google/gemini-3.5-flash-lite` | 0.6264 | 0.66 | 0.83 | 11.3s | $0.0106 | 0/6 |
+| `openrouter/meta-llama/llama-3.3-70b-instruct` | 0.5682 | 0.58 | 0.33 | 74.1s (p95 294s) | $0.0011 | 0/6 |
+| `openrouter/meta-llama/llama-3.1-8b-instruct` | 0.5434 | 0.45 | 0.40 | **17.9s** | **$0.0003** | 0/6 |
+| `openrouter/openai/gpt-5-nano` | — | — | — | — | — | **6/6 (see finding below)** |
 
-`gpt-4o-mini` had the best accuracy at the lowest cost with zero errors;
-`llama-3.3-70b-instruct`'s judge-quality score (0.24) and one 217s p95
-latency spike stand out as weak. `gemini-2.5-flash` scored highest on judge
-quality but had one hard failure. Full results:
-`eval/out/model_comparison_results_20260818_194115.json` (gitignored per
-`.gitignore:55` `apps/api/eval/out/` — laptop-local only, not in git).
+**Read for a decision, not just a leaderboard**: `gpt-4o-mini` is the strongest all-round pick —
+highest accuracy, zero errors, cheap, ~32s. `claude-haiku-4.5`/`kimi-k2`/`gemini-2.5-flash-lite` all
+beat it on judge quality (tone/personalization/coherence) at a real cost or latency premium.
+`llama-3.1-8b-instruct` is the cheapest and fastest by a wide margin but weakest on judge quality —
+a plausible pick for the low-stakes tier this was added for (§3.2c-A), not for itinerary generation
+itself. `gpt-5-mini`'s judge score is from only 2 judged calls (4 of 6 errored) — not a reliable
+signal at this sample size.
 
-Two real bugs found and fixed while getting this run to work (neither
-specific to OpenRouter):
-- `_call_openrouter()` left `max_tokens` unset, so OpenRouter defaulted to
-  the upstream model's own max (65535 for gemini-2.5-flash) — exceeded this
-  account's free credit and 402'd every call. Capped at 8192, matching
-  `_call_anthropic`'s existing pattern.
-- `run_model_comparison.py::build_prompt()` was missing the `day_cost_guidance`
-  kwarg that `chains.itinerary_chain.SYSTEM_PROMPT` now requires (added by
-  an unrelated main-branch merge) — `KeyError: 'day_cost_guidance'` on every
-  call, before any model was even reached.
+**Two real bugs found and fixed getting the first (5-model) run to work** — neither specific to
+OpenRouter itself:
+- `_call_openrouter()` left `max_tokens` unset, so OpenRouter defaulted to the upstream model's own
+  max (65535 for gemini-2.5-flash) — 402'd every call against a low-credit account. Capped at 8192,
+  matching `_call_anthropic`'s existing pattern.
+- `run_model_comparison.py::build_prompt()` was missing the `day_cost_guidance` kwarg that
+  `chains.itinerary_chain.SYSTEM_PROMPT` now requires (added by an unrelated main-branch merge) —
+  `KeyError: 'day_cost_guidance'` on every call, before any model was even reached.
 
-**Registry expanded 2026-08-19** to 12 `openrouter/*` models total — mid/high
-tier (Google, Anthropic, OpenAI, Meta-Llama, Kimi, DeepSeek, each at or above
-gemini-2.5-flash's capability tier) plus a low-cost/nano tier
-(`gpt-5-nano`, `gemini-2.5-flash-lite`, `deepseek-v4-flash`,
-`llama-3.1-8b-instruct`) intended for simple/non-critical task routing once a
-central router exists (§3.2c-A). **Not yet run against this fuller set** —
-planned for next session. Tracked in `docs/NEXT_SESSION_TODO.md` item 0.
+**Two-of-two model ids that 404'd** (`openrouter/google/gemini-2.0-flash-001`,
+`openrouter/anthropic/claude-3.5-haiku`) were retired by OpenRouter since the registry was first
+written — see the model-id-drift note above.
+
+**One more real bug found and fixed 2026-08-20**: `openrouter/moonshotai/kimi-k2` 400'd on every
+call — `"model: moonshotai/kimi-k2-instruct does not support feature: structured-outputs"` — because
+OpenRouter's routing for this model (via the Novita provider) doesn't support
+`response_format={"type": "json_object"}`. `_call_openrouter()` now catches that specific
+`BadRequestError` and retries once with a prompt-suffix JSON instruction instead (same fallback
+`_call_anthropic`/`_call_moonshot` already use), live-verified. **Can't be hardcoded per model id**
+because OpenRouter can route the same model to a different upstream provider over time.
+
+**One finding documented, NOT fixed**: `openrouter/openai/gpt-5-nano` failed all 6 calls with
+`content=None`. It's a reasoning model — even a trivial test prompt spent 192 of 266 completion
+tokens on hidden `reasoning_tokens` before emitting visible output. Against the much longer real
+itinerary prompt, it likely exhausts the entire 8192-token cap on reasoning before producing any
+JSON — the same class of bug already documented in this project for Gemini's hidden-thinking tokens
+(see `docs/NEXT_SESSION_TODO.md` gotcha on `gemini-2.5-flash-lite`/`thinking_budget`). A real fix
+needs a reasoning-effort/budget control (OpenRouter exposes a `reasoning` param on some routes), not
+just a bigger `max_tokens` cap — deferred, not attempted live given it's a per-model tuning problem,
+not a shared code path.
 
 ---
 

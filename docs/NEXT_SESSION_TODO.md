@@ -2162,28 +2162,34 @@ Reviewed the existing eval harnesses against the standard "Quality Flywheel" met
 
 ## ⏭️ Remaining items (in suggested order — items 1-3 are POC-readiness priorities per 2026-07-16 discussion)
 
-### 0. Run the LLM model-selection + red-team evals live — model-comparison PARTIALLY done 2026-08-19, red-team still not run
+### 0. Run the LLM model-selection + red-team evals live — model-comparison ✅ DONE 2026-08-20, red-team still not run
 
-**UPDATE 2026-08-19**: the OpenRouter DLP network block (see issue #66) was lifted this session, and
-`run_model_comparison.py` was run live for the first time — `--runs 1` across the 5
-originally-registered `openrouter/*` models. Full results table + bugs found/fixed:
-`docs/eval-set.md` §8D and `docs/llm-routing-openrouter-analysis.md` §7. Short version: `gpt-4o-mini`
-won on accuracy/cost/reliability; 2 of the 5 registered OpenRouter ids had gone dead (404, model
-generations retired) and were replaced; the registry was expanded to 12 `openrouter/*` models
-(added OpenAI/Kimi/DeepSeek + a low-cost/nano tier) but **the fuller 12-model set has not been run
-yet** — that's the next concrete step, likely still at `--runs 1` first to keep cost down before a
-full `--runs 3` sweep.
+**UPDATE 2026-08-20**: the full 12-model `openrouter/*` comparison is done. Results table + all bugs
+found/fixed: `docs/eval-set.md` §8D and `docs/llm-routing-openrouter-analysis.md` §7. Short version:
+`gpt-4o-mini` wins on accuracy/cost/reliability; `claude-haiku-4.5`/`kimi-k2`/`gemini-2.5-flash-lite`
+beat it on judge quality at a cost/latency premium; `llama-3.1-8b-instruct` is far cheapest/fastest
+but weakest on judge quality (candidate for low-stakes task routing, not itinerary generation).
+`gpt-5-nano` fails every call (reasoning-token budget exhaustion — documented, not fixed, needs a
+`reasoning`-param control OpenRouter exposes on some routes, not just a bigger `max_tokens`).
+
+**⚠️ Gotcha for next time a multi-model sweep is run**: the OpenRouter account ran to **$0 credit
+mid-run** on the first full-registry attempt (2026-08-19) — 6/12 models 402'd every call, and the
+"successful" models showed 3-6x inflated latencies from retries against a shrinking balance, not
+real speed. That run's numbers were discarded. **Check `GET https://openrouter.ai/api/v1/credits`
+before trusting a run's latency/error numbers** — a starved account produces plausible-looking data,
+not an outright crash. User topped up $10; ~$9.5 should remain after this session's runs — check
+before spending more.
 
 `run_red_team_eval.py` (§9) is **still not run live at all** — only import/smoke-tested against
-synthetic data.
+synthetic data. This is the next concrete step.
 
 To continue next session:
-- Run `python -m eval.run_model_comparison --models openrouter/google/gemini-2.5-flash,openrouter/google/gemini-3.5-flash-lite,openrouter/google/gemini-2.5-flash-lite,openrouter/anthropic/claude-haiku-4.5,openrouter/openai/gpt-4o-mini,openrouter/openai/gpt-5-mini,openrouter/openai/gpt-5-nano,openrouter/meta-llama/llama-3.3-70b-instruct,openrouter/meta-llama/llama-3.1-8b-instruct,openrouter/moonshotai/kimi-k2,openrouter/deepseek/deepseek-chat,openrouter/deepseek/deepseek-v4-flash --runs 1 --yes` from `apps/api` (12 models × 6 cases × 1 run = 72 calls — estimate cost before bumping `--runs`).
-- Also still open from the original plan: add `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` to `.env` if the *direct*-SDK rows (not the `openrouter/*` ones) should join the comparison too — these remain unset, so the parity question in §3.3 of the analysis doc (does OpenRouter routing change the answer vs. calling the provider directly) is still unanswered.
-- Run `python -m eval.run_red_team_eval --models <ids>` (still never run live).
-- Review `eval/out/model_comparison_report_<ts>.md` / `eval/out/red_team_report_<ts>.md`, decide whether to switch `gemini_model`/`llm_provider` based on results — the judge's tone/personalization/coherence sub-scores sit alongside deterministic accuracy/hallucination numbers, so a cheaper model that's structurally "accurate" but reads generically won't look artificially good.
-- **Re-verify any `openrouter/*` id against `https://openrouter.ai/api/v1/models` before adding more** — two ids already went dead once; don't assume a slug that worked in a past session still resolves.
-- Once a second run exists, try `python eval/compare_results.py <first-run>.json <second-run>.json` and `python eval/analyze_results.py <run>.json` — verified against synthetic fixtures only so far, not a real multi-model run.
+- Run `python -m eval.run_red_team_eval --models <ids>` (never run live yet) — start with the same 12 `openrouter/*` ids, or a cheaper subset given red-team cases likely multiply the call count.
+- Also still open from the original plan: add `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` to `.env` if the *direct*-SDK rows (not the `openrouter/*` ones) should join a comparison too — these remain unset, so the parity question in §3.3 of the analysis doc (does OpenRouter routing change the answer vs. calling the provider directly) is still unanswered.
+- Review `eval/out/red_team_report_<ts>.md` once it exists, decide whether to switch `gemini_model`/`llm_provider` based on combined model-comparison + red-team results.
+- **Re-verify any `openrouter/*` id against `https://openrouter.ai/api/v1/models` before adding more** — two ids already went dead once (§8D); don't assume a slug that worked in a past session still resolves.
+- A `--runs 3` sweep of the model-comparison eval (for real p50/p95 latency percentiles, not just single-sample numbers) is still open if the `--runs 1` results above aren't decisive enough — budget ~3x the cost of this session's run.
+- Try `python eval/compare_results.py <first-run>.json <second-run>.json` and `python eval/analyze_results.py <run>.json` against the two real model-comparison runs that now exist (`model_comparison_results_20260818_194115.json` vs `..._20260820_043357.json`) — verified against synthetic fixtures only so far, never against real multi-model data.
 
 ### 1. Security checks before any real (even POC) traffic — ✅ done 2026-07-20
 
