@@ -2172,6 +2172,12 @@ but weakest on judge quality (candidate for low-stakes task routing, not itinera
 `gpt-5-nano` fails every call (reasoning-token budget exhaustion — documented, not fixed, needs a
 `reasoning`-param control OpenRouter exposes on some routes, not just a bigger `max_tokens`).
 
+**3 frontier-tier models added and run same day** (`claude-sonnet-5`, `gpt-5.6-terra`, `gpt-5.6-luna`
+— $2-12/1M tokens): neither beats `gpt-4o-mini` on accuracy despite costing 3-36x more, though judge
+quality is genuinely higher. `claude-sonnet-5` fails all 6 calls — `finish_reason: length` at exactly
+8192 tokens, its itineraries are longer than the shared `max_tokens` cap allows. **Open follow-up**:
+per-model `max_tokens` override (not a global bump, which would raise cost for cheaper models too).
+
 **⚠️ Gotcha for next time a multi-model sweep is run**: the OpenRouter account ran to **$0 credit
 mid-run** on the first full-registry attempt (2026-08-19) — 6/12 models 402'd every call, and the
 "successful" models showed 3-6x inflated latencies from retries against a shrinking balance, not

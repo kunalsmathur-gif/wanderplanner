@@ -71,6 +71,15 @@ MODEL_REGISTRY: dict[str, str] = {
     "openrouter/google/gemini-2.5-flash-lite": "openrouter",
     "openrouter/deepseek/deepseek-v4-flash": "openrouter",
     "openrouter/meta-llama/llama-3.1-8b-instruct": "openrouter",
+    # Frontier tier — notably pricier than everything above ($2+/1M prompt
+    # tokens vs. $0.10-1.00), added 2026-08-20 on request to see whether the
+    # premium buys a real accuracy/judge-quality gain over gpt-4o-mini's
+    # result in the mid-tier comparison. "-pro" variants of terra/luna price
+    # identically to the base id on OpenRouter's live catalog, so only the
+    # base ids are registered here.
+    "openrouter/anthropic/claude-sonnet-5": "openrouter",
+    "openrouter/openai/gpt-5.6-terra": "openrouter",
+    "openrouter/openai/gpt-5.6-luna": "openrouter",
 }
 
 _PROVIDER_KEY_ATTR = {

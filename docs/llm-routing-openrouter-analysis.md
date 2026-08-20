@@ -472,3 +472,20 @@ Two models still failed, for two different real reasons:
   potentially different safety-filter defaults" as an open unknown — add hidden reasoning-token
   budgets to that list). Real fix needs a reasoning-effort/budget control (OpenRouter exposes a
   `reasoning` param on some routes) — deferred as a per-model tuning problem, not a shared-code fix.
+
+**2026-08-20 (later) — 3 frontier-tier models added on request** (`claude-sonnet-5`, `gpt-5.6-terra`,
+`gpt-5.6-luna` — $2-12/1M tokens, notably pricier than the 12 above) to see whether spend buys a
+real quality gain over `gpt-4o-mini`'s mid-tier win. It doesn't, on accuracy: neither beats
+`gpt-4o-mini`'s 0.7478 despite costing 3-36x more per request. Judge quality is genuinely higher
+(`gpt-5.6-luna` 0.97, 0 errors; `gpt-5.6-terra` 1.0 but only 3 judged samples) — full table in
+`docs/eval-set.md` §8D.
+
+**One more real, undiagnosed-until-now failure mode**: `claude-sonnet-5` failed all 6 calls with
+`JSONDecodeError: Unterminated string...`. A direct diagnostic call against the actual production
+prompt confirmed the cause: `finish_reason: length` at exactly 8192 completion tokens — Sonnet 5
+produces longer itineraries than the shared `max_tokens` cap allows for this prompt shape, and gets
+cut off mid-string. **Not fixed**: the cap is shared across every OpenRouter model in
+`_call_openrouter()` specifically to stop the credit-exhaustion 402s documented above; raising it
+globally would raise cost for every cheaper model too. The real fix is a per-model `max_tokens`
+override (e.g. a second field alongside each `MODEL_REGISTRY` entry), not a blind global bump —
+scoped as a follow-up, not attempted live this session.

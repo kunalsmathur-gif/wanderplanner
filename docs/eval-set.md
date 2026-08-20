@@ -1031,6 +1031,33 @@ needs a reasoning-effort/budget control (OpenRouter exposes a `reasoning` param 
 just a bigger `max_tokens` cap — deferred, not attempted live given it's a per-model tuning problem,
 not a shared code path.
 
+**Frontier-tier models added and run 2026-08-20 (later)**: 3 more expensive models
+(`openrouter/anthropic/claude-sonnet-5`, `openrouter/openai/gpt-5.6-terra`, `openrouter/openai/gpt-5.6-luna`
+— $2-12/1M tokens vs. $0.10-1.00 for the 12 above) were added on request, to see whether the premium
+buys a real quality gain over `gpt-4o-mini`'s mid-tier result. Only 2 of 3 produced usable data:
+
+| Model | Accuracy | Judge Quality | p50 Latency | Cost/req | Errors |
+|---|---|---|---|---|---|
+| `openrouter/openai/gpt-5.6-terra` | 0.669 | 1.0 (n=3) | 75.6s | $0.0826 | 2/6 |
+| `openrouter/openai/gpt-5.6-luna` | 0.6491 | 0.9667 | 41.0s | $0.0071 | 0/6 |
+| `openrouter/anthropic/claude-sonnet-5` | — | — | — | — | **6/6** (see finding below) |
+
+Neither `terra` nor `luna` beats `gpt-4o-mini`'s accuracy (0.7478) despite costing 3x (`luna`) to
+36x (`terra`) more per request — on this specific deterministic-accuracy axis, spend doesn't buy
+better schema/day-count/budget compliance. Judge quality is genuinely higher (`luna` 0.97, `terra`
+1.0 but only 3 judged samples), consistent with the general pattern that frontier models write
+better prose/personalization without necessarily being more mechanically "correct."
+
+**`claude-sonnet-5` finding, documented, NOT fixed**: failed all 6 calls with malformed/truncated
+JSON (`JSONDecodeError: Unterminated string...`). Confirmed via a direct diagnostic call against the
+real production prompt: `finish_reason: length`, exactly 8192 completion tokens spent, output cut
+off mid-JSON-string. Claude Sonnet 5 produces longer itineraries than the shared `max_tokens=8192`
+cap (set project-wide in `_call_openrouter()` to avoid the 402 credit-exhaustion issue documented
+above) allows for this prompt. **Raising the cap for this one model would fix it but isn't done
+here** — it needs to be a per-model cap, not a global one, since bumping the shared default would
+raise cost for every other model sharing this code path too. A real fix is a config-driven per-model
+`max_tokens` override in `MODEL_REGISTRY` (or similar), not a blind global bump.
+
 ---
 
 ## Section 9 — Adversarial / Red-Team Eval (`eval/run_red_team_eval.py`)

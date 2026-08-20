@@ -60,6 +60,10 @@ _PRICING: dict[str, tuple[float, float]] = {
     "openrouter/google/gemini-2.5-flash-lite": (0.10, 0.40),
     "openrouter/deepseek/deepseek-v4-flash": (0.0798, 0.1596),
     "openrouter/meta-llama/llama-3.1-8b-instruct": (0.05, 0.08),
+    # Frontier tier — see matching comment in eval/llm_providers.py.
+    "openrouter/anthropic/claude-sonnet-5": (2.00, 10.00),
+    "openrouter/openai/gpt-5.6-terra": (2.00, 12.00),
+    "openrouter/openai/gpt-5.6-luna": (0.20, 1.20),
 }
 _DEFAULT_PRICING = (0.10, 0.40)
 
