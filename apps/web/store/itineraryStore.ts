@@ -29,6 +29,13 @@ interface ItineraryStore {
   expenseBreakdown: ExpenseBreakdown | null
   generationTier: GenerationTier
   warnings: string[]
+  // Correlates this generation to the implicit-quality-signal endpoint
+  // (POST /api/generation-signal) — undefined when the backend didn't store
+  // this generation in the RAG corpus.
+  generationId: string | undefined
+  // When this itinerary was first shown, so the session-duration signal can
+  // be computed as "now - generatedAt" on unmount/navigation-away.
+  generatedAt: number | null
 
   setDays: (
     days: ItineraryDay[],
@@ -36,6 +43,7 @@ interface ItineraryStore {
     breakdown?: ExpenseBreakdown,
     generationTier?: GenerationTier,
     warnings?: string[],
+    generationId?: string,
   ) => void
   setActiveDay: (day: number) => void
   setHoveredItem: (id: string | null) => void
@@ -70,8 +78,10 @@ export const useItineraryStore = create<ItineraryStore>()(persist((set) => ({
   expenseBreakdown: null,
   generationTier: 'live',
   warnings: [],
+  generationId: undefined,
+  generatedAt: null,
 
-  setDays: (days, score, breakdown, generationTier, warnings) => {
+  setDays: (days, score, breakdown, generationTier, warnings, generationId) => {
     // A fresh itinerary deserves its own feedback opportunity — clear any
     // vote/prompt state left over from the previous one so the widget/popup
     // don't show a stale "already answered" state for a plan the user
@@ -85,6 +95,8 @@ export const useItineraryStore = create<ItineraryStore>()(persist((set) => ({
       expenseBreakdown: breakdown ?? null,
       generationTier: generationTier ?? 'live',
       warnings: warnings ?? [],
+      generationId,
+      generatedAt: Date.now(),
     })
   },
   setActiveDay: (activeDay) => set({ activeDay }),
@@ -96,7 +108,7 @@ export const useItineraryStore = create<ItineraryStore>()(persist((set) => ({
     days: [], activeDay: 0, hoveredItemId: null,
     status: 'idle', progress: { message: '', step: 0, total: 4 },
     error: null, alignmentScore: 0, expenseBreakdown: null, generationTier: 'live',
-    warnings: [],
+    warnings: [], generationId: undefined, generatedAt: null,
   }),
 }), {
   name: 'wanderplanner-itinerary',
@@ -108,6 +120,8 @@ export const useItineraryStore = create<ItineraryStore>()(persist((set) => ({
     expenseBreakdown: state.expenseBreakdown,
     generationTier: state.generationTier,
     warnings: state.warnings,
+    generationId: state.generationId,
+    generatedAt: state.generatedAt,
     // A restored itinerary is a finished one; without this the route guard
     // would see days but a stale 'idle' status.
     status: 'success' as const,

@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     # Set against the PRD's stated budget rather than measured p95 — revisit
     # once there is real traffic data to set it from.
     slow_itinerary_threshold_seconds: float = 20.0
+    # Same idea for the (much lighter) feasibility check — a single Gemini
+    # call plus free-tools grounding, so a much tighter bar than full
+    # itinerary generation is appropriate.
+    slow_feasibility_threshold_seconds: float = 8.0
 
     # Qdrant
     qdrant_url: str = "http://localhost:6333"
@@ -190,6 +194,15 @@ class Settings(BaseSettings):
     # losing the stored data.
     generated_itineraries_store_enabled: bool = True
     generated_itineraries_retrieval_enabled: bool = True
+    # Quality-score background scoring job (issue #34): how often the
+    # scheduler checks for generated_itinerary_signals rows whose session
+    # looks finished and writes a computed quality_score onto the
+    # corresponding generated_itineraries Qdrant point.
+    quality_score_job_interval_minutes: int = 15
+    # Safety cap per run — keeps one run bounded even if a large backlog
+    # piled up (e.g. after downtime), same reasoning as
+    # youtube_refresh_batch_size.
+    quality_score_job_batch_size: int = 200
     # Agentic router (issue #35, docs/rag-strategy.md §12): cheap heuristic
     # classifier that flags time-sensitive queries (weather, live prices,
     # strikes/disruptions) so the chat/wizard chains can caveat freshness
@@ -341,6 +354,30 @@ class Settings(BaseSettings):
     # triggered the block in the first place.
     youtube_narration_transcript_retry_hours: int = 4
     youtube_narration_transcript_retry_batch_size: int = 5
+
+    # yt-dlp + local Whisper STT fallback for videos with no caption track
+    # at all (issue #38, docs/rag-strategy.md roadmap P3 "niche travel
+    # vlogger content"). No API $ cost — both tools are free/open-source —
+    # but genuinely compute-heavy (local/CPU transcription time), unlike
+    # every other knob in this section which is a quota/rate concern. Off by
+    # default: this is the lowest-priority (P3) item in the roadmap, and
+    # enabling it pulls in `requirements-ml.txt`'s yt-dlp/openai-whisper
+    # (~3GB with PyTorch, same file sentence-transformers already lives in)
+    # plus a local `ffmpeg` binary — not something to turn on by accident.
+    youtube_stt_fallback_enabled: bool = False
+    # "base" per OpenAI's own model card: smallest step up from "tiny" with a
+    # meaningfully lower word-error-rate, while still being fast enough for
+    # CPU-only transcription — this is a background/low-priority job, not a
+    # request-path one, so trading a bit more time for real accuracy is the
+    # right default over "tiny".
+    youtube_stt_whisper_model: str = "base"
+    # Per-run cap (not rolling 24h like the search budget above — this is
+    # bounded by local compute time, not an external quota that resets on a
+    # clock) on total audio minutes transcribed, so one run can't tie up the
+    # machine indefinitely. scrapers/youtube_narration.py checks a video's
+    # duration before downloading its audio and skips (not queues) it once
+    # this is exhausted.
+    youtube_stt_max_minutes_per_run: int = 30
 
     log_level: str = "INFO"
 

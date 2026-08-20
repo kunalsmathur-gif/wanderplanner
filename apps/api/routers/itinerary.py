@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -71,6 +72,7 @@ async def _stream_generation(trip_config: TripConfig, db: AsyncSession, user: Us
     yield await send("status", {"message": "Searching destination content...", "step": 2, "total_steps": total_steps})
     await asyncio.sleep(0)
 
+    generation_started = time.perf_counter()
     task = asyncio.ensure_future(
         asyncio.wait_for(generate_itinerary(trip_config), timeout=settings.llm_timeout_seconds)
     )
@@ -138,6 +140,12 @@ async def _stream_generation(trip_config: TripConfig, db: AsyncSession, user: Us
                     # has no such key, which is why this recorded null on the
                     # events that did survive. The model method derives it.
                     "days": trip_config.effective_duration_days(),
+                    # Latency metric feeding the admin `/admin/metrics/summary`
+                    # average/p50/p90 itinerary-generation latency figures —
+                    # measured around the actual generation task (not this
+                    # whole handler) so streaming setup/teardown doesn't
+                    # inflate it.
+                    "duration_ms": round((time.perf_counter() - generation_started) * 1000, 1),
                 },
             )
         finally:
@@ -165,14 +173,20 @@ async def _stream_generation(trip_config: TripConfig, db: AsyncSession, user: Us
             "message": "Generation timed out. Please try again.",
             "retryable": True,
         })
-        await log_event(db, "itinerary_failed", user_id=user.id, metadata={"reason": "timeout"})
+        await log_event(
+            db, "itinerary_failed", user_id=user.id,
+            metadata={"reason": "timeout", "duration_ms": round((time.perf_counter() - generation_started) * 1000, 1)},
+        )
     except Exception as exc:
         yield await send("error", {
             "code": "GENERATION_FAILED",
             "message": sanitize_error(exc, context="generate-itinerary"),
             "retryable": True,
         })
-        await log_event(db, "itinerary_failed", user_id=user.id, metadata={"reason": "exception"})
+        await log_event(
+            db, "itinerary_failed", user_id=user.id,
+            metadata={"reason": "exception", "duration_ms": round((time.perf_counter() - generation_started) * 1000, 1)},
+        )
     finally:
         await flush_llm_usage(db, user_id=user.id)
 

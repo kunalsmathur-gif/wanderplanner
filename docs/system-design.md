@@ -396,10 +396,10 @@ flowchart TD
     D --> D1["Verify Argon2id password hash"]
     D1 --> C2
 
-    B -->|Google SSO| E["GET /api/auth/google/start"]
+    B -->|Google SSO| E["GET /api/auth/google/start<br/>proxied through the frontend origin"]
     E --> E1["Sign stateless state param<br/>via itsdangerous serializer"]
     E1 --> E2["Redirect to Google consent screen"]
-    E2 --> E3["GET /api/auth/google/callback?code=...&state=..."]
+    E2 --> E3["GET /api/auth/google/callback?code=...&state=...<br/>proxied through the frontend origin"]
     E3 --> E4["Exchange code for tokens<br/>fetch /userinfo via httpx"]
     E4 --> E5["Upsert/find user by google_sub"]
     E5 --> C2
@@ -426,6 +426,8 @@ flowchart TD
 **Google SSO gating (⭐ NEW, v10.13):** in local/dev environments (and any deployment without `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` set), Google sign-in previously showed a "Continue with Google" button that always failed with `{"detail":"Google sign-in is not configured."}` on click. `GET /api/auth/config` now returns `{"google_sso_enabled": bool(settings.google_client_id)}`; the frontend's new `components/common/GoogleSsoSection.tsx` fetches this once and only renders the Google button + divider when true (fails closed — hidden on load/error). `/signup` and `/login` both use this component instead of the raw button.
 
 **Signup/login error message specificity (⭐ CHANGED, v10.13):** `POST /api/auth/signup` now returns `"An account with this email already exists. Try logging in instead."` instead of a generic message when the email is already registered — an explicit product decision trading a small amount of account-enumeration resistance for a clearer signup UX. Login's error remains the deliberately combined `"Incorrect email or password."` (does not reveal whether the email itself is registered).
+
+**Google OAuth routes proxied through the frontend origin (⭐ NEW, 2026-08-17 — fixes cross-browser cookie loss):** Google SSO previously redirected `google.com → api.<domain>` (`/api/auth/google/callback` sets the session cookie there) `→ <domain>` — a three-site "bounce" through the API subdomain. Chrome's Bounce Tracking Mitigations and Safari's ITP both specifically clear cookies set on a domain used only as a mid-chain bounce, so the cookie never survived to the next request in *any* modern browser — confirmed live in prod: the callback succeeded server-side every time (token exchange + `/userinfo` both 200, cookie set correctly), but the immediately-following `GET /api/auth/me` / `POST /api/auth/refresh` both came back 401. Fix: `apps/web/next.config.ts` now rewrites `/api/auth/google/:path*` through the frontend's own origin to the API, so the redirect chain is two sites (`google.com` + the frontend) instead of three, and the cookie is set by the domain the browser actually lands on. `GOOGLE_REDIRECT_URI` (both `.env` and Google Cloud Console's registered redirect URI) now points at the frontend origin, not the API directly. All other auth routes are unaffected — this proxy only covers the two Google OAuth hops shown above.
 
 ---
 
@@ -1133,12 +1135,27 @@ Migrations:
 - `0001_auth_analytics`
 - `0002_password_reset`
 - `0003_admin_requests`
+- `0010_user_last_itinerary`
+
+---
+
+### `user_last_itinerary` (⭐ NEW, 2026-08-15, issue #65 — "resume your last trip")
+
+| Column | Notes |
+|---|---|
+| `user_id` | UUID, primary key **and** FK → `users.id`, `ON DELETE CASCADE` — one row per user (upsert-only, not a history table) |
+| `trip_config_json` | JSONB (JSON on SQLite) — the `TripConfig` that produced the itinerary |
+| `itinerary_json` | JSONB (JSON on SQLite) — the full `ItineraryResponse` |
+| `created_at` | Row creation timestamp |
+| `updated_at` | Bumped on every upsert |
+
+Best-effort, fire-and-forget upsert (`asyncio.create_task`, same discipline as `generated_itineraries` below) fired right after every successful live generation in `_stream_generation` — never adds latency or risk to the response already streamed to the client. `GET /me/last-itinerary` (auth-gated, 404 if none) is read by the Account page's "Continue your last trip" card and by Anya's "show me my last itinerary" chat intent, both funneling through the shared `lib/resumeLastItinerary.ts` helper on the frontend to repopulate `tripConfigStore` + `itineraryStore` for the existing wizard/edit flow. A saved row older than a **30-day TTL** is treated as expired and lazily deleted on read (`services/user_last_itinerary.py`) — no separate cron job needed for a single-row-per-user table.
 
 ---
 
 ## 9. Qdrant Collection Schema
 
-Four active collections, all using `all-MiniLM-L6-v2` (384 dims, cosine distance):
+Five active collections, all using `all-MiniLM-L6-v2` (384 dims, cosine distance):
 
 ### `reddit` collection
 ```json
@@ -1221,6 +1238,26 @@ Populated by `scrapers/osm.py::ingest_osm_pois()` from the free Overpass API (no
 ```
 Key: `embed(f"{destination} {duration_days}d {pace} {purpose} trip")`. Written by `services/itinerary_cache.py::store_itinerary()` after every successful LLM generation (best-effort, never blocks the response; strips any `_`-prefixed fallback markers so degraded fallback output is never cached). Read by `get_cached_itinerary()` with `score_threshold=0.88` as Tier 1 of the fallback chain.
 
+### `generated_itineraries` collection ✅ Live (⭐ NEW, 2026-08-15, issue #32 — the "learning flywheel")
+```json
+{
+  "vectors": {
+    "config": [384 floats],
+    "content": [384 floats]
+  },
+  "payload": {
+    "destination": "Bali",
+    "duration_days": 5,
+    "pace": "moderate",
+    "purpose": "leisure",
+    "itinerary_json": "{...serialized ItineraryResponse...}",
+    "quality_score": 0.7,
+    "generated_at": "2026-08-15T10:00:00Z"
+  }
+}
+```
+Mirrors `itinerary_corpus`'s dual-named-vector schema (`config` + `content`) rather than `itinerary_cache`'s single vector — the point is few-shot retrieval by both trip-config similarity and content similarity, not an exact-match cache lookup. Every successfully live-generated itinerary is written here via `services/generated_itineraries.py::store_generated_itinerary()`, fired with `asyncio.create_task` right after the existing `itinerary_cache` write in `chains/itinerary_chain.py` (fire-and-forget, best-effort, never raises — a write failure here can't affect the itinerary already streamed to the client). `quality_score` is penalized when the generation wasn't context-grounded. Retrieved by `retrieve_generated_itinerary_examples()` (60/40 config/content weighted merge + quality reranking + case-insensitive destination fallback, mirroring `retrieve_itinerary_examples`) and combined with `itinerary_corpus` results under one shared prompt-injection wrapper in `_itinerary_examples_block()` — so real generated output becomes retrievable grounding for future generations, growing organically with usage instead of needing a separate scraping pipeline. Store and retrieval are independently toggleable (`generated_itineraries_store_enabled` / `generated_itineraries_retrieval_enabled`), and the collection is destination-payload-indexed the same way `itinerary_cache` is (§ list above). Previously tracked as roadmap item P1 in `docs/rag-strategy.md` §9/§10 — now shipped, not pending.
+
 ### Ingestion Schedule
 - **Reddit**: ⛔ **RETIRED 2026-07-26 — no longer an ingestion source.** History, since the code is still present: it ran on APScheduler every 6h over `travel`, `solotravel`, `digitalnomad`, `backpacking`, with destination matching limited to `KNOWN_DESTINATIONS`. Reddit began 403'ing unauthenticated public-JSON reads from any server including Railway (confirmed in prod logs, not just the dev sandbox), and its replacement API required a dedicated bot account plus a written app review. That review was submitted 2026-07-16 and **never issued credentials** — on 2026-07-26 the bot account's `/prefs/apps` showed no registered app at all. Rather than hold a pipeline open against an external approval with no ETA, Reddit was dropped and community grounding moved to Wikivoyage + YouTube. `scrapers/reddit.py` and the `reddit` collection's **read** paths were deliberately left in place (the collection degrades to empty rather than erroring, and still holds previously-ingested points); removing them is a separate, deliberate change tracked in `docs/NEXT_SESSION_TODO.md`.
 - **YouTube comments**: wired into both the cold-start gate and a scheduled `_refresh_youtube_comments` job. This is the one *metered* source — `search.list` has a hard cap of **100 calls per project per day** (resets midnight Pacific), so both callers sit behind a rolling-24h search budget. See §16.
@@ -1228,6 +1265,7 @@ Key: `embed(f"{destination} {duration_days}d {pace} {purpose} trip")`. Written b
 - **Wiki**: `scrapers/wikivoyage.py::ingest_wikivoyage(destination)` is now wired into both the on-demand gatekeeper and the scheduled refresh loop (see demand-driven ingestion below) — the "not called from any scheduled job or request path" drift noted in earlier revisions is resolved.
 - **OSM POIs + Wiki (⭐ NEW, 2026-07-16 — demand-driven, replaces the static-list loop)**: `core/scheduler.py::_refresh_osm_pois` no longer iterates the fixed `KNOWN_DESTINATIONS` list. It now queries the new Postgres `destination_ingestion_state` table for rows past their staleness window (`osm_last_ingested_at < now() - osm_refresh_days`) and refreshes only those — i.e. destinations someone has actually requested. New destinations get ingested inline on first request via `services/destination_ingestion.py::ensure_destination_ingested()` (geocode-validates, then runs OSM + Wikivoyage ingestion, stampede-safe via a per-destination `asyncio.Lock`, same pattern as `services/gems.py`), called from `chains/itinerary_chain.py::generate_itinerary()` before any RAG retrieval. This is the design from §8 below, now implemented rather than just sketched. The old 134-destination curated list is still the seed corpus (backfilled into `destination_ingestion_state` via a one-off script) but is no longer authoritative — it's just whatever's accumulated real demand so far (105 distinct destinations with real OSM data as of 2026-07-16, up from 48 the same day after two retry passes against the real Cloud cluster; Overpass rate-limiting means ~33 popular destinations still need a future retry). **Cold-start rate cap (⭐ NEW, 2026-07-22)**: `ensure_destination_ingested()` now enforces a process-global sliding-window cap of 5 first-ever ingestions/hour (`_cold_start_budget_available()`) before doing the expensive Overpass/Wikivoyage/embedding work, so garbage/spam destination input can't run up unbounded spend — exhausted-budget requests are skipped and retried once the window clears, never persisted as "ingested." Scoped globally, not per-IP/session, since no caller identity reaches this function yet (§8 item 5 in `docs/scaling-tech-challenges.md` covers the deferred per-IP scoping).
 - **Itinerary cache**: Event-driven — written on every successful itinerary generation, no separate scheduled job.
+- **Generated itineraries flywheel (⭐ NEW, 2026-08-15)**: Same event-driven pattern as the itinerary cache — every successful generation also fires a fire-and-forget write into `generated_itineraries` (see the collection's own section above), no separate scheduled job.
 
 **Scaling caveat (⭐ RESOLVED 2026-07-16, was previously an open TODO):** the ingestion loop no longer iterates a static list — see the demand-driven bullet above. `docs/scaling-tech-challenges.md` §8 describes the original problem and design; it has been implemented as described.
 

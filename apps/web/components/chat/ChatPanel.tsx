@@ -8,7 +8,7 @@ import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useItineraryStore } from '@/store/itineraryStore'
 import { useAppStore } from '@/store/appStore'
 import { useAuthStore } from '@/store/authStore'
-import { chatRefine, streamItinerary, checkFeasibility } from '@/lib/api'
+import { chatRefine, streamItinerary, checkFeasibility, sendGenerationSignal } from '@/lib/api'
 import { savePendingGeneration } from '@/lib/pendingGeneration'
 import { loadLastItinerary } from '@/lib/resumeLastItinerary'
 import { diffItineraries, isEmptyDiff } from '@/lib/itineraryDiff'
@@ -70,6 +70,11 @@ export function ChatPanel() {
    * duplicating the streaming/diff/error-handling logic. */
   function runRegeneration(config: TripConfig) {
     const oldDays = useItineraryStore.getState().days
+    // Capture the outgoing generation's id before it's overwritten below —
+    // this regeneration is exactly the "regenerated" implicit-quality
+    // signal (docs/rag-strategy.md's Learning Flywheel), reported against
+    // the plan being replaced, not the new one.
+    const outgoingGenerationId = useItineraryStore.getState().generationId
     setRegenNote('Updating your itinerary…')
 
     cancelRegenRef.current?.()
@@ -77,12 +82,14 @@ export function ChatPanel() {
       { ...config, pace: useTripConfigStore.getState().effectivePace() },
       (msg) => setRegenNote(msg || 'Updating your itinerary…'),
       (result) => {
+        sendGenerationSignal(outgoingGenerationId, 'regenerated')
         useItineraryStore.getState().setDays(
           result.days,
           result.alignment_score,
           result.expense_breakdown,
           result.generation_tier,
           result.warnings,
+          result.generation_id,
         )
         setRegenNote(null)
         const diff = diffItineraries(oldDays, result.days)
@@ -204,6 +211,15 @@ export function ChatPanel() {
         content: m.content,
       }))
       const result = await chatRefine(history, tripConfig)
+      // Every chat turn while an itinerary is on screen is engagement with
+      // it — the "post_gen_chat_turns" implicit-quality signal
+      // (docs/rag-strategy.md's Learning Flywheel). Reported against
+      // whichever generation is current *before* this turn potentially
+      // triggers a regeneration below, since the turn itself was about the
+      // plan the user was looking at when they sent it.
+      if (useItineraryStore.getState().days.length > 0) {
+        sendGenerationSignal(useItineraryStore.getState().generationId, 'chat_turn')
+      }
       useChatStore.getState().updateLastAssistant(
         result.reply,
         result.pinned_pois?.length ? { pins: result.pinned_pois } : undefined,

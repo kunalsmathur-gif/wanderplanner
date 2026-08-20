@@ -35,6 +35,7 @@ from routers import (
     comparison,
     extract_trip,
     feasibility,
+    generation_signal,
     geocode,
     itinerary,
     itinerary_feedback,
@@ -128,6 +129,7 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(agent_leads.router, prefix="/api")
 app.include_router(itinerary_feedback.router, prefix="/api")
+app.include_router(generation_signal.router, prefix="/api")
 app.include_router(analytics.router, prefix="/api")
 app.include_router(voice.router, prefix="/api")
 

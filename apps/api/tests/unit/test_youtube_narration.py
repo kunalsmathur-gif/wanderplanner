@@ -11,10 +11,14 @@ import pytest
 from scrapers.youtube_narration import (
     _CHUNK_CHARS,
     _narration_chunks,
+    _stt_budget_available,
+    _stt_transcript_sync,
+    _transcript_text,
     destinations_missing_transcripts,
     fetch_video_descriptions,
     ingest_youtube_narration,
     known_video_ids_sync,
+    reset_stt_budget,
 )
 
 
@@ -153,7 +157,7 @@ class TestIngestYoutubeNarration:
              patch("scrapers.youtube_narration.fetch_video_descriptions",
                    new=AsyncMock(return_value={"v1": long_text})), \
              patch("scrapers.youtube_narration._transcript_text",
-                   new=AsyncMock(return_value=long_text)), \
+                   new=AsyncMock(return_value=(long_text, "youtube_transcript"))), \
              patch("scrapers.youtube_narration.embed", side_effect=lambda t: [[0.0] * 384] * len(t)), \
              patch("scrapers.youtube_narration.get_qdrant", return_value=fake_client), \
              patch("scrapers.youtube_narration.delete_stale_destination_points", return_value=0):
@@ -176,7 +180,8 @@ class TestIngestYoutubeNarration:
                    return_value=[{"video_id": "v1", "title": "T"}]), \
              patch("scrapers.youtube_narration.fetch_video_descriptions",
                    new=AsyncMock(return_value={"v1": long_text})), \
-             patch("scrapers.youtube_narration._transcript_text", new=AsyncMock(return_value="")), \
+             patch("scrapers.youtube_narration._transcript_text",
+                   new=AsyncMock(return_value=("", "youtube_transcript"))), \
              patch("scrapers.youtube_narration.embed", side_effect=lambda t: [[0.0] * 384] * len(t)), \
              patch("scrapers.youtube_narration.get_qdrant", return_value=fake_client), \
              patch("scrapers.youtube_narration.delete_stale_destination_points", return_value=0):
@@ -294,3 +299,129 @@ class TestDestinationsMissingTranscripts:
             missing = await destinations_missing_transcripts()
 
         assert missing == ["A"]
+
+
+class TestSttBudget:
+    """Per-run minutes budget (issue #38) — module-level counter, not a
+    rolling window, since compute time isn't a quota that resets on a clock.
+    """
+
+    def teardown_method(self):
+        reset_stt_budget()
+
+    def test_reserves_minutes_within_budget(self):
+        reset_stt_budget()
+        with patch("scrapers.youtube_narration.settings.youtube_stt_max_minutes_per_run", 30):
+            assert _stt_budget_available(10.0) is True
+            assert _stt_budget_available(15.0) is True
+
+    def test_rejects_once_budget_would_be_exceeded(self):
+        reset_stt_budget()
+        with patch("scrapers.youtube_narration.settings.youtube_stt_max_minutes_per_run", 30):
+            assert _stt_budget_available(20.0) is True
+            assert _stt_budget_available(15.0) is False, "20+15 > 30"
+
+    def test_reset_clears_the_counter(self):
+        with patch("scrapers.youtube_narration.settings.youtube_stt_max_minutes_per_run", 10):
+            assert _stt_budget_available(10.0) is True
+            assert _stt_budget_available(1.0) is False
+            reset_stt_budget()
+            assert _stt_budget_available(10.0) is True
+
+
+class TestSttTranscriptSync:
+    """`_stt_transcript_sync` must degrade to "" on any failure — same
+    best-effort contract as every other fetch in this module — including the
+    case (true on this machine/CI) where yt-dlp/whisper aren't installed."""
+
+    def teardown_method(self):
+        reset_stt_budget()
+
+    def test_missing_yt_dlp_dependency_degrades_to_empty_string(self):
+        # yt-dlp/openai-whisper are opt-in (requirements-ml.txt) and not
+        # installed in this test environment — exercises the real
+        # ImportError branch, not a simulated one.
+        assert _stt_transcript_sync("dQw4w9WgXcQ") == ""
+
+    def test_zero_duration_probe_returns_empty_without_downloading(self):
+        fake_ydl_probe = MagicMock()
+        fake_ydl_probe.__enter__.return_value.extract_info.return_value = {"duration": 0}
+        fake_yt_dlp = MagicMock()
+        fake_yt_dlp.YoutubeDL.return_value = fake_ydl_probe
+
+        with patch.dict("sys.modules", {"yt_dlp": fake_yt_dlp}):
+            assert _stt_transcript_sync("v1") == ""
+
+    def test_over_budget_video_is_skipped_without_downloading(self):
+        fake_ydl_probe = MagicMock()
+        fake_ydl_probe.__enter__.return_value.extract_info.return_value = {"duration": 3600}
+        fake_yt_dlp = MagicMock()
+        fake_yt_dlp.YoutubeDL.return_value = fake_ydl_probe
+
+        with patch.dict("sys.modules", {"yt_dlp": fake_yt_dlp}), \
+             patch("scrapers.youtube_narration.settings.youtube_stt_max_minutes_per_run", 5):
+            result = _stt_transcript_sync("v1")
+
+        assert result == ""
+        # Only the cheap duration probe ran, never a download attempt.
+        assert fake_ydl_probe.__enter__.return_value.extract_info.call_count == 1
+
+    def test_successful_transcription_returns_whisper_text(self):
+        fake_probe_ydl = MagicMock()
+        fake_probe_ydl.__enter__.return_value.extract_info.return_value = {"duration": 120}
+        fake_download_ydl = MagicMock()
+        fake_yt_dlp = MagicMock()
+        fake_yt_dlp.YoutubeDL.side_effect = [fake_probe_ydl, fake_download_ydl]
+
+        fake_whisper_model = MagicMock()
+        fake_whisper_model.transcribe.return_value = {"text": " a two minute vlog "}
+        fake_whisper = MagicMock()
+        fake_whisper.load_model.return_value = fake_whisper_model
+
+        with patch.dict("sys.modules", {"yt_dlp": fake_yt_dlp, "whisper": fake_whisper}), \
+             patch("os.listdir", return_value=["v1.mp3"]), \
+             patch("scrapers.youtube_narration._whisper_model", None):
+            result = _stt_transcript_sync("v1")
+
+        assert result == "a two minute vlog"
+        fake_whisper_model.transcribe.assert_called_once()
+
+
+class TestTranscriptTextSttFallback:
+    """`_transcript_text` wiring: STT is only ever attempted when captions
+    come back empty AND the feature flag is on, and tags the doc source
+    accordingly so it's traceable back to how the text was produced."""
+
+    @pytest.mark.asyncio
+    async def test_caption_success_never_touches_stt_path(self):
+        with patch("scrapers.itinerary_corpus.fetch_youtube_transcript",
+                   new=AsyncMock(return_value={"raw_text": "captioned text"})), \
+             patch("scrapers.youtube_narration.settings.youtube_stt_fallback_enabled", True), \
+             patch("scrapers.youtube_narration._stt_transcript_sync") as stt_mock:
+            text, source = await _transcript_text("v1", "Title")
+
+        assert (text, source) == ("captioned text", "youtube_transcript")
+        stt_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_captions_and_flag_off_skips_stt_and_returns_empty(self):
+        with patch("scrapers.itinerary_corpus.fetch_youtube_transcript",
+                   new=AsyncMock(return_value=None)), \
+             patch("scrapers.youtube_narration.settings.youtube_stt_fallback_enabled", False), \
+             patch("scrapers.youtube_narration._stt_transcript_sync") as stt_mock:
+            text, source = await _transcript_text("v1", "Title")
+
+        assert (text, source) == ("", "youtube_transcript")
+        stt_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_captions_and_flag_on_falls_back_to_stt(self):
+        with patch("scrapers.itinerary_corpus.fetch_youtube_transcript",
+                   new=AsyncMock(return_value=None)), \
+             patch("scrapers.youtube_narration.settings.youtube_stt_fallback_enabled", True), \
+             patch("scrapers.youtube_narration._stt_transcript_sync",
+                   return_value="whisper output") as stt_mock:
+            text, source = await _transcript_text("v1", "Title")
+
+        assert (text, source) == ("whisper output", "youtube_stt_transcript")
+        stt_mock.assert_called_once_with("v1")

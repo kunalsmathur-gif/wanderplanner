@@ -582,6 +582,18 @@ def calculate_mock_itinerary_alignment(persona_vector, accommodation_booleans, b
 
 ---
 
+### **Clarification #22 — Resume Last Generated Itinerary ✅ BUILT (issue #65, 2026-08-19)**
+
+| Question | Decision |
+|---|---|
+| A signed-in user closes the tab (or the wizard's client-side session state simply expires) mid-trip — do they have to regenerate from scratch? | **No, as of this change.** Every successful generation for a signed-in user is now persisted server-side (`user_last_itinerary` table, one row per user, upsert-only), independent of the client's sessionStorage-backed wizard/itinerary state. The Account page shows a "Continue your last trip" card that resumes it in one tap; Anya (the chat assistant) also recognizes phrasing like "show me my last itinerary" and resumes the same way. |
+| Does this replace or duplicate the existing client-side itinerary state? | **Complements it, doesn't replace it.** The client-side `itineraryStore` (sessionStorage) remains the fast path during an active session. The server-side `user_last_itinerary` row is a durable fallback consulted only when the client-side state is empty — e.g. after a browser restart, a different device, or (see the itinerary-page bug fix below) a disruptive external navigation that cleared client state before auth had a chance to resolve. |
+| Does it expire? | Lazily — no scheduled purge job. The row is simply overwritten on every new successful generation; a stale entry only matters if a signed-in user never generates a new itinerary at all, in which case the UI treats anything older than 30 days as unlikely to still be reservation-relevant and quietly stops offering to resume it (client-side display check, not a server-side delete). |
+| Fix | **Built.** Migration `0010_user_last_itinerary`; `GET /api/me/last-itinerary`; `apps/web/lib/resumeLastItinerary.ts` as the single shared entry point used by both the Account page card and the Anya chat intent. Also fixed a related bug (found in live testing, 2026-08-19): the itinerary page's empty-state guard was redirecting signed-in users away before `authStore`'s async session check had resolved, occasionally bouncing a user back to the profile/home page (and flipping dark→light theme along with it) instead of correctly resuming their trip — the guard now waits for auth to resolve and re-fetches the last itinerary before giving up. |
+| Where documented | This entry; `docs/system-design.md` §8A (`user_last_itinerary` table) and §3A (unrelated but nearby OAuth fix); `TECHNICAL_DOCUMENTATION.md` §6A ("Resume last generated itinerary") and §7 (`GET /api/me/last-itinerary`). |
+
+---
+
 ## **Rev 5 — Phase 1B Requirements** *(Updated: 2026-06-15)*
 
 ---

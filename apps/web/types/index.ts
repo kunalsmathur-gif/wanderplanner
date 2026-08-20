@@ -160,6 +160,12 @@ export interface ItineraryResponse {
   // (cache / rag_skeleton / enhanced_mock / mock) — the UI must disclose
   // this rather than present it as a verified plan.
   generation_tier?: GenerationTier
+  // Correlates this specific generation to future implicit-quality signals
+  // (regenerated, session duration, shared, chat turns) reported via
+  // POST /api/generation-signal — see docs/rag-strategy.md's "Learning
+  // Flywheel". Absent when this generation wasn't eligible for RAG-corpus
+  // storage (see services/generated_itineraries.py::compute_generation_id).
+  generation_id?: string
 }
 
 export type GenerationTier =

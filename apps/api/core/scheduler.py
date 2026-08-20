@@ -380,6 +380,27 @@ async def _check_agent_lead_sla(*, now: datetime | None = None):
             await db.commit()
 
 
+async def _score_generated_itinerary_quality():
+    """Learning-flywheel quality-score background job (issue #34): finds
+    `generated_itinerary_signals` rows whose session looks finished and
+    writes a computed `quality_score` onto the matching `generated_itineraries`
+    Qdrant point — see services/generation_signals.py::
+    score_ready_generation_signals for the scoring/readiness logic and
+    docs/rag-strategy.md's "Implicit Quality Signal Scoring" table for the
+    formula this implements. Guarded the same way as the other jobs here so
+    a bad run never crashes the scheduler thread.
+    """
+    from db import AsyncSessionLocal
+    from services.generation_signals import score_ready_generation_signals
+
+    try:
+        async with AsyncSessionLocal() as db:
+            scored = await score_ready_generation_signals(db, settings.quality_score_job_batch_size)
+        logger.info("generated_itineraries quality_score job: scored %d generation(s)", scored)
+    except Exception as e:
+        logger.warning("generated_itineraries quality_score job failed: %s", e)
+
+
 async def start_scheduler():
     _scheduler.add_job(
         _refresh_reddit,
@@ -433,6 +454,12 @@ async def start_scheduler():
         _check_agent_lead_sla,
         trigger=IntervalTrigger(hours=settings.agent_lead_sla_check_hours),
         id="agent_lead_sla_check",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        _score_generated_itinerary_quality,
+        trigger=IntervalTrigger(minutes=settings.quality_score_job_interval_minutes),
+        id="generated_itinerary_quality_score",
         replace_existing=True,
     )
     _scheduler.start()

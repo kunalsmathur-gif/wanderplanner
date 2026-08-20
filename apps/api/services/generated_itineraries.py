@@ -70,7 +70,43 @@ def _corpus_days_json(raw_days: list[dict[str, Any]]) -> str:
     return json.dumps(reshaped)
 
 
-async def store_generated_itinerary(trip_config: TripConfig, itinerary_raw: dict[str, Any]) -> None:
+def compute_generation_id(trip_config: TripConfig, itinerary_raw: dict[str, Any]) -> str | None:
+    """Deterministically derive (once, cheaply, no I/O) the Qdrant point id
+    a live generation *would* be stored under, so the id can be handed back
+    to the client in the same request (`ItineraryResponse.generation_id`,
+    issue #34) before the actual embed+upsert happens in the background via
+    `store_generated_itinerary`. Returns None for anything that wouldn't be
+    stored anyway (disabled, no destination, no days) so the response never
+    advertises an id that was never written.
+
+    Deliberately mirrors the eligibility checks in `store_generated_itinerary`
+    exactly — call this first, and pass its result straight through to that
+    function via `point_id=` so both agree on the same id.
+    """
+    if not settings.generated_itineraries_store_enabled:
+        return None
+    dest = trip_config.destination
+    if not dest or not dest.city:
+        return None
+    raw_days = itinerary_raw.get("days") or []
+    if not raw_days:
+        return None
+
+    config_text = _corpus_config_query(trip_config)
+    content_text = _content_text_from_raw_days(raw_days)
+    # Unlike itinerary_cache's one-point-per-config-shape key, every
+    # generation is stored as its own point (multiple travellers/trips can
+    # share the same duration/pace/purpose/destination) — the id only needs
+    # to be stable enough to dedupe an exact retry, not to merge distinct
+    # generations.
+    dedupe_key = f"{config_text}|{content_text}|{datetime.now(UTC).isoformat()}"
+    point_id = int(hashlib.md5(dedupe_key.encode()).hexdigest(), 16) % (2**63)
+    return str(point_id)
+
+
+async def store_generated_itinerary(
+    trip_config: TripConfig, itinerary_raw: dict[str, Any], point_id: str | None = None
+) -> None:
     """Best-effort write of a successfully live-generated itinerary into the
     `generated_itineraries` collection. Never raises — a write failure here
     must never affect the response already being returned to the user, and
@@ -80,6 +116,11 @@ async def store_generated_itinerary(trip_config: TripConfig, itinerary_raw: dict
     Skips fallback-generated content (mock/cache/error-fallback) — only a
     genuine live LLM result should feed the flywheel, the same rule
     `store_itinerary` (itinerary cache) already applies.
+
+    `point_id` should normally be the value `compute_generation_id()` already
+    returned to the caller (so the id handed to the client and the id
+    actually written to Qdrant are the same one) — computed fresh here only
+    as a fallback for callers that skip that step (e.g. existing tests).
     """
     if not settings.generated_itineraries_store_enabled:
         return
@@ -95,13 +136,9 @@ async def store_generated_itinerary(trip_config: TripConfig, itinerary_raw: dict
         content_text = _content_text_from_raw_days(raw_days)
         config_vec, content_vec = await asyncio.to_thread(embed, [config_text, content_text])
 
-        # Unlike itinerary_cache's one-point-per-config-shape key, every
-        # generation is stored as its own point (multiple travellers/trips
-        # can share the same duration/pace/purpose/destination) — the id
-        # only needs to be stable enough to dedupe an exact retry, not to
-        # merge distinct generations.
-        dedupe_key = f"{config_text}|{content_text}|{datetime.now(UTC).isoformat()}"
-        point_id = int(hashlib.md5(dedupe_key.encode()).hexdigest(), 16) % (2**63)
+        resolved_point_id = int(point_id) if point_id is not None else int(
+            hashlib.md5(f"{config_text}|{content_text}|{datetime.now(UTC).isoformat()}".encode()).hexdigest(), 16
+        ) % (2**63)
 
         # A genuine live result that had nothing in our corpus to ground
         # itself in (raw["_context_grounded"] is False) is still real LLM
@@ -116,7 +153,7 @@ async def store_generated_itinerary(trip_config: TripConfig, itinerary_raw: dict
             client.upsert(
                 collection_name=settings.qdrant_collection_generated_itineraries,
                 points=[PointStruct(
-                    id=point_id,
+                    id=resolved_point_id,
                     vector={"config": config_vec, "content": content_vec},
                     payload={
                         "destination": dest.city,

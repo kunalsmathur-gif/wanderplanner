@@ -7,7 +7,10 @@ import { LLMWizard } from '@/components/wizard/LLMWizard'
 import { FloatingAnyaButton } from '@/components/common/FloatingAnyaButton'
 import { ChatPanel } from '@/components/chat/ChatPanel'
 import { useAppStore } from '@/store/appStore'
+import { useAuthStore } from '@/store/authStore'
 import { useItineraryStore } from '@/store/itineraryStore'
+import { loadLastItinerary } from '@/lib/resumeLastItinerary'
+import { useSessionDurationSignal } from '@/hooks/useSessionDurationSignal'
 
 /**
  * The generated trip, at its own URL.
@@ -24,6 +27,8 @@ export default function ItineraryPage() {
   const wizardOpen = useAppStore((state) => state.wizardOpen)
   const days = useItineraryStore((state) => state.days)
   const hasItinerary = days.length > 0
+  const authStatus = useAuthStore((state) => state.status)
+  useSessionDurationSignal()
 
   // 🔴 Hydration state is read in an effect, never during render, and through
   // optional chaining. zustand's `persist` middleware **returns early without
@@ -56,10 +61,35 @@ export default function ItineraryPage() {
     // page is empty — on the first client render `days` is always [], so
     // redirecting eagerly would bounce every refresh back to the landing page,
     // which is the exact failure this route was added to avoid.
-    if (hydrated && !hasItinerary) {
+    if (!hydrated || hasItinerary) return
+
+    // Also wait for auth to resolve. `sessionStorage` can be dropped by
+    // events entirely outside our control — an external link (e.g. a
+    // YouTube video thumbnail) navigating the same tab, a mobile browser
+    // reclaiming memory while backgrounded, the 15-minute access token
+    // expiring mid-visit and needing a silent refresh — none of which mean
+    // the trip is actually gone server-side. Bouncing to the landing page
+    // while `authStatus` is still `idle`/`loading` treated every one of
+    // those as a hard "no trip", permanently losing a signed-in user's
+    // itinerary and (going back to it) dropping them one page short of
+    // where they started, on `/` instead of `/account`.
+    if (authStatus === 'idle' || authStatus === 'loading') return
+
+    let cancelled = false
+    if (authStatus === 'authenticated') {
+      // Signed in: the trip is still saved server-side, so re-fetch it
+      // instead of giving up. Only redirect if that also comes back empty.
+      loadLastItinerary().then((resumed) => {
+        if (cancelled) return
+        if (!resumed) router.replace('/account')
+      })
+    } else {
       router.replace('/')
     }
-  }, [hydrated, hasItinerary, router])
+    return () => {
+      cancelled = true
+    }
+  }, [hydrated, hasItinerary, authStatus, router])
 
   if (!hasItinerary) {
     return (
