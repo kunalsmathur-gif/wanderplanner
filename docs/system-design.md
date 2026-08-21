@@ -1713,6 +1713,27 @@ This is a **monitoring capability**, not a direct cost-reduction mechanism. The 
 
 ## 15. Resilience & Retry Architecture
 
+### Caching Strategy Overview
+
+Six distinct caches exist across the stack, each solving a different problem — not one
+generic "cache layer":
+
+| Cache | Stores | Backing store | Why it exists |
+|---|---|---|---|
+| Itinerary cache (Tier 1 fallback) | Successful itineraries, keyed by embedding of (destination, duration, pace, purpose) | Qdrant `itinerary_cache` collection | Serves a semantically similar past itinerary instantly if the live Gemini call fails, instead of a hard error |
+| Share links + travel-tips cache | Share-link tokens (90d TTL), travel-tips responses (1h TTL) | Managed Redis (Railway) via `core/redis_client.py`; in-process dict fallback locally | Fixes a real correctness bug — plain in-process dicts lost all data on restart/deploy and were inconsistent across multiple instances |
+| TTS monthly budget counter | Characters synthesized this calendar month | Same Redis layer (`core/tts_budget.py`) | Durable counter enforcing a hard ceiling under Google Cloud TTS's free tier |
+| Pexels image cache | Query → photo result, capped at 500 entries | In-process dict | Avoids repeated searches for the same destination/theme combination |
+| Currency conversion rate cache | Exchange rate, 6h TTL + hardcoded fallback table | In-process | Avoids hitting the external rate API on every wizard message; a network hiccup never blocks the wizard |
+| Generated-itineraries flywheel | Every real generated itinerary, retrievable as few-shot grounding | Qdrant `generated_itineraries` collection | Not a performance cache — a *learning* cache that makes future RAG-grounded generations better |
+
+Common thread: each exists because the real thing being cached (an LLM call, a paid/
+rate-limited third-party API, or fragile in-process state) is too slow/expensive to redo
+every time, or too fragile to trust surviving a restart. One candidate cache,
+`services/geocode.py`'s `_cached_geocode()`, was discovered mid-2026-07-29-Redis-migration
+to be a no-op — `@lru_cache`-decorated but its body unconditionally `return None`s — flagged,
+not yet fixed.
+
 ### Itinerary Generation Retry Chain
 
 ```

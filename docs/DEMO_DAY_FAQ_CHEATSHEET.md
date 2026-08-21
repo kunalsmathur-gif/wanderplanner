@@ -66,6 +66,21 @@ All chains run on **Google Gemini** (`gemini-2.5-flash` default). Itinerary gene
 | Google Cloud TTS — Chirp 3: HD | Anya's server-side voice (replaces device-dependent `speechSynthesis`) — voice **Achernar**, `hi-IN`/`en-IN` | Free tier (1M chars/month); backend built (provider interface, Redis cache, monthly budget guard, HMAC-signed reply verification) but **disabled** (`TTS_PROVIDER=off`) pending the frontend `<audio>` swap — see `docs/adr/0001-anya-voice-provider.md` |
 | BestTime.app / Google Popular Times (planned) | Live crowd forecasts | Not yet wired |
 
+### Q7a. What's the caching strategy, and why?
+
+Caching here isn't one thing — it's several different caches, each solving a different problem:
+
+| Cache | What it stores | Why | Where |
+|---|---|---|---|
+| Itinerary cache (Tier 1 fallback) | Every successfully-generated itinerary, keyed by an embedding of (destination, duration, pace, purpose) | If the live Gemini call fails, serve a semantically similar past itinerary instantly instead of a hard error | `services/itinerary_cache.py` (Qdrant `itinerary_cache` collection) |
+| Redis (share links + travel tips) | Share-link tokens (90-day TTL), travel-tips responses (1h TTL) | Fixes a real correctness bug: plain in-process dicts lost all data on every restart/deploy and were inconsistent across multiple instances | `core/redis_client.py` (Railway managed Redis; falls back to an in-process dict when `REDIS_URL` is unset, so local dev never needs Redis running) |
+| TTS monthly budget counter | Characters synthesized this calendar month | Same Redis layer, reused as a durable counter to enforce a hard ceiling under Google Cloud TTS's free tier | `core/tts_budget.py` |
+| Pexels image cache | Query → photo result, in-process, capped at 500 entries | Avoid repeated paid-adjacent API calls for the same destination/theme search | `services/pexels.py` |
+| Currency conversion rate cache | Exchange rate, 6h in-memory TTL + hardcoded fallback table | Avoid hitting the external rate API on every wizard message; never blocks on a network hiccup | `core/currency_convert.py` |
+| Generated-itineraries "flywheel" | Every real generated itinerary, also fed back as few-shot grounding for future generations | Not a performance cache — a *learning* cache that makes the RAG-grounded generation better over time | `services/generated_itineraries.py` |
+
+**The common thread:** most of these exist because the "real" thing being cached (an LLM call, a paid/rate-limited third-party API, or in-process state) is either too slow/expensive to redo every time, or too fragile to trust surviving a restart. One cache candidate — `services/geocode.py`'s "geocode cache" — was discovered to be a no-op (`@lru_cache`-decorated but the function body unconditionally returns `None`); flagged, not yet fixed.
+
 ---
 
 ## Part 2 — Rigor: Evaluation, Testing, Proof
