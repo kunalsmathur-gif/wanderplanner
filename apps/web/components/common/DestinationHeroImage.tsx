@@ -19,7 +19,7 @@ export function DestinationHeroImage({
   imageQuery?: string
   alt: string
 }) {
-  const imgUrl = useWikiImage(city, country, imageQuery)
+  const imgUrl = useWikiImage(city, country, imageQuery, 1400)
 
   if (!imgUrl) {
     return <div className="h-56 w-full bg-[var(--_muted)] sm:h-72" aria-hidden="true" />
