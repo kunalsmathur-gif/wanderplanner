@@ -124,6 +124,16 @@
 }
 
 /* ── Base styles ────────────────────────────────────────────────────────────── */
+/* Guardrail against horizontal-overflow regressions (e.g. a decorative element
+   or fixed-width child wider than the viewport) — clips instead of letting the
+   whole page scroll/pinch-zoom right into blank canvas. Intentional inner
+   scrollers (e.g. the trip-idea carousel) set their own `overflow-x-auto` and
+   are unaffected since this only clips at the document root. */
+html, body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
 body {
   font-family: var(--font-body);
   color: var(--_fg);

@@ -18,7 +18,17 @@ const jetbrainsMono = JetBrains_Mono({
   variable: '--font-jetbrains',
 })
 
-export const viewport: Viewport = { themeColor: '#0EA5E9' }
+// `width`/`initialScale` are required — without them Next emits no
+// `<meta name="viewport">` tag at all (see metadata.js::createViewportElements),
+// so mobile browsers fall back to a ~980px desktop-emulation viewport and
+// scale the page down, leaving real blank canvas to the right that pinch-zoom
+// or horizontal scroll can reveal.
+export const viewport: Viewport = {
+  themeColor: '#0EA5E9',
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+}
 
 const SITE_URL = 'https://wanderplanner.app'
 const SITE_TITLE = 'Wanderplanner — Free AI Travel Planner & Itinerary Generator'
