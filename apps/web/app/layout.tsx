@@ -41,7 +41,7 @@ export const viewport: Viewport = {
   userScalable: false,
 }
 
-const SITE_URL = 'https://wanderplanner.app'
+const SITE_URL = 'https://wanderplanner.org'
 const SITE_TITLE = 'Wanderplanner — Free AI Travel Planner & Itinerary Generator'
 const SITE_DESCRIPTION =
   'Wanderplanner is a free AI travel planner. Tell Anya — our AI concierge — your destination, budget, and group. Get a personalised day-by-day itinerary for Bali, Europe, Rajasthan, Dubai, and 190+ countries. Free sign-up, no credit card required.'

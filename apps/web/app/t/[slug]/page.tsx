@@ -4,7 +4,7 @@ import { ThemeToggle } from '@/components/common/ThemeToggle'
 import { formatDayDate } from '@/lib/format'
 import { getSharedTrip } from '@/lib/sharedTrip'
 
-const SITE_URL = 'https://wanderplanner.app'
+const SITE_URL = 'https://wanderplanner.org'
 
 const TAG_BADGE: Record<string, { emoji: string; className: string }> = {
   hidden_gem: {
