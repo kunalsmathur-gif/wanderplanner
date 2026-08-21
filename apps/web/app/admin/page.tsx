@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   Check,
+  Clock,
   Database,
   Eye,
   EyeOff,
@@ -113,6 +114,11 @@ function formatRelativeTime(input: string): string {
   }
 
   return 'just now'
+}
+
+function formatMs(ms: number | null): string {
+  if (ms == null) return '—'
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`
 }
 
 function leadStatusBadge(lead: AdminLead) {
@@ -618,6 +624,28 @@ export default function AdminDashboardPage() {
                 <StatCard icon={<Sparkles size={16} />} label="Sign-ups (30d)" value={summary.signups['30d']} sub={`${summary.signups.today} today`} />
                 <StatCard icon={<LogIn size={16} />} label="Login success rate" value={summary.logins.success_rate_30d != null ? `${Math.round(summary.logins.success_rate_30d * 100)}%` : '—'} sub={`${summary.logins.success_30d} ok · ${summary.logins.failed_30d} failed`} />
                 <StatCard icon={<Sparkles size={16} />} label="Itineraries (30d)" value={summary.itineraries.generated_30d} sub={`${summary.itineraries.failed_30d} failed`} />
+                <StatCard
+                  icon={<Clock size={16} />}
+                  label="Itinerary generation time"
+                  value={formatMs(summary.itineraries.generation_time_avg_ms)}
+                  valueClassName="font-mono"
+                  sub={
+                    summary.itineraries.generation_time_p50_ms != null
+                      ? `p50 ${formatMs(summary.itineraries.generation_time_p50_ms)} · p90 ${formatMs(summary.itineraries.generation_time_p90_ms)}`
+                      : 'No generations yet'
+                  }
+                />
+                <StatCard
+                  icon={<Clock size={16} />}
+                  label="Feasibility check time"
+                  value={formatMs(summary.feasibility_checks.check_time_avg_ms)}
+                  valueClassName="font-mono"
+                  sub={
+                    summary.feasibility_checks.check_time_p50_ms != null
+                      ? `p50 ${formatMs(summary.feasibility_checks.check_time_p50_ms)} · p90 ${formatMs(summary.feasibility_checks.check_time_p90_ms)} · ${summary.feasibility_checks.count_30d} checks (30d)`
+                      : `${summary.feasibility_checks.count_30d} checks (30d)`
+                  }
+                />
               </div>
             </section>
 

@@ -11,7 +11,19 @@ export interface AdminSummary {
   signups: { today: number; '7d': number; '30d': number }
   sessions: { today: number; '7d': number; '30d': number }
   logins: { success_30d: number; failed_30d: number; success_rate_30d: number | null }
-  itineraries: { generated_30d: number; failed_30d: number }
+  itineraries: {
+    generated_30d: number
+    failed_30d: number
+    generation_time_avg_ms: number | null
+    generation_time_p50_ms: number | null
+    generation_time_p90_ms: number | null
+  }
+  feasibility_checks: {
+    count_30d: number
+    check_time_avg_ms: number | null
+    check_time_p50_ms: number | null
+    check_time_p90_ms: number | null
+  }
   agent_leads: {
     created_total: number
     responded_total: number
