@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react'
 import Image from 'next/image'
+import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Users, Wallet, MapPin, Sparkles, ArrowRight, Plane, Link2, Loader2, AlertCircle } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
@@ -12,7 +13,7 @@ import { UserMenu } from '@/components/common/UserMenu'
 import { useWikiImage } from '@/hooks/useWikiImage'
 import { extractTrip } from '@/lib/api'
 import { MAX_EXTRACT_INPUT_LEN } from '@/lib/limits'
-import { destinationBySlug } from '@/lib/destinationsData'
+import { destinationBySlug, destinations } from '@/lib/destinationsData'
 
 const FEATURED_TRIPS = [
   { emoji: '🏖️', dest: 'Bali, Indonesia',    days: 7,  budget: '₹80,000',   theme: 'Beach & Temples',      gradient: 'linear-gradient(135deg,#0EA5E9 0%,#0C4A6E 100%)' },
@@ -62,17 +63,15 @@ function InspirationCard({
   const city = trip.dest.split(',')[0].trim()
   const country = trip.dest.includes(',') ? trip.dest.split(',').slice(1).join(',').trim() : city
   const imgUrl = useWikiImage(city, country, trip.imageQuery)
+  const guideSlug = destinations.find((d) => d.label === trip.dest)?.slug
 
-  function handleClick() {
+  function handlePlanClick() {
     onPlan({ city, country, days: trip.days, label: trip.dest })
   }
 
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      className="group cursor-pointer overflow-hidden rounded-2xl border border-[var(--_border)] bg-[var(--_card)] text-left shadow-sm transition-all hover:-translate-y-1 hover:border-[var(--_primary)] hover:shadow-lg"
-      aria-label={`Start planning: ${trip.dest}, ${trip.days} days, ${trip.budget}`}
+    <div
+      className="group overflow-hidden rounded-2xl border border-[var(--_border)] bg-[var(--_card)] shadow-sm transition-all hover:-translate-y-1 hover:border-[var(--_primary)] hover:shadow-lg"
     >
       {/* Hero — real photo or gradient fallback */}
       <div
@@ -115,11 +114,30 @@ function InspirationCard({
         <p className="mt-0.5 text-xs text-[var(--_muted-fg)]">
           {trip.days} days · {trip.budget}
         </p>
-        <span className="mt-2 inline-flex items-center gap-0.5 text-xs font-semibold text-[var(--_primary)] opacity-70 transition-opacity group-hover:opacity-100">
-          Plan this <ArrowRight size={11} />
-        </span>
+        {/* Two CTAs: read the full SEO guide, or jump straight into the
+            wizard pre-filled with this destination. Stacked on mobile
+            (cards are only ~150px wide at grid-cols-2) so the labels don't
+            wrap or collide; side-by-side from sm+ once cards have room. */}
+        <div className="mt-2 flex flex-col items-start gap-1.5 sm:flex-row sm:items-center sm:gap-3">
+          {guideSlug && (
+            <Link
+              href={`/destinations/${guideSlug}`}
+              className="text-xs font-semibold text-[var(--_muted-fg)] underline-offset-2 hover:text-[var(--_primary)] hover:underline"
+            >
+              Read guide
+            </Link>
+          )}
+          <button
+            type="button"
+            onClick={handlePlanClick}
+            className="inline-flex items-center gap-0.5 text-xs font-semibold text-[var(--_primary)] hover:underline"
+            aria-label={`Start planning: ${trip.dest}, ${trip.days} days, ${trip.budget}`}
+          >
+            Plan custom <ArrowRight size={11} />
+          </button>
+        </div>
       </div>
-    </button>
+    </div>
   )
 }
 
@@ -209,7 +227,7 @@ export function LandingHero() {
           </span>
           <nav className="flex min-w-0 items-center gap-1 sm:gap-4" aria-label="Site navigation">
             <a
-              href="/destinations"
+              href="#inspiration"
               className="hidden text-sm font-medium text-[var(--_fg)] hover:text-[var(--_primary)] sm:inline"
             >
               Inspiration
