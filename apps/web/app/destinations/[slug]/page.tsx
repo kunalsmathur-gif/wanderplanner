@@ -104,9 +104,7 @@ export default async function DestinationPage({
       </header>
 
       <DestinationHeroImage
-        city={dest.city}
-        country={dest.country}
-        imageQuery={dest.imageQuery}
+        heroImage={dest.heroImage}
         alt={`${dest.label} — ${dest.tagline}`}
       />
 

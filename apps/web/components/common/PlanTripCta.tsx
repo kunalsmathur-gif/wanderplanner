@@ -15,7 +15,7 @@ export function PlanTripCta({ slug, label }: { slug: string; label: string }) {
       href={`/?dest=${slug}`}
       className="btn btn-accent inline-flex items-center gap-2 rounded-2xl px-6 py-3.5 text-sm font-bold shadow-lg sm:px-8 sm:py-4 sm:text-base"
     >
-      Plan my {label} trip <ArrowRight size={18} />
+      Customize my {label} itinerary <ArrowRight size={18} />
     </Link>
   )
 }

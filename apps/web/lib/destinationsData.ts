@@ -14,6 +14,12 @@ export interface DestinationFaq {
   a: string
 }
 
+export interface DestinationHeroImage {
+  url: string
+  photographer: string
+  photographerUrl: string
+}
+
 export interface Destination {
   slug: string
   // Search terms fed into the wizard preload / useWikiImage — kept singular
@@ -29,6 +35,10 @@ export interface Destination {
   metaDescription: string
   keywords: string[]
   imageQuery?: string
+  // Curated once from Pexels (1600x900, landscape-cropped) — replaces a live
+  // Wikipedia thumbnail fetch that was often oddly cropped/low-res when
+  // stretched across the full-width hero banner. See DestinationHeroImage.tsx.
+  heroImage: DestinationHeroImage
   overview: string[]
   highlights: string[]
   bestTimeToVisit: string
@@ -52,6 +62,11 @@ export const destinations: Destination[] = [
       'Free AI Bali trip planner. Get a personalised 7-day Bali itinerary covering Ubud, Seminyak, Uluwatu, and the Nusa islands — with budget, best time to visit, and local tips.',
     keywords: ['Bali trip planner', 'Bali itinerary', 'Bali travel guide', '7 days in Bali', 'Bali budget trip'],
     imageQuery: 'Uluwatu Temple Bali',
+    heroImage: {
+      url: 'https://images.pexels.com/photos/36593818/pexels-photo-36593818.jpeg?auto=compress&cs=tinysrgb&w=1600&h=900&fit=crop',
+      photographer: 'Tom Fisk',
+      photographerUrl: 'https://www.pexels.com/@tomfisk',
+    },
     overview: [
       "Bali packs an unusual range of experiences into a small island — surf beaches in the south, rice terraces and waterfalls in the centre, and quieter volcanic landscapes up north. Most first-time visitors split their week between Ubud (culture, jungle, rice fields), Seminyak or Canggu (beach clubs, cafés, sunsets), and Uluwatu (cliffs, temples, world-class surf).",
       "It's also one of the better value long-haul destinations for Indian travellers — direct flights from major metros, visa-on-arrival, and daily costs that stay reasonable even at mid-range hotels.",
@@ -100,6 +115,11 @@ export const destinations: Destination[] = [
       'Free AI Rajasthan trip planner. Get a personalised 10-day itinerary covering Jaipur, Udaipur, Jodhpur, and Jaisalmer — with budget, best time to visit, and fort/palace tips.',
     keywords: ['Rajasthan travel guide', 'Rajasthan trip planner', 'Rajasthan itinerary', '10 days in Rajasthan', 'Jaipur Udaipur Jodhpur trip'],
     imageQuery: 'Amber Fort Jaipur',
+    heroImage: {
+      url: 'https://images.pexels.com/photos/19446861/pexels-photo-19446861.jpeg?auto=compress&cs=tinysrgb&w=1600&h=900&fit=crop',
+      photographer: 'Abhinav Sharma',
+      photographerUrl: 'https://www.pexels.com/@abhi31',
+    },
     overview: [
       "Rajasthan is India's most classic heritage circuit — a loop through Jaipur's forts, Udaipur's lakes, Jodhpur's blue city, and Jaisalmer's desert dunes, all connected by well-worn tourist rail and road routes. It rewards a slower pace: each city has a genuinely distinct character, from Udaipur's romantic lakeside palaces to Jaisalmer's living desert fort.",
       "It also works well as either a first big India trip or a focused heritage-and-photography trip for repeat visitors, since the driving distances between cities (4–6 hours) make a loop itinerary practical without much backtracking.",
@@ -151,6 +171,11 @@ export const destinations: Destination[] = [
       'Free AI Dubai trip planner. Get a personalised 4-day Dubai itinerary covering Burj Khalifa, desert safari, Old Dubai, and the Marina — with budget and visa tips.',
     keywords: ['Dubai trip planner', 'Dubai itinerary', '4 days in Dubai', 'Dubai travel guide', 'Dubai budget trip'],
     imageQuery: 'Burj Khalifa Dubai skyline',
+    heroImage: {
+      url: 'https://images.pexels.com/photos/5577693/pexels-photo-5577693.jpeg?auto=compress&cs=tinysrgb&w=1600&h=900&fit=crop',
+      photographer: 'Maria Charizani',
+      photographerUrl: 'https://www.pexels.com/@maria-charizani-3542905',
+    },
     overview: [
       "Dubai suits a short, high-density trip — most of the marquee experiences (Burj Khalifa, desert safari, Dubai Mall, the Marina) sit within a 30-minute drive of each other, and the metro covers a surprising amount of it directly. It's also one of the most convenient international trips for Indian travellers: a 3-hour flight, visa-on-arrival for most passport holders with a valid US/UK/Schengen visa or eligible visa categories, and no time-zone adjustment worth mentioning.",
       "It works equally well as a long weekend city break or as a 2–3 night stopover extension on a longer Europe or East Africa trip.",
@@ -196,6 +221,11 @@ export const destinations: Destination[] = [
       'Free AI Europe trip planner. Get a personalised 12-day itinerary across Paris, Amsterdam, and Rome — with Schengen visa, rail pass, and budget tips.',
     keywords: ['Europe trip itinerary', 'Europe travel planner', '12 days in Europe', 'first time Europe trip', 'Europe budget itinerary'],
     imageQuery: 'Eiffel Tower Paris',
+    heroImage: {
+      url: 'https://images.pexels.com/photos/16496484/pexels-photo-16496484.jpeg?auto=compress&cs=tinysrgb&w=1600&h=900&fit=crop',
+      photographer: 'Mehmet Turgut  Kirkgoz',
+      photographerUrl: 'https://www.pexels.com/@tkirkgoz',
+    },
     overview: [
       "A first Europe trip usually means choosing between going deep on one country or covering a classic multi-city loop — Paris, Amsterdam, and Rome remain the most popular combination for a first-timer, connected by cheap short-haul flights or high-speed rail, and each offering a distinctly different city character.",
       "Because most Western European countries share the Schengen visa, one visa application covers the whole loop, which is what makes multi-country itineraries this efficient in the first place.",
@@ -249,6 +279,11 @@ export const destinations: Destination[] = [
       'Free AI Paris trip planner. Get a personalised 5-day Paris itinerary covering the Eiffel Tower, the Louvre, Montmartre, and a Versailles day trip — with budget and visa tips.',
     keywords: ['Paris trip planner', 'Paris itinerary', '5 days in Paris', 'Paris travel guide', 'Paris budget trip'],
     imageQuery: 'Eiffel Tower Paris',
+    heroImage: {
+      url: 'https://images.pexels.com/photos/16496484/pexels-photo-16496484.jpeg?auto=compress&cs=tinysrgb&w=1600&h=900&fit=crop',
+      photographer: 'Mehmet Turgut  Kirkgoz',
+      photographerUrl: 'https://www.pexels.com/@tkirkgoz',
+    },
     overview: [
       "Paris rewards unhurried mornings and a willingness to walk — the Louvre, Notre-Dame, the Latin Quarter, and the Seine's riverbanks are all within a compact, walkable core, with Montmartre's hilltop streets and Sacré-Cœur just a short metro ride away.",
       "Five days is enough to cover the major landmarks at a comfortable pace, with a day left over for either a Versailles side trip or a slower neighbourhood-by-neighbourhood wander through areas like Le Marais and Saint-Germain-des-Prés.",
@@ -294,6 +329,11 @@ export const destinations: Destination[] = [
     metaDescription:
       'Free AI Kyoto trip planner. Get a personalised 7-day Kyoto itinerary covering Fushimi Inari, Arashiyama, Gion, and day trips to Nara and Osaka — with budget and season tips.',
     keywords: ['Kyoto trip planner', 'Kyoto itinerary', '7 days in Kyoto', 'Kyoto travel guide', 'Japan itinerary'],
+    heroImage: {
+      url: 'https://images.pexels.com/photos/35076911/pexels-photo-35076911.jpeg?auto=compress&cs=tinysrgb&w=1600&h=900&fit=crop',
+      photographer: 'Dmitry Romanoff',
+      photographerUrl: 'https://www.pexels.com/@dmitry-romanoff-1151933996',
+    },
     overview: [
       "Kyoto was Japan's imperial capital for over a thousand years, and it shows — over a thousand temples and shrines, entire preserved geisha districts, and gardens built for exactly this kind of unhurried walking. It's slower and more traditional than Tokyo, which is precisely why most itineraries pair the two.",
       "A week is enough to cover Kyoto properly (the city itself rewards 4–5 days) plus day trips to Nara's deer park and Osaka's food scene, both under an hour away by train.",
@@ -342,6 +382,11 @@ export const destinations: Destination[] = [
       'Free AI Kenya safari planner. Get a personalised 8-day itinerary covering the Masai Mara, Amboseli, and Lake Nakuru — with migration season timing and budget breakdown.',
     keywords: ['Kenya safari itinerary', 'Masai Mara trip planner', 'Kenya safari budget', 'Africa safari itinerary', 'wildlife safari trip'],
     imageQuery: 'Masai Mara wildlife safari',
+    heroImage: {
+      url: 'https://images.pexels.com/photos/10822350/pexels-photo-10822350.jpeg?auto=compress&cs=tinysrgb&w=1600&h=900&fit=crop',
+      photographer: 'Richard Wilson',
+      photographerUrl: 'https://www.pexels.com/@richard-wilson-1717169',
+    },
     overview: [
       "A Kenya safari is built around a handful of parks, each with a different draw: the Masai Mara for big cats and, from roughly July to October, the wildebeest migration crossing the Mara River; Amboseli for elephant herds set against Kilimanjaro; and Lake Nakuru for rhinos and flamingos in a smaller, easier-to-cover park.",
       "Most trips combine 2–3 parks with internal flights or a long game-drive transfer between them, plus a day or two around Nairobi at either end.",
@@ -390,6 +435,11 @@ export const destinations: Destination[] = [
     metaDescription:
       'Free AI Himachal Pradesh trip planner. Get a personalised 6-day itinerary covering Manali, Kasol, and Spiti Valley or Shimla — with budget and best season tips.',
     keywords: ['Himachal Pradesh trip planner', 'Manali itinerary', 'Himachal travel guide', 'Kasol trip', '6 days in Himachal'],
+    heroImage: {
+      url: 'https://images.pexels.com/photos/16104060/pexels-photo-16104060.jpeg?auto=compress&cs=tinysrgb&w=1600&h=900&fit=crop',
+      photographer: 'Piyush Sharma',
+      photographerUrl: 'https://www.pexels.com/@piyush-sharma-503040734',
+    },
     overview: [
       "Himachal Pradesh covers a lot of ground character-wise — Manali's adventure-sports base camp feel, Kasol's backpacker cafés along the Parvati river, Shimla's colonial hill-station streets, and, further out, Spiti Valley's stark high-altitude desert landscape.",
       "Most first-time trips centre on Manali and Kasol (close together, easy loop) or Shimla and Kufri for a gentler, more accessible hill-station trip — Spiti requires more days and is best added on a second visit.",
@@ -437,6 +487,11 @@ export const destinations: Destination[] = [
       'Free AI Maldives trip planner. Get a personalised 5-day Maldives itinerary covering resort selection, snorkelling, and overwater villa stays — with budget and season tips.',
     keywords: ['Maldives trip planner', 'Maldives itinerary', 'Maldives honeymoon', 'Maldives budget trip', 'overwater villa'],
     imageQuery: 'Maldives tourism travel',
+    heroImage: {
+      url: 'https://images.pexels.com/photos/1287455/pexels-photo-1287455.jpeg?auto=compress&cs=tinysrgb&w=1600&h=900&fit=crop',
+      photographer: 'Asad Photo Maldives',
+      photographerUrl: 'https://www.pexels.com/@asadphoto',
+    },
     overview: [
       "The Maldives is a one-resort-island trip more often than a multi-stop itinerary — most visitors pick a single atoll resort (or two, split across a stay) and build the days around the house reef, water sports, and spa time rather than day-tripping between sights.",
       "Budget swings enormously by resort tier: a guesthouse on a local island (like Maafushi) with day-trip snorkelling costs a fraction of an overwater-villa resort — both are valid ways to do the Maldives depending on the trip you want.",
@@ -482,6 +537,11 @@ export const destinations: Destination[] = [
     metaDescription:
       'Free AI Singapore trip planner. Get a personalised 4-day Singapore itinerary covering Gardens by the Bay, Sentosa, and hawker centres — with budget and visa tips.',
     keywords: ['Singapore trip planner', 'Singapore itinerary', '4 days in Singapore', 'Singapore travel guide', 'Singapore family trip'],
+    heroImage: {
+      url: 'https://images.pexels.com/photos/18662417/pexels-photo-18662417.jpeg?auto=compress&cs=tinysrgb&w=1600&h=900&fit=crop',
+      photographer: 'Mark Baldovino',
+      photographerUrl: 'https://www.pexels.com/@odlab2',
+    },
     overview: [
       "Singapore is one of the most logistically easy international trips available from India — a clean, English-speaking, well-connected city where the metro reaches almost everything, hawker centres make food both cheap and excellent, and a short flight means minimal jet lag.",
       "Four days covers the core sights (Marina Bay, Sentosa, a couple of neighbourhoods) comfortably, and it works equally well as a standalone trip or a stopover extension.",
@@ -527,6 +587,11 @@ export const destinations: Destination[] = [
       'Free AI Andaman Islands trip planner. Get a personalised 6-day itinerary covering Port Blair, Havelock, and Neil Island — with scuba diving, budget, and season tips.',
     keywords: ['Andaman Islands trip planner', 'Andaman itinerary', 'Havelock Island trip', 'Andaman budget trip', 'scuba diving Andaman'],
     imageQuery: 'Radhanagar Beach Andaman',
+    heroImage: {
+      url: 'https://images.pexels.com/photos/37949152/pexels-photo-37949152.jpeg?auto=compress&cs=tinysrgb&w=1600&h=900&fit=crop',
+      photographer: 'Nabil Naidu',
+      photographerUrl: 'https://www.pexels.com/@nabilnaidu',
+    },
     overview: [
       "The Andaman Islands are India's best beach-and-reef destination, built around a few island hops by ferry — Port Blair for history and logistics, Havelock (Swaraj Dweep) for Radhanagar Beach and scuba diving, and Neil (Shaheed Dweep) for a quieter, smaller-scale version of the same.",
       "It's a genuinely different kind of India trip: clear water, coral reefs, and a slower island pace, with none of the usual heritage-circuit sightseeing pressure.",
@@ -573,6 +638,11 @@ export const destinations: Destination[] = [
     metaDescription:
       'Free AI New York trip planner. Get a personalised 7-day NYC itinerary covering Manhattan, Central Park, the Statue of Liberty, and Brooklyn — with budget and visa tips.',
     keywords: ['New York trip planner', 'NYC itinerary', '7 days in New York', 'New York travel guide', 'New York budget trip'],
+    heroImage: {
+      url: 'https://images.pexels.com/photos/8569166/pexels-photo-8569166.jpeg?auto=compress&cs=tinysrgb&w=1600&h=900&fit=crop',
+      photographer: 'Ivana Rodriguez',
+      photographerUrl: 'https://www.pexels.com/@ivana-rodriguez-53736',
+    },
     overview: [
       "New York rewards a borough-by-borough approach more than a single checklist — Manhattan's landmarks (Times Square, Central Park, the Empire State Building) anchor most itineraries, but a full week lets you add the Statue of Liberty, world-class museums, and a proper Brooklyn day without feeling rushed.",
       "The subway makes the whole city genuinely walkable-by-transit, so most days can mix 2–3 neighbourhoods without needing a car or ride-share.",
@@ -621,6 +691,11 @@ export const destinations: Destination[] = [
       'Free AI Bangkok trip planner. Get a personalised 5-day Bangkok itinerary covering the Grand Palace, Wat Pho, floating markets, and street food — with budget and visa tips.',
     keywords: ['Bangkok trip planner', 'Bangkok itinerary', '5 days in Bangkok', 'Bangkok travel guide', 'Bangkok budget trip'],
     imageQuery: 'Wat Pho Bangkok temple',
+    heroImage: {
+      url: 'https://images.pexels.com/photos/30540817/pexels-photo-30540817.jpeg?auto=compress&cs=tinysrgb&w=1600&h=900&fit=crop',
+      photographer: 'Zaonar Saizainalin',
+      photographerUrl: 'https://www.pexels.com/@zaonar-saizainalin-547935324',
+    },
     overview: [
       "Bangkok works as both a standalone trip and the natural gateway to the rest of Thailand — a dense, chaotic, genuinely exciting city where ornate temples sit blocks away from rooftop bars and some of the best street food in the world.",
       "Five days covers the temple circuit, a floating market day trip, and enough time to just wander Chinatown or Chatuchak Market without feeling like you're racing a checklist.",

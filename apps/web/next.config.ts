@@ -18,6 +18,11 @@ const nextConfig: NextConfig = {
         protocol: 'https',
         hostname: 'img.youtube.com',
       },
+      {
+        protocol: 'https',
+        hostname: 'images.pexels.com',
+        pathname: '/**',
+      },
     ],
   },
   // Point Turbopack at the monorepo root so it resolves workspace-hoisted deps
