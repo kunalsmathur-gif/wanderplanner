@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import Image from 'next/image'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { Users, Wallet, MapPin, Sparkles, ArrowRight, Plane, Link2, Loader2, AlertCircle } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
 import type { WizardPreload } from '@/store/appStore'
@@ -11,6 +12,7 @@ import { UserMenu } from '@/components/common/UserMenu'
 import { useWikiImage } from '@/hooks/useWikiImage'
 import { extractTrip } from '@/lib/api'
 import { MAX_EXTRACT_INPUT_LEN } from '@/lib/limits'
+import { destinationBySlug } from '@/lib/destinationsData'
 
 const FEATURED_TRIPS = [
   { emoji: '🏖️', dest: 'Bali, Indonesia',    days: 7,  budget: '₹80,000',   theme: 'Beach & Temples',      gradient: 'linear-gradient(135deg,#0EA5E9 0%,#0C4A6E 100%)' },
@@ -121,6 +123,38 @@ function InspirationCard({
   )
 }
 
+/**
+ * Reads `?dest=<slug>` (set by destination landing-page CTAs, since those
+ * are server-rendered pages with no access to the zustand store) and opens
+ * the wizard pre-filled with that destination. Split out and wrapped in
+ * Suspense because useSearchParams forces that boundary during static
+ * prerendering.
+ */
+function DestinationPreload() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const openWizardWithPreload = useAppStore((s) => s.openWizardWithPreload)
+
+  useEffect(() => {
+    const slug = searchParams.get('dest')
+    if (!slug) return
+    const dest = destinationBySlug.get(slug)
+    if (dest) {
+      openWizardWithPreload({
+        city: dest.city,
+        country: dest.country,
+        days: dest.recommendedDays,
+        label: dest.label,
+      })
+    }
+    // Strip the query param so refreshing/sharing doesn't re-trigger it
+    router.replace('/')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
+
+  return null
+}
+
 export function LandingHero() {
   const openWizard = useAppStore((s) => s.openWizard)
   const openWizardWithPreload = useAppStore((s) => s.openWizardWithPreload)
@@ -159,6 +193,9 @@ export function LandingHero() {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto bg-[var(--_bg)]">
+      <Suspense fallback={null}>
+        <DestinationPreload />
+      </Suspense>
 
       {/* ── Site nav ─────────────────────────────────────────────── */}
       <header className="sticky top-0 z-10 border-b border-[var(--_border)] bg-[var(--_bg)]/90 backdrop-blur-sm">
@@ -171,6 +208,12 @@ export function LandingHero() {
             <WanderplannerLogo size="md" wordmark />
           </span>
           <nav className="flex min-w-0 items-center gap-1 sm:gap-4" aria-label="Site navigation">
+            <a
+              href="/destinations"
+              className="hidden text-sm font-medium text-[var(--_fg)] hover:text-[var(--_primary)] sm:inline"
+            >
+              Destinations
+            </a>
             <ThemeToggle />
             <button
               type="button"
