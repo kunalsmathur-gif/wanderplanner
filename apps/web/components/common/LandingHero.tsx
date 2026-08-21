@@ -212,7 +212,7 @@ export function LandingHero() {
               href="/destinations"
               className="hidden text-sm font-medium text-[var(--_fg)] hover:text-[var(--_primary)] sm:inline"
             >
-              Destinations
+              Inspiration
             </a>
             <ThemeToggle />
             <button
