@@ -23,11 +23,22 @@ const jetbrainsMono = JetBrains_Mono({
 // so mobile browsers fall back to a ~980px desktop-emulation viewport and
 // scale the page down, leaving real blank canvas to the right that pinch-zoom
 // or horizontal scroll can reveal.
+//
+// `userScalable: false` locks the layout to the device's actual size —
+// deliberately overriding the WCAG 1.4.4 "always allow zoom" default. Capping
+// `maximumScale` alone isn't enough: pinch-zoom operates on the browser's
+// visual viewport (a compositor-level zoom/pan) which is independent of the
+// CSS overflow model, so even `overflow-x: hidden` can't stop panning into
+// blank canvas once a user has manually zoomed. Disabling user-scalable is
+// the only way to prevent both the zoomed-out blank canvas and the
+// post-zoom pan-right, matching this being an app-like mobile experience
+// with its own bottom-nav rather than a long-form reading page.
 export const viewport: Viewport = {
   themeColor: '#0EA5E9',
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 5,
+  maximumScale: 1,
+  userScalable: false,
 }
 
 const SITE_URL = 'https://wanderplanner.app'
