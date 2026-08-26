@@ -192,6 +192,24 @@ Core components of the view:
   queries to add wifi/internet_access tag filtering, and cross-references existing
   accommodation data already used for property specs, to produce a "workation-friendly"
   venue shortlist per destination.
+  - **Side-quest completed 2026-08-26, feeds into this later**: while investigating this
+    plan's POI needs, a **time-boxed Google Places (New) trial** was implemented as an
+    alternative/backstop POI provider for the existing `osm_pois` collection (not
+    scoped to workation venues specifically, but directly relevant here since it's the
+    same collection `workation_venues.py` will read from). Runs 2026-08-26 →
+    `settings.google_places_trial_end_date` (2026-10-31), using free trial credits
+    shared with the YouTube Data API v3 key. `scrapers/poi_provider.py` tries Google
+    Places `searchNearby` first, falls back to OSM's existing
+    `ingest_osm_pois_with_outcome` (preserving its thin/degraded-geocode guards) on any
+    failure, empty result, or once the trial ends — a hard date check, not a
+    credits-remaining check. Every attempt logs a row to the new `poi_provider_usage`
+    table (migration `0013`) for a data-driven keep/drop decision before the trial ends.
+    **Relevant caveat for workation venues**: Google Places has **no explicit wifi
+    field** either (confirmed against Google's Place Details/Nearby Search docs) — it
+    does not solve the "sparse `wifi=yes` OSM tagging" problem this plan flagged above;
+    wifi would still need inference from reviews (not yet built) on either provider. See
+    `docs/rag-strategy.md` §3I for the full design writeup, and
+    `scripts/poi_provider_eval_report.py` (not yet built) for the planned eval tool.
 - **New chain**: `chains/workation_recommend_chain.py` — combines long-weekend windows +
   events + interests to rank and explain destination candidates (mirrors the existing
   `recommend_cities_chain.py` pattern for LLM-assisted ranking/rationale text).
