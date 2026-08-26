@@ -296,6 +296,43 @@ class Settings(BaseSettings):
     osm_refresh_days: int = 7
     osm_ingest_delay_seconds: float = 2.0  # be polite to the free Overpass API between destinations
 
+    # --- Google Places POI trial (2026-08-26 -> 2026-10-31) ---
+    # User has free Google Cloud credits expiring end of October. Trial plan:
+    # run Google Places as the PRIMARY POI source (richer India coverage,
+    # ratings/photos/hours) with automatic fallback to the existing free OSM/
+    # Overpass pipeline on any failure, so POI ingestion never goes to zero
+    # even if the Places API errors, quota runs out, or the key is revoked.
+    # Every ingestion run's provider + Places API call count + estimated cost
+    # is logged (services/poi_provider_eval.py) so a data-driven keep/drop
+    # decision can be made before the trial window ends. After
+    # `google_places_trial_end_date`, `_refresh_osm_pois` stops trying Google
+    # Places at all and reverts to OSM-only, regardless of whether credits
+    # are technically still available — see scripts/poi_provider_eval_report.py
+    # for the comparison report this decision should be based on.
+    #
+    # Left blank by default and resolved from `youtube_api_key` in
+    # `_default_google_places_api_key_from_youtube` below — this repo's
+    # Google Cloud project uses ONE API key for both YouTube Data API v3 and
+    # Places API (New), so requiring a second env var for the same credential
+    # would just invite them to drift out of sync. Set GOOGLE_PLACES_API_KEY
+    # explicitly only if/when this ever becomes a genuinely separate key.
+    google_places_api_key: str = ""
+    google_places_enabled: bool = True
+    google_places_trial_end_date: str = "2026-10-31"  # ISO date, inclusive
+    # Nearby Search Pro pricing (fields incl. ratings/photos/hours) per
+    # Google's public pricing page, https://developers.google.com/maps/billing-and-pricing/pricing,
+    # checked 2026-08-26: $32/1000 calls beyond the 5,000/month free cap.
+    # Used only for the admin-facing cost estimate in the eval report, not
+    # for enforcement — Google's own billing console is the source of truth.
+    google_places_cost_per_1000_calls_usd: float = 32.0
+    # Categories queried per destination (scrapers/google_places.py) — Places
+    # Nearby Search takes one `includedTypes` list per call but a broad mix of
+    # unrelated types in one call measurably degrades result relevance, so
+    # POIs are fetched in a small number of themed category groups instead of
+    # one give-me-everything call (unlike Overpass, which supports a single
+    # unioned QL query across all categories).
+    google_places_max_results_per_category: int = 20
+
     itinerary_corpus_refresh_days: int = 7  # weekly cadence for now (was monthly, docs §9 ingestion pipeline)
 
     # YouTube Data API v3 (docs/NEXT_SESSION_TODO.md item 3 — hidden-gems
@@ -454,6 +491,17 @@ class Settings(BaseSettings):
         if v == "change-me-in-production" and is_production():
             raise ValueError("JWT_SECRET must be set to a strong random value in production.")
         return v
+
+    @model_validator(mode="after")
+    def _default_google_places_api_key_from_youtube(self) -> "Settings":
+        # See the comment on `google_places_api_key` above — this repo's GCP
+        # project shares one key across YouTube Data API v3 and Places API
+        # (New), so an unset GOOGLE_PLACES_API_KEY falls back to
+        # YOUTUBE_API_KEY rather than requiring a duplicate env var for the
+        # same credential.
+        if not self.google_places_api_key and self.youtube_api_key:
+            self.google_places_api_key = self.youtube_api_key
+        return self
 
     @model_validator(mode="after")
     def _validate_cookie_settings_for_prod(self) -> "Settings":

@@ -146,12 +146,14 @@ async def _refresh_visa_info():
     await mark_ran(job_id)
 
 
-async def _ingest_osm_and_wikivoyage(destination: str, ingest_osm_pois, ingest_wikivoyage) -> None:
-    """Small helper so `with_backoff` can retry the OSM+Wikivoyage pair for
-    one destination as a single unit — both scrapers upsert (safe to
-    re-run), so retrying both on a failure of either is simpler and no less
-    correct than tracking which half already succeeded."""
-    await ingest_osm_pois(destination)
+async def _ingest_pois_and_wikivoyage(destination: str, ingest_pois, ingest_wikivoyage) -> None:
+    """Small helper so `with_backoff` can retry the POI+Wikivoyage pair for
+    one destination as a single unit — both upsert (safe to re-run), so
+    retrying both on a failure of either is simpler and no less correct than
+    tracking which half already succeeded. `ingest_pois` is
+    `scrapers/poi_provider.py::ingest_pois`, which already internally decides
+    Google Places vs OSM per `settings.google_places_trial_end_date`."""
+    await ingest_pois(destination)
     await ingest_wikivoyage(destination)
 
 
@@ -173,7 +175,7 @@ async def _refresh_osm_pois():
 
     from db import AsyncSessionLocal
     from db_models import DestinationIngestionState
-    from scrapers.osm import ingest_osm_pois
+    from scrapers.poi_provider import ingest_pois
     from scrapers.wikivoyage import ingest_wikivoyage
 
     stale_before = datetime.now(UTC) - timedelta(days=settings.osm_refresh_days)
@@ -194,8 +196,11 @@ async def _refresh_osm_pois():
             # window, so per-destination retries must stay cheap. A
             # genuinely unreachable destination still just gets skipped
             # (timestamp left stale) and picked up again tomorrow night.
+            # `ingest_pois` (scrapers/poi_provider.py) tries Google Places
+            # first during the 2026-10-31 trial, falling back to OSM/
+            # Wikivoyage on any failure — see that module's docstring.
             await with_backoff(
-                lambda d=destination: _ingest_osm_and_wikivoyage(d, ingest_osm_pois, ingest_wikivoyage),
+                lambda d=destination: _ingest_pois_and_wikivoyage(d, ingest_pois, ingest_wikivoyage),
                 job_name=f"osm_poi_refresh[{destination}]",
                 max_attempts=2,
                 base_delay_seconds=3,
