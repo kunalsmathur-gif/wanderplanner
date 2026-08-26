@@ -2,35 +2,97 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from core.config import settings
+from core.job_run_state import is_due, mark_ran
+from core.retry import with_backoff
 
 logger = logging.getLogger(__name__)
 _scheduler = AsyncIOScheduler()
 
+# How often the scheduler *checks* whether a deploy-safe job is due (see
+# core/job_run_state.py). Cheap — it's just a DB read — so this can be much
+# shorter than any of the actual refresh cadences without adding real load.
+_CADENCE_CHECK_INTERVAL_MINUTES = 60
+
+# All RAG/scraping ingestion jobs (Reddit, OSM/Wikivoyage, itinerary corpus,
+# YouTube comments, visa info) are confined to a 2–4AM IST off-peak window
+# so a run's Overpass/Wikivoyage/YouTube/Gemini traffic and DB writes never
+# compete with real user traffic — this is a product requirement, not just
+# an optimization, so every job below is scheduled with `_off_peak_ist(...)`
+# rather than a plain interval, and staggered a few minutes apart within the
+# window so they don't all fire in the same instant.
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def _off_peak_ist(hour: int, minute: int = 0) -> CronTrigger:
+    """Build a daily CronTrigger anchored inside the 2–4AM IST off-peak
+    window. `hour` must be 2 or 3 (i.e. within [2:00, 4:00) IST) — callers
+    stagger their own minute offsets to spread load within the window."""
+    if hour not in (2, 3):
+        raise ValueError(f"off-peak IST window is [2:00, 4:00) — got hour={hour}")
+    return CronTrigger(hour=hour, minute=minute, timezone=IST)
+
+
 
 async def _refresh_reddit():
+    job_id = "reddit_refresh"
+    if not await is_due(job_id, interval=timedelta(hours=settings.reddit_refresh_hours)):
+        return
     from scrapers.reddit import ingest_reddit
     await ingest_reddit()
+    await mark_ran(job_id)
 
 
 async def _refresh_itinerary_corpus():
-    """Monthly-cadence ingestion of the free-tier itinerary corpus (docs
-    §9): scrape raw content, extract structured itineraries, embed, and
-    upsert into the `itinerary_corpus` Qdrant collection. Individual source
-    failures are already tolerated inside `collect_itinerary_corpus_raw()`;
-    this wrapper just guards the whole job so a bad run doesn't crash the
-    scheduler thread."""
+    """7-day cadence (`itinerary_corpus_refresh_days`) ingestion of the
+    free-tier itinerary corpus (docs §9): scrape raw content, extract
+    structured itineraries, embed, and upsert into the `itinerary_corpus`
+    Qdrant collection. Per-document extraction failures are already
+    tolerated inside `ingest_itinerary_corpus()`; this wrapper's own
+    exponential-backoff retry (`core.retry.with_backoff`) covers the
+    *whole-pipeline* failure modes that aren't per-document — a scraping
+    outage across all sources, an embedding-model hiccup, or a transient
+    Qdrant write failure — so one bad night doesn't have to wait a full
+    extra 7 days before trying again.
+
+    Gated by `core.job_run_state` (deploy-safe cadence, not process uptime):
+    the outer APScheduler trigger only fires once daily inside the 2-4AM IST
+    off-peak window (`_off_peak_ist`), but the actual ingestion only runs
+    once `itinerary_corpus_refresh_days` has genuinely elapsed since the
+    last *successful* run, per the DB-persisted `last_run_at` — so repeated
+    deploys/restarts never reset this clock, and a transient failure is
+    retried the very next night (not a full 7 days later), since
+    `mark_ran()` is only called on success.
+    """
+    job_id = "itinerary_corpus_refresh"
+    if not await is_due(job_id, interval=timedelta(days=settings.itinerary_corpus_refresh_days)):
+        return
     from chains.itinerary_corpus_extraction_chain import ingest_itinerary_corpus
+
     try:
-        count = await ingest_itinerary_corpus()
+        # 4 attempts, 5/10/20-minute backoff (~35min worst case) — comfortably
+        # inside the 2-4AM window even starting at the tail of it.
+        count = await with_backoff(
+            ingest_itinerary_corpus,
+            job_name="itinerary_corpus_refresh",
+            max_attempts=4,
+            base_delay_seconds=300,
+        )
         logger.info("Itinerary corpus ingestion complete: %d documents", count)
-    except Exception as e:
-        logger.warning("Itinerary corpus ingestion failed: %s", e)
+    except Exception:
+        # Already logged with full attempt detail inside with_backoff(); no
+        # mark_ran() means is_due() stays True and tomorrow's 2:40AM IST
+        # check retries the whole thing, rather than waiting out the full
+        # 7-day cadence again.
+        return
+    await mark_ran(job_id)
 
 
 async def _refresh_visa_info():
@@ -40,13 +102,32 @@ async def _refresh_visa_info():
     scrapers/visa_info.py for the measurement behind that). Failures are
     per-country and non-fatal — one unreachable article must not cost the
     other sixty, the same contract as `_refresh_osm_pois`.
+
+    Gated by `core.job_run_state` the same way as `_refresh_itinerary_corpus`
+    — `visa_info_refresh_days` is measured from the last successful full
+    pass, not from process start, so it survives deploys/restarts correctly.
     """
+    job_id = "visa_info_refresh"
+    if not await is_due(job_id, interval=timedelta(days=settings.visa_info_refresh_days)):
+        return
+
     from scrapers.visa_info import VISA_SEED_COUNTRIES, ingest_visa_info
 
     total = failures = 0
     for country in VISA_SEED_COUNTRIES:
         try:
-            total += await ingest_visa_info(country)
+            # Small, bounded retry (2 attempts, single ~3s backoff) — this
+            # loop can run across dozens of countries inside the 2-4AM
+            # window, so per-item retries must stay cheap; a genuinely dead
+            # source still just gets skipped and logged, same contract as
+            # before.
+            total += await with_backoff(
+                lambda c=country: ingest_visa_info(c),
+                job_name=f"visa_info_refresh[{country}]",
+                max_attempts=2,
+                base_delay_seconds=3,
+                max_total_delay_seconds=10,
+            )
         except Exception as e:
             failures += 1
             logger.warning("visa_info refresh failed for %r: %s", country, e)
@@ -57,6 +138,21 @@ async def _refresh_visa_info():
         "visa_info refresh complete: %d chunks across %d countries (%d failed)",
         total, len(VISA_SEED_COUNTRIES), failures,
     )
+    # Marked done even if some countries failed — matches `_refresh_osm_pois`'s
+    # per-item tolerance contract; a handful of unreachable articles shouldn't
+    # force the whole 30-day cadence to restart from zero. Only a total loop
+    # exception (unlikely, since per-country errors are already caught above)
+    # would skip this and retry the full pass next time.
+    await mark_ran(job_id)
+
+
+async def _ingest_osm_and_wikivoyage(destination: str, ingest_osm_pois, ingest_wikivoyage) -> None:
+    """Small helper so `with_backoff` can retry the OSM+Wikivoyage pair for
+    one destination as a single unit — both scrapers upsert (safe to
+    re-run), so retrying both on a failure of either is simpler and no less
+    correct than tracking which half already succeeded."""
+    await ingest_osm_pois(destination)
+    await ingest_wikivoyage(destination)
 
 
 async def _refresh_osm_pois():
@@ -93,8 +189,18 @@ async def _refresh_osm_pois():
     for destination in stale_destinations:
         now = datetime.now(UTC)
         try:
-            await ingest_osm_pois(destination)
-            await ingest_wikivoyage(destination)
+            # Small, bounded retry (2 attempts, single ~3s backoff) — many
+            # destinations can be stale at once inside the shared 2-4AM
+            # window, so per-destination retries must stay cheap. A
+            # genuinely unreachable destination still just gets skipped
+            # (timestamp left stale) and picked up again tomorrow night.
+            await with_backoff(
+                lambda d=destination: _ingest_osm_and_wikivoyage(d, ingest_osm_pois, ingest_wikivoyage),
+                job_name=f"osm_poi_refresh[{destination}]",
+                max_attempts=2,
+                base_delay_seconds=3,
+                max_total_delay_seconds=10,
+            )
         except Exception as e:
             logger.warning("Refresh ingestion failed for %s: %s", destination, e)
         else:
@@ -158,7 +264,19 @@ async def _refresh_youtube_comments():
     for destination in destinations:
         now = datetime.now(UTC)
         try:
-            count = await ingest_youtube_comments(destination)
+            # Small, bounded retry (2 attempts, single ~3s backoff) for
+            # transient failures only — a quota-exhausted/no-results run
+            # returns 0 rather than raising, so it's never retried here
+            # (retrying it would burn extra metered `search.list` quota for
+            # no benefit); it's handled by the `if not count` branch below,
+            # same as before.
+            count = await with_backoff(
+                lambda d=destination: ingest_youtube_comments(d),
+                job_name=f"youtube_comments_refresh[{destination}]",
+                max_attempts=2,
+                base_delay_seconds=3,
+                max_total_delay_seconds=10,
+            )
         except Exception as e:
             logger.warning("YouTube comment refresh failed for %s: %s", destination, e)
             continue
@@ -404,36 +522,57 @@ async def _score_generated_itinerary_quality():
 async def start_scheduler():
     _scheduler.add_job(
         _refresh_reddit,
-        trigger=IntervalTrigger(hours=settings.reddit_refresh_hours),
+        # Job self-gates via core.job_run_state against reddit_refresh_hours
+        # (deploy-safe). The outer trigger only fires once daily, inside the
+        # 2-4AM IST off-peak window, so real ingestion traffic/DB writes
+        # never land during user hours — see `_off_peak_ist` above.
+        trigger=_off_peak_ist(2, 0),
         id="reddit_refresh",
         replace_existing=True,
     )
     _scheduler.add_job(
         _refresh_osm_pois,
-        trigger=IntervalTrigger(days=settings.osm_refresh_days),
+        # Per-destination staleness is still gated by DestinationIngestionState
+        # inside the job body (unchanged) — only the outer check cadence moves
+        # to once daily, off-peak, instead of an arbitrary time-of-day tied to
+        # process start.
+        trigger=_off_peak_ist(2, 20),
         id="osm_poi_refresh",
         replace_existing=True,
     )
     _scheduler.add_job(
         _refresh_itinerary_corpus,
-        trigger=IntervalTrigger(days=settings.itinerary_corpus_refresh_days),
+        # Self-gated via core.job_run_state (see function docstring) — deploy-safe,
+        # and off-peak per the 2-4AM IST window.
+        trigger=_off_peak_ist(2, 40),
         id="itinerary_corpus_refresh",
         replace_existing=True,
     )
     _scheduler.add_job(
         _refresh_youtube_comments,
-        trigger=IntervalTrigger(days=settings.youtube_refresh_days),
+        # Same rationale as _refresh_osm_pois — per-destination staleness
+        # check unchanged, outer cadence moved to daily off-peak.
+        trigger=_off_peak_ist(3, 0),
         id="youtube_comments_refresh",
         replace_existing=True,
     )
     _scheduler.add_job(
         _refresh_visa_info,
-        trigger=IntervalTrigger(days=settings.visa_info_refresh_days),
+        # Self-gated via core.job_run_state (see function docstring) — deploy-safe,
+        # and off-peak per the 2-4AM IST window.
+        trigger=_off_peak_ist(3, 20),
         id="visa_info_refresh",
         replace_existing=True,
     )
     _scheduler.add_job(
         _retry_youtube_narration_transcripts,
+        # Deliberately NOT moved into the 2-4AM off-peak window: this job's
+        # whole design (see its docstring) is a *slow trickle* of small
+        # batches spread across the day, specifically so retries don't look
+        # like a scraping burst to YouTube's abuse detection — concentrating
+        # it into one daily off-peak run would reintroduce exactly the burst
+        # pattern it exists to avoid. Its batches are small/cheap enough that
+        # off-peak-only confinement isn't needed for user-impact reasons.
         trigger=IntervalTrigger(hours=settings.youtube_narration_transcript_retry_hours),
         id="youtube_narration_transcript_retry",
         replace_existing=True,

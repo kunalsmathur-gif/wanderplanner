@@ -296,7 +296,7 @@ class Settings(BaseSettings):
     osm_refresh_days: int = 7
     osm_ingest_delay_seconds: float = 2.0  # be polite to the free Overpass API between destinations
 
-    itinerary_corpus_refresh_days: int = 30  # monthly cadence (docs §9 ingestion pipeline)
+    itinerary_corpus_refresh_days: int = 7  # weekly cadence for now (was monthly, docs §9 ingestion pipeline)
 
     # YouTube Data API v3 (docs/NEXT_SESSION_TODO.md item 3 — hidden-gems
     # alternative source while Reddit ingestion is blocked on approval).
