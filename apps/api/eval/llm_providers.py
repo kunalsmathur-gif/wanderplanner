@@ -82,6 +82,23 @@ MODEL_REGISTRY: dict[str, str] = {
     "openrouter/openai/gpt-5.6-luna": "openrouter",
 }
 
+# Reasoning models spend part of their max_tokens budget on hidden
+# reasoning tokens before ever emitting visible output (gpt-5-nano/gpt-5-mini
+# — docs/eval-set.md §8D), and some non-reasoning models simply write longer
+# itinerary JSON than the shared default allows (claude-sonnet-5, gpt-5.6-terra
+# — truncated mid-string at exactly 8192 completion tokens, confirmed via
+# finish_reason: length). Overriding per model id here (instead of raising
+# the shared default) avoids inflating cost for every other model on this
+# same code path — see the TODO called out in docs/eval-set.md §8D.
+MAX_TOKENS_OVERRIDES: dict[str, int] = {
+    "openrouter/openai/gpt-5-mini": 16384,
+    "openrouter/openai/gpt-5-nano": 16384,
+    "openrouter/anthropic/claude-sonnet-5": 16384,
+    "openrouter/openai/gpt-5.6-terra": 16384,
+}
+_DEFAULT_MAX_TOKENS = 8192
+
+
 _PROVIDER_KEY_ATTR = {
     "gemini": "gemini_api_key",
     "groq": "groq_api_key",
@@ -204,10 +221,13 @@ def _call_openrouter(model: str, prompt: str, json_mode: bool = True) -> tuple[s
     OpenRouter — this is exactly the parity question the eval comparison is
     meant to surface, not something assumed correct here.
 
-    `max_tokens` is capped explicitly (matching `_call_anthropic`'s 8192)
-    because OpenRouter otherwise defaults to the upstream model's own max
-    (65535 for gemini-2.5-flash), which a free/low-credit account can't
-    afford and 402s on — confirmed live 2026-08-19.
+    `max_tokens` is capped explicitly (matching `_call_anthropic`'s 8192
+    default) because OpenRouter otherwise defaults to the upstream model's
+    own max (65535 for gemini-2.5-flash), which a free/low-credit account
+    can't afford and 402s on — confirmed live 2026-08-19. A handful of
+    models need a higher-than-default cap (`MAX_TOKENS_OVERRIDES` above) —
+    reasoning models that spend part of the budget on hidden reasoning
+    tokens, or models whose itineraries simply run longer than 8192 tokens.
 
     Falls back to a prompt-suffix JSON instruction (same approach
     `_call_moonshot`/`_call_anthropic` use) if the upstream route rejects
@@ -220,7 +240,8 @@ def _call_openrouter(model: str, prompt: str, json_mode: bool = True) -> tuple[s
     from openai import BadRequestError, OpenAI
     client = OpenAI(api_key=settings.openrouter_api_key, base_url="https://openrouter.ai/api/v1")
     upstream_model = model.removeprefix("openrouter/")
-    kwargs: dict[str, Any] = {"temperature": 0.4, "max_tokens": 8192}
+    max_tokens = MAX_TOKENS_OVERRIDES.get(model, _DEFAULT_MAX_TOKENS)
+    kwargs: dict[str, Any] = {"temperature": 0.4, "max_tokens": max_tokens}
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
     try:
@@ -237,7 +258,7 @@ def _call_openrouter(model: str, prompt: str, json_mode: bool = True) -> tuple[s
             model=upstream_model,
             messages=[{"role": "user", "content": fallback_prompt}],
             temperature=0.4,
-            max_tokens=8192,
+            max_tokens=max_tokens,
         )
     usage = resp.usage
     prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0 if usage else 0
