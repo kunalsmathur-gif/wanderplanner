@@ -9,6 +9,7 @@ import pytest
 
 from models.common import GeocodeResponse
 from scrapers.google_places import (
+    FIELD_MASK,
     GooglePlacesQuotaError,
     _poi_from_place,
     estimate_cost_usd,
@@ -31,6 +32,27 @@ def _place(name: str, types: list[str], lat: float = 15.29, lon: float = 74.12,
 
 def _geo() -> GeocodeResponse:
     return GeocodeResponse(display_name="Goa, India", lat=15.2993, lon=74.1240, country_code="in")
+
+
+class TestFieldMaskStaysOnProSku:
+    def test_does_not_request_enterprise_sku_fields(self):
+        """FIELD_MASK must never request `rating`/`userRatingCount` (or any
+        other Enterprise-SKU field) — architecture decision 2026-08-31:
+        Nearby Search bills the WHOLE request at the highest-tier field
+        present, so requesting even one Enterprise field would move every
+        call from the Pro rate ($9.60/1000, 35,000/month free in India) to
+        the pricier Enterprise rate ($10.50/1000, only 7,000/month free)."""
+        requested_fields = {f.strip() for f in FIELD_MASK.split(",")}
+        enterprise_sku_fields = {
+            "places.rating", "places.userRatingCount", "places.currentOpeningHours",
+            "places.regularOpeningHours", "places.nationalPhoneNumber",
+            "places.internationalPhoneNumber", "places.priceLevel", "places.websiteUri",
+        }
+        assert requested_fields.isdisjoint(enterprise_sku_fields)
+
+    def test_requests_the_expected_pro_sku_fields(self):
+        requested_fields = {f.strip() for f in FIELD_MASK.split(",")}
+        assert requested_fields == {"places.id", "places.displayName", "places.location", "places.types"}
 
 
 class TestPoiFromPlace:

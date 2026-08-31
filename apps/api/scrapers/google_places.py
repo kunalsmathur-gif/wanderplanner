@@ -70,9 +70,19 @@ GOOGLE_PLACES_TYPE_TO_ATTRACTION: dict[str, AttractionType] = {
 }
 
 FIELD_MASK = (
-    "places.id,places.displayName,places.location,places.types,"
-    "places.rating,places.userRatingCount"
+    "places.id,places.displayName,places.location,places.types"
 )
+# 🔴 Deliberately Pro-SKU fields ONLY (id, displayName, location, types) —
+# NOT `places.rating`/`places.userRatingCount`. Google's Places API (New)
+# has no "Essentials" tier for Nearby Search; the two real tiers are Pro
+# (this field set) and Enterprise (adds rating/userRatingCount, opening
+# hours, phone, price level, website). Google bills the WHOLE request at
+# whichever tier the highest field present belongs to — so requesting even
+# one Enterprise field (e.g. `rating`) tips every call in that request to
+# Enterprise pricing, not just that field. See core/config.py's
+# "Google Places POI trial" comment block for the actual India per-1000-call
+# rates and free-tier caps for both SKUs, and the explicit decision (2026-08-
+# 31) to stay on Pro/no-ratings for now.
 
 
 class GooglePlacesQuotaError(Exception):
@@ -93,6 +103,11 @@ def _poi_from_place(place: dict[str, Any], destination: str, category: str) -> d
     types = place.get("types") or []
     primary_type = next((t for t in types if t in GOOGLE_PLACES_TYPE_TO_ATTRACTION), category)
     attraction_type = GOOGLE_PLACES_TYPE_TO_ATTRACTION.get(primary_type, "activity")
+    # `rating`/`userRatingCount` are Enterprise-SKU fields and deliberately
+    # NOT in FIELD_MASK (see its comment) — Google's response simply omits
+    # them, so these always resolve to None on the current Pro-tier field
+    # mask. Left as `.get()` lookups (not removed) so re-adding those two
+    # fields to FIELD_MASK is the only change needed to bring ratings back.
     rating = place.get("rating")
     rating_count = place.get("userRatingCount")
 

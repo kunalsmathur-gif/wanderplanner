@@ -319,12 +319,45 @@ class Settings(BaseSettings):
     google_places_api_key: str = ""
     google_places_enabled: bool = True
     google_places_trial_end_date: str = "2026-10-31"  # ISO date, inclusive
-    # Nearby Search Pro pricing (fields incl. ratings/photos/hours) per
-    # Google's public pricing page, https://developers.google.com/maps/billing-and-pricing/pricing,
-    # checked 2026-08-26: $32/1000 calls beyond the 5,000/month free cap.
-    # Used only for the admin-facing cost estimate in the eval report, not
-    # for enforcement — Google's own billing console is the source of truth.
-    google_places_cost_per_1000_calls_usd: float = 32.0
+    #
+    # 🔴 ARCHITECTURE DECISION (2026-08-31): Nearby Search (New) has NO
+    # "Essentials" tier — only Pro and Enterprise. An earlier version of this
+    # comment (and the `32.0` default that used to live here) assumed a
+    # cheaper Essentials rate existed; it does not. Confirmed directly from
+    # Google's SKU docs (developers.google.com/maps/documentation/places/
+    # web-service/nearby-search's field-mask tier list) and India pricing
+    # page (developers.google.com/maps/billing-and-pricing/pricing-india),
+    # checked 2026-08-31:
+    #
+    #   | SKU        | Fields it unlocks                          | India rate/1000 | Free cap/mo |
+    #   |------------|---------------------------------------------|-----------------|-------------|
+    #   | Pro        | id, displayName, location, types, address*   | $9.60           | 35,000      |
+    #   | Enterprise | + rating, userRatingCount, hours, phone,     | $10.50          | 7,000       |
+    #   |            |   priceLevel, website                        |                 |             |
+    #
+    #   (*Pro also unlocks several address/business-status fields this repo
+    #   doesn't request — see the SKU doc for the full list.)
+    #
+    # Google bills the ENTIRE request at the highest-tier field present in
+    # the field mask — so requesting even one Enterprise field (e.g.
+    # `rating`) moves ALL of that call's cost to the Enterprise rate, not
+    # just that field's marginal cost. `scrapers/google_places.py::FIELD_MASK`
+    # was originally set to include `rating`/`userRatingCount` (for the
+    # "verified POI" rating/review-count signal — OSM has no equivalent
+    # data), which put every call on the Enterprise SKU without that being a
+    # deliberate choice.
+    #
+    # DECISION: drop `rating`/`userRatingCount` and stay on the Pro SKU for
+    # now — the free-cap is 5x larger (35,000 vs 7,000/month) and the
+    # per-call rate is only marginally cheaper, but the free-cap difference
+    # is what actually matters at this product's destination-count scale
+    # (~171 destinations x 5 category calls/week = ~3,700 calls/month,
+    # comfortably under Pro's 35,000 free cap but only 1,860 calls under
+    # Enterprise's separate, much smaller 7,000 free cap once other Places
+    # usage on the same project is considered). Ratings/review-count can be
+    # re-added later (flip FIELD_MASK back) if the `poi_provider_usage` eval
+    # data shows the quality uplift is worth moving to the Enterprise tier.
+    google_places_cost_per_1000_calls_usd: float = 9.60  # India Pro SKU rate — see table above
     # Categories queried per destination (scrapers/google_places.py) — Places
     # Nearby Search takes one `includedTypes` list per call but a broad mix of
     # unrelated types in one call measurably degrades result relevance, so
@@ -332,6 +365,7 @@ class Settings(BaseSettings):
     # one give-me-everything call (unlike Overpass, which supports a single
     # unioned QL query across all categories).
     google_places_max_results_per_category: int = 20
+
 
     itinerary_corpus_refresh_days: int = 7  # weekly cadence for now (was monthly, docs §9 ingestion pipeline)
 
