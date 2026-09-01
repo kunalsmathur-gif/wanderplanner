@@ -105,7 +105,13 @@ async def _already_fresh(destination: str, stale_before: datetime) -> bool:
         row = await db.get(DestinationIngestionState, destination)
         if row is None or row.osm_last_ingested_at is None:
             return False
-        return row.osm_last_ingested_at >= stale_before
+        last_ingested = row.osm_last_ingested_at
+        if last_ingested.tzinfo is None:
+            # sqlite (local dev) stores naive datetimes; Postgres (prod)
+            # returns tz-aware ones. Normalize to UTC-aware so this
+            # comparison works against either backend.
+            last_ingested = last_ingested.replace(tzinfo=UTC)
+        return last_ingested >= stale_before
 
 
 async def _upsert_state_row(destination: str, poi_count: int) -> None:
