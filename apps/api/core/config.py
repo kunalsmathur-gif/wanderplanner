@@ -68,6 +68,21 @@ class Settings(BaseSettings):
     # call plus free-tools grounding, so a much tighter bar than full
     # itinerary generation is appropriate.
     slow_feasibility_threshold_seconds: float = 8.0
+    # Bounds `ensure_destination_ingested()` inside generate_itinerary — a
+    # first-ever-request destination runs Overpass + Wikivoyage + YouTube
+    # inline (services/destination_ingestion.py), and Overpass's own retry/
+    # backoff on a 429 can alone run past a minute. Without a cap here, cold-
+    # start ingestion can consume the entire llm_timeout_seconds budget and
+    # leave zero time for the actual generation call, surfacing to the user
+    # as a generic LLM_TIMEOUT with no indication ingestion was the cause
+    # (found 2026-09-01 via a live prod trace on 'Bentota': ingestion's own
+    # Overpass 429-retry cascade ate the full 120s). Deliberately small
+    # relative to llm_timeout_seconds so generation still has most of the
+    # budget; ingestion is best-effort and safe to abandon mid-flight (it
+    # only writes to a lock/table it owns, no partial state generation
+    # depends on) — a timed-out attempt just means the next request for the
+    # same destination retries cold-start again.
+    destination_ingestion_timeout_seconds: float = 25.0
 
     # Qdrant
     qdrant_url: str = "http://localhost:6333"

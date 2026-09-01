@@ -1025,9 +1025,26 @@ async def _generate_itinerary_inner(
                 # First-ever request for a destination runs Overpass +
                 # Wikivoyage + embeddings inline, blocking this user's response
                 # for everyone who arrives first. This stage is what says how
-                # often that happens and what it costs.
+                # often that happens and what it costs. Bounded by its own
+                # timeout (settings.destination_ingestion_timeout_seconds) so
+                # a slow/rate-limited cold start can't consume the entire
+                # llm_timeout_seconds budget and starve the actual generation
+                # call — see the config comment for the prod incident this
+                # fixes. Ingestion is best-effort: a timeout here just means
+                # this request falls back to whatever grounding already
+                # exists, and the next request for the destination retries
+                # cold-start ingestion fresh.
                 with timing.stage("ingestion"):
-                    await ensure_destination_ingested(dest)
+                    await asyncio.wait_for(
+                        ensure_destination_ingested(dest),
+                        timeout=settings.destination_ingestion_timeout_seconds,
+                    )
+            except TimeoutError:
+                logger.warning(
+                    "destination ingestion timed out after %.0fs for %r — "
+                    "proceeding to generation without it",
+                    settings.destination_ingestion_timeout_seconds, dest,
+                )
             except Exception:
                 logger.warning("destination ingestion gatekeeper failed for %r", dest, exc_info=True)
         async def _generate(correction: str = "") -> dict:

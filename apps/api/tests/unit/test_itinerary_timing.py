@@ -388,3 +388,103 @@ class TestRetryCascadeRespectsTheDeadline:
         # sleeping; the old code would have attempted 75s per model, times up
         # to 3 models (225s total) with no deadline check at all.
         assert total_slept < settings.llm_timeout_seconds
+
+
+class TestDestinationIngestionDoesNotStarveGeneration:
+    """Regression guard for a live prod incident (2026-09-01, destination
+    'Bentota'): `ensure_destination_ingested()` used to run with no timeout of
+    its own inside `generate_itinerary`, which is itself wrapped in
+    `asyncio.wait_for(..., llm_timeout_seconds)` by routers/itinerary.py. When
+    Overpass rate-limited the first-ever request for a destination, OSM's own
+    retry/backoff cascade alone ran past the full 120s budget, leaving zero
+    time for the actual generation call — the request died as a generic
+    LLM_TIMEOUT with nothing pointing at ingestion as the cause. These tests
+    pin that a slow/hanging ingestion call is bounded by its own
+    `destination_ingestion_timeout_seconds` and can never consume the whole
+    request budget."""
+
+    @pytest.mark.asyncio
+    async def test_a_hanging_ingestion_call_times_out_and_generation_still_runs(
+        self, monkeypatch
+    ):
+        from chains import itinerary_chain
+        from core.config import settings
+        from models.trip import DestinationInput, TripConfig
+
+        # Force through the non-mock branch that calls
+        # ensure_destination_ingested, while still returning a cheap
+        # deterministic itinerary so the test doesn't need a real LLM call.
+        monkeypatch.setattr(settings, "llm_provider", "gemini")
+        monkeypatch.setattr(settings, "destination_ingestion_timeout_seconds", 0.05)
+
+        async def _hangs_forever(destination: str):
+            await asyncio.sleep(10)
+
+        monkeypatch.setattr(
+            "services.destination_ingestion.ensure_destination_ingested",
+            _hangs_forever,
+        )
+
+        async def _fake_generate(trip_config, cost_correction: str = ""):
+            return {
+                "days": [],
+                "total_cost_inr": 0,
+                "notes": "",
+            }
+
+        monkeypatch.setattr(itinerary_chain, "_gemini_itinerary", _fake_generate)
+        monkeypatch.setattr(
+            itinerary_chain, "_cost_sanity_problem", lambda raw, trip_config: None
+        )
+
+        async def _no_op_store(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(itinerary_chain, "store_itinerary", _no_op_store)
+        monkeypatch.setattr(itinerary_chain.asyncio, "create_task", lambda coro: coro.close())
+
+        trip_config = TripConfig(destination=DestinationInput(city="Bentota"))
+
+        with timing.track("generate_itinerary") as timings:
+            start = asyncio.get_event_loop().time()
+            raw = await itinerary_chain._generate_itinerary_inner(trip_config, timings)
+            elapsed = asyncio.get_event_loop().time() - start
+
+        # Generation must still complete, and quickly — the hanging
+        # ingestion call must not have been awaited to completion.
+        assert raw is not None
+        assert elapsed < 2.0
+
+    @pytest.mark.asyncio
+    async def test_ingestion_timeout_is_logged_as_a_warning(self, monkeypatch, caplog):
+        from chains import itinerary_chain
+        from core.config import settings
+        from models.trip import DestinationInput, TripConfig
+
+        monkeypatch.setattr(settings, "llm_provider", "gemini")
+        monkeypatch.setattr(settings, "destination_ingestion_timeout_seconds", 0.05)
+
+        async def _hangs_forever(destination: str):
+            await asyncio.sleep(10)
+
+        monkeypatch.setattr(
+            "services.destination_ingestion.ensure_destination_ingested",
+            _hangs_forever,
+        )
+
+        async def _fake_generate(trip_config, cost_correction: str = ""):
+            return {"days": [], "total_cost_inr": 0, "notes": ""}
+
+        monkeypatch.setattr(itinerary_chain, "_gemini_itinerary", _fake_generate)
+        monkeypatch.setattr(
+            itinerary_chain, "_cost_sanity_problem", lambda raw, trip_config: None
+        )
+
+        trip_config = TripConfig(destination=DestinationInput(city="Bentota"))
+
+        with timing.track("generate_itinerary") as timings, caplog.at_level(logging.WARNING):
+            await itinerary_chain._generate_itinerary_inner(trip_config, timings)
+
+        assert any(
+            "ingestion timed out" in record.message for record in caplog.records
+        )
