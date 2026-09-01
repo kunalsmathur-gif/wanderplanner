@@ -41,6 +41,18 @@ KNOWN_DESTINATIONS = [
     "Darjeeling", "Gangtok", "Shillong",
     "Khajuraho", "Aurangabad", "Mahabaleshwar", "Lonavala",
     "Andaman", "Port Blair",
+    # India — additional popular tourist circuits still missing as of
+    # 2026-09-01 (Northeast, Himachal/Uttarakhand adventure towns, Kerala
+    # backwaters/hills, Rajasthan/Gujarat heritage, Tamil Nadu/Odisha temple
+    # towns, wildlife). Added on user request to widen destination-tagging
+    # coverage ahead of the India Workation Finder feature.
+    "Wayanad", "Kodaikanal", "Yercaud", "Chikmagalur", "Panchgani", "Matheran",
+    "Kasol", "Bir Billing", "Auli", "Mount Abu", "Nashik", "Alibaug",
+    "Kaziranga", "Tawang", "Ziro", "Majuli",
+    "Thekkady", "Kumarakom", "Vagamon", "Rann of Kutch", "Kutch", "Diu",
+    "Ranthambore", "Bandhavgarh", "Kanha", "Bodh Gaya",
+    "Madurai", "Thanjavur", "Mahabalipuram", "Puri", "Bhubaneswar", "Konark",
+    "Kanyakumari", "Rameswaram", "Chandigarh", "Kasauli", "Chail",
     # Europe
     "Paris", "London", "Rome", "Barcelona", "Amsterdam", "Berlin", "Prague",
     "Vienna", "Budapest", "Lisbon", "Porto", "Madrid", "Athens", "Santorini",
@@ -60,6 +72,15 @@ KNOWN_DESTINATIONS = [
     "Cape Town", "Marrakech", "Cairo", "Nairobi", "Zanzibar", "Casablanca",
     "Sydney", "Melbourne", "Brisbane", "Auckland", "Queenstown", "Bora Bora",
     "Fiji", "Hawaii", "Honolulu",
+    # International — popular workation / digital-nomad friendly hubs still
+    # missing as of 2026-09-01 (visa-easy long-stay destinations, SE Asia
+    # co-working circuits, remote-work-visa countries), added alongside the
+    # India expansion above for the same destination-tagging-coverage reason.
+    "Ubud", "Canggu", "Da Nang", "Bandung", "Cebu", "Boracay", "Palawan",
+    "Chiang Rai", "Luang Prabang", "Vientiane", "Yangon",
+    "Lisbon Coast", "Madeira", "Canary Islands", "Tenerife", "Malta",
+    "Georgia", "Batumi", "Yerevan", "Sri Lanka Hill Country", "Kandy",
+    "Cape Town Winelands", "Mauritius", "Seychelles",
 ]
 
 # Build a lowercase lookup for fast case-insensitive matching
