@@ -50,6 +50,8 @@ Yes — hardcoded directly inside each chain's Python file (not externalized to 
 
 All chains run on **Google Gemini** (`gemini-2.5-flash` default). Itinerary generation has a scripted fallback chain on rate-limit/503 errors: `gemini-2.5-flash` → `gemini-2.5-flash-lite` → `gemini-1.5-flash`. Groq (Llama 3.1/3.3-70B) exists as a configurable alternate provider but isn't the production default. The eval "judge" scoring other models is deliberately pinned to a **fixed** `gemini-2.5-flash` to avoid self-grading bias. No per-chain model specialization — differentiation is via **prompt + temperature** only (0.1 extraction, 0.4 itinerary/wizard, 0.5 chat-refine).
 
+**Eval-only model selection is a separate, much larger exercise (production model choice above is untouched by it).** `eval/run_model_comparison.py` now benchmarks **12 models** end-to-end via **OpenRouter** (eval-only — production keeps calling Gemini directly, not routed), most recently adding frontier-tier `claude-sonnet-5`, `gpt-5.6-terra`, `gpt-5.6-luna` (2026-08-21, verified against the live OpenRouter catalog). Headline finding: frontier pricing doesn't buy a real accuracy edge — none beats `gpt-4o-mini`'s 0.7478 accuracy despite costing 3–36x more per request — though judge-scored *quality* is genuinely higher for `gpt-5.6-luna` (0.97) and `gpt-5.6-terra` (1.0, small sample). One frontier model (`claude-sonnet-5`) failed all 6 calls in that run, diagnosed live as hitting the shared 8,192-token output cap (applied uniformly across every `openrouter/*` model specifically to prevent credit-exhaustion 402s) and truncating mid-JSON — not fixed, since raising the cap for one model raises cost for every cheaper model sharing it too. Full results: `docs/eval-results/model_comparison_eval_2026-08-20.xlsx`, `apps/api/eval/out/model_comparison_report*.md`. Separately, `docs/llm-routing-openrouter-analysis.md` lays out the case for (and risks of) eventually routing *production* traffic per-task through OpenRouter — not yet adopted, eval-only today.
+
 ### Q7. What APIs does every chain/agent call — name, purpose, cost?
 
 | API | Purpose | Cost |
@@ -59,6 +61,7 @@ All chains run on **Google Gemini** (`gemini-2.5-flash` default). Itinerary gene
 | Qdrant Cloud | Vector search / RAG knowledge base | Free tier (1GB) |
 | OSM Overpass API | POI ingestion | Free (public) |
 | Nominatim (OpenStreetMap) | Geocoding | Free (public, ToS rate-limited) |
+| Google Places (New) | POI ingestion — 🆕 time-boxed free-credit trial running alongside OSM (2026-08-26 → 2026-10-31) | Free during trial window; swapped into the existing weekly OSM refresh job (`scrapers/poi_provider.py`) so it gets identical fallback behavior, not a parallel path — falls back to free OSM Overpass automatically past the trial end date or on any Places API failure |
 | ~~Reddit~~ | ~~Trip-report/hidden-gem corpus~~ | **Retired 2026-07-26 — no longer a source.** Reddit blocked unauthenticated reads, and its API now requires a written app review that never issued credentials. Rather than wait on an external approval with no ETA, that signal was moved to Wikivoyage + YouTube. See Q13. |
 | YouTube Data API v3 | Hidden-gem sentiment (video comments) + itinerary-video discovery + narration/transcripts for price grounding | Free, and the one *metered* source. The cap that actually binds is **100 `search.list` calls per project per day** (its own meter — not the widely-quoted 10k units/day), resetting midnight Pacific, so both automatic callers sit behind a rolling-24h search budget |
 | Wikivoyage | Destination guide text + entry/visa rules (`visa_info` corpus, 73/73 seed countries ingested v10.54.0) | Free (scraper) |
@@ -94,6 +97,7 @@ All in `apps/api/eval/`:
 - **Criteria:** accuracy, hallucination rate, cost, latency, LLM-as-judge quality (tone/personalization/coherence) for itineraries; attack-success-rate/robustness for red-team; field-leak/chip-alignment checks for the wizard.
 - **Results stored in:** `apps/api/eval/out/` (e.g. `model_comparison_results.json`, `wizard_eval_results_20260718_171437.json`) and human-readable competitive write-ups in `docs/eval-results/` (`report_vs_chatgpt_2026-07-15.md`, `report_vs_claude_sonnet_2026-07-15.md`).
 - **Baselines:** `apps/api/eval/baselines/chatgpt_refinement.json`, `claude_sonnet_refinement.json`.
+- **Published this window:** the refinement-fidelity harness's real (previously internal-only) figure — **0.992** — is now public in `docs/eval-results/` (dated 2026-08-04 report + results.json), measuring whether a chat-refine turn applies exactly the requested edit and nothing else. Model-comparison also expanded from a handful of models to **12**, adding frontier-tier entries via OpenRouter (see Q6) — same accuracy/hallucination/cost/latency/judge criteria, just a wider field.
 
 ---
 
@@ -125,7 +129,9 @@ An LLM only knows what it was trained on — ask it to plan a trip to a smaller 
 3. Compressed to a ~600-token "briefing note" and injected into the itinerary prompt alongside the trip request.
 4. If the LLM or retrieval fails outright, a 3-tier fallback kicks in: cached similar itinerary → OSM-data-only skeleton → lightly templated itinerary with real tip snippets spliced in — so users essentially never see a hard error.
 
-**⭐ NEW (issue #32): the system now learns from its own output, not just scraped sources.** Every successful live generation is also stored in a second collection, `generated_itineraries` — same schema as our scraped/curated `itinerary_corpus`, but populated by our own past generations. Future requests for similar trips retrieve from *both* as few-shot grounding, weighted by a quality heuristic. It's a genuine flywheel: the more people use WanderPlanner, the better its own reference material gets, independent of any new scraping or paid data source. Still early — the quality signal today is a coarse heuristic, not yet the richer per-itinerary engagement signal (regenerated? shared? session length?) planned in `docs/rag-strategy.md` §10.
+**⭐ NEW (issue #32): the system now learns from its own output, not just scraped sources.** Every successful live generation is also stored in a second collection, `generated_itineraries` — same schema as our scraped/curated `itinerary_corpus`, but populated by our own past generations. Future requests for similar trips retrieve from *both* as few-shot grounding, weighted by a quality score. It's a genuine flywheel: the more people use WanderPlanner, the better its own reference material gets, independent of any new scraping or paid data source.
+
+**Update (issue #34, shipped this window) — the richer engagement signal is no longer just planned, it's live.** A `generation_id` is now threaded through the entire lifecycle — generation → share → in-chat refine → regenerate — and a scheduled batch job (`services/generation_signals.py`, `core/scheduler.py`) scores each generation on real post-generation behavior once its session looks finished: was it **shared**, **regenerated**, refined via a **chat turn**, and how long did the **session** last? That score is written onto the matching `generated_itineraries` Qdrant payload and retrieval already weights by it (`services/generated_itineraries.py`, `services/search.py`) — replacing the earlier coarse "did the LLM call succeed" heuristic with an actual outcome-based signal, closing the exact gap this section used to flag as a roadmap item.
 
 **⭐ NEW (issue #35): a cheap classifier flags when a chat question needs fresher-than-our-corpus info.** `services/query_router.py` looks for time-sensitive language ("is it open right now", "current prices") in wizard/post-generation chat and adds a freshness caveat to the response instead of presenting a static-corpus answer as if it were live. This is classification only today — no live data source is wired in yet — but it's an honest signal to the user about what our RAG actually can and can't know, which matters for the same "own our limitations" credibility this cheatsheet leads with.
 
@@ -161,11 +167,19 @@ This objective harness is exactly what caught a real production bug — RAG sile
 - **Freshness decay.** 18-month half-life time-decay scoring means stale, unrefreshed destination content is gradually deprioritized and eventually filtered out.
 - **Corpus density, not corpus size, is the live gap.** Reddit was retired as a source in v10.40 after it blocked unauthenticated reads and its API review never issued credentials. The honest framing if asked: **we measured what we'd actually lose before deciding, and it was less than assumed.** An earlier internal note called Reddit "the biggest unblocker" for price grounding; measuring money-shaped text per destination showed no corpus had real price density — YouTube comments carry only 1–3 price mentions per destination, so people simply don't quote prices in comments. The "hidden gems" signal now rests on YouTube comments (ingested automatically on a destination's first request, v10.38; corpus completed to 170/170 destinations in v10.40.2) plus Wikivoyage. **The real constraint is that a *complete* corpus is not a *dense* one** — food-cost grounding still returns "not grounded" for most destinations, and the fix is denser price-bearing text (Wikivoyage's priced listings, video transcripts where vloggers state costs aloud), not more tuning.
 - **A new grounding source shipped this window: entry/visa rules.** The `visa_info` Qdrant collection existed since v10.52.0 but sat empty — a silent no-op, since an empty corpus just makes `retrieve_visa_note()` return "" and the wizard correctly says nothing, so the feature *looked* healthy with zero content behind it. First real ingestion (v10.54.0) landed 1,291 chunks across 73/73 seed countries, with a Wikivoyage disambiguation-page fallback (bare `/wiki/Georgia` redirects to a country disambiguation page; the real guide lives at `Georgia (country)`). This corpus grounds *prose* about entry rules/permits, not a dollar figure — see Q14 for why a visa cost number is deliberately withheld rather than estimated.
+- **A second new source, this one on the POI side: Google Places (New), running as a time-boxed trial alongside OSM.** 2026-08-26 → 2026-10-31, on free trial credit. Swapped into the *existing* weekly POI refresh job (`scrapers/poi_provider.py` sits in front of both `scrapers/google_places.py` and `scrapers/osm.py`) rather than added as a separate path, so it inherits identical fallback behavior. The bet: Places' categorical/rating metadata may close the "famous landmarks buried under restaurants" gap (see Q19) more cheaply than OSM's own area-shaped-feature fix did. Because ingestion is demand-driven (only destinations with a `destination_ingestion_state` row get refreshed — see Q13a), only 9/168 known destinations had been touched by the trial as of 2026-08-31, so `scripts/backfill_poi_provider_full_corpus.py` was added to deliberately sweep the full destination list through it instead of waiting on organic traffic to exercise it before the trial window closes.
 - **Retrieval can be the wrong tool for the question.** Found and fixed in v10.38: semantic search ranks by topical similarity, so it never surfaced casual price mentions ("Choki dani 700 per person") for cost-grounding queries — that comment is *about a restaurant*, not *about cost*. Presence of a price is a lexical property and is now tested lexically. A useful general caution: vector search answers "what is this text about", which is not always the question being asked.
 - **Latency/throughput tradeoff.** Reranking (best quality) causes a ~3x throughput drop under load — so it's only turned on for the one call site (final itinerary generation) where it matters most.
 - **Garbage-in-garbage-out.** RAG only grounds the model in what's in the database; if scraped content is wrong or spam, RAG will confidently retrieve and repeat it. It reduces hallucination — it doesn't guarantee truth.
 
 Full detail in `docs/rag-strategy.md` (new section: "RAG Failure Modes & Where It Shines") and `docs/scaling-tech-challenges.md` §6a.
+
+### Q13a. How often does the RAG content actually get refreshed — and has that changed recently?
+
+**Yes, on two fronts — cadence was tightened, and a real staleness bug in the refresh mechanism itself was found and fixed.**
+- **Cadence tightened:** the `itinerary_corpus` extraction job (few-shot corpus growth) defaulted to monthly; tightened to **weekly (7 days)** on 2026-08-26 while corpus growth is actively monitored. OSM/Google Places POI refresh runs weekly per destination; YouTube comments refresh every 14 days per destination, gated behind the rolling-24h search-quota budget (raised 80→100/day on 2026-07-26 to match the provider's actual per-project cap).
+- **Refresh is demand-driven, not a scheduled full sweep.** Both the POI and corpus refresh jobs only touch destinations that already have a `destination_ingestion_state` row — created the first time a real user requests that destination. A destination nobody's asked for yet is never refreshed automatically; `scripts/backfill_poi_provider_full_corpus.py` exists specifically to force a sweep of the full known-destination list rather than waiting on organic traffic (with a printed cost estimate + `--dry-run` for the paid Google Places leg).
+- **A real bug found and fixed this window (v10.77.0): redeploys were silently resetting every refresh countdown to zero.** APScheduler's in-memory job store computes a job's next-fire time from *process start*, not from its last actual successful run — and Railway redeploys on every push. Production Qdrant confirmed the damage: `itinerary_corpus` had only actually ingested a handful of times over several weeks despite a nominally "weekly" schedule, because every deploy restarted its countdown. Fixed with a persisted `job_run_state` table that computes next-fire time from the last real run instead of process start, plus an off-peak backoff so a burst of redeploys can't cause a pile-up of overdue jobs all firing at once.
 
 ### Q14. When Anya recommends a budget, is that number real or is the LLM just making it up?
 
@@ -197,6 +211,25 @@ Full detail in `docs/PRD.md` (Epic/budget-estimator section) and `core/budget_es
 - Consumer-facing app itself stays 100% WanderPlanner-branded — white-labeling only applies to the B2B "Anya for Agents" surface and its outputs, so consumer brand equity isn't fragmented.
 
 Full detail in `docs/GTM_STRATEGY.md` and `docs/MARKET_RESEARCH.md`.
+
+---
+
+## Part 5a — Product & Design: What Shipped Since Early August
+
+### Q16a. What's new on the product/design side since the last review (2026-08-03)?
+
+| Area | What shipped | Why |
+|---|---|---|
+| SEO | Indexable destination landing pages expanded from 4 (Bali, Rajasthan, Dubai, Europe) to all **12** Inspiration cities; canonical domain fixed to `wanderplanner.org` + robots/sitemap; hero images fixed from blurry reused 600px thumbnails | Organic discovery channel — these pages are crawlable, the wizard/chat product isn't |
+| Admin console | Itinerary/feasibility **generation-latency charts** added to `/admin` | First real visibility into P50/P90 generation time, not just success/failure counts |
+| Learning flywheel | `generation_id` threaded end-to-end (generation → share → chat-refine → regenerate); scheduler now scores real engagement signals (shared, regenerated, chat-turned, session duration) onto each generation, feeding retrieval weighting (see Q11) | Turns the flywheel from "did it succeed" into "was it actually good," per issue #34 |
+| Auth / dashboard | Login promoted to its own tab on the auth card (was buried under signup); dashboard regrouped by user intent, "expert" card cut down to a single CTA | Reduce friction/clutter identified in a UX pass |
+| Account page | Reorganized into clear, isolated sections; **"Continue your last trip"** one-tap resume card (issue #65) — a generated itinerary now persists server-side per signed-in user, independent of client-side session state, so closing the tab/switching devices/a session expiring no longer loses it | Closed a real gap found in live testing |
+| Agent handoff (B2B lead-gen) | Quote-lead handoff flow, SLA escalation, and admin metrics for lead response time (issues #48, #62, #63); late responses now surfaced as late, lead emails masked by default | Makes the consumer→agency handoff (Q15) operationally trackable, not just a UI stub |
+| Mobile | Viewport meta tag fix + pinch-zoom fully locked (was only capped, still let scroll reveal a blank canvas) | Real production bug affecting every mobile visitor |
+| Voice | Anya's server-side TTS (Google Cloud TTS Chirp 3: HD) wired end-to-end and confirmed working — including Hindi (`hi-IN`) | Closes the loop on the voice feature described in Q7's TTS row, which had shipped backend-only before |
+
+Full detail and exact commits in `TECHNICAL_DOCUMENTATION.md`'s changelog (v10.55.0–v10.80.0).
 
 ---
 
@@ -293,4 +326,70 @@ Every single one of these was **invisible to the user in the moment** — no err
 
 ---
 
-*Maintainer: Founder/PM · Last updated: 2026-08-03 · Companion to `docs/system-design.md`, `docs/rag-strategy.md`, `docs/scaling-tech-challenges.md`, `docs/GTM_STRATEGY.md`, `docs/MARKET_RESEARCH.md`, `docs/adr/0001-anya-voice-provider.md`.*
+## Part 7 — Tech Stack
+
+### Q28. What's the actual tech stack, top to bottom?
+
+| Layer | Choice | Notes |
+|---|---|---|
+| Frontend framework | **Next.js 16** (App Router), **React 19**, **TypeScript** | Hosted on **Vercel** |
+| Styling | **Tailwind CSS v4** | Design tokens for the rebrand ("Anya" chat UI) |
+| Frontend tests | **Vitest** | `apps/web/__tests__/` |
+| Maps | **react-leaflet** | Itinerary map views |
+| Charts | **Recharts** | Admin console latency/metrics dashboards |
+| Backend framework | **FastAPI** (Python), **uvicorn** | Hosted on **Railway** |
+| Backend validation | **Pydantic v2** + `pydantic-settings` | |
+| Database | **Postgres** (Supabase-managed in production; `sqlite+aiosqlite` for local dev) via **SQLAlchemy 2.0 (async)** + **Alembic** migrations | SQLite rejected for production — concurrent multi-instance Railway deploys would hit file-locking/durability issues |
+| Vector DB | **Qdrant Cloud** (free 1GB tier) | Collections: `wiki`, `osm_pois`, `youtube_comments`, `itinerary_corpus`, `generated_itineraries`, `visa_info`, `itinerary_cache`, legacy `reddit` (read-only) |
+| Cache / ephemeral state | **Redis** (Railway managed; in-process dict fallback in local dev) | Share-link tokens, travel-tips cache, TTS monthly budget counter |
+| Embeddings | **sentence-transformers** — `all-MiniLM-L6-v2` (bi-encoder) | |
+| Reranker | **cross-encoder/ms-marco-MiniLM-L-6-v2** | Only on the itinerary-generation call site (throughput cost elsewhere isn't worth it) |
+| Keyword search | **rank_bm25** (BM25), RRF-merged with semantic results | |
+| LLM (production) | **Google Gemini** (`google-genai` SDK) — `gemini-2.5-flash` default, scripted fallback to `flash-lite`/`1.5-flash` | See Q6 |
+| LLM (eval-only) | **OpenRouter** — 12-model comparison harness (GPT, Claude, Gemini-via-router, Kimi, and others) | Never in the production request path |
+| Alternate LLM provider | **Groq** (Llama 3.1/3.3-70B) | Configurable, not the production default |
+| Voice | **Google Cloud Text-to-Speech (Chirp 3: HD)** — voice `Achernar`, `hi-IN`/`en-IN` | Backend built, currently gated off pending a frontend `<audio>` swap |
+| Auth | **Google OAuth** (Authlib) + **JWT** (PyJWT) sessions, **argon2-cffi** password hashing | Frontend (Vercel) and backend (Railway) are cross-origin — cookies require `SameSite=None; Secure` in production |
+| Scheduling | **APScheduler** | Weekly/14-day RAG refresh jobs, quality-score batch job — see Q13a for the deploy-safety fix |
+| Rate limiting | **slowapi** | LLM-call and general API rate limits |
+| Error/observability | **Sentry** (`sentry-sdk`) | |
+| External data sources | OSM Overpass API, Nominatim (geocoding), Wikivoyage (scraper), YouTube Data API v3, Google Places (New) (time-boxed trial), Pexels | See Q7 for cost/purpose per source |
+| Monorepo layout | `apps/api` (FastAPI backend), `apps/web` (Next.js frontend) | Single repo, independently deployed services |
+
+Full detail (with version pins) in `apps/api/requirements.txt`, `apps/web/package.json`, and `docs/system-design.md`.
+
+---
+
+## Part 8 — How This Was Actually Built (Tooling, Models, Process)
+
+**Why this section exists:** demo-day audiences increasingly ask "did you write this, or did an AI?" — an honest answer is more credible than dodging the question, and it's directly on-brand with this document's whole "we disclose what broke" stance.
+
+### Q29. Was this built with AI coding assistance? Which tools/models?
+
+**Yes, extensively — this is an AI-assisted solo build, not hand-written line by line.** Commit trailers (`git log`, verifiable on request) show the actual mix:
+
+| Tool / model | Commits co-authored | Role |
+|---|---|---|
+| **GitHub Copilot CLI** | 239 | The primary day-to-day coding agent — feature implementation, bug fixes, refactors, and (per `E2E_SANITY_REPORT.md`, `ORIGIN_VALIDATION_FIX.md`) live end-to-end testing/verification against the running app, not just code generation |
+| **Claude Opus 5** | 73 | Larger/harder features and multi-file changes |
+| **Claude Fable 5** | 16 | Documentation and long-form writing passes |
+| **Claude Sonnet 5** | 13 | Targeted fixes and reviews |
+| **Claude Opus 4.8** | 3 | Earlier-generation work, superseded by Opus 5 |
+
+No single model wrote the whole app — the pattern is a human founder directing multiple AI coding agents per-task, reviewing and shipping the result, with every AI-assisted commit explicitly trailer-tagged rather than left unattributed.
+
+### Q30. Was AI used for planning too, or only for writing code?
+
+**Both.** The same tools that write code here are also used to structure *how* work gets planned and reviewed, via a library of ~60 reusable "agent skills" (`.claude/skills/`, mirrored in `.agents/skills/`) — reusable prompts/workflows, not one-off instructions, covering things like:
+- `planning-and-task-breakdown` / `incremental-implementation` — breaking a feature into small, ordered, shippable steps rather than one large change
+- `spec-driven-development` / `domain-modeling` — writing down what a feature should do and the vocabulary for it before coding
+- `debugging-and-error-recovery` / `diagnosing-bugs` — a systematic root-cause loop (this is the same discipline behind Part 6's gotcha list)
+- `test-driven-development` / `code-review-and-quality` — tests-first where it matters, structured review before merge
+- `research` — grounding claims (like this cheatsheet's own numbers) in the actual codebase/docs rather than an AI's recollection
+- `doubt-driven-development` / `rubber-duck` — adversarial second-pass review on non-trivial decisions before they're considered final
+
+In short: planning, architecture decisions, and documentation (this cheatsheet included) go through the same AI-assisted, human-directed process as the code — same tools, same disclosure standard as everything else in this document.
+
+---
+
+*Maintainer: Founder/PM · Last updated: 2026-09-02 · Companion to `docs/system-design.md`, `docs/rag-strategy.md`, `docs/scaling-tech-challenges.md`, `docs/GTM_STRATEGY.md`, `docs/MARKET_RESEARCH.md`, `docs/adr/0001-anya-voice-provider.md`.*
