@@ -1608,12 +1608,41 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.79, v10.78, v10.77, v10.76, v10.75, v10.74, v10.73, v10.70, v10.69, v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.80, v10.79, v10.78, v10.77, v10.76, v10.75, v10.74, v10.73, v10.70, v10.69, v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
 
 > ⚠️ **v10.63.0 and v10.64.0 shipped code and tests but have no entry in this
 > section** (visa cost exclusion + corpus-gated `visa_inr`, and the analytics
 > event fix). This is the known changelog-reconciliation backlog, not an
 > omission specific to v10.65.0.
+
+### v10.80.0 Changes (September 2, 2026) — chat-refine no longer claims a regeneration is running when nothing was triggered
+
+**Bug (found live in prod):** after a "regenerate" reply asked the user to confirm ("Shall I
+proceed?"), the user typed "is it done?" instead of clicking the "Yes, rebuild it" button.
+Nothing had ever been triggered — regeneration only starts client-side, after an explicit
+confirm — but the model replied "Yes, I'm now regenerating your trip plan... This might take a
+moment. I'll let you know once the new itinerary is ready!" No loading state ever appeared
+(there was nothing to load) and the itinerary never changed, leaving the user waiting on a
+promise the system had no way to keep.
+
+**Fix (two parts, matching root causes on each side):**
+- **Frontend** (`components/chat/ChatPanel.tsx`): a plain typed confirmation ("yes", "yeah",
+  "go ahead", "do it", "proceed", etc.) sent while a `pendingAction` confirmation card is showing
+  now triggers the real regeneration directly (`handleConfirmRegenerate()`), the same as clicking
+  the button — intercepted before the text is routed to `chatRefine` at all, since the LLM has no
+  visibility into `pendingAction` and can't know whether a "yes" is confirming it. New test:
+  `__tests__/components/ChatPanelTypedConfirmRegenerate.test.tsx`.
+- **Backend** (`chains/chat_refine_chain.py`): `chat_refine` itself never triggers regeneration —
+  only the confirmed client-side path does — so no reply from this chain can ever truthfully claim
+  it's "now regenerating" or will "let you know once ready". Added `_HALLUCINATED_REGEN_PROGRESS_RE`
+  + `_strip_false_regen_progress_claim()`, the same deterministic-guardrail pattern already used for
+  false pin claims (`_HALLUCINATED_PIN_RE`/`_strip_false_pin_claim`): any reply matching present-
+  progress phrasing is replaced with an honest "I don't actually have visibility into whether a
+  regeneration is running" message, regardless of `action_type`. Also tightened the `"regenerate"`
+  prompt rule to explicitly forbid these phrasings and explain why (the model can't observe a
+  regeneration it doesn't trigger). New tests in
+  `tests/unit/test_chat_refine_reply_parsing.py::TestStripFalseRegenProgressClaim` (3 tests,
+  including the exact live-bug text). Full suite: 1546 passed, 6 skipped (API); 233 passed (web).
 
 ### v10.79.0 Changes (September 2, 2026) — chat-refine no longer leaks raw JSON on truncated/malformed LLM responses
 

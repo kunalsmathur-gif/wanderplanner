@@ -107,7 +107,16 @@ ACTION RULES:
   - Budget change of >20%
   Set config_patch with the changed fields.
   Set major_change: true.
-  In the reply, ask the user to confirm regeneration.
+  In the reply, ask the user to confirm regeneration — you cannot start it
+  yourself. 🔴 NEVER say you are "now regenerating"/"currently rebuilding"/
+  "this might take a moment, I'll let you know" for a "regenerate" action —
+  regeneration only starts after the user explicitly confirms (a button
+  click or a clear "yes"), which happens outside this conversation turn, so
+  you have no way to know it has started. If the user asks "is it done?" or
+  "did it work?" and you have not seen a system message confirming a
+  regeneration completed, say you don't have visibility into that and ask
+  them to check the itinerary on screen or confirm again — never claim it
+  is in progress.
 
 NAMED INTEREST DETECTION:
 - If the user expresses a specific interest, passion, fandom or theme they
@@ -297,6 +306,52 @@ def _apply_day_cost_preference(
     return resp
 
 
+# Phrases that falsely claim regeneration is already underway/near-complete —
+# same bug class as _HALLUCINATED_PIN_RE below, and the exact live failure
+# (2026-09-02): a "regenerate" reply asked the user to confirm, the user typed
+# "is it done?" instead of clicking the confirm button (so nothing had
+# actually been triggered — see ChatPanel.tsx's CONFIRM_REGENERATE_INTENT
+# fix), and the model replied "Yes, I'm now regenerating your trip plan...
+# This might take a moment." No loading state ever appeared because no
+# regeneration had started; the model has no channel to observe that.
+# Deliberately anchored on present-progress/near-future forms ("I'm now
+# regenerating", "this might take a moment"), not the legitimate ask-to-
+# confirm phrasing ("I'll regenerate... shall I proceed?").
+_HALLUCINATED_REGEN_PROGRESS_RE = re.compile(
+    r"\bi'?m\s+now\s+(?:regenerat\w*|rebuild\w*|updat\w*)\b"
+    r"|\b(?:currently|actively)\s+(?:regenerat\w*|rebuild\w*)\b"
+    r"|\bthis\s+(?:might|may|could)\s+take\s+a\s+moment\b"
+    r"|\bi'?ll\s+let\s+you\s+know\s+(?:once|when)\s+(?:the\s+)?(?:new\s+)?"
+    r"(?:itinerary|plan|trip)\s+is\s+ready\b",
+    re.IGNORECASE,
+)
+
+_REGEN_PROGRESS_RETRACTION = (
+    "I don't actually have visibility into whether a regeneration is running — "
+    "I can only ask you to confirm it, not watch it happen. If you clicked "
+    "\"Yes, rebuild it\" and see a spinner in this chat, it's in progress; "
+    "otherwise nothing has started yet — just say the word and I'll kick it off."
+)
+
+
+def _strip_false_regen_progress_claim(resp: ChatRefineResponse) -> ChatRefineResponse:
+    """Replace a reply that claims regeneration is already running/near-done.
+
+    chat_refine itself never triggers regeneration — the client does, only
+    after an explicit confirm (button click or a recognized "yes"). So no
+    reply from this chain can ever truthfully claim it's "now regenerating"
+    or "will let you know once ready"; that claim is false by construction
+    regardless of action_type.
+    """
+    if not _HALLUCINATED_REGEN_PROGRESS_RE.search(resp.reply or ""):
+        return resp
+    logger.warning(
+        "chat_refine reply claimed regeneration was in progress; retracting"
+    )
+    resp.reply = _REGEN_PROGRESS_RETRACTION
+    return resp
+
+
 def _strip_false_pin_claim(resp: ChatRefineResponse) -> ChatRefineResponse:
     """Replace a reply that claims a pin with the truth, when nothing pinned.
 
@@ -398,13 +453,13 @@ async def _apply_interest_pinning(
 async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
     if settings.llm_provider == "mock":
         last_msg = request.messages[-1].content if request.messages else ""
-        return _strip_false_pin_claim(
+        return _strip_false_regen_progress_claim(_strip_false_pin_claim(
             _apply_day_cost_preference(
                 await _apply_interest_pinning(_mock_refine(last_msg), request.trip_config),
                 request.trip_config,
                 last_msg,
             )
-        )
+        ))
 
     try:
         from google import genai as google_genai
@@ -502,13 +557,13 @@ async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
     last_user_text = next(
         (m.content for m in reversed(request.messages) if m.role == "user"), ""
     )
-    return _strip_false_pin_claim(
+    return _strip_false_regen_progress_claim(_strip_false_pin_claim(
         _apply_day_cost_preference(
             await _apply_interest_pinning(resp, request.trip_config),
             request.trip_config,
             last_user_text,
         )
-    )
+    ))
 
 
 def _mock_refine(user_msg: str) -> ChatRefineResponse:

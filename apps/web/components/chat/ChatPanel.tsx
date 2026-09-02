@@ -29,6 +29,17 @@ const WELCOME =
 // misclassify it as a regular refine request.
 const RESUME_LAST_ITINERARY_INTENT = /\b(show|continue|resume|pull up|bring back|get)\b.{0,20}\b(my )?(last|previous|recent)\b.{0,20}\b(trip|itinerary|plan)\b/i
 
+// Bug fix (live-observed): when a "regenerate" action_type reply asks the
+// user to confirm, the ONLY way regeneration actually started was clicking
+// the "Yes, rebuild it" button under `pendingAction` — typing "yes"/"go
+// ahead" instead sent that text to chatRefine like any other message, which
+// has no way to know a regeneration was ever pending, so the LLM produced a
+// confident "I'm now regenerating…" reply while nothing had actually been
+// triggered. Catch a plain-language confirmation client-side, while
+// `pendingAction` is set, and route it straight to the real trigger instead
+// of round-tripping through the LLM at all.
+const CONFIRM_REGENERATE_INTENT = /^\s*(yes|yeah|yep|sure|ok(ay)?|confirm(ed)?|go ahead|do it|proceed|please do|sounds good)\b/i
+
 export function ChatPanel() {
   const router = useRouter()
   const { isOpen, close, messages, status, errorMsg, addMessage, setStatus } = useChatStore()
@@ -181,6 +192,16 @@ export function ChatPanel() {
 
     setInput('')
     addMessage({ role: 'user', content: text })
+
+    // A typed "yes"/"go ahead" while a regenerate confirmation is pending —
+    // trigger the real regeneration directly, the same as clicking "Yes,
+    // rebuild it" would. Must run before the resume-last-itinerary check and
+    // the normal chatRefine call: the LLM has no visibility into pendingAction
+    // and would otherwise hallucinate that regeneration is already underway.
+    if (pendingAction && CONFIRM_REGENERATE_INTENT.test(text)) {
+      handleConfirmRegenerate()
+      return
+    }
 
     // "Show me my last itinerary" / "continue my trip" (issue #65) —
     // authenticated users only, checked here (not left to the backend
