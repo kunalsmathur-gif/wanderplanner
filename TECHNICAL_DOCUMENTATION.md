@@ -1608,12 +1608,42 @@ curl http://localhost:8000/health
 
 ---
 
-## 14. Recent Changes (v10.78, v10.77, v10.76, v10.75, v10.74, v10.73, v10.70, v10.69, v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
+## 14. Recent Changes (v10.79, v10.78, v10.77, v10.76, v10.75, v10.74, v10.73, v10.70, v10.69, v10.68, v10.67, v10.66, v10.65, v10.62, v10.61, v10.60, v10.59, v10.58, v10.57, v10.56, v10.55, v10.54, v10.53, v10.52, v10.51, v10.50, v10.49, v10.48, v10.47, v10.46, v10.45, v10.44, v10.43, v10.42, v10.41, v10.40, v10.39, v10.38, v10.37, v10.36, v10.35, v10.34, v10.33, v10.32, v10.31, v10.30, v10.29, v10.28, v10.27, v10.26, v10.25, v10.24, v10.23, v10.22, v10.21, v10.20, v10.19, v10.18, v10.17, v10.16, v10.15, v10.14, v10.13, v10.12, v10.11, v10.10, v10.9, v10.8, v10.7, v10.6, v10.5, v10.4, v10.3, v10.2, v10.1, v10.0, v9.0, v7.0, v6.0 & v5.0)
 
 > ⚠️ **v10.63.0 and v10.64.0 shipped code and tests but have no entry in this
 > section** (visa cost exclusion + corpus-gated `visa_inr`, and the analytics
 > event fix). This is the known changelog-reconciliation backlog, not an
 > omission specific to v10.65.0.
+
+### v10.79.0 Changes (September 2, 2026) — chat-refine no longer leaks raw JSON on truncated/malformed LLM responses
+
+**Bug (found live in prod):** the "Ask & adjust" chat-refinement panel sometimes showed a
+reply that literally started with `{"reply": "..."` and was cut off mid-sentence with no
+closing quote/brace. Root cause: `chains/chat_refine_chain.py`'s Gemini call requests JSON
+output and does a manual cleanup + `json.loads()`; whenever that parse failed — most often
+because a long reply (with an accompanying `config_patch`) hit the `max_output_tokens=1024`
+cap and got truncated mid-string — the `except` fallback returned `ChatRefineResponse(reply=raw, ...)`,
+dumping the entire raw JSON blob straight to the user as if it were the reply text.
+
+**Fix:**
+- Added `_REPLY_FIELD_RE` (a regex matching `"reply": "..."` up to the first unescaped
+  closing quote, or end-of-string for the truncated case) and `_extract_reply_text(raw)`
+  in `chains/chat_refine_chain.py`, which recovers just the reply text — re-running it
+  through `json.loads(f'"{text}"')` to properly un-escape `\"`/`\n`/`\\` — and falls back
+  to a generic apology ("Sorry, I had trouble putting that together — could you try asking
+  again?") only if no `"reply"` field can be found at all. Raw JSON syntax is never
+  returned to the user.
+- Wired `_extract_reply_text()` into both the `except Exception` fallback (previously
+  `reply=raw`) and the success path (`data.get("reply") or _extract_reply_text(raw)`,
+  guarding the rare case where JSON parses but has no `reply` key).
+- Raised `max_output_tokens` from `1024` to `2048` in the same Gemini call so truncation
+  itself is rarer going forward — this is a mitigation, not a fix, since the parsing-side
+  fix is what guarantees no raw JSON ever reaches the user regardless of token budget.
+- New test file `tests/unit/test_chat_refine_reply_parsing.py` (5 tests) covers: recovering
+  a reply from JSON truncated mid-string (the exact live bug), a well-formed-but-unparsed
+  JSON blob, un-escaping embedded quotes/newlines, falling back to the generic message when
+  no `reply` field exists, and a table-driven guard that no malformed input ever yields text
+  starting with `{`. Full suite: 1543 passed, 6 skipped.
 
 ### v10.78.0 Changes (September 1, 2026) — KNOWN_DESTINATIONS coverage expansion (168→229) + cold-start ingestion timeout fix
 

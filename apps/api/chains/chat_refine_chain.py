@@ -29,6 +29,33 @@ def _is_transient_llm_error(exc: Exception) -> bool:
     ))
 
 
+# Recovers the "reply" string when the model's JSON is malformed or was cut
+# off mid-string by max_output_tokens (found live 2026-09-02: a long reply
+# hit the 1024-token cap, json.loads() raised, and the old fallback showed
+# the user the raw '{"reply": "..."' blob verbatim, quotes/braces and all).
+# Matches only up to the first unescaped closing quote (or end of string, for
+# the truncated case) rather than doing a full JSON parse, since a truncated
+# value has no closing quote/brace to parse against.
+_REPLY_FIELD_RE = re.compile(r'"reply"\s*:\s*"((?:[^"\\]|\\.)*)"?', re.DOTALL)
+
+
+def _extract_reply_text(raw: str) -> str:
+    """Best-effort recovery of a user-facing reply from a response that
+    failed json.loads() — never returns raw JSON syntax to the user."""
+    match = _REPLY_FIELD_RE.search(raw)
+    if match:
+        text = match.group(1)
+        # Undo the JSON string escapes our own regex left untouched (\", \n, \\).
+        try:
+            return json.loads(f'"{text}"')
+        except Exception:
+            return text
+    logger.warning("chat_refine could not recover a reply from malformed JSON: %r", raw[:200])
+    return (
+        "Sorry, I had trouble putting that together — could you try asking again?"
+    )
+
+
 class ChatRefineResponse(BaseModel):
     reply: str
     action_type: Literal["none", "patch_config", "regenerate"]
@@ -418,7 +445,13 @@ async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
             config=genai_types.GenerateContentConfig(
                 system_instruction=system_prompt,
                 temperature=0.5,
-                max_output_tokens=1024,
+                # 1024 was found too tight live 2026-09-02: a reply plus
+                # config_patch could hit the cap and get cut off mid-string,
+                # producing invalid JSON that used to leak raw '{"reply": ...'
+                # syntax to the user (see _extract_reply_text's docstring for
+                # the parsing-side fix; this raises the ceiling so truncation
+                # itself is rarer).
+                max_output_tokens=2048,
             ),
         )
 
@@ -452,14 +485,19 @@ async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
             # which never re-validates through TripConfig.
             patch = normalise_choice_fields(patch)
         resp = ChatRefineResponse(
-            reply=data.get("reply", raw),
+            reply=data.get("reply") or _extract_reply_text(raw),
             action_type=data.get("action_type", "none"),
             config_patch=patch,
             major_change=bool(data.get("major_change", False)),
             named_interest=data.get("named_interest") or None,
         )
     except Exception:
-        return ChatRefineResponse(reply=raw, action_type="none", config_patch=None, major_change=False)
+        return ChatRefineResponse(
+            reply=_extract_reply_text(raw),
+            action_type="none",
+            config_patch=None,
+            major_change=False,
+        )
 
     last_user_text = next(
         (m.content for m in reversed(request.messages) if m.role == "user"), ""
