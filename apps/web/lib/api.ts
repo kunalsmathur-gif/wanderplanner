@@ -123,10 +123,21 @@ export async function recommendCities(
 
 // ── Feasibility check ────────────────────────────────────────────────────
 export async function checkFeasibility(tripConfig: TripConfig, skipDestinationCheck = false) {
-  const { data } = await api.post('/api/feasibility-check', {
-    trip_config: tripConfig,
-    skip_destination_check: skipDestinationCheck,
-  })
+  const { data } = await api.post(
+    '/api/feasibility-check',
+    {
+      trip_config: tripConfig,
+      skip_destination_check: skipDestinationCheck,
+    },
+    // Same rationale as wizardChat/extractTrip below: this endpoint does a
+    // destination geocode check, three concurrent cost-grounding lookups, a
+    // Gemini call, and a bare-minimum-budget estimate in sequence. Measured
+    // real-world latency (esp. right after a cold process start, when the
+    // embedding/reranker models are still loading) can land at or past the
+    // shared 25s default, surfacing as a spurious "connection hiccup" even
+    // though the backend was still working and would have succeeded.
+    { timeout: 45_000 },
+  )
   return data as FeasibilityResponse
 }
 
