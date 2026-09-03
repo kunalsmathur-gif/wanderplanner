@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from core.budget_estimator import budget_estimate_prompt_hint, absolute_budget_floor_check
+from core.budget_estimator import absolute_budget_floor_check, budget_estimate_prompt_hint
 from core.chips import (
     GENERIC_CHIP_KEYWORDS,
     MULTI_SELECT_CHIP_KEYWORDS,
