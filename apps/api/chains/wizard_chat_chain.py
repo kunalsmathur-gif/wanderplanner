@@ -1342,9 +1342,16 @@ def _absolute_budget_floor_warning_text(amount: int | float, floor_estimate: dic
     floor_total = floor_estimate["total_inr"]
     breakdown = floor_estimate["breakdown"]
     duration = floor_estimate["duration_days"]
+    headcount = floor_estimate.get("headcount", 1)
+    # Only call it out as a "solo-traveller" assumption when group size was
+    # genuinely unknown and absolute_budget_floor_check() had to assume one —
+    # otherwise (real, already-known headcount), the total already reflects
+    # the actual group size and mislabelling it "solo" would misrepresent
+    # what was actually computed.
+    traveller_desc = "economical, solo-traveller" if headcount <= 1 else f"economical, {headcount}-traveller"
     return (
         f"Just flagging this before we go further — ₹{amount:,.0f} doesn't look enough for this trip. "
-        f"Even at the cheapest possible (economical, solo-traveller) estimate for what you've told me so far "
+        f"Even at the cheapest possible ({traveller_desc}) estimate for what you've told me so far "
         f"({duration} day{'s' if duration != 1 else ''}), it works out to roughly ₹{floor_total:,} "
         f"(flights ₹{breakdown['flights_inr']:,} + stay ₹{breakdown['stay_inr']:,} + food ₹{breakdown['food_inr']:,}). "
         "Could you double-check and restate your budget? (In ₹, or another currency — I'll convert it.)"
@@ -2041,7 +2048,19 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # `merged` and `patch` keeps the budget field genuinely missing so
         # the wizard asks again instead of silently treating an impossible
         # number as valid input.
-        budget_floor_warning = await _absolute_budget_floor_warning(merged)
+        # Only run this the turn budget is NEWLY recorded OR CHANGED (not on
+        # an unrelated later turn where the same already-accepted amount is
+        # merely being carried forward) — otherwise, on every later turn
+        # (e.g. "sure", "is it planned"), this would re-fire against an
+        # already-accepted budget, wipe it back out, and trap the user in an
+        # infinite re-ask loop where the field can never stay "filled" and
+        # ready_to_generate never fires. Mirrors the ready_to_generate guard
+        # below (and deliberately allows re-checking a CHANGED amount, e.g.
+        # the user restating a new figure after a previous floor failure).
+        budget_amount_pre_turn = (request.partial_config.get("budget") or {}).get("amount", 0)
+        budget_amount_post_turn = (merged.get("budget") or {}).get("amount", 0)
+        budget_newly_recorded_this_turn = budget_amount_post_turn > 0 and budget_amount_post_turn != budget_amount_pre_turn
+        budget_floor_warning = await _absolute_budget_floor_warning(merged) if budget_newly_recorded_this_turn else None
         if budget_floor_warning:
             reply_text = budget_floor_warning
             chips_list = []
@@ -2060,10 +2079,19 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # follow-up question, a checkpoint-style aside, etc.) would re-fire
         # the automatic feasibility check / auto-generation.
         if ready:
-            budget_was_already_present = (request.partial_config.get("budget") or {}).get("amount", 0) > 0
-            budget_just_recorded_this_turn = not budget_was_already_present and merged.get("budget", {}).get("amount", 0) > 0
+            budget_amount_pre_turn = (request.partial_config.get("budget") or {}).get("amount", 0)
+            budget_amount_post_turn = merged.get("budget", {}).get("amount", 0)
+            # Covers both a genuine missing -> present transition AND a
+            # changed amount on an already-present budget (e.g. the "Set
+            # budget to ₹X" chip offered after an infeasible-budget verdict,
+            # or the user restating a new figure) — both are legitimate,
+            # user-initiated updates that should re-run the feasibility
+            # check/CTA, not just the very first time budget appears.
+            budget_just_recorded_or_changed_this_turn = (
+                budget_amount_post_turn > 0 and budget_amount_post_turn != budget_amount_pre_turn
+            )
             explicit_regenerate_request = bool(last_user_text and _EXPLICIT_REGENERATE_RE.search(last_user_text))
-            if not (budget_just_recorded_this_turn or explicit_regenerate_request):
+            if not (budget_just_recorded_or_changed_this_turn or explicit_regenerate_request):
                 ready = False
 
         # Anti-hallucination safety net: if the model's own reply text falsely
@@ -2240,7 +2268,14 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # Hard, non-LLM sanity floor (⭐ NEW, same as JSON-success path above)
         # — real, destination-aware floor using whatever's known so far. An
         # amount that fails it is stripped back out so budget stays "missing".
-        fallback_budget_floor_warning = await _absolute_budget_floor_warning(fallback_config)
+        fallback_budget_amount_pre_turn = (request.partial_config.get("budget") or {}).get("amount", 0)
+        fallback_budget_amount_post_turn = (fallback_config.get("budget") or {}).get("amount", 0)
+        fallback_budget_newly_recorded_this_turn = (
+            fallback_budget_amount_post_turn > 0 and fallback_budget_amount_post_turn != fallback_budget_amount_pre_turn
+        )
+        fallback_budget_floor_warning = (
+            await _absolute_budget_floor_warning(fallback_config) if fallback_budget_newly_recorded_this_turn else None
+        )
         if fallback_budget_floor_warning:
             clean_raw = fallback_budget_floor_warning
             extracted_chips = []
