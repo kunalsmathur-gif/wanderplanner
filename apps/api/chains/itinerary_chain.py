@@ -1112,16 +1112,20 @@ async def _generate_itinerary_inner(
             raw = await _fallback_itinerary(trip_config, llm_error)
         entry_grounded = await ensure_entry_info(entry_country)
     else:
-        # Cache successful LLM-generated itineraries for future
-        # fallback use (best-effort — never blocks/fails the response).
-        with timing.stage("cache_store"):
-            await store_itinerary(trip_config, raw)
+        # Cache successful LLM-generated itineraries for future fallback
+        # use. Fire-and-forget via create_task, same as the generated-
+        # itineraries write just below — store_itinerary() is explicitly
+        # best-effort and never raises (see its own docstring), and nothing
+        # on this request's remaining critical path (post-processing,
+        # scoring, response assembly) reads back what it just wrote, so
+        # there is no reason to hold the response up for a Qdrant round-trip
+        # whose outcome this request doesn't use.
+        asyncio.create_task(store_itinerary(trip_config, raw))
         # Learning flywheel (issue #32): feed this generation into the
         # generated_itineraries collection too. Fire-and-forget via
-        # create_task (not awaited, unlike cache_store above) — the
-        # issue explicitly requires zero added latency, and unlike the
-        # cache write this isn't needed for anything on this request's
-        # own critical path.
+        # create_task, same as the cache write just above — the issue
+        # explicitly requires zero added latency, and this isn't needed for
+        # anything on this request's own critical path either.
         #
         # The point id is computed synchronously (cheap string hashing,
         # no I/O) *before* spawning the write so it can be handed back to

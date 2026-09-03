@@ -272,6 +272,16 @@ async def _check_feasibility_inner(
     if not settings.gemini_api_key:
         raise RuntimeError("GEMINI_API_KEY is not set.")
 
+    # Kicked off here rather than awaited after the LLM call: this only
+    # depends on `trip_config`, not the cost-grounding hints or the LLM's
+    # estimate, so it doesn't need to wait for either to finish first. It's
+    # its own Qdrant-backed lookup (community_median_price_inr) previously
+    # paid for serially after everything else — now it runs the whole time
+    # the grounding gather + LLM call are in flight. `_safe_bare_minimum`
+    # never raises (wraps its own body in try/except), so a bare
+    # `create_task` here carries no risk of an unretrieved exception.
+    bare_minimum_task = asyncio.create_task(_safe_bare_minimum(trip_config))
+
     # Free-tools-only budget curation (⭐ NEW): persona/purpose budget-tier
     # guidance + a real-distance flight heuristic + community-reported price
     # mentions pulled from the existing free RAG collections. Best-effort —
@@ -341,7 +351,7 @@ async def _check_feasibility_inner(
         _store_estimate(cache_key, {"data": data, "entry_grounded": entry_grounded})
 
     with timing.stage("bare_minimum"):
-        bare_minimum = await _safe_bare_minimum(trip_config)
+        bare_minimum = await bare_minimum_task
     return _build_response(
         data,
         budget_inr,
