@@ -740,8 +740,19 @@ async def _gemini_itinerary(trip_config: TripConfig, cost_correction: str = "") 
     # retrieval call in the product that is deliberately traded latency-for-
     # precision — worth its own stage rather than being folded into "the LLM
     # step", which is where an unmeasured cost would hide.
-    with timing.stage("rag_retrieval"):
-        context_docs = await retrieve_context(trip_config, enable_reranking=True)
+    # RAG retrieval and the three guidance blocks are all independent lookups
+    # — none consumes another's output, so they were previously paying for
+    # two sequential round-trips (retrieve_context, THEN the guidance
+    # gather) for no reason. Folding all four into one gather overlaps
+    # retrieval (incl. the cross-encoder rerank pass) with the guidance
+    # lookups instead of paying for both in series.
+    with timing.stage("rag_retrieval_and_guidance"):
+        context_docs, itinerary_examples, gem_guidance, budget_guidance = await asyncio.gather(
+            retrieve_context(trip_config, enable_reranking=True),
+            _itinerary_examples_block(trip_config),
+            _gem_guidance_block(trip_config),
+            _budget_guidance_block(trip_config),
+        )
     if context_docs:
         context_text = wrap_untrusted(
             summarise_context(context_docs, max_chars=2400),
@@ -750,14 +761,6 @@ async def _gemini_itinerary(trip_config: TripConfig, cost_correction: str = "") 
     else:
         context_text = "No pre-fetched research available — use your own knowledge of the destination."
 
-    # The three guidance blocks are independent lookups — fetch them
-    # concurrently so prompt assembly adds one round-trip, not three.
-    with timing.stage("guidance_blocks"):
-        itinerary_examples, gem_guidance, budget_guidance = await asyncio.gather(
-            _itinerary_examples_block(trip_config),
-            _gem_guidance_block(trip_config),
-            _budget_guidance_block(trip_config),
-        )
     prompt = SYSTEM_PROMPT.format(
         context=context_text,
         itinerary_examples=itinerary_examples,
@@ -907,9 +910,16 @@ async def _langchain_itinerary(trip_config: TripConfig, cost_correction: str = "
     """Groq/Ollama path via LangChain, grounded with the same summarised
     RAG context used by the Gemini path."""
     # Reranking enabled: this feeds directly into the final generated
-    # itinerary, same as the Gemini path above.
-    with timing.stage("rag_retrieval"):
-        context_docs = await retrieve_context(trip_config, enable_reranking=True)
+    # itinerary, same as the Gemini path above. Retrieval and the three
+    # guidance blocks are independent lookups — same fix as the Gemini path,
+    # one gather instead of two sequential round-trips.
+    with timing.stage("rag_retrieval_and_guidance"):
+        context_docs, itinerary_examples, gem_guidance, budget_guidance = await asyncio.gather(
+            retrieve_context(trip_config, enable_reranking=True),
+            _itinerary_examples_block(trip_config),
+            _gem_guidance_block(trip_config),
+            _budget_guidance_block(trip_config),
+        )
     # Use the same time-decay + dedup + budget-capped summarisation as the
     # Gemini path (previously this just joined all 20 raw chunks, which
     # skipped stale-content penalisation and duplicate filtering, and
@@ -933,13 +943,6 @@ async def _langchain_itinerary(trip_config: TripConfig, cost_correction: str = "
     llm = _build_llm()
     parser = JsonOutputParser()
     chain = prompt | llm | parser
-    # Same concurrent fetch as the Gemini path — one round-trip, not three.
-    with timing.stage("guidance_blocks"):
-        itinerary_examples, gem_guidance, budget_guidance = await asyncio.gather(
-            _itinerary_examples_block(trip_config),
-            _gem_guidance_block(trip_config),
-            _budget_guidance_block(trip_config),
-        )
     timing.increment("llm_attempts")
     timing.label("llm_model", settings.llm_provider)
     with timing.stage("llm_api"):
@@ -1014,10 +1017,18 @@ async def _generate_itinerary_inner(
     # Set only by the live path; stays None for mock/cache/fallback, whose costs
     # come from code we control rather than a model that can drift currency.
     cost_warning: str | None = None
-    if settings.llm_provider == "mock":
-        raw = _mock_itinerary(trip_config)
-        raw.setdefault("_from_fallback", "mock")
-    else:
+    entry_country = (
+        (trip_config.destination.country if trip_config.destination else None)
+        or trip_config.destination_country
+        or ""
+    )
+
+    async def _generate_raw() -> dict:
+        if settings.llm_provider == "mock":
+            raw = _mock_itinerary(trip_config)
+            raw.setdefault("_from_fallback", "mock")
+            return raw
+
         dest = trip_config.destination.city if trip_config.destination else ""
         if dest:
             try:
@@ -1047,65 +1058,81 @@ async def _generate_itinerary_inner(
                 )
             except Exception:
                 logger.warning("destination ingestion gatekeeper failed for %r", dest, exc_info=True)
+
         async def _generate(correction: str = "") -> dict:
             if settings.llm_provider == "gemini":
                 return await _gemini_itinerary(trip_config, cost_correction=correction)
             return await _langchain_itinerary(trip_config, cost_correction=correction)
 
-        try:
-            raw = await _generate()
-            # Cost sanity BEFORE the cache write — caching a wrong-currency or
-            # wrong-direction itinerary would serve the defect to every later
-            # fallback for this trip shape, long after the bad run is forgotten.
-            problem = _cost_sanity_problem(raw, trip_config)
-            if problem:
-                logger.warning("Itinerary costs rejected, regenerating once: %s", problem)
-                timing.increment("cost_sanity_retries")
-                with timing.stage("cost_retry"):
-                    retry_raw = await _generate(_cost_correction_block(problem))
-                retry_problem = _cost_sanity_problem(retry_raw, trip_config)
-                if not retry_problem:
-                    raw, problem = retry_raw, None
-                else:
-                    # Keep the FIRST result. A second bad answer is not an
-                    # improvement, and swapping one defect for another loses
-                    # the only thing we know about this one. The surviving
-                    # `problem` becomes a user-visible warning below — never
-                    # present unreliable costs as if they were checked.
-                    logger.warning("Regenerated itinerary still fails cost sanity: %s", retry_problem)
-                    timing.increment("cost_sanity_retries_failed")
-            cost_warning = problem
-            # A live call that had nothing in our corpus to ground itself in
-            # is not the same guarantee as a normal live generation — mark it
-            # before caching so the disclosure survives into any later
-            # cache-served response for this trip shape too.
-            if raw.get("_context_grounded") is False:
-                raw.setdefault("_from_fallback", "live_unverified")
-        except Exception as llm_error:
-            with timing.stage("fallback"):
-                raw = await _fallback_itinerary(trip_config, llm_error)
-        else:
-            # Cache successful LLM-generated itineraries for future
-            # fallback use (best-effort — never blocks/fails the response).
-            with timing.stage("cache_store"):
-                await store_itinerary(trip_config, raw)
-            # Learning flywheel (issue #32): feed this generation into the
-            # generated_itineraries collection too. Fire-and-forget via
-            # create_task (not awaited, unlike cache_store above) — the
-            # issue explicitly requires zero added latency, and unlike the
-            # cache write this isn't needed for anything on this request's
-            # own critical path.
-            #
-            # The point id is computed synchronously (cheap string hashing,
-            # no I/O) *before* spawning the write so it can be handed back to
-            # the client as `generation_id` (issue #34) — the frontend needs
-            # a stable handle to later report session signals (regenerated,
-            # shared, session duration, chat turns) back against this exact
-            # Qdrant point.
-            generation_id = compute_generation_id(trip_config, raw)
-            if generation_id:
-                raw["_generation_id"] = generation_id
-            asyncio.create_task(store_generated_itinerary(trip_config, raw, point_id=generation_id))
+        raw = await _generate()
+        # Cost sanity BEFORE the cache write — caching a wrong-currency or
+        # wrong-direction itinerary would serve the defect to every later
+        # fallback for this trip shape, long after the bad run is forgotten.
+        problem = _cost_sanity_problem(raw, trip_config)
+        if problem:
+            logger.warning("Itinerary costs rejected, regenerating once: %s", problem)
+            timing.increment("cost_sanity_retries")
+            with timing.stage("cost_retry"):
+                retry_raw = await _generate(_cost_correction_block(problem))
+            retry_problem = _cost_sanity_problem(retry_raw, trip_config)
+            if not retry_problem:
+                raw, problem = retry_raw, None
+            else:
+                # Keep the FIRST result. A second bad answer is not an
+                # improvement, and swapping one defect for another loses
+                # the only thing we know about this one. The surviving
+                # `problem` becomes a user-visible warning below — never
+                # present unreliable costs as if they were checked.
+                logger.warning("Regenerated itinerary still fails cost sanity: %s", retry_problem)
+                timing.increment("cost_sanity_retries_failed")
+        nonlocal cost_warning
+        cost_warning = problem
+        # A live call that had nothing in our corpus to ground itself in
+        # is not the same guarantee as a normal live generation — mark it
+        # before caching so the disclosure survives into any later
+        # cache-served response for this trip shape too.
+        if raw.get("_context_grounded") is False:
+            raw.setdefault("_from_fallback", "live_unverified")
+        return raw
+
+    # `ensure_entry_info` only needs `trip_config`, not the LLM's output, so
+    # it doesn't have to wait for the whole generate-and-verify sequence
+    # above to finish before starting. Memoised per country for the process
+    # lifetime, so on a warm process this resolves near-instantly anyway —
+    # the concurrency only pays off on a cold miss (first request for a
+    # country since process start), but that's exactly the case worth not
+    # paying for twice. Gathered (not `create_task`) so a failure in either
+    # propagates normally and there's no orphaned task to track.
+    try:
+        raw, entry_grounded = await asyncio.gather(
+            _generate_raw(), ensure_entry_info(entry_country)
+        )
+    except Exception as llm_error:
+        with timing.stage("fallback"):
+            raw = await _fallback_itinerary(trip_config, llm_error)
+        entry_grounded = await ensure_entry_info(entry_country)
+    else:
+        # Cache successful LLM-generated itineraries for future
+        # fallback use (best-effort — never blocks/fails the response).
+        with timing.stage("cache_store"):
+            await store_itinerary(trip_config, raw)
+        # Learning flywheel (issue #32): feed this generation into the
+        # generated_itineraries collection too. Fire-and-forget via
+        # create_task (not awaited, unlike cache_store above) — the
+        # issue explicitly requires zero added latency, and unlike the
+        # cache write this isn't needed for anything on this request's
+        # own critical path.
+        #
+        # The point id is computed synchronously (cheap string hashing,
+        # no I/O) *before* spawning the write so it can be handed back to
+        # the client as `generation_id` (issue #34) — the frontend needs
+        # a stable handle to later report session signals (regenerated,
+        # shared, session duration, chat turns) back against this exact
+        # Qdrant point.
+        generation_id = compute_generation_id(trip_config, raw)
+        if generation_id:
+            raw["_generation_id"] = generation_id
+        asyncio.create_task(store_generated_itinerary(trip_config, raw, point_id=generation_id))
 
     with timing.stage("post_processing"):
         days = _parse_days(raw.get("days", []))
@@ -1167,17 +1194,10 @@ async def _generate_itinerary_inner(
     timings.label("generation_tier", str(raw.get("_from_fallback", "live")))
     timings.increment("days", len(scored_days))
 
-    # Re-asked rather than threaded down from `_budget_guidance_block` through
-    # three call frames and two generation paths (Gemini, LangChain) plus the
-    # fallback. `ensure_entry_info` memoises per country for the life of the
-    # process, so this is a dict hit — and on the fallback paths, where no
-    # guidance block ran, it is the only thing that establishes coverage at all.
-    entry_country = (
-        (trip_config.destination.country if trip_config.destination else None)
-        or trip_config.destination_country
-        or ""
-    )
-    entry_grounded = await ensure_entry_info(entry_country)
+    # `entry_grounded` was resolved earlier alongside generation (gathered
+    # rather than awaited after) — it only needs `trip_config`, not the
+    # LLM's output, and on the fallback paths, where no guidance block ran,
+    # it is the only thing that establishes coverage at all.
 
     # A surviving cost problem is disclosed, not swallowed: the plan itself is
     # good (real places, pins honoured) and is worth showing, but its numbers
