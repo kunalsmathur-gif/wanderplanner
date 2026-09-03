@@ -66,10 +66,18 @@ const REQUIRED_LABELS: { key: string; label: string }[] = [
   { key: 'purpose',     label: 'Purpose'     },
   { key: 'destination', label: 'Destination' },
   { key: 'dates',       label: 'Dates'       },
-  { key: 'budget',      label: 'Budget'      },
   { key: 'group',       label: 'Group'       },
   { key: 'pace',        label: 'Pace'        },
+  { key: 'budget',      label: 'Budget'      },
 ]
+
+// The 5 CORE fields (everything except budget) — the checkpoint ("anything
+// else?") now fires once these are done, BEFORE budget is asked (see Section
+// 7 Stage 2 in wizard_chat_chain.py's system prompt), so completeness for
+// triggering the checkpoint must be checked against this subset, not the
+// full REQUIRED_LABELS (which would wait for budget too and never fire in
+// time).
+const CORE_LABELS_BEFORE_BUDGET = REQUIRED_LABELS.filter(({ key }) => key !== 'budget')
 
 // Theme chips (Culture, Food, Adventure, ...) map to a multi-value array
 // field, so unlike every other chip group (purpose, pace, etc.) the user
@@ -533,9 +541,11 @@ export function LLMWizard() {
           typeof k === 'number' ? { age: k } : k
         )
       }
-      // Track that the "anything else?" checkpoint has been shown
-      // once all 6 fields are filled, so the LLM doesn't re-ask next turn
-      const allFilledCheck = REQUIRED_LABELS.every(({ key }) => _isFieldFilled(key, mergedPartial))
+      // Track that the "anything else?" checkpoint has been shown once the
+      // 5 CORE fields are filled (excluding budget, which is now asked
+      // AFTER the checkpoint — see Section 7 Stage 2 in the backend prompt),
+      // so the LLM doesn't re-ask next turn.
+      const allFilledCheck = CORE_LABELS_BEFORE_BUDGET.every(({ key }) => _isFieldFilled(key, mergedPartial))
       if (allFilledCheck && !(mergedPartial as Record<string, unknown>)._checkpoint_asked) {
         (mergedPartial as Record<string, unknown>)._checkpoint_asked = true
       }

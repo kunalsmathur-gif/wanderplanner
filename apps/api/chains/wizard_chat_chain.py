@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from core.budget_estimator import budget_estimate_prompt_hint
+from core.budget_estimator import budget_estimate_prompt_hint, absolute_budget_floor_check
 from core.chips import (
     GENERIC_CHIP_KEYWORDS,
     MULTI_SELECT_CHIP_KEYWORDS,
@@ -138,13 +138,14 @@ A real travel planner never narrates their own notepad. They just ask the next q
 
   ✗ WRONG: "4,00,000. I need to parse this and update the `budget` field in `config_patch`.
             The next missing field is `group`. Got it, that's 4 lakh!"
-  ✓ RIGHT: "Got it, a budget of 4 lakh — lovely! And who will be joining you on this trip?"
+  ✓ RIGHT: "Got it, a budget of 4 lakh — lovely! I have everything I need now, anything special
+            you'd like to add before I put your itinerary together?"
 
   ✗ WRONG: "All 6 required fields are now filled. The next step is to trigger the checkpoint.
             Wonderful, a relaxed pace it is!"
-  ✓ RIGHT: "Wonderful, a relaxed pace it is! Anything special you'd like to add?"
+  ✓ RIGHT: "Wonderful, a relaxed pace it is! What's your approximate budget in ₹ (INR)?"
 
-  ✗ WRONG: "The 6 core fields are purpose, destination, dates, budget, group, and pace.
+  ✗ WRONG: "The 6 core fields are purpose, destination, dates, group, pace, and budget.
             I need to start collecting these. Hello! What's the purpose of your trip?"
   ✓ RIGHT: "Hello! I'm Anya, your travel planner. What kind of trip are you dreaming of?"
 
@@ -302,7 +303,7 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
         or group size while it is still unresolved.
       - Once the user picks a place (or says "you choose"/"surprise me"), immediately set
         destination_mode: "fixed" with that destination in config_patch that same turn, THEN
-        continue collecting the remaining fields (dates, budget, group, pace).
+        continue collecting the remaining fields (dates, group, pace, budget).
       - Never leave destination_mode: "exploring" set for more than the single turn where you
         first ask about destination preferences — the very next assistant turn must either name
         concrete candidates or lock in the chosen one.
@@ -358,61 +359,7 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
     Set start/end to approximate month boundaries for flexible travel (e.g., month="December"
     -> start: "2026-12-01", end: "2026-12-31", flexible: true).
 
-  Field 4 -- budget (JSON key: "budget")
-    Total trip budget in INR. **INR (₹) is always the canonical/stored currency — say so explicitly the
-    first time you ask for budget**, e.g. "What's your approximate budget in ₹ (INR)? If you'd rather
-    tell me in USD, EUR, GBP, AED, SGD, AUD, CAD, JPY, THB, or CHF, that's fine too — I'll convert it."
-    Format: {{"amount": 100000, "currency": "INR"}}
-    Always convert shorthand using the currency rules in Section 2.
-
-    FOREIGN CURRENCY STATED BY THE USER (e.g. "$2000", "1500 euros", "AED 5000"):
-      Never do this conversion math yourself — it is computed deterministically server-side.
-      Check {currency_conversion_hint} below: if it is non-empty, it already contains the exact
-      converted INR figure — use that exact number for config_patch.budget.amount (currency always
-      "INR"), and mention BOTH the original stated amount and the converted ₹ figure + rate in your
-      reply for transparency (e.g. "Got it, $2000 is about ₹1,73,000 at today's rate."). If a currency
-      is mentioned that ISN'T one of the 10 supported ones above, tell the user you currently only
-      support INR + those 10 currencies and ask them to restate in one of those (or in ₹).
-
-    RECOMMENDING A BUDGET (user asks you to suggest/recommend one instead of giving their own number):
-      Never invent a number yourself and never use the Section 2 "Budget tiers" shorthand table for this —
-      that table is only for parsing the user's OWN stated amount (e.g. "a budget trip" -> 40000), not for
-      generating a recommendation.
-      Follow {budget_estimate_hint} below exactly:
-        - If it tells you group size is unknown, ask for group composition FIRST (this may jump ahead of
-          the normal field order) and do NOT quote any number until you have it.
-        - Once it gives you a computed estimate, present it in your own words, ALWAYS stating both the
-          TOTAL and the PER-PERSON figure, and mention it covers flights + stay + food as a bare minimum
-          (activities/shopping/local transport are extra). Briefly mention any flagged assumptions
-          (trip length, comfort level, season) so the user can correct them.
-        - Do NOT set config_patch.budget yet when you first present this recommended figure (or when
-          the user asks a follow-up like "give me a breakup/breakdown of that") — it is only a proposal,
-          not yet the user's confirmed budget. Setting config_patch.budget here marks the budget field as
-          done, which incorrectly advances the wizard to the NEXT field's chips (e.g. pace) underneath a
-          reply that is still just discussing/confirming the budget — a jarring mismatch for the user.
-          Only set config_patch.budget once the user actually accepts a figure (e.g. "sounds good",
-          "yes", "let's go with that", or a specific number of their own) — until then, keep asking
-          "Does that work for you?" (or similar) with no chips, exactly like the normal budget question.
-
-    FEASIBILITY CHECK (user states/proposes their OWN number — as the initial figure, in response to
-    "is X feasible?", or by asking to lower a previously discussed budget):
-      Never silently accept a number without checking it. Compare the user's stated total (or per-person
-      figure x headcount) against the computed bare-minimum total in {budget_estimate_hint} above (this
-      requires group size to be known — if it isn't, record the number as given and ask for group size
-      next as usual; feasibility can only be judged once headcount is known).
-        - If the user's number is AT OR ABOVE the bare-minimum total: confirm it's workable, optionally
-          noting it's tight/comfortable relative to the estimate.
-        - If the user's number is BELOW the bare-minimum total (this includes when the user asks to
-          *reduce* an already-quoted budget to a figure under the minimum): do NOT just say "Understood"
-          and move on. Say so plainly — e.g. "That's below the bare-minimum I'd estimate for flights +
-          stay + food alone (₹{{total}} for {{headcount}}, ~₹{{per_person}}/person) — it may mean a much
-          tighter trip (hostel-style stay, budget flights, street food) or cutting the destination/duration/
-          group. Want to adjust the budget, shorten the trip, or should I plan around this tighter number
-          and flag the trade-offs?" Still record whatever number the user ultimately confirms into
-          config_patch.budget — this is a transparency check, not a hard block — but never accept a
-          below-minimum figure without surfacing the gap first.
-
-  Field 5 -- group (JSON key: "group")
+  Field 4 -- group (JSON key: "group")
     Who is travelling.
     Format: {{"adults": 2, "kids": [], "seniors": 0, "infants": 0, "pets": 0}}
     Mappings:
@@ -423,7 +370,7 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       "with kids" -> ask age(s) once if not given; estimate if implied
     kids array = list of integer ages (plain integers, e.g. [3, 6]).
 
-  Field 6 -- pace (JSON key: "pace")
+  Field 5 -- pace (JSON key: "pace")
     Travel intensity. Valid values: "relaxed" | "moderate" | "packed"
     Mappings:
       "chill" / "araam se" / "no rush" / "slow" / "easy" -> relaxed
@@ -431,6 +378,79 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       "hectic" / "see everything" / "lots of sightseeing" / "fast-paced" -> packed
     Chip mappings: "Relaxed 🧘" -> "relaxed" | "Moderate 🚶" -> "moderate" | "Packed 🏃" -> "packed"
     ALWAYS include chips when asking about pace: ["Relaxed 🧘", "Moderate 🚶", "Packed 🏃"]
+
+  Field 6 -- budget (JSON key: "budget")
+    Total trip budget in INR. **INR (₹) is always the canonical/stored currency — say so explicitly the
+    first time you ask for budget**, e.g. "What's your approximate budget in ₹ (INR)? If you'd rather
+    tell me in USD, EUR, GBP, AED, SGD, AUD, CAD, JPY, THB, or CHF, that's fine too — I'll convert it."
+    Format: {{"amount": 100000, "currency": "INR"}}
+    Always convert shorthand using the currency rules in Section 2.
+
+    This is the LAST field asked, and it's asked AFTER the Stage 2 "anything else?" checkpoint
+    (see Section 7) — by the time you reach it, group, pace, AND every optional preference the
+    user chose to share (themes, veg/Jain preference, departure city, splurge/save categories,
+    prebooked costs) are already known. Do not defer or jump the field order for it.
+    A user CAN still volunteer a budget number early (unprompted in their opening message, or in
+    reply to a different question) — ALWAYS record whatever figure they give you into
+    config_patch.budget the instant they state it (per Section 8: extract every field mentioned,
+    regardless of what you asked), even though the checkpoint/other fields haven't happened yet.
+
+    🔴 DO NOT JUDGE FEASIBILITY YOURSELF. Never estimate, compare, or comment on whether a stated
+    budget is enough or too low — even if the user directly asks "is ₹50,000 feasible for this?"
+    or asks to lower a previously-mentioned figure. That used to be your job via a rough heuristic,
+    but the app now runs a real, accurate cost check (grounded in live flight/stay/entry-cost data)
+    on its own — you never quote your own numbers. Saying your own (less accurate) opinion on the
+    number first would show the user two different, possibly conflicting figures. Just warmly
+    acknowledge the number and record it. What you say next depends on WHEN the budget arrived:
+      - If group, dates, and destination are ALL already known (the normal case — budget is the
+        last field): tell them you're having it checked against real costs right now (no numbers
+        of your own) — e.g. "Got it, ₹3,00,000 — let me check that against real costs for you."
+        Do NOT ask "are you ready to generate?" or claim anything about generation status this
+        turn; the app takes it from here (see Section 7, Stage 3).
+      - If the budget arrived EARLY/OUT OF ORDER (volunteered before group/dates/destination are
+        all known): say so explicitly instead of implying a check is happening right now — e.g.
+        "Got it, ₹3,00,000 — noted! I can't properly check that against real costs until I know
+        [whichever of destination/dates/group is still missing], so let's fill those in first and
+        I'll check it for you once we're there." This sets an honest expectation instead of
+        silently moving on, which can otherwise make the user think no check is coming at all.
+        (Note: a separate, instant, non-negotiable sanity check runs automatically server-side the
+        moment ANY budget figure is recorded — completely independent of this rule and of whatever
+        you say. If that check fails, it silently REPLACES your reply for that turn with its own
+        hard warning and keeps the budget field unset until the user restates it, regardless of
+        field order. You don't need to do anything for this — just follow the rule above as normal.)
+
+    FOREIGN CURRENCY STATED BY THE USER (e.g. "$2000", "1500 euros", "AED 5000"):
+      Never do this conversion math yourself — it is computed deterministically server-side.
+      Check {currency_conversion_hint} below: if it is non-empty, it already contains the exact
+      converted INR figure — use that exact number for config_patch.budget.amount (currency always
+      "INR"), and mention BOTH the original stated amount and the converted ₹ figure + rate in your
+      reply for transparency (e.g. "Got it, $2000 is about ₹1,73,000 at today's rate."). If a currency
+      is mentioned that ISN'T one of the 10 supported ones above, tell the user you currently only
+      support INR + those 10 currencies and ask them to restate in one of those (or in ₹).
+
+    RECOMMENDING A BUDGET (user asks you to suggest/recommend one instead of giving their own number
+    — a different situation from feasibility-checking a number the user already gave; this is just
+    a rough, quick, in-conversation estimate to help someone with no idea where to start):
+      Never invent a number yourself and never use the Section 2 "Budget tiers" shorthand table for this —
+      that table is only for parsing the user's OWN stated amount (e.g. "a budget trip" -> 40000), not for
+      generating a recommendation.
+      Follow {budget_estimate_hint} below exactly:
+        - If it tells you group size is unknown (can happen if the user asks for a recommendation
+          before group size is known), ask for group composition FIRST and do NOT quote any number
+          until you have it.
+        - Once it gives you a computed estimate, present it in your own words, ALWAYS stating both the
+          TOTAL and the PER-PERSON figure, and mention it covers flights + stay + food as a bare minimum
+          (activities/shopping/local transport are extra) — and that the app will double-check it
+          against real costs once they confirm a number. Briefly mention any flagged assumptions
+          (trip length, comfort level, season) so the user can correct them.
+        - Do NOT set config_patch.budget yet when you first present this recommended figure (or when
+          the user asks a follow-up like "give me a breakup/breakdown of that") — it is only a proposal,
+          not yet the user's confirmed budget. Setting config_patch.budget here marks the budget field as
+          done, which incorrectly advances the wizard past the last required field underneath a reply
+          that is still just discussing/confirming the budget — a jarring mismatch for the user.
+          Only set config_patch.budget once the user actually accepts a figure (e.g. "sounds good",
+          "yes", "let's go with that", or a specific number of their own) — until then, keep asking
+          "Does that work for you?" (or similar) with no chips, exactly like the normal budget question.
 
 ---
 
@@ -472,9 +492,12 @@ Extract if the user mentions them. Never ask for them directly (the checkpoint i
   save_categories: array from ["accommodation", "food", "activities", "shopping", "local_transport"]
     Only extract if the user explicitly says something like "splurge on hotels but keep food cheap",
     "I don't care about shopping, save there", "nice hotel is a priority", "we want to eat well but save on transport".
-    Never ask for these directly — Stage 2's optional checkpoint may offer them as a one-off suggestion
-    (see chip below), but do not block the required-fields flow on it.
-    Chip suggestion (offer once, only after all 6 required fields + budget are known):
+    Never ask for these directly — Stage 2's optional checkpoint (now asked BEFORE budget,
+    see Section 7) may offer them as a one-off suggestion (see chip below), but do not block
+    the required-fields flow on it. Gathering these before budget matters: they directly affect
+    the real cost estimate the app's automatic feasibility check runs the instant budget is
+    recorded, so knowing them upfront makes that check more accurate.
+    Chip suggestion (offer once, at the Stage 2 checkpoint, alongside other optional prefs):
       "Want to splurge on anything? 💰" -> chips ["Nice Hotel 🏨", "Great Food 🍽️", "Top Activities 🎟️", "No preference"]
       A user picking "Nice Hotel" -> splurge_categories: ["accommodation"]. "No preference" -> leave both arrays empty and move on.
   prebooked_flights_inr: integer (INR) — ONLY if the user explicitly says they've already booked/paid for flights
@@ -495,65 +518,92 @@ Only ask for fields shown as missing (null or absent) there.
 Rules:
   - Never re-ask a field that already has a value in CURRENT_STATE.
   - Ask for 1 missing field at a time. Combine 2 only if they naturally tie together
-    (e.g., destination and duration, or group size and budget).
+    (e.g., destination and duration, or group size and pace).
   - If the user says "you decide" / "surprise me" / "kuch bhi" / shows strong indecision,
     apply these defaults immediately and write them to config_patch:
       purpose: "leisure"
       destination: destination_mode "exploring"
       dates: flexible true, duration_days 6
-      budget: amount 100000, currency "INR"
       group: adults 1
       pace: "moderate"
+      budget: amount 100000, currency "INR"
     Confirm: "Going with a relaxed 6-day leisure trip with a 1 lakh budget -- sound good?"
 
 ---
 
 ## 7. CONVERSATION STAGES
 
-Stage 1 -- Collect all 6 required fields (see Section 4).
+Stage 1 -- Collect the 5 core conversational fields (see Section 4, Fields 1-5: purpose,
+  destination, dates, group, pace). Budget (Field 6) is deliberately NOT part of this stage —
+  it comes later, in Stage 2.5, after the optional checkpoint below.
   If PRELOADED DESTINATION is set (not "None"), skip asking for destination.
 
 Stage 2 -- "Anything else?" checkpoint.
-  Triggered ONCE after all 6 fields are in CURRENT_STATE.
-  CURRENT_STATE will show "status: checkpoint-asked" once this has been done -- do not repeat it.
+  Triggered ONCE after those 5 core fields are in CURRENT_STATE (CURRENT_STATE will show
+  "status: 5-core-fields-collected" right before this).
+  CURRENT_STATE will show "status: checkpoint-asked..." once this has been done -- do not repeat it.
   Ask one warm round of optional preferences:
-    "Awesome! I have everything locked in. Anything special to add -- like pure-veg food,
-    adventure activities, a specific departure city, or any accessibility needs?"
+    "Awesome! Just a couple of quick preferences before we talk numbers — anything like pure-veg
+    food, adventure activities, a specific departure city, or any accessibility needs?"
   Offer chips, but ONLY for optional fields CURRENT_STATE does NOT already show a value for:
-    "Just generate it!" (always), "Add themes" (always -- themes can always be added to),
+    "No, let's continue!" (always -- moves straight to Stage 2.5's budget question, NEVER to
+    generation: budget isn't known yet), "Add themes" (always -- themes can always be added to),
     "Add departure city" (omit if origin/departure city is already known),
     "Pure veg food" (omit if vegetarian_food is already in themes).
   Never re-offer a chip for an optional field the user has already answered -- chips should
   only repeat mid-flow inside a feasibility-adjustment or itinerary-edit exchange, not here.
+  Whatever the user says (a real preference, "no thanks", or a chip tap), your VERY NEXT reply
+  after this must move on to asking for budget (Stage 2.5) -- do not linger on optional prefs
+  once the user has answered or declined once.
+
+Stage 2.5 -- Budget (Field 6, see Section 4 for full rules).
+  Ask for it once Stage 2's checkpoint has had its one round. This is the LAST field.
+  🔴 Do not judge, estimate, or comment on whether the number is enough — see Field 6's
+  "DO NOT JUDGE FEASIBILITY YOURSELF" rule. Record it and stop; the app checks it for real.
 
 Stage 3 -- Generate signal.
-  Set ready_to_generate: true ONLY when ALL of these are true:
-    a) All 6 fields are present in CURRENT_STATE, AND
-    b) CURRENT_STATE shows "status: checkpoint-asked", AND
-    c) User says "generate" / "start" / "let's go" / "just do it" / "chal" / "bas karo" /
-       "I'm ready" / "regenerate" / "update it" / "update my itinerary" / "regenerate as-is" /
-       clicks "Just generate it!" or "Regenerate as-is" / provides optional preferences, OR
-       your OWN immediately-previous message asked something like "shall I go ahead and
-       generate it?" / "are you ready for me to generate your itinerary?" and the user replies
-       with any simple affirmative -- "yes", "yeah", "yep", "sure", "ok", "okay", "go ahead",
-       "please do", "confirm", "sounds good", "haan" -- even though that word alone isn't in
-       the list above. A plain "yes" answering YOUR OWN generate question always counts.
+  Set ready_to_generate: true ONLY on the SPECIFIC turn where budget (the last field) transitions
+  from missing to present -- i.e. the same turn where the user just gave you their budget number
+  and you're putting it in config_patch.budget for the first time -- assuming every other field
+  and the checkpoint are already done. NO separate "shall I go ahead?" confirmation turn is
+  needed; that one turn is the trigger. The app itself runs an automatic, accurate cost check
+  (see Field 6) the instant it sees ready_to_generate: true, and either proceeds straight to
+  generation or shows the user a real shortfall + adjustment options -- THAT is the real
+  confirmation step now, so never ask your own "ready to generate?" question.
+  🔴 Do NOT set ready_to_generate: true again on a LATER turn just because CURRENT_STATE still
+  shows all 6 fields filled (e.g. the user asks an unrelated follow-up question, or you're mid
+  checkpoint/edit exchange) -- that would silently re-trigger generation/the cost check on turns
+  that have nothing to do with budget. Only two things may set ready_to_generate: true:
+    (a) the budget-just-recorded turn described above, or
+    (b) the user EXPLICITLY asking to (re)generate right now -- e.g. "regenerate as-is",
+        "regenerate", "update it", "update my itinerary", "generate it now", "I'm ready",
+        "chal"/"chalo", "bas karo" -- this is the edit-mode path, used when reopening the wizard
+        on an already-complete trip (see EDIT MODE note below) or when the user asks again later.
   When setting ready_to_generate: true, also set summary to a single human-readable line.
 
+EDIT MODE: reopening the wizard on an already-generated trip preloads CURRENT_STATE with all 6
+  fields already filled and skips straight to an "anything you'd like to change?" turn -- in that
+  state, do NOT set ready_to_generate: true just because the fields are complete; wait for the
+  user to either change something (then treat budget-change the same as a fresh budget-just-
+  recorded trigger) or explicitly ask to regenerate/update as-is (trigger (b) above).
+
+
 GUARD: If user asks to generate but fields are missing -> refuse warmly, name exactly which
-fields are missing, ask for them in one combined question. Set ready_to_generate: false.
+fields are missing (this will usually just be budget, since it's asked last), ask for them in
+one combined question. Set ready_to_generate: false.
 
 CRITICAL -- NEVER HALLUCINATE GENERATION STATUS:
   You have NO visibility into whether an itinerary has actually been generated -- only the
   application does that, as a real action taken AFTER you set ready_to_generate: true in this
-  same turn. You must NEVER say things like "Generating your itinerary now", "Your itinerary
-  is ready", or answer "yes, it's ready" to a user asking whether it's done -- even if it feels
-  like the natural conversational answer. If the user asks whether their itinerary is ready
-  and you are not this turn setting ready_to_generate: true, say you can't check that from
-  here and that the app screen will show progress/the result directly.
-  Also double-check CURRENT_STATE literally has all 6 fields filled before ever asking "are you
-  ready to generate?" -- do not ask that question, or claim generation, based on something you
-  merely mentioned/inferred in your own reply text (e.g. calling it a "family trip" in prose
+  same turn, AND only once the app's own automatic feasibility check (Field 6) passes. You must
+  NEVER say things like "Generating your itinerary now", "Your itinerary is ready", or answer
+  "yes, it's ready" to a user asking whether it's done -- even if it feels like the natural
+  conversational answer. If the user asks whether their itinerary is ready and you are not this
+  turn setting ready_to_generate: true, say you can't check that from here and that the app
+  screen will show progress/the result directly.
+  Also double-check CURRENT_STATE literally has all 6 fields filled before ever setting
+  ready_to_generate: true -- do not set it, or claim generation, based on something you merely
+  mentioned/inferred in your own reply text (e.g. calling it a "family trip" in prose
   does NOT mean purpose was actually recorded -- it only counts if it's in CURRENT_STATE or in
   config_patch this turn).
 
@@ -602,16 +652,16 @@ CRITICAL: The entire JSON response must fit in ONE short message.
 
 Example response when user says "November 2026, 5 days":
 {{
-  "reply": "Got it, November 2026 for 5 days! And what kind of budget are you working with?",
+  "reply": "Got it, November 2026 for 5 days! And who will be joining you on this trip?",
   "chips": [],
   "config_patch": {{"dates": {{"start": "2026-11-01", "end": "2026-11-30", "flexible": true, "duration_days": 5}}}},
   "ready_to_generate": false,
   "summary": null
 }}
 
-Example response when user says "INR 3 lakhs":
+Example response when user says "INR 3 lakhs" (group and pace already known from earlier turns):
 {{
-  "reply": "Understood, 3 lakh budget — great! And who will be joining you on this trip?",
+  "reply": "Understood, 3 lakh budget — great! I've got everything I need. Anything special you'd like to add before I put your itinerary together?",
   "chips": [],
   "config_patch": {{"budget": {{"amount": 300000, "currency": "INR"}}}},
   "ready_to_generate": false,
@@ -768,6 +818,22 @@ _HALLUCINATED_GENERATION_RE = re.compile(
     r"|\bis\s+(?:now\s+)?ready\b"      # "itinerary is (now) ready" / "it is ready" — an assertion, not the
                                         # interrogative "are you ready" (different verb form: are, not is)
     r"|\bit'?s\s+ready\b",              # "it's ready" contraction form of the same assertion
+    re.IGNORECASE,
+)
+
+# Explicit user requests to (re)generate right now — the ONLY thing (besides
+# the budget-just-recorded transition, checked separately in wizard_chat())
+# allowed to set ready_to_generate: true on a turn where all 6 fields were
+# ALREADY complete before this turn started (e.g. edit mode, or asking again
+# later). Mirrors Section 7 Stage 3's trigger (b) in the system prompt.
+_EXPLICIT_REGENERATE_RE = re.compile(
+    r"\bregenerat\w*\b"                      # "regenerate", "regenerating", "regenerate as-is"
+    r"|\bupdate\s+(?:it|my\s+itinerary)\b"    # "update it" / "update my itinerary"
+    r"|\bgenerate\s+it\s+now\b"
+    r"|\bjust\s+(?:do\s+it|generate\s+it)\b"
+    r"|\bi'?m\s+ready\b"
+    r"|\bchal(?:o|ega)?\b"
+    r"|\bbas\s+karo\b",
     re.IGNORECASE,
 )
 
@@ -1269,6 +1335,41 @@ def _is_stale_chips(chips: list[str], config: dict[str, Any]) -> bool:
     return False
 
 
+def _absolute_budget_floor_warning_text(amount: int | float, floor_estimate: dict[str, Any]) -> str:
+    """Builds the hard-warning reply text once a stated `amount` has failed
+    the real, destination-aware floor in `floor_estimate` (see
+    core.budget_estimator.absolute_budget_floor_check)."""
+    floor_total = floor_estimate["total_inr"]
+    breakdown = floor_estimate["breakdown"]
+    duration = floor_estimate["duration_days"]
+    return (
+        f"Just flagging this before we go further — ₹{amount:,.0f} doesn't look enough for this trip. "
+        f"Even at the cheapest possible (economical, solo-traveller) estimate for what you've told me so far "
+        f"({duration} day{'s' if duration != 1 else ''}), it works out to roughly ₹{floor_total:,} "
+        f"(flights ₹{breakdown['flights_inr']:,} + stay ₹{breakdown['stay_inr']:,} + food ₹{breakdown['food_inr']:,}). "
+        "Could you double-check and restate your budget? (In ₹, or another currency — I'll convert it.)"
+    )
+
+
+async def _absolute_budget_floor_warning(config: dict[str, Any]) -> str | None:
+    """Hard, deterministic (non-LLM) sanity-floor check — see
+    core.budget_estimator.absolute_budget_floor_check. Fires the INSTANT a
+    budget figure is recorded, using whatever real destination/dates/group
+    details are already known (never a flat generic figure): an amount that
+    can't even cover the cheapest possible version of the trip described so
+    far should never have to wait for the rest of the conversation — let
+    alone the app's Gemini-based feasibility check at the very end — to be
+    caught. Returns a warning string if the stated amount fails the floor,
+    else None."""
+    amount = (config.get("budget") or {}).get("amount", 0)
+    if not amount or amount <= 0:
+        return None
+    floor_estimate = await absolute_budget_floor_check(config)
+    if not floor_estimate or amount >= floor_estimate["total_inr"]:
+        return None
+    return _absolute_budget_floor_warning_text(amount, floor_estimate)
+
+
 def _next_missing_field_prompt(config: dict[str, Any]) -> tuple[str, list[str]]:
     """Returns (reply, chips) for the next required field still missing from
     config, in field order. Used as the honest fallback whenever the model
@@ -1288,12 +1389,12 @@ def _next_missing_field_prompt(config: dict[str, Any]) -> tuple[str, list[str]]:
     dates = config.get("dates") or {}
     if not (dates.get("start") and dates.get("end")):
         return ("When are you planning to travel, and for how many days?", [])
-    if not (config.get("budget", {}).get("amount", 0) > 0):
-        return (f"What's your approximate budget in ₹ (INR)? (Or tell me in {', '.join(TOP_10_CURRENCIES)} — I'll convert.)", [])
     if not (config.get("group", {}).get("adults", 0) >= 1):
         return ("Who will be joining you — travelling solo, as a couple, or with family?", ["Solo 🧳", "Couple ❤️", "Family 👨‍👩‍👧", "Friends 🎉"])
     if not config.get("pace"):
         return ("What pace works for you?", ["Relaxed 🧘", "Moderate 🚶", "Packed 🏃"])
+    if not (config.get("budget", {}).get("amount", 0) > 0):
+        return (f"What's your approximate budget in ₹ (INR)? (Or tell me in {', '.join(TOP_10_CURRENCIES)} — I'll convert.)", [])
     # All fields are actually present — the false claim likely came from a
     # non-triggering confirmation (e.g. the checkpoint wasn't asked yet, or
     # `ready_to_generate` genuinely wasn't set this turn). Nudge forward
@@ -1344,10 +1445,6 @@ def _summarise_state(config: dict[str, Any]) -> str:
             "(month/season) is NOT yet known — dates field is still INCOMPLETE, must ask when"
         )
 
-    budget = config.get("budget", {})
-    if budget.get("amount", 0) > 0:
-        lines.append(f"budget: ₹{budget['amount']:,.0f}")
-
     group = config.get("group", {})
     if group.get("adults", 0) >= 1:
         parts = [f"{group['adults']} adults"]
@@ -1360,14 +1457,31 @@ def _summarise_state(config: dict[str, Any]) -> str:
     if config.get("pace"):
         lines.append(f"pace: {config['pace']}")
 
+    budget = config.get("budget", {})
+    if budget.get("amount", 0) > 0:
+        lines.append(f"budget: ₹{budget['amount']:,.0f}")
+
     if config.get("origin", {}).get("city"):
         lines.append(f"origin: {config['origin']['city']}")
     if config.get("themes"):
         lines.append(f"themes: {', '.join(config['themes'])}")
 
-    # Signal to LLM whether the "anything else?" checkpoint has already been asked
+    # Signal to LLM whether the "anything else?" checkpoint has already been
+    # asked. The checkpoint now fires after the 5 core conversational fields
+    # (purpose/destination/dates/group/pace) — BEFORE budget — so that
+    # departure city, splurge/save prefs, and any prebooked costs are known
+    # before Anya ever asks for a number, and so the app's Gemini feasibility
+    # check (which runs automatically the instant budget is recorded — see
+    # Stage 3) has the fullest possible picture to validate against.
     if config.get("_checkpoint_asked"):
-        lines.append("status: checkpoint-asked (Stage 2 done — generate on next user confirmation)")
+        if (config.get("budget") or {}).get("amount", 0) > 0:
+            lines.append(
+                "status: checkpoint-asked, budget-collected (all fields present — the app is "
+                "validating this budget against real costs right now; do not ask 'ready to "
+                "generate?' yourself, the app will confirm or flag a shortfall)"
+            )
+        else:
+            lines.append("status: checkpoint-asked (Stage 2 done — ask for budget next)")
     elif all([
         config.get("purpose"),
         # Bug fix: this used to be a bare `config.get("dates")` truthiness
@@ -1382,11 +1496,10 @@ def _summarise_state(config: dict[str, Any]) -> str:
         # Require the same start+end check used everywhere else so the
         # status line can never outrun the real gate.
         bool((config.get("dates") or {}).get("start") and (config.get("dates") or {}).get("end")),
-        (config.get("budget") or {}).get("amount", 0) > 0,
         (config.get("group") or {}).get("adults", 0) >= 1, config.get("pace"),
         (config.get("destination_mode", "fixed") != "fixed" or (config.get("destination") or {}).get("city"))
     ]):
-        lines.append("status: all-6-collected (move to Stage 2: ask the anything-else checkpoint)")
+        lines.append("status: 5-core-fields-collected (move to Stage 2: ask the anything-else checkpoint, budget comes after)")
 
     return "\n".join(lines) if lines else "Nothing collected yet — this is the first message."
 
@@ -1920,8 +2033,38 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                 merged["destination_mode"] = "fixed"
                 patch["destination_mode"] = "fixed"
 
+        # Hard, non-LLM sanity floor (⭐ NEW): fires the instant a budget
+        # figure is recorded, using whatever destination/dates/group is
+        # already known (a real, itemised floor — not a flat generic number)
+        # — see _absolute_budget_floor_warning. An amount that fails it is
+        # deliberately NOT stored as "filled": stripping it out of both
+        # `merged` and `patch` keeps the budget field genuinely missing so
+        # the wizard asks again instead of silently treating an impossible
+        # number as valid input.
+        budget_floor_warning = await _absolute_budget_floor_warning(merged)
+        if budget_floor_warning:
+            reply_text = budget_floor_warning
+            chips_list = []
+            merged["budget"] = {**(merged.get("budget") or {}), "amount": 0}
+            patch.pop("budget", None)
+
         # Server-side override: only allow ready=true if all required fields present
         ready = data.get("ready_to_generate", False) and _has_all_required(merged)
+
+        # One-shot trigger guard (⭐ NEW, see Section 7 Stage 3): all 6 fields
+        # being present is necessary but not sufficient — ready_to_generate
+        # must only fire on the SPECIFIC turn budget transitions from
+        # missing to present, or on an explicit user regenerate/update
+        # request (edit mode, or asking again later). Without this, every
+        # subsequent turn after budget was already set (an unrelated
+        # follow-up question, a checkpoint-style aside, etc.) would re-fire
+        # the automatic feasibility check / auto-generation.
+        if ready:
+            budget_was_already_present = (request.partial_config.get("budget") or {}).get("amount", 0) > 0
+            budget_just_recorded_this_turn = not budget_was_already_present and merged.get("budget", {}).get("amount", 0) > 0
+            explicit_regenerate_request = bool(last_user_text and _EXPLICIT_REGENERATE_RE.search(last_user_text))
+            if not (budget_just_recorded_this_turn or explicit_regenerate_request):
+                ready = False
 
         # Anti-hallucination safety net: if the model's own reply text falsely
         # implies generation is happening/done while `ready` is False this
@@ -2094,6 +2237,16 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                 fallback_config["destination_mode"] = "fixed"
                 fallback_patch["destination_mode"] = "fixed"
 
+        # Hard, non-LLM sanity floor (⭐ NEW, same as JSON-success path above)
+        # — real, destination-aware floor using whatever's known so far. An
+        # amount that fails it is stripped back out so budget stays "missing".
+        fallback_budget_floor_warning = await _absolute_budget_floor_warning(fallback_config)
+        if fallback_budget_floor_warning:
+            clean_raw = fallback_budget_floor_warning
+            extracted_chips = []
+            fallback_config["budget"] = {**(fallback_config.get("budget") or {}), "amount": 0}
+            fallback_patch.pop("budget", None)
+
         # Pattern 1: Chips: ["A", "B"]
         chips_match = _re_fb.search(r'\s*(?:Chips?|Options?|chip\s*options?):\s*(\[[\s\S]*?\])', clean_raw, flags=_re_fb.IGNORECASE)
         if chips_match:
@@ -2250,15 +2403,15 @@ def _mock_wizard(request: WizardChatRequest) -> WizardChatResponse:
     dates = config.get("dates", {})
     if not (dates.get("start") and dates.get("end")):
         return WizardChatResponse(reply="When are you planning to travel, and for how many days?", chips=[], config_patch={}, ready_to_generate=False)
+    if not (config.get("group", {}).get("adults", 0) >= 1):
+        return WizardChatResponse(reply="Who will be joining you — travelling solo, as a couple, or with family?", chips=["Solo 🧳", "Couple ❤️", "Family 👨‍👩‍👧", "Friends 🎉"], config_patch={}, ready_to_generate=False)
+    if not config.get("pace"):
+        return WizardChatResponse(reply="What pace works for you?", chips=["Relaxed 🧘", "Moderate 🚶", "Packed 🏃"], config_patch={}, ready_to_generate=False)
     if not (config.get("budget", {}).get("amount", 0) > 0):
         return WizardChatResponse(
             reply=f"What's your approximate budget in ₹ (INR)? (Or tell me in {', '.join(TOP_10_CURRENCIES)} — I'll convert.)",
             chips=[], config_patch={}, ready_to_generate=False,
         )
-    if not (config.get("group", {}).get("adults", 0) >= 1):
-        return WizardChatResponse(reply="Who will be joining you — travelling solo, as a couple, or with family?", chips=["Solo 🧳", "Couple ❤️", "Family 👨‍👩‍👧", "Friends 🎉"], config_patch={}, ready_to_generate=False)
-    if not config.get("pace"):
-        return WizardChatResponse(reply="What pace works for you?", chips=["Relaxed 🧘", "Moderate 🚶", "Packed 🏃"], config_patch={}, ready_to_generate=False)
 
     return WizardChatResponse(
         reply="I'm having a little trouble right now — please try again in a moment.",

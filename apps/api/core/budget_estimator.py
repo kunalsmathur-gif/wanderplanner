@@ -716,6 +716,44 @@ async def estimate_bare_minimum_budget(
     }
 
 
+async def absolute_budget_floor_check(trip_config: dict[str, Any]) -> dict[str, Any] | None:
+    """Real, destination-aware absolute floor for a stated budget — a hard,
+    deterministic (non-LLM) sanity check meant to catch an impossible number
+    the INSTANT it's stated (e.g. "₹12,000 for 5 days in Bali"), using
+    whatever real trip details (destination, dates, group) already happen to
+    be known, rather than a flat generic per-person figure. This is the
+    cheapest-possible-case counterpart to estimate_bare_minimum_budget()
+    above; the two differ in exactly two ways, both there to guarantee this
+    always models the BEST case (so a flag here means the trip is genuinely
+    impossible, not just tight):
+      - never returns None for unknown group size — assumes a single solo
+        adult (the cheapest possible headcount) instead of asking the caller
+        to wait for group composition.
+      - always forces the "economical" traveller tier (the cheapest cost-
+        matrix row), ignoring any stated splurge/premium preference.
+    Whatever destination/dates ARE known are still used for real (grounded
+    flight/stay/food) numbers — this is not a flat ₹X/day constant.
+
+    Returns the same dict shape as estimate_bare_minimum_budget() (so callers
+    can build an itemised warning), or None on failure (e.g. a network
+    hiccup grounding community pricing) — never raises, so a bug here can't
+    block the conversation.
+    """
+    synthetic_config = dict(trip_config)
+    adults, kids, seniors, infants = _group_headcount(trip_config.get("group"))
+    if adults + kids + seniors + infants == 0:
+        synthetic_config["group"] = {**(trip_config.get("group") or {}), "adults": 1}
+    # Prebooked flight/accommodation costs describe a DIFFERENT (already-
+    # committed) spend than the hypothetical cheapest-possible trip this
+    # floor models from scratch — never let them leak into this estimate.
+    synthetic_config.pop("prebooked_flights_inr", None)
+    synthetic_config.pop("prebooked_accommodation_inr", None)
+    try:
+        return await estimate_bare_minimum_budget(synthetic_config, hint_text="economical bare minimum")
+    except Exception:
+        return None
+
+
 async def budget_estimate_prompt_hint(trip_config: dict[str, Any], hint_text: str | None = None) -> str:
     """Renders either (a) an instruction to ask for group size first, or
     (b) the computed estimate the LLM should present verbatim (in its own
