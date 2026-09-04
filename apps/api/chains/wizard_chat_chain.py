@@ -24,7 +24,10 @@ from core.llm_client import track_gemini_usage
 from core.validation import (
     MAX_CHAT_HISTORY,
     MAX_CITY_LEN,
+    MAX_KIDS,
+    MAX_PER_GROUP_FIELD,
     MAX_TRIP_CONTEXT_CHARS,
+    MAX_TRIP_DAYS,
     normalise_choice_fields,
     text_validator,
 )
@@ -1353,12 +1356,28 @@ def _absolute_budget_floor_warning_text(amount: int | float, floor_estimate: dic
         f"Just flagging this before we go further — ₹{amount:,.0f} doesn't look enough for this trip. "
         f"Even at the cheapest possible ({traveller_desc}) estimate for what you've told me so far "
         f"({duration} day{'s' if duration != 1 else ''}), it works out to roughly ₹{floor_total:,} "
-        f"(flights ₹{breakdown['flights_inr']:,} + stay ₹{breakdown['stay_inr']:,} + food ₹{breakdown['food_inr']:,}). "
-        "Could you double-check and restate your budget? (In ₹, or another currency — I'll convert it.)"
+        f"(flights ₹{breakdown['flights_inr']:,} + stay ₹{breakdown['stay_inr']:,} + food ₹{breakdown['food_inr']:,})."
     )
 
 
-async def _absolute_budget_floor_warning(config: dict[str, Any]) -> str | None:
+def _absolute_budget_floor_warning_chips(floor_estimate: dict[str, Any]) -> list[str]:
+    """Actionable next steps for a stated budget that failed the hard floor
+    — restating the SAME too-low number (as seen live: a user re-typing
+    "no change in budget") must not just re-show an identical wall of text
+    with nothing to click. Each chip is plain text the user can also type
+    verbatim; "Update budget..." matches _infer_budget_amount_from_free_text
+    deterministically, the other two are handled by the LLM as ordinary
+    free-text turns (shortening the trip / suggesting a cheaper
+    destination), same as the existing Gemini-feasibility-gate chips."""
+    floor_total = floor_estimate["total_inr"]
+    return [
+        f"Update budget to ₹{floor_total:,}",
+        "Help me shorten the trip instead",
+        "Suggest a cheaper destination instead",
+    ]
+
+
+async def _absolute_budget_floor_warning(config: dict[str, Any]) -> tuple[str, list[str]] | None:
     """Hard, deterministic (non-LLM) sanity-floor check — see
     core.budget_estimator.absolute_budget_floor_check. Fires the INSTANT a
     budget figure is recorded, using whatever real destination/dates/group
@@ -1366,15 +1385,130 @@ async def _absolute_budget_floor_warning(config: dict[str, Any]) -> str | None:
     can't even cover the cheapest possible version of the trip described so
     far should never have to wait for the rest of the conversation — let
     alone the app's Gemini-based feasibility check at the very end — to be
-    caught. Returns a warning string if the stated amount fails the floor,
-    else None."""
+    caught. Returns (warning_text, chips) if the stated amount fails the
+    floor, else None.
+
+    NOTE: the two call sites in wizard_chat() below no longer call this
+    directly (they need the raw floor_estimate for _high_budget_sanity_warning
+    too, so they call absolute_budget_floor_check() themselves) — kept as a
+    standalone helper since it's a clean, independently testable unit."""
     amount = (config.get("budget") or {}).get("amount", 0)
     if not amount or amount <= 0:
         return None
     floor_estimate = await absolute_budget_floor_check(config)
     if not floor_estimate or amount >= floor_estimate["total_inr"]:
         return None
-    return _absolute_budget_floor_warning_text(amount, floor_estimate)
+    return _absolute_budget_floor_warning_text(amount, floor_estimate), _absolute_budget_floor_warning_chips(floor_estimate)
+
+
+# ── Hard capacity limits (⭐ NEW) ──────────────────────────────────────────
+# The backend's actual generation endpoint (models.trip.TripConfig, built
+# from core.validation's MAX_* constants) silently accepts anything through
+# the ENTIRE wizard conversation — group size, trip duration, and budget
+# amount are all stored as freeform dicts here with zero validation — and
+# only rejects an out-of-range value with a raw Pydantic error message at
+# the very last step (clicking "Generate my itinerary"), by which point the
+# user has already answered every other question. These three checks catch
+# the three real limits (group headcount, trip duration, budget-vs-scale
+# sanity) the INSTANT the disqualifying value is stated, with a clear
+# explanation and actionable next steps — mirroring the absolute-budget-
+# floor pattern above, including the same "only re-check images the turn it
+# was actually just stated/changed" gating at the call site.
+def _group_size_limit_warning(group: dict[str, Any] | None) -> tuple[str, list[str]] | None:
+    """Anya can plan for reasonably large groups, but not literally
+    unlimited ones — group.adults/seniors/infants/pets each cap at
+    MAX_PER_GROUP_FIELD (30) and kids at MAX_KIDS (20) in models.trip.
+    Returns (message, chips) if a stated group breaches either cap, so a
+    "trip for 100 people" is flagged the moment it's said, not after every
+    other question has already been answered."""
+    group = group or {}
+    adults = int(group.get("adults") or 0)
+    seniors = int(group.get("seniors") or 0)
+    infants = int(group.get("infants") or 0)
+    pets = int(group.get("pets") or 0)
+    kids_raw = group.get("kids") or []
+    kids = len(kids_raw) if isinstance(kids_raw, list) else int(kids_raw or 0)
+
+    over_person_fields = [
+        (label, count) for label, count in
+        [("adults", adults), ("seniors", seniors), ("infants", infants), ("pets", pets)]
+        if count > MAX_PER_GROUP_FIELD
+    ]
+    over_kids = kids > MAX_KIDS
+    if not over_person_fields and not over_kids:
+        return None
+
+    total = adults + seniors + infants + kids
+    parts = [f"{count} {label}" for label, count in over_person_fields]
+    if over_kids:
+        parts.append(f"{kids} kids")
+    breached = " and ".join(parts)
+    message = (
+        f"That's a big group — {total} people in total — and I can only plan for up to "
+        f"{MAX_PER_GROUP_FIELD} of each of adults/seniors/infants/pets, and up to {MAX_KIDS} kids, "
+        f"per trip ({breached} is over that). For a group this size, you're usually better off with a "
+        "dedicated group/event travel planner rather than a single personalised itinerary. "
+        f"Want to plan for a smaller group instead (up to {MAX_PER_GROUP_FIELD} of each type), or talk to a human "
+        "who can help arrange something for the full group?"
+    )
+    return message, [f"Plan for {MAX_PER_GROUP_FIELD} people instead", "Talk to a human instead 🧑‍💼"]
+
+
+def _trip_duration_limit_warning(dates: dict[str, Any] | None) -> tuple[str, list[str]] | None:
+    """Anya plans single trips, not multi-year travel plans — duration caps
+    at MAX_TRIP_DAYS (60) in models.trip/core.validation. Returns (message,
+    chips) if a stated trip is longer than that, so a "5-year trip" is
+    flagged the moment it's said, not after every other question has
+    already been answered."""
+    dates = dates or {}
+    duration = dates.get("duration_days")
+    start, end = dates.get("start"), dates.get("end")
+    if not duration and start and end:
+        try:
+            duration = (date.fromisoformat(str(end)[:10]) - date.fromisoformat(str(start)[:10])).days + 1
+        except (ValueError, TypeError):
+            duration = None
+    if not duration or duration <= MAX_TRIP_DAYS:
+        return None
+
+    message = (
+        f"That's a {duration}-day trip — I'm built for single trips of up to {MAX_TRIP_DAYS} days "
+        "(about 2 months), not multi-month or multi-year travel plans. For something that long, "
+        "you'd get much better results planning it as a series of shorter trips rather than one giant "
+        f"itinerary. Want to plan the first {MAX_TRIP_DAYS} days for now, or talk to a human about a longer-term plan?"
+    )
+    return message, [f"Plan the first {MAX_TRIP_DAYS} days instead", "Talk to a human instead 🧑‍💼"]
+
+
+def _high_budget_sanity_warning(config: dict[str, Any], floor_estimate: dict[str, Any] | None) -> tuple[str, list[str]] | None:
+    """The opposite end of the absolute-floor check above: an amount so far
+    beyond what the trip could plausibly need (e.g. ₹10 crore for a modest
+    weekend break) isn't invalid — Budget.amount only caps at ₹100 crore —
+    but a number that large is far more likely to be a typo (an extra zero,
+    or a currency mix-up) than a genuine luxury budget, and Anya should
+    flag it rather than silently plan against it. Uses the SAME
+    cheapest-possible floor already computed for the low-budget check as
+    its reference point, multiplied by a generous multiplier so an
+    intentional ultra-luxury trip is never wrongly flagged."""
+    amount = (config.get("budget") or {}).get("amount", 0)
+    if not amount or amount <= 0 or not floor_estimate:
+        return None
+    floor_total = floor_estimate["total_inr"]
+    # A real premium/luxury trip can easily run 5-10x the bare-minimum
+    # economical floor (better flights, 5-star stays, fine dining) — 25x
+    # is comfortably past even the most lavish genuine trip, so a number
+    # above that is almost certainly a data-entry mistake, not intent.
+    _SANITY_MULTIPLIER = 25
+    sanity_ceiling = floor_total * _SANITY_MULTIPLIER
+    if amount < sanity_ceiling:
+        return None
+    message = (
+        f"Just double-checking — ₹{amount:,.0f} is a huge amount for this trip (roughly "
+        f"{amount / floor_total:.0f}x even the cheapest possible estimate, ₹{floor_total:,}). "
+        "Did you mean to add an extra zero, or state it in a different currency? If this is genuinely "
+        "your budget, that's absolutely fine — just let me know and I'll proceed."
+    )
+    return message, [f"Yes, ₹{amount:,.0f} is correct", "No, let me restate my budget"]
 
 
 def _next_missing_field_prompt(config: dict[str, Any]) -> tuple[str, list[str]]:
@@ -2040,6 +2174,32 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                 merged["destination_mode"] = "fixed"
                 patch["destination_mode"] = "fixed"
 
+        # Hard capacity/sanity checks (⭐ NEW), same "only the turn something
+        # newly changed" gating as the budget-floor check below — group
+        # size, trip duration, and a suspiciously large budget are all
+        # accepted with zero validation everywhere else in this chain (see
+        # module comment above _group_size_limit_warning), and would
+        # otherwise only surface as a raw Pydantic 422 at the very last step
+        # (clicking Generate), after every other question has already been
+        # answered.
+        group_amount_pre_turn = request.partial_config.get("group") or {}
+        group_amount_post_turn = merged.get("group") or {}
+        group_newly_recorded_this_turn = group_amount_post_turn != group_amount_pre_turn and bool(group_amount_post_turn)
+        group_size_result = _group_size_limit_warning(merged.get("group")) if group_newly_recorded_this_turn else None
+        if group_size_result:
+            reply_text, chips_list = group_size_result
+            merged["group"] = {}
+            patch.pop("group", None)
+
+        dates_pre_turn = request.partial_config.get("dates") or {}
+        dates_post_turn = merged.get("dates") or {}
+        dates_newly_recorded_this_turn = dates_post_turn != dates_pre_turn and bool(dates_post_turn.get("start") or dates_post_turn.get("duration_days"))
+        duration_result = _trip_duration_limit_warning(merged.get("dates")) if (dates_newly_recorded_this_turn and not group_size_result) else None
+        if duration_result:
+            reply_text, chips_list = duration_result
+            merged["dates"] = {"start": None, "end": None, "flexible": False}
+            patch.pop("dates", None)
+
         # Hard, non-LLM sanity floor (⭐ NEW): fires the instant a budget
         # figure is recorded, using whatever destination/dates/group is
         # already known (a real, itemised floor — not a flat generic number)
@@ -2059,13 +2219,30 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # the user restating a new figure after a previous floor failure).
         budget_amount_pre_turn = (request.partial_config.get("budget") or {}).get("amount", 0)
         budget_amount_post_turn = (merged.get("budget") or {}).get("amount", 0)
-        budget_newly_recorded_this_turn = budget_amount_post_turn > 0 and budget_amount_post_turn != budget_amount_pre_turn
-        budget_floor_warning = await _absolute_budget_floor_warning(merged) if budget_newly_recorded_this_turn else None
-        if budget_floor_warning:
-            reply_text = budget_floor_warning
-            chips_list = []
+        budget_newly_recorded_this_turn = (
+            budget_amount_post_turn > 0 and budget_amount_post_turn != budget_amount_pre_turn
+            and not group_size_result and not duration_result
+        )
+        budget_floor_result = None
+        high_budget_result = None
+        if budget_newly_recorded_this_turn:
+            floor_estimate = await absolute_budget_floor_check(merged)
+            if floor_estimate and budget_amount_post_turn < floor_estimate["total_inr"]:
+                budget_floor_result = (
+                    _absolute_budget_floor_warning_text(budget_amount_post_turn, floor_estimate),
+                    _absolute_budget_floor_warning_chips(floor_estimate),
+                )
+            else:
+                high_budget_result = _high_budget_sanity_warning(merged, floor_estimate)
+        if budget_floor_result:
+            reply_text, chips_list = budget_floor_result
             merged["budget"] = {**(merged.get("budget") or {}), "amount": 0}
             patch.pop("budget", None)
+        elif high_budget_result:
+            # Not a hard block (a real ultra-luxury budget is allowed) — just
+            # flag it and let the user confirm; the amount stays recorded so
+            # the conversation isn't blocked while they answer.
+            reply_text, chips_list = high_budget_result
 
         # Server-side override: only allow ready=true if all required fields present
         ready = data.get("ready_to_generate", False) and _has_all_required(merged)
@@ -2265,6 +2442,30 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                 fallback_config["destination_mode"] = "fixed"
                 fallback_patch["destination_mode"] = "fixed"
 
+        # Hard capacity/sanity checks (⭐ NEW, same as JSON-success path above).
+        fallback_group_pre_turn = request.partial_config.get("group") or {}
+        fallback_group_post_turn = fallback_config.get("group") or {}
+        fallback_group_newly_recorded = fallback_group_post_turn != fallback_group_pre_turn and bool(fallback_group_post_turn)
+        fallback_group_size_result = _group_size_limit_warning(fallback_config.get("group")) if fallback_group_newly_recorded else None
+        if fallback_group_size_result:
+            clean_raw, extracted_chips = fallback_group_size_result
+            fallback_config["group"] = {}
+            fallback_patch.pop("group", None)
+
+        fallback_dates_pre_turn = request.partial_config.get("dates") or {}
+        fallback_dates_post_turn = fallback_config.get("dates") or {}
+        fallback_dates_newly_recorded = fallback_dates_post_turn != fallback_dates_pre_turn and bool(
+            fallback_dates_post_turn.get("start") or fallback_dates_post_turn.get("duration_days")
+        )
+        fallback_duration_result = (
+            _trip_duration_limit_warning(fallback_config.get("dates"))
+            if (fallback_dates_newly_recorded and not fallback_group_size_result) else None
+        )
+        if fallback_duration_result:
+            clean_raw, extracted_chips = fallback_duration_result
+            fallback_config["dates"] = {"start": None, "end": None, "flexible": False}
+            fallback_patch.pop("dates", None)
+
         # Hard, non-LLM sanity floor (⭐ NEW, same as JSON-success path above)
         # — real, destination-aware floor using whatever's known so far. An
         # amount that fails it is stripped back out so budget stays "missing".
@@ -2272,15 +2473,25 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         fallback_budget_amount_post_turn = (fallback_config.get("budget") or {}).get("amount", 0)
         fallback_budget_newly_recorded_this_turn = (
             fallback_budget_amount_post_turn > 0 and fallback_budget_amount_post_turn != fallback_budget_amount_pre_turn
+            and not fallback_group_size_result and not fallback_duration_result
         )
-        fallback_budget_floor_warning = (
-            await _absolute_budget_floor_warning(fallback_config) if fallback_budget_newly_recorded_this_turn else None
-        )
-        if fallback_budget_floor_warning:
-            clean_raw = fallback_budget_floor_warning
-            extracted_chips = []
+        fallback_budget_floor_result = None
+        fallback_high_budget_result = None
+        if fallback_budget_newly_recorded_this_turn:
+            fallback_floor_estimate = await absolute_budget_floor_check(fallback_config)
+            if fallback_floor_estimate and fallback_budget_amount_post_turn < fallback_floor_estimate["total_inr"]:
+                fallback_budget_floor_result = (
+                    _absolute_budget_floor_warning_text(fallback_budget_amount_post_turn, fallback_floor_estimate),
+                    _absolute_budget_floor_warning_chips(fallback_floor_estimate),
+                )
+            else:
+                fallback_high_budget_result = _high_budget_sanity_warning(fallback_config, fallback_floor_estimate)
+        if fallback_budget_floor_result:
+            clean_raw, extracted_chips = fallback_budget_floor_result
             fallback_config["budget"] = {**(fallback_config.get("budget") or {}), "amount": 0}
             fallback_patch.pop("budget", None)
+        elif fallback_high_budget_result:
+            clean_raw, extracted_chips = fallback_high_budget_result
 
         # Pattern 1: Chips: ["A", "B"]
         chips_match = _re_fb.search(r'\s*(?:Chips?|Options?|chip\s*options?):\s*(\[[\s\S]*?\])', clean_raw, flags=_re_fb.IGNORECASE)
