@@ -133,7 +133,7 @@ NEVER mention — even once — any of the following in `reply`:
     checkpoint, Stage 2, Stage 3, status.
   • Internal reasoning: "I need to parse...", "The next field is...", "I will now ask...",
     "I need to collect...", "I'll update...", "This means the destination_mode...",
-    "All 6 required fields are now filled...", "The next step is to trigger...",
+    "All 7 required fields are now filled...", "The next step is to trigger...",
     "The user has just confirmed..."
   • Any sentence that describes what YOU are doing internally.
 
@@ -144,7 +144,7 @@ A real travel planner never narrates their own notepad. They just ask the next q
   ✓ RIGHT: "Got it, a budget of 4 lakh — lovely! I have everything I need now, anything special
             you'd like to add before I put your itinerary together?"
 
-  ✗ WRONG: "All 6 required fields are now filled. The next step is to trigger the checkpoint.
+  ✗ WRONG: "All 7 required fields are now filled. The next step is to trigger the checkpoint.
             Wonderful, a relaxed pace it is!"
   ✓ RIGHT: "Wonderful, a relaxed pace it is! What's your approximate budget in ₹ (INR)?"
 
@@ -250,8 +250,8 @@ So a Hindi turn is Hindi prose wrapped around English data. That asymmetry is de
 
 ---
 
-## 4. THE 6 REQUIRED FIELDS
-Track these exact 6 fields using the JSON keys listed. A field is filled ONLY when it
+## 4. THE 7 REQUIRED FIELDS
+Track these exact 7 fields using the JSON keys listed. A field is filled ONLY when it
 explicitly appears in CURRENT_STATE below. Never assume a field is filled from memory.
 
   Field 1 -- purpose (JSON key: "purpose")
@@ -352,7 +352,18 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       "November" / "November 2026" -> start: "2026-11-01", end: "2026-11-30", flexible: false
       "long weekend" -> duration_days: 3
       "summer holidays" -> start: approx May 1, end: approx May 31, flexible: true
-    When only a month is given with no duration, default duration_days to 7.
+
+    🔴 If the user gives ONLY a month/period with NO number of days ("November", "sometime in
+    December", "next monsoon"), do NOT silently assume any duration — not 7 days, and NOT the
+    whole month. Set start/end to that month's boundaries but leave duration_days OUT of
+    config_patch, and ask directly: "Got it, November! And how many days were you thinking —
+    or would you like to explore the whole month?" Only set duration_days once the user answers:
+    a specific number if they give one, or the exact day-count of that month/period if they
+    confirm they want the whole thing (e.g. "the whole month" for November 2026 -> duration_days:
+    30). Bug fix: previously defaulting to 7 (or, worse, leaving duration_days unset entirely)
+    let the app's day-count fallback compute the FULL month-boundary span as the trip length —
+    a user who just said "November" got a 29-30 day itinerary they never asked for. Never mark
+    dates as filled (see IMPORTANT below) until duration_days is explicitly known.
 
     IMPORTANT: Duration alone ("5 days", "a week") is NOT enough to fill this field.
     You MUST also know WHEN they want to travel (month or rough period).
@@ -382,7 +393,22 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
     Chip mappings: "Relaxed 🧘" -> "relaxed" | "Moderate 🚶" -> "moderate" | "Packed 🏃" -> "packed"
     ALWAYS include chips when asking about pace: ["Relaxed 🧘", "Moderate 🚶", "Packed 🏃"]
 
-  Field 6 -- budget (JSON key: "budget")
+  Field 6 -- origin (JSON key: "origin", departure city)
+    Where they're travelling FROM. This is a REQUIRED field, not optional — flight cost varies
+    hugely by departure city, and the app cannot run an accurate budget estimate or feasibility
+    check without it (see core.budget_estimator's origin gate). Bug fix: this used to only get
+    asked opportunistically while recommending a budget, so a user who stated their own budget
+    number never got asked at all, and Anya/the app quietly priced flights off a generic
+    destination-tier guess instead of the real route.
+    Format: {{"city": "Mumbai", "iata": "", "lat": 0, "lon": 0}}
+    Ask directly once pace is known, e.g. "And which city will you be travelling from?" — this
+    happens BEFORE the Stage 2 "anything else?" checkpoint (see Section 7), so a departure city
+    is always known before budget is ever asked or estimated.
+    Mappings: "Mumbai se" -> origin city Mumbai (see Section 3 Hinglish parsing for combined
+    "origin + destination + duration" utterances given in one breath) — extract origin
+    immediately if the user volunteers it early, don't wait to ask.
+
+  Field 7 -- budget (JSON key: "budget")
     Total trip budget in INR. **INR (₹) is always the canonical/stored currency — say so explicitly the
     first time you ask for budget**, e.g. "What's your approximate budget in ₹ (INR)? If you'd rather
     tell me in USD, EUR, GBP, AED, SGD, AUD, CAD, JPY, THB, or CHF, that's fine too — I'll convert it."
@@ -390,9 +416,9 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
     Always convert shorthand using the currency rules in Section 2.
 
     This is the LAST field asked, and it's asked AFTER the Stage 2 "anything else?" checkpoint
-    (see Section 7) — by the time you reach it, group, pace, AND every optional preference the
-    user chose to share (themes, veg/Jain preference, departure city, splurge/save categories,
-    prebooked costs) are already known. Do not defer or jump the field order for it.
+    (see Section 7) — by the time you reach it, group, pace, departure city (origin), AND every
+    optional preference the user chose to share (themes, veg/Jain preference, splurge/save
+    categories, prebooked costs) are already known. Do not defer or jump the field order for it.
     A user CAN still volunteer a budget number early (unprompted in their opening message, or in
     reply to a different question) — ALWAYS record whatever figure they give you into
     config_patch.budget the instant they state it (per Section 8: extract every field mentioned,
@@ -459,10 +485,8 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
 
 ## 5. OPTIONAL FIELDS
 Extract if the user mentions them. Never ask for them directly (the checkpoint in Stage 2 will invite them).
-  origin: {{"city": "Mumbai", "iata": "", "lat": 0, "lon": 0}}
-    Exception: while RECOMMENDING A BUDGET (see below), {budget_estimate_hint} may explicitly tell you to
-    ask for the departure city (flight cost depends heavily on it) — follow that instruction when it says so,
-    even though origin is otherwise never asked for directly.
+  (origin/departure city is NOT optional anymore — see Field 6 in Section 4; it's asked
+  directly, before the Stage 2 checkpoint, not invited here.)
   themes: array from ["culture", "food", "adventure", "nature", "shopping",
                        "photography", "nightlife", "sports", "wellness",
                        "religious", "vegetarian_food"]
@@ -536,22 +560,21 @@ Rules:
 
 ## 7. CONVERSATION STAGES
 
-Stage 1 -- Collect the 5 core conversational fields (see Section 4, Fields 1-5: purpose,
-  destination, dates, group, pace). Budget (Field 6) is deliberately NOT part of this stage —
-  it comes later, in Stage 2.5, after the optional checkpoint below.
+Stage 1 -- Collect the 6 core conversational fields (see Section 4, Fields 1-6: purpose,
+  destination, dates, group, pace, origin/departure city). Budget (Field 7) is deliberately NOT
+  part of this stage — it comes later, in Stage 2.5, after the optional checkpoint below.
   If PRELOADED DESTINATION is set (not "None"), skip asking for destination.
 
 Stage 2 -- "Anything else?" checkpoint.
-  Triggered ONCE after those 5 core fields are in CURRENT_STATE (CURRENT_STATE will show
-  "status: 5-core-fields-collected" right before this).
+  Triggered ONCE after those 6 core fields are in CURRENT_STATE (CURRENT_STATE will show
+  "status: 6-core-fields-collected" right before this).
   CURRENT_STATE will show "status: checkpoint-asked..." once this has been done -- do not repeat it.
   Ask one warm round of optional preferences:
     "Awesome! Just a couple of quick preferences before we talk numbers — anything like pure-veg
-    food, adventure activities, a specific departure city, or any accessibility needs?"
+    food, adventure activities, or any accessibility needs?"
   Offer chips, but ONLY for optional fields CURRENT_STATE does NOT already show a value for:
     "No, let's continue!" (always -- moves straight to Stage 2.5's budget question, NEVER to
     generation: budget isn't known yet), "Add themes" (always -- themes can always be added to),
-    "Add departure city" (omit if origin/departure city is already known),
     "Pure veg food" (omit if vegetarian_food is already in themes).
   Never re-offer a chip for an optional field the user has already answered -- chips should
   only repeat mid-flow inside a feasibility-adjustment or itinerary-edit exchange, not here.
@@ -559,9 +582,9 @@ Stage 2 -- "Anything else?" checkpoint.
   after this must move on to asking for budget (Stage 2.5) -- do not linger on optional prefs
   once the user has answered or declined once.
 
-Stage 2.5 -- Budget (Field 6, see Section 4 for full rules).
+Stage 2.5 -- Budget (Field 7, see Section 4 for full rules).
   Ask for it once Stage 2's checkpoint has had its one round. This is the LAST field.
-  🔴 Do not judge, estimate, or comment on whether the number is enough — see Field 6's
+  🔴 Do not judge, estimate, or comment on whether the number is enough — see Field 7's
   "DO NOT JUDGE FEASIBILITY YOURSELF" rule. Record it and stop; the app checks it for real.
 
 Stage 3 -- Generate signal.
@@ -570,11 +593,11 @@ Stage 3 -- Generate signal.
   and you're putting it in config_patch.budget for the first time -- assuming every other field
   and the checkpoint are already done. NO separate "shall I go ahead?" confirmation turn is
   needed; that one turn is the trigger. The app itself runs an automatic, accurate cost check
-  (see Field 6) the instant it sees ready_to_generate: true, and either proceeds straight to
+  (see Field 7) the instant it sees ready_to_generate: true, and either proceeds straight to
   generation or shows the user a real shortfall + adjustment options -- THAT is the real
   confirmation step now, so never ask your own "ready to generate?" question.
   🔴 Do NOT set ready_to_generate: true again on a LATER turn just because CURRENT_STATE still
-  shows all 6 fields filled (e.g. the user asks an unrelated follow-up question, or you're mid
+  shows all 7 fields filled (e.g. the user asks an unrelated follow-up question, or you're mid
   checkpoint/edit exchange) -- that would silently re-trigger generation/the cost check on turns
   that have nothing to do with budget. Only two things may set ready_to_generate: true:
     (a) the budget-just-recorded turn described above, or
@@ -584,7 +607,7 @@ Stage 3 -- Generate signal.
         on an already-complete trip (see EDIT MODE note below) or when the user asks again later.
   When setting ready_to_generate: true, also set summary to a single human-readable line.
 
-EDIT MODE: reopening the wizard on an already-generated trip preloads CURRENT_STATE with all 6
+EDIT MODE: reopening the wizard on an already-generated trip preloads CURRENT_STATE with all 7
   fields already filled and skips straight to an "anything you'd like to change?" turn -- in that
   state, do NOT set ready_to_generate: true just because the fields are complete; wait for the
   user to either change something (then treat budget-change the same as a fresh budget-just-
@@ -598,13 +621,13 @@ one combined question. Set ready_to_generate: false.
 CRITICAL -- NEVER HALLUCINATE GENERATION STATUS:
   You have NO visibility into whether an itinerary has actually been generated -- only the
   application does that, as a real action taken AFTER you set ready_to_generate: true in this
-  same turn, AND only once the app's own automatic feasibility check (Field 6) passes. You must
+  same turn, AND only once the app's own automatic feasibility check (Field 7) passes. You must
   NEVER say things like "Generating your itinerary now", "Your itinerary is ready", or answer
   "yes, it's ready" to a user asking whether it's done -- even if it feels like the natural
   conversational answer. If the user asks whether their itinerary is ready and you are not this
   turn setting ready_to_generate: true, say you can't check that from here and that the app
   screen will show progress/the result directly.
-  Also double-check CURRENT_STATE literally has all 6 fields filled before ever setting
+  Also double-check CURRENT_STATE literally has all 7 fields filled before ever setting
   ready_to_generate: true -- do not set it, or claim generation, based on something you merely
   mentioned/inferred in your own reply text (e.g. calling it a "family trip" in prose
   does NOT mean purpose was actually recorded -- it only counts if it's in CURRENT_STATE or in
@@ -788,10 +811,16 @@ def _has_all_required(config: dict[str, Any]) -> bool:
     if mode == "country" and not config.get("destination_country"):
         return False
 
-    # Dates: must have start+end (even approximate month boundaries) — flexible+duration alone
-    # is insufficient because we need to know WHEN, not just HOW LONG.
+    # Dates: must have start+end (even approximate month boundaries). A flexible (month-only)
+    # window additionally needs duration_days explicitly set — bug fix: previously start+end
+    # alone was accepted as "dates known" even for a flexible month-boundary window with no
+    # duration_days, so a user who only said "November" (no day count) silently fell through to
+    # models.trip.effective_duration_days()'s start/end-span fallback, which computed the FULL
+    # ~30-day month span as the trip length instead of asking how many days they actually wanted.
     dates = config.get("dates", {})
-    has_dates = bool(dates.get("start") and dates.get("end"))
+    has_dates = bool(dates.get("start") and dates.get("end")) and (
+        not dates.get("flexible") or dates.get("duration_days")
+    )
     if not has_dates:
         return False
 
@@ -802,6 +831,12 @@ def _has_all_required(config: dict[str, Any]) -> bool:
         return False
 
     if not config.get("pace"):
+        return False
+
+    # Origin/departure city — now a required field (Field 6), not optional: flight cost varies
+    # hugely by departure city, and the app's budget/feasibility estimates need it to be
+    # meaningful (see core.budget_estimator's origin gate).
+    if not (config.get("origin", {}).get("city")):
         return False
 
     return True
@@ -826,7 +861,7 @@ _HALLUCINATED_GENERATION_RE = re.compile(
 
 # Explicit user requests to (re)generate right now — the ONLY thing (besides
 # the budget-just-recorded transition, checked separately in wizard_chat())
-# allowed to set ready_to_generate: true on a turn where all 6 fields were
+# allowed to set ready_to_generate: true on a turn where all 7 fields were
 # ALREADY complete before this turn started (e.g. edit mode, or asking again
 # later). Mirrors Section 7 Stage 3's trigger (b) in the system prompt.
 _EXPLICIT_REGENERATE_RE = re.compile(
@@ -1274,14 +1309,15 @@ def _is_group_type_chip_tap(last_user_text: str | None) -> bool:
     return stripped in canonical
 
 
-# Keywords identifying the one-off "which city will you be flying out of?"
-# question (see budget_estimate_prompt_hint's departure-city gate). This
-# question has no canonical chip set of its own — the answer is a free-form
-# city name — but it fires *before* pace is known, so the generic "field is
-# missing -> backfill its canonical chips" and "chips look stale" safety
-# nets below both mistake it for the pace question and attach
-# Relaxed/Moderate/Packed chips underneath it (see bug: pace chips shown
-# under the departure-city question).
+# Keywords identifying the "which city will you be flying out of?"
+# question (Field 6, origin/departure city — asked directly right after pace,
+# and as a fallback safety net inside budget_estimate_prompt_hint's gate if
+# origin somehow wasn't captured by then). This question has no canonical
+# chip set of its own — the answer is a free-form city name — but historically
+# could fire in a slot where the generic "field is missing -> backfill its
+# canonical chips" and "chips look stale" safety nets mistook it for the pace
+# question and attached Relaxed/Moderate/Packed chips underneath it (see bug:
+# pace chips shown under the departure-city question).
 _DEPARTURE_CITY_QUESTION_KEYWORDS = frozenset({
     "departure city", "flying out of", "flying from", "fly out of",
     "fly from", "which city will you", "which airport",
@@ -1511,6 +1547,70 @@ def _high_budget_sanity_warning(config: dict[str, Any], floor_estimate: dict[str
     return message, [f"Yes, ₹{amount:,.0f} is correct", "No, let me restate my budget"]
 
 
+# ── Origin (departure city) ambiguity check (⭐ NEW) ──────────────────────
+# Real bug (live-tested): a bare "MUM" (informal shorthand for Mumbai, but
+# NOT actually Mumbai's IATA code — that's "BOM") top-hits "Miami University
+# Middletown" in Ohio via Nominatim's free-text search, and a bare "NY"
+# top-hits the STATE of New York (not a specific city) with the runner-up
+# being Niamey, Niger's capital — completely unrelated places. Before this
+# fix, `_ensure_place_coords` silently accepted whatever Nominatim returned
+# (or silently gave up on a hard failure), so a mistyped/abbreviated
+# departure city could silently corrupt every downstream flight-distance
+# estimate with no warning to the user. Same "strip the field back out so
+# it re-asks" pattern as the group-size/duration/budget-floor checks above.
+_AMBIGUOUS_SHORT_CODE_RE = re.compile(r"^[A-Za-z]{2,3}$")
+
+
+def _looks_like_ambiguous_place_code(text: str) -> bool:
+    """True for a bare 2-3 letter alphabetic token — the shape of an
+    airport/city code or informal shorthand ("NY", "LA", "SF", "BOM",
+    "MUM", "BLR") rather than a real place name someone would actually
+    type. Real city names this short are vanishingly rare worldwide, so
+    flagging every one of these for a quick confirmation is the safer
+    default rather than trusting whichever place Nominatim's free-text
+    search happens to rank first for an ambiguous 2-3 letter string."""
+    return bool(_AMBIGUOUS_SHORT_CODE_RE.match((text or "").strip()))
+
+
+async def _origin_ambiguity_warning(origin: dict[str, Any] | None) -> tuple[str, list[str]] | None:
+    """Returns (message, chips) if the stated departure city is too
+    short/ambiguous to trust blindly, or if geocoding it landed on a
+    low-confidence match (see GeocodeResponse.low_confidence) or failed
+    outright. Returns None when the city looks fine — either a clean,
+    confident geocode, or (best-effort) when geocoding itself can't be
+    reached at all, since a hint that can't be computed must not block the
+    user's turn indefinitely. Never raises."""
+    city = (origin or {}).get("city")
+    if not city:
+        return None
+
+    if _looks_like_ambiguous_place_code(city):
+        return (
+            f"Just to confirm — when you say \"{city}\", could you spell out the full city name? "
+            "That's a bit short/ambiguous for me to safely pin down (it could be an abbreviation, "
+            "an airport code, or match several different real places), and flight cost estimates "
+            "depend on getting the right one.",
+            [],
+        )
+
+    try:
+        result = await geocode_city(city)
+    except Exception:
+        return (
+            f"I couldn't quite place \"{city}\" as a departure city — could you double-check the "
+            "spelling, or give me the nearest major city instead?",
+            [],
+        )
+    if result.low_confidence:
+        return (
+            f"Just to confirm — you're travelling from {result.display_name}? \"{city}\" matched a "
+            "few different real places for me, so I want to make sure I've got the right one before "
+            "estimating flight costs.",
+            [f"Yes, {result.display_name} is right", "No, let me restate it"],
+        )
+    return None
+
+
 def _next_missing_field_prompt(config: dict[str, Any]) -> tuple[str, list[str]]:
     """Returns (reply, chips) for the next required field still missing from
     config, in field order. Used as the honest fallback whenever the model
@@ -1528,12 +1628,14 @@ def _next_missing_field_prompt(config: dict[str, Any]) -> tuple[str, list[str]]:
     if not has_dest:
         return ("Where are you thinking of going?", ["Suggest me! 🌍", "I have a destination in mind"])
     dates = config.get("dates") or {}
-    if not (dates.get("start") and dates.get("end")):
+    if not (dates.get("start") and dates.get("end") and (not dates.get("flexible") or dates.get("duration_days"))):
         return ("When are you planning to travel, and for how many days?", [])
     if not (config.get("group", {}).get("adults", 0) >= 1):
         return ("Who will be joining you — travelling solo, as a couple, or with family?", ["Solo 🧳", "Couple ❤️", "Family 👨‍👩‍👧", "Friends 🎉"])
     if not config.get("pace"):
         return ("What pace works for you?", ["Relaxed 🧘", "Moderate 🚶", "Packed 🏃"])
+    if not (config.get("origin", {}).get("city")):
+        return ("And which city will you be travelling from?", [])
     if not (config.get("budget", {}).get("amount", 0) > 0):
         return (f"What's your approximate budget in ₹ (INR)? (Or tell me in {', '.join(TOP_10_CURRENCIES)} — I'll convert.)", [])
     # All fields are actually present — the false claim likely came from a
@@ -1565,8 +1667,19 @@ def _summarise_state(config: dict[str, Any]) -> str:
             lines.append(f"destination: {dest['city']}, {dest.get('country', '')}")
 
     dates = config.get("dates", {})
-    if dates.get("start") and dates.get("end"):
+    if dates.get("start") and dates.get("end") and (not dates.get("flexible") or dates.get("duration_days")):
         lines.append(f"dates: {dates['start']} → {dates['end']}")
+    elif dates.get("start") and dates.get("end") and dates.get("flexible") and not dates.get("duration_days"):
+        # Bug fix: a flexible (month-only) window with start/end already set to month
+        # boundaries but NO duration_days means the user only named a period ("November")
+        # without saying how many days — reporting this as fully-known dates let the LLM (or
+        # the effective_duration_days() start/end-span fallback) silently treat the WHOLE
+        # month as the trip length instead of asking how many days were actually wanted.
+        lines.append(
+            f"dates: travel period known ({dates['start']} → {dates['end']}) but NUMBER OF DAYS "
+            "is NOT yet known — dates field is still INCOMPLETE, must ask how many days (or "
+            "confirm they want the whole period) before this counts as filled"
+        )
     elif dates.get("duration_days"):
         # Duration alone is NOT sufficient (see Field 3 rules) — a real
         # travel period (month/season -> start/end) is still required.
@@ -1585,6 +1698,7 @@ def _summarise_state(config: dict[str, Any]) -> str:
             f"dates: duration known ({dates['duration_days']} days) but travel period "
             "(month/season) is NOT yet known — dates field is still INCOMPLETE, must ask when"
         )
+
 
     group = config.get("group", {})
     if group.get("adults", 0) >= 1:
@@ -1608,12 +1722,14 @@ def _summarise_state(config: dict[str, Any]) -> str:
         lines.append(f"themes: {', '.join(config['themes'])}")
 
     # Signal to LLM whether the "anything else?" checkpoint has already been
-    # asked. The checkpoint now fires after the 5 core conversational fields
-    # (purpose/destination/dates/group/pace) — BEFORE budget — so that
-    # departure city, splurge/save prefs, and any prebooked costs are known
-    # before Anya ever asks for a number, and so the app's Gemini feasibility
-    # check (which runs automatically the instant budget is recorded — see
-    # Stage 3) has the fullest possible picture to validate against.
+    # asked. The checkpoint now fires after the 6 core conversational fields
+    # (purpose/destination/dates/group/pace/origin) — BEFORE budget — so that
+    # splurge/save prefs and any prebooked costs are known before Anya ever
+    # asks for a number, and so the app's Gemini feasibility check (which
+    # runs automatically the instant budget is recorded — see Stage 3) has
+    # the fullest possible picture to validate against. Origin (departure
+    # city) is also now required before budget for the same reason — flight
+    # cost varies hugely by departure city (see Field 6 in Section 4).
     if config.get("_checkpoint_asked"):
         if (config.get("budget") or {}).get("amount", 0) > 0:
             lines.append(
@@ -1634,13 +1750,21 @@ def _summarise_state(config: dict[str, Any]) -> str:
         # _has_all_required() below correctly still required start/end,
         # silently desyncing the two and leaving the wizard stuck asking
         # nothing further while never actually becoming ready to generate.
-        # Require the same start+end check used everywhere else so the
-        # status line can never outrun the real gate.
-        bool((config.get("dates") or {}).get("start") and (config.get("dates") or {}).get("end")),
+        # Require the same start+end (+duration_days when flexible) check
+        # used everywhere else so the status line can never outrun the real
+        # gate — see _has_all_required's dates comment for the flexible
+        # month-only-no-duration bug this also guards against.
+        bool(
+            (config.get("dates") or {}).get("start")
+            and (config.get("dates") or {}).get("end")
+            and (not (config.get("dates") or {}).get("flexible") or (config.get("dates") or {}).get("duration_days"))
+        ),
         (config.get("group") or {}).get("adults", 0) >= 1, config.get("pace"),
-        (config.get("destination_mode", "fixed") != "fixed" or (config.get("destination") or {}).get("city"))
+        (config.get("destination_mode", "fixed") != "fixed" or (config.get("destination") or {}).get("city")),
+        # Origin/departure city — now required before the Stage 2 checkpoint (see Field 6).
+        bool((config.get("origin") or {}).get("city")),
     ]):
-        lines.append("status: 5-core-fields-collected (move to Stage 2: ask the anything-else checkpoint, budget comes after)")
+        lines.append("status: 6-core-fields-collected (move to Stage 2: ask the anything-else checkpoint, budget comes after)")
 
     return "\n".join(lines) if lines else "Nothing collected yet — this is the first message."
 
@@ -2200,6 +2324,23 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             merged["dates"] = {"start": None, "end": None, "flexible": False}
             patch.pop("dates", None)
 
+        # Origin (departure city) ambiguity check (⭐ NEW), same "only the
+        # turn it was newly stated" gating — see _origin_ambiguity_warning.
+        # A bare "MUM"/"NY" style entry silently corrupts every downstream
+        # flight-cost estimate with no warning, so it's flagged and the
+        # field is stripped back out (kept "missing") until confirmed.
+        origin_pre_turn = request.partial_config.get("origin") or {}
+        origin_post_turn = merged.get("origin") or {}
+        origin_newly_recorded_this_turn = (
+            origin_post_turn != origin_pre_turn and bool(origin_post_turn.get("city"))
+            and not group_size_result and not duration_result
+        )
+        origin_result = await _origin_ambiguity_warning(merged.get("origin")) if origin_newly_recorded_this_turn else None
+        if origin_result:
+            reply_text, chips_list = origin_result
+            merged["origin"] = {}
+            patch.pop("origin", None)
+
         # Hard, non-LLM sanity floor (⭐ NEW): fires the instant a budget
         # figure is recorded, using whatever destination/dates/group is
         # already known (a real, itemised floor — not a flat generic number)
@@ -2221,7 +2362,7 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         budget_amount_post_turn = (merged.get("budget") or {}).get("amount", 0)
         budget_newly_recorded_this_turn = (
             budget_amount_post_turn > 0 and budget_amount_post_turn != budget_amount_pre_turn
-            and not group_size_result and not duration_result
+            and not group_size_result and not duration_result and not origin_result
         )
         budget_floor_result = None
         high_budget_result = None
@@ -2247,7 +2388,7 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # Server-side override: only allow ready=true if all required fields present
         ready = data.get("ready_to_generate", False) and _has_all_required(merged)
 
-        # One-shot trigger guard (⭐ NEW, see Section 7 Stage 3): all 6 fields
+        # One-shot trigger guard (⭐ NEW, see Section 7 Stage 3): all 7 fields
         # being present is necessary but not sufficient — ready_to_generate
         # must only fire on the SPECIFIC turn budget transitions from
         # missing to present, or on an explicit user regenerate/update
@@ -2466,6 +2607,21 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             fallback_config["dates"] = {"start": None, "end": None, "flexible": False}
             fallback_patch.pop("dates", None)
 
+        # Origin ambiguity check (⭐ NEW, same as JSON-success path above).
+        fallback_origin_pre_turn = request.partial_config.get("origin") or {}
+        fallback_origin_post_turn = fallback_config.get("origin") or {}
+        fallback_origin_newly_recorded = (
+            fallback_origin_post_turn != fallback_origin_pre_turn and bool(fallback_origin_post_turn.get("city"))
+            and not fallback_group_size_result and not fallback_duration_result
+        )
+        fallback_origin_result = (
+            await _origin_ambiguity_warning(fallback_config.get("origin")) if fallback_origin_newly_recorded else None
+        )
+        if fallback_origin_result:
+            clean_raw, extracted_chips = fallback_origin_result
+            fallback_config["origin"] = {}
+            fallback_patch.pop("origin", None)
+
         # Hard, non-LLM sanity floor (⭐ NEW, same as JSON-success path above)
         # — real, destination-aware floor using whatever's known so far. An
         # amount that fails it is stripped back out so budget stays "missing".
@@ -2473,7 +2629,7 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         fallback_budget_amount_post_turn = (fallback_config.get("budget") or {}).get("amount", 0)
         fallback_budget_newly_recorded_this_turn = (
             fallback_budget_amount_post_turn > 0 and fallback_budget_amount_post_turn != fallback_budget_amount_pre_turn
-            and not fallback_group_size_result and not fallback_duration_result
+            and not fallback_group_size_result and not fallback_duration_result and not fallback_origin_result
         )
         fallback_budget_floor_result = None
         fallback_high_budget_result = None

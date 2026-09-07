@@ -73,3 +73,17 @@ class GeocodeResponse(BaseModel):
     # state, and ingesting a large one from one centre misses everything past
     # its radius. See scrapers/osm.py::_area_centroids.
     bbox: tuple[float, float, float, float] | None = None
+    # 🔴 True when the matched hit was flagged as suspiciously obscure/wrong
+    # (`_needs_second_opinion` in services/geocode.py — low Nominatim
+    # `importance`, a small settlement type, or no genuine place-level hit at
+    # all) AND an independent Wikipedia cross-check did not confidently
+    # confirm/correct it. Not set for a hub-town/country resolution (that
+    # path already cross-validates via Overpass) or for a hit that was
+    # cross-checked and corrected (that's now confirmed, not still shaky).
+    # Callers taking free-form, open-vocabulary input from a user in a live
+    # conversation (e.g. the wizard's departure-city field) — as opposed to
+    # a curated destination catalog — should treat this as "don't silently
+    # trust this match, ask the user to confirm" rather than quietly using
+    # possibly-wrong coordinates. See chains/wizard_chat_chain.py's origin
+    # clarification hint.
+    low_confidence: bool = False

@@ -467,7 +467,14 @@ async def _geocode_city_uncached(city: str, countrycodes: str = "") -> GeocodeRe
             reverse_hit = await _reverse_geocode(client, lat, lon)
             if reverse_hit is None:
                 raise ValueError(f"Location not found: {city}")
-            return _hit_to_response(reverse_hit, title)
+            response = _hit_to_response(reverse_hit, title)
+            # Nominatim's direct search returned literally nothing for this
+            # query — Wikipedia's fuzzy match is the ONLY signal behind this
+            # result, with no independent corroboration, so flag it as
+            # low-confidence for callers that need to decide whether to
+            # trust free-form user input (see GeocodeResponse.low_confidence).
+            response.low_confidence = True
+            return response
 
         hit = _pick_best_hit(data)
 
@@ -511,6 +518,15 @@ async def _geocode_city_uncached(city: str, countrycodes: str = "") -> GeocodeRe
                             "Wikipedia-anchored location instead.",
                             city, original_country, hit.get("importance"), title, corrected_country,
                         )
+                        # Cross-validated (and corrected) by an independent source — this is now
+                        # confirmed, not still shaky, so low_confidence stays False.
                         return _hit_to_response(reverse_hit, city)
+            # Flagged as suspicious by `_needs_second_opinion` and Wikipedia either found nothing
+            # or agreed closely enough not to warrant an override — still worth flagging to a
+            # caller taking free-form user input (e.g. an ambiguous departure city), since "not
+            # contradicted" isn't the same confidence level as "independently confirmed".
+            response = _hit_to_response(hit, city)
+            response.low_confidence = True
+            return response
 
         return _hit_to_response(hit, city)

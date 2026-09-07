@@ -68,15 +68,20 @@ const REQUIRED_LABELS: { key: string; label: string }[] = [
   { key: 'dates',       label: 'Dates'       },
   { key: 'group',       label: 'Group'       },
   { key: 'pace',        label: 'Pace'        },
+  { key: 'origin',      label: 'Departure'   },
   { key: 'budget',      label: 'Budget'      },
 ]
 
-// The 5 CORE fields (everything except budget) — the checkpoint ("anything
+// The 6 CORE fields (everything except budget) — the checkpoint ("anything
 // else?") now fires once these are done, BEFORE budget is asked (see Section
 // 7 Stage 2 in wizard_chat_chain.py's system prompt), so completeness for
 // triggering the checkpoint must be checked against this subset, not the
 // full REQUIRED_LABELS (which would wait for budget too and never fire in
-// time).
+// time). Origin/departure city is one of these 6 core fields now — it used
+// to be optional (only asked opportunistically while recommending a
+// budget), which meant a user who stated their own budget number was never
+// asked for it at all, and the app silently priced flights off a generic
+// destination-tier guess instead of the real route.
 const CORE_LABELS_BEFORE_BUDGET = REQUIRED_LABELS.filter(({ key }) => key !== 'budget')
 
 // Theme chips (Culture, Food, Adventure, ...) map to a multi-value array
@@ -122,11 +127,16 @@ function _isFieldFilled(key: string, config: Partial<TripConfig>): boolean {
       // requires a real start/end, and the exact travel period was never
       // actually asked for. A real start+end (even approximate month
       // boundaries for flexible trips) must be present to count as filled.
-      return Boolean(d.start && d.end)
+      // Bug fix (2): a flexible (month-only) window ALSO needs duration_days
+      // explicitly set — otherwise a user who only said "November" (no day
+      // count) shows Dates as complete here while the backend silently
+      // falls back to the full month-boundary span as the trip length.
+      return Boolean(d.start && d.end && (!d.flexible || d.duration_days))
     }
     case 'budget':      return (config.budget?.amount ?? 0) > 0
     case 'group':       return (config.group?.adults ?? 0) >= 1
     case 'pace':        return Boolean(config.pace)
+    case 'origin':      return Boolean(config.origin?.city)
     default:            return false
   }
 }

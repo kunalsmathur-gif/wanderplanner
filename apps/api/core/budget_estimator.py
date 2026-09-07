@@ -92,13 +92,41 @@ from core.price_extraction import FOOD_CONTEXT_KEYWORDS, STAY_CONTEXT_KEYWORDS
 # keyed on destination identity rather than distance).
 # ---------------------------------------------------------------------------
 
+# Bug fix (2026-09): this used to include blanket COUNTRY-level entries for
+# large, cost-diverse countries — "usa"/"united states", "uk"/"united
+# kingdom", "australia", "canada", "germany", "netherlands", "france",
+# "italy", "japan" — which tiered EVERY city in that country as premium.
+# That's wrong for any large/geographically diverse country: a domestic
+# Detroit->Chicago road trip got priced with Paris-level hotel/food rates
+# (see resolve_destination_tier's docstring) purely because "usa" matched,
+# even though most of the country's cities are nowhere near as expensive as
+# its handful of genuinely premium ones. This is NOT a US-specific
+# carve-out — the same distortion applies to any large/diverse country, so
+# the general fix is: large/diverse countries are tiered by CITY, never by
+# country name; only small, cost-uniform countries/city-states (where
+# nearly everywhere in the country really is premium) get a country-level
+# entry. An unrecognised city in a large country correctly falls through to
+# `_DEFAULT_TIER` ("moderate") instead of being assumed premium.
 _PREMIUM_KEYWORDS = [
-    "maldives", "switzerland", "swiss", "japan", "tokyo", "kyoto", "osaka",
-    "dubai", "abu dhabi", "uae", "singapore", "iceland", "norway", "sweden",
-    "denmark", "paris", "france", "italy", "venice", "rome", "london", "uk",
-    "united kingdom", "usa", "united states", "new york", "california",
-    "australia", "sydney", "new zealand", "seychelles", "mauritius",
-    "monaco", "hong kong", "canada", "germany", "netherlands", "amsterdam",
+    # Small / cost-uniform countries or city-states — a country-level match
+    # is appropriate here because there isn't a materially cheaper region of
+    # the country to under-price.
+    "maldives", "switzerland", "swiss", "dubai", "abu dhabi", "uae", "qatar",
+    "singapore", "iceland", "norway", "sweden", "denmark", "monaco",
+    "hong kong", "seychelles", "mauritius", "new zealand",
+    # Specific expensive cities within large/diverse countries — tiered by
+    # city, NOT by country, so the rest of that country defaults to
+    # "moderate" instead of inheriting the capital/flagship city's cost.
+    "tokyo", "kyoto", "osaka",                          # Japan
+    "paris",                                            # France
+    "venice", "rome", "milan", "florence",              # Italy
+    "london",                                           # UK
+    "new york", "california", "san francisco",
+    "los angeles", "boston", "seattle", "miami",
+    "hawaii", "honolulu", "las vegas",                  # USA
+    "sydney", "melbourne",                              # Australia
+    "toronto", "vancouver",                             # Canada
+    "amsterdam",                                        # Netherlands
 ]
 
 _MODERATE_KEYWORDS = [
@@ -121,7 +149,11 @@ def resolve_destination_tier(city: str | None, country: str | None) -> str:
     """Hand-authored destination -> cost tier ('budget' | 'moderate' | 'premium').
     Whole-word keyword match against city/country; defaults to 'moderate' when
     the destination isn't recognised (safer than assuming cheap or assuming
-    expensive for an unknown place)."""
+    expensive for an unknown place). This also correctly handles a
+    recognised-country-but-unrecognised-city case (e.g. "Chicago, USA") for
+    large/diverse countries, since those are only matched by specific
+    premium CITY keywords, not a blanket country-level entry — see
+    `_PREMIUM_KEYWORDS`'s comment."""
     haystack = f"{city or ''} {country or ''}".lower()
     if not haystack.strip():
         return _DEFAULT_TIER
@@ -777,6 +809,11 @@ async def budget_estimate_prompt_hint(trip_config: dict[str, Any], hint_text: st
     # number was the actual bug being fixed here — see budget_estimator.py's
     # module docstring). Skip this gate when the flight component is already
     # the user's real prebooked figure, since no flight estimate is needed then.
+    # Defensive fallback only: origin/departure city is now a required wizard
+    # field (Field 6 in wizard_chat_chain.py's prompt, asked right after pace,
+    # before the budget question ever comes up) — so this branch should be
+    # unreachable in the normal flow, but is kept in case origin is somehow
+    # still missing by the time a recommendation is requested.
     if not estimate["origin_city"] and not estimate["flights_prebooked"]:
         return (
             "BUDGET RECOMMENDATION GUIDANCE: The user wants you to suggest/recommend a budget. Group size and "
