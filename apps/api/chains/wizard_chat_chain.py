@@ -1572,14 +1572,31 @@ def _looks_like_ambiguous_place_code(text: str) -> bool:
     return bool(_AMBIGUOUS_SHORT_CODE_RE.match((text or "").strip()))
 
 
-async def _origin_ambiguity_warning(origin: dict[str, Any] | None) -> tuple[str, list[str]] | None:
-    """Returns (message, chips) if the stated departure city is too
-    short/ambiguous to trust blindly, or if geocoding it landed on a
+async def _origin_ambiguity_warning(origin: dict[str, Any] | None) -> tuple[str, list[str], bool] | None:
+    """Returns (message, chips, hard_reset) if the stated departure city is
+    too short/ambiguous to trust blindly, or if geocoding it landed on a
     low-confidence match (see GeocodeResponse.low_confidence) or failed
     outright. Returns None when the city looks fine — either a clean,
     confident geocode, or (best-effort) when geocoding itself can't be
     reached at all, since a hint that can't be computed must not block the
-    user's turn indefinitely. Never raises."""
+    user's turn indefinitely. Never raises.
+
+    `hard_reset` tells the caller whether the field must be stripped back
+    out to "missing" (True — the raw text itself is unusable, e.g. a bare
+    airport code or a city geocoding can't find at all) or whether it's
+    safe to keep the already-geocoded value stored while merely asking the
+    user to confirm it (False — the low-confidence case below). Wiping the
+    field on every low-confidence turn was a real bug: geocoding the SAME
+    city string deterministically returns the SAME low_confidence verdict,
+    so if the field is stripped back to "missing" while awaiting
+    confirmation, the user's "Yes, that's right" reply re-states the same
+    city text, which gets re-recorded as "newly stated", re-geocoded,
+    re-flagged low-confidence, and re-asked — forever, regardless of how
+    many times the user confirms (live-tested 2026-09-09 with "Bangalore"
+    -> "Bengaluru, India"). Keeping the value stored (like the soft
+    high-budget sanity warning above) means the NEXT turn's pre/post
+    comparison in the caller sees no change and the check naturally does
+    not re-fire, breaking the loop as soon as the user answers."""
     city = (origin or {}).get("city")
     if not city:
         return None
@@ -1591,6 +1608,7 @@ async def _origin_ambiguity_warning(origin: dict[str, Any] | None) -> tuple[str,
             "an airport code, or match several different real places), and flight cost estimates "
             "depend on getting the right one.",
             [],
+            True,
         )
 
     try:
@@ -1600,6 +1618,7 @@ async def _origin_ambiguity_warning(origin: dict[str, Any] | None) -> tuple[str,
             f"I couldn't quite place \"{city}\" as a departure city — could you double-check the "
             "spelling, or give me the nearest major city instead?",
             [],
+            True,
         )
     if result.low_confidence:
         return (
@@ -1607,6 +1626,7 @@ async def _origin_ambiguity_warning(origin: dict[str, Any] | None) -> tuple[str,
             "few different real places for me, so I want to make sure I've got the right one before "
             "estimating flight costs.",
             [f"Yes, {result.display_name} is right", "No, let me restate it"],
+            False,
         )
     return None
 
@@ -2337,9 +2357,10 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         )
         origin_result = await _origin_ambiguity_warning(merged.get("origin")) if origin_newly_recorded_this_turn else None
         if origin_result:
-            reply_text, chips_list = origin_result
-            merged["origin"] = {}
-            patch.pop("origin", None)
+            reply_text, chips_list, origin_hard_reset = origin_result
+            if origin_hard_reset:
+                merged["origin"] = {}
+                patch.pop("origin", None)
 
         # Hard, non-LLM sanity floor (⭐ NEW): fires the instant a budget
         # figure is recorded, using whatever destination/dates/group is
@@ -2618,9 +2639,10 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             await _origin_ambiguity_warning(fallback_config.get("origin")) if fallback_origin_newly_recorded else None
         )
         if fallback_origin_result:
-            clean_raw, extracted_chips = fallback_origin_result
-            fallback_config["origin"] = {}
-            fallback_patch.pop("origin", None)
+            clean_raw, extracted_chips, fallback_origin_hard_reset = fallback_origin_result
+            if fallback_origin_hard_reset:
+                fallback_config["origin"] = {}
+                fallback_patch.pop("origin", None)
 
         # Hard, non-LLM sanity floor (⭐ NEW, same as JSON-success path above)
         # — real, destination-aware floor using whatever's known so far. An

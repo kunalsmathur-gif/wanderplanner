@@ -37,8 +37,9 @@ async def test_origin_ambiguity_warning_flags_short_code_without_geocoding():
     with patch("chains.wizard_chat_chain.geocode_city", new=AsyncMock()) as mock_geocode:
         result = await _origin_ambiguity_warning({"city": "MUM"})
     assert result is not None
-    message, chips = result
+    message, chips, hard_reset = result
     assert "MUM" in message
+    assert hard_reset is True
     mock_geocode.assert_not_called()
 
 
@@ -61,9 +62,10 @@ async def test_origin_ambiguity_warning_flags_low_confidence_geocode():
     with patch("chains.wizard_chat_chain.geocode_city", new=AsyncMock(return_value=fake_response)):
         result = await _origin_ambiguity_warning({"city": "Springfield"})
     assert result is not None
-    message, chips = result
+    message, chips, hard_reset = result
     assert "Some Ambiguous Place" in message
     assert chips
+    assert hard_reset is False
 
 
 @pytest.mark.asyncio
@@ -71,5 +73,6 @@ async def test_origin_ambiguity_warning_handles_geocode_failure():
     with patch("chains.wizard_chat_chain.geocode_city", new=AsyncMock(side_effect=ValueError("not found"))):
         result = await _origin_ambiguity_warning({"city": "Xyzzyville"})
     assert result is not None
-    message, chips = result
+    message, chips, hard_reset = result
     assert "Xyzzyville" in message
+    assert hard_reset is True
