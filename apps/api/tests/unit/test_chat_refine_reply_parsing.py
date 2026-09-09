@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from chains.chat_refine_chain import (
     ChatRefineResponse,
+    _cap_reply_length,
     _extract_reply_text,
     _strip_false_regen_progress_claim,
 )
+from core.validation import MAX_CHAT_MESSAGE_LEN
 
 
 class TestExtractReplyText:
@@ -97,3 +99,43 @@ class TestStripFalseRegenProgressClaim:
         resp = ChatRefineResponse(reply="The best time to visit Kerala is Nov-Feb.", action_type="none")
         result = _strip_false_regen_progress_claim(resp)
         assert result.reply == "The best time to visit Kerala is Nov-Feb."
+
+
+class TestCapReplyLength:
+    """Regression guard for a live prod bug (2026-09-09): the model
+    occasionally free-writes a full multi-day itinerary in a chat-refine
+    reply (worse when `_extract_reply_text` recovers raw text from
+    malformed/truncated JSON), producing a reply over
+    `ChatMessageText`'s `MAX_CHAT_MESSAGE_LEN` cap (models/chat.py). The
+    frontend stores every assistant reply and replays it back as chat
+    history on the next turn, so an over-length reply here made the VERY
+    NEXT `/api/chat-refine` request 422 on Pydantic validation — surfacing
+    to the user as a generic "couldn't connect" error, unrecoverable short
+    of clearing the chat. `_cap_reply_length` truncates before the reply
+    ever leaves this chain so it can never round-trip into an invalid
+    request.
+    """
+
+    def test_leaves_short_reply_untouched(self):
+        resp = ChatRefineResponse(reply="Sure, updating your pace now.", action_type="none")
+        result = _cap_reply_length(resp)
+        assert result.reply == "Sure, updating your pace now."
+
+    def test_truncates_reply_over_the_chat_message_cap(self):
+        resp = ChatRefineResponse(reply="A" * (MAX_CHAT_MESSAGE_LEN + 500), action_type="none")
+        result = _cap_reply_length(resp)
+        assert len(result.reply) <= MAX_CHAT_MESSAGE_LEN
+        assert result.reply.endswith("(trimmed)")
+
+    def test_truncated_reply_survives_chat_message_validation(self):
+        # The actual regression: a truncated reply must round-trip cleanly
+        # as tomorrow's `ChatMessage.content` instead of 422ing.
+        from models.chat import ChatMessage
+
+        resp = ChatRefineResponse(
+            reply="\n\n**Day 1: Arrival**\n" + ("Explore the city. " * 500),
+            action_type="none",
+        )
+        result = _cap_reply_length(resp)
+        msg = ChatMessage(role="assistant", content=result.reply)
+        assert len(msg.content) <= MAX_CHAT_MESSAGE_LEN

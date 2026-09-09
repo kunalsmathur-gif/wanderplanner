@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from core.config import settings
 from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize
-from core.validation import normalise_choice_fields
+from core.validation import MAX_CHAT_MESSAGE_LEN, normalise_choice_fields
 from models.chat import ChatMessage
 from models.trip import DayCostPreference, PinnedPOI, TripConfig
 
@@ -54,6 +54,32 @@ def _extract_reply_text(raw: str) -> str:
     return (
         "Sorry, I had trouble putting that together — could you try asking again?"
     )
+
+
+# A reply this chain returns today becomes a `ChatMessage.content` value in
+# tomorrow's request (the frontend stores every assistant reply and replays
+# the whole history back to us) — and that field is capped at
+# `MAX_CHAT_MESSAGE_LEN` (see core/validation.py). Found live 2026-09-09: the
+# model occasionally ignores the "no full itineraries in chat" instruction
+# and free-writes a multi-day "Day 1 / Day 2 / ..." breakdown (worse when
+# `_extract_reply_text` falls back to raw-text recovery on malformed JSON),
+# producing a reply well over 4000 chars. Nothing rejects it on the way out,
+# so it round-trips into the very next request's history and THAT request
+# 422s on Pydantic validation — surfacing to the user as a generic "couldn't
+# connect" error with no obvious link to the reply that caused it, and no
+# way to recover short of clearing the chat. Capping here, once, at the
+# single chokepoint every code path funnels through before returning to the
+# client, is cheaper and safer than trying to make every reply-producing
+# branch (LLM JSON, malformed-JSON fallback, interest-pinning appends)
+# individually well-behaved.
+_REPLY_TRUNCATION_SUFFIX = "… (trimmed)"
+
+
+def _cap_reply_length(resp: "ChatRefineResponse") -> "ChatRefineResponse":
+    limit = MAX_CHAT_MESSAGE_LEN
+    if len(resp.reply) > limit:
+        resp.reply = resp.reply[: limit - len(_REPLY_TRUNCATION_SUFFIX)] + _REPLY_TRUNCATION_SUFFIX
+    return resp
 
 
 class ChatRefineResponse(BaseModel):
@@ -453,13 +479,13 @@ async def _apply_interest_pinning(
 async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
     if settings.llm_provider == "mock":
         last_msg = request.messages[-1].content if request.messages else ""
-        return _strip_false_regen_progress_claim(_strip_false_pin_claim(
+        return _cap_reply_length(_strip_false_regen_progress_claim(_strip_false_pin_claim(
             _apply_day_cost_preference(
                 await _apply_interest_pinning(_mock_refine(last_msg), request.trip_config),
                 request.trip_config,
                 last_msg,
             )
-        ))
+        )))
 
     try:
         from google import genai as google_genai
@@ -557,13 +583,13 @@ async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
     last_user_text = next(
         (m.content for m in reversed(request.messages) if m.role == "user"), ""
     )
-    return _strip_false_regen_progress_claim(_strip_false_pin_claim(
+    return _cap_reply_length(_strip_false_regen_progress_claim(_strip_false_pin_claim(
         _apply_day_cost_preference(
             await _apply_interest_pinning(resp, request.trip_config),
             request.trip_config,
             last_user_text,
         )
-    ))
+    )))
 
 
 def _mock_refine(user_msg: str) -> ChatRefineResponse:
