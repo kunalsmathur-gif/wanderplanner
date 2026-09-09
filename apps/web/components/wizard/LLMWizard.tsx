@@ -65,10 +65,10 @@ const nextId = () => {
 const REQUIRED_LABELS: { key: string; label: string }[] = [
   { key: 'purpose',     label: 'Purpose'     },
   { key: 'destination', label: 'Destination' },
+  { key: 'origin',      label: 'Departure'   },
   { key: 'dates',       label: 'Dates'       },
   { key: 'group',       label: 'Group'       },
   { key: 'pace',        label: 'Pace'        },
-  { key: 'origin',      label: 'Departure'   },
   { key: 'budget',      label: 'Budget'      },
 ]
 

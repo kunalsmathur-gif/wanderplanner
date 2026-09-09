@@ -340,7 +340,27 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
     If the user later narrows it down to just one of those cities, replace destination with
     that city and clear hops to [].
 
-  Field 3 -- dates (JSON key: "dates")
+  Field 3 -- origin (JSON key: "origin", departure city)
+    Where they're travelling FROM. This is a REQUIRED field, not optional — flight cost varies
+    hugely by departure city, and the app cannot run an accurate budget estimate or feasibility
+    check without it (see core.budget_estimator's origin gate). Bug fix: this used to only get
+    asked opportunistically while recommending a budget, so a user who stated their own budget
+    number never got asked at all, and Anya/the app quietly priced flights off a generic
+    destination-tier guess instead of the real route.
+    Format: {{"city": "Mumbai", "iata": "", "lat": 0, "lon": 0}}
+    Ask directly right after destination is known, e.g. "And which city will you be travelling
+    from?" — this happens BEFORE dates/group/pace and BEFORE the Stage 2 "anything else?"
+    checkpoint (see Section 7), so a departure city is always known before budget is ever asked
+    or estimated. Bug fix: asking this last (right before budget) meant a user who'd already
+    picked "Solo" for purpose still got asked "who's joining you?" as if it were unresolved, and
+    departure city sat unasked until the very end of the flow — asking it right after destination
+    instead keeps the flow feeling linear (where -> from where -> when -> who -> pace) and
+    surfaces the flight-cost-critical field as early as possible.
+    Mappings: "Mumbai se" -> origin city Mumbai (see Section 3 Hinglish parsing for combined
+    "origin + destination + duration" utterances given in one breath) — extract origin
+    immediately if the user volunteers it early, don't wait to ask.
+
+  Field 4 -- dates (JSON key: "dates")
     When and how long they want to travel.
     Fixed window: {{"start": "2026-12-20", "end": "2026-12-27", "flexible": false}}
     Flexible:     {{"start": "2026-12-01", "end": "2026-12-31", "flexible": true, "duration_days": 7}}
@@ -373,7 +393,7 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
     Set start/end to approximate month boundaries for flexible travel (e.g., month="December"
     -> start: "2026-12-01", end: "2026-12-31", flexible: true).
 
-  Field 4 -- group (JSON key: "group")
+  Field 5 -- group (JSON key: "group")
     Who is travelling.
     Format: {{"adults": 2, "kids": [], "seniors": 0, "infants": 0, "pets": 0}}
     Mappings:
@@ -384,7 +404,7 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       "with kids" -> ask age(s) once if not given; estimate if implied
     kids array = list of integer ages (plain integers, e.g. [3, 6]).
 
-  Field 5 -- pace (JSON key: "pace")
+  Field 6 -- pace (JSON key: "pace")
     Travel intensity. Valid values: "relaxed" | "moderate" | "packed"
     Mappings:
       "chill" / "araam se" / "no rush" / "slow" / "easy" -> relaxed
@@ -392,21 +412,6 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       "hectic" / "see everything" / "lots of sightseeing" / "fast-paced" -> packed
     Chip mappings: "Relaxed 🧘" -> "relaxed" | "Moderate 🚶" -> "moderate" | "Packed 🏃" -> "packed"
     ALWAYS include chips when asking about pace: ["Relaxed 🧘", "Moderate 🚶", "Packed 🏃"]
-
-  Field 6 -- origin (JSON key: "origin", departure city)
-    Where they're travelling FROM. This is a REQUIRED field, not optional — flight cost varies
-    hugely by departure city, and the app cannot run an accurate budget estimate or feasibility
-    check without it (see core.budget_estimator's origin gate). Bug fix: this used to only get
-    asked opportunistically while recommending a budget, so a user who stated their own budget
-    number never got asked at all, and Anya/the app quietly priced flights off a generic
-    destination-tier guess instead of the real route.
-    Format: {{"city": "Mumbai", "iata": "", "lat": 0, "lon": 0}}
-    Ask directly once pace is known, e.g. "And which city will you be travelling from?" — this
-    happens BEFORE the Stage 2 "anything else?" checkpoint (see Section 7), so a departure city
-    is always known before budget is ever asked or estimated.
-    Mappings: "Mumbai se" -> origin city Mumbai (see Section 3 Hinglish parsing for combined
-    "origin + destination + duration" utterances given in one breath) — extract origin
-    immediately if the user volunteers it early, don't wait to ask.
 
   Field 7 -- budget (JSON key: "budget")
     Total trip budget in INR. **INR (₹) is always the canonical/stored currency — say so explicitly the
@@ -485,7 +490,7 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
 
 ## 5. OPTIONAL FIELDS
 Extract if the user mentions them. Never ask for them directly (the checkpoint in Stage 2 will invite them).
-  (origin/departure city is NOT optional anymore — see Field 6 in Section 4; it's asked
+  (origin/departure city is NOT optional anymore — see Field 3 in Section 4; it's asked
   directly, before the Stage 2 checkpoint, not invited here.)
   themes: array from ["culture", "food", "adventure", "nature", "shopping",
                        "photography", "nightlife", "sports", "wellness",
@@ -561,7 +566,7 @@ Rules:
 ## 7. CONVERSATION STAGES
 
 Stage 1 -- Collect the 6 core conversational fields (see Section 4, Fields 1-6: purpose,
-  destination, dates, group, pace, origin/departure city). Budget (Field 7) is deliberately NOT
+  destination, origin/departure city, dates, group, pace). Budget (Field 7) is deliberately NOT
   part of this stage — it comes later, in Stage 2.5, after the optional checkpoint below.
   If PRELOADED DESTINATION is set (not "None"), skip asking for destination.
 
@@ -833,7 +838,7 @@ def _has_all_required(config: dict[str, Any]) -> bool:
     if not config.get("pace"):
         return False
 
-    # Origin/departure city — now a required field (Field 6), not optional: flight cost varies
+    # Origin/departure city — now a required field (Field 3), not optional: flight cost varies
     # hugely by departure city, and the app's budget/feasibility estimates need it to be
     # meaningful (see core.budget_estimator's origin gate).
     if not (config.get("origin", {}).get("city")):
@@ -1126,7 +1131,7 @@ def _infer_group_from_free_text(last_user_text: str | None) -> dict[str, Any] | 
 # Bare numeric date ranges (e.g. "13/11 to 19/11") are deliberately NOT
 # handled, since day/month order is locale-ambiguous and a wrong guess here
 # is worse than asking again. "Next month" / "a week" / "fortnight" / season
-# names etc. (see Field 3 in the system prompt) are left to the LLM -- they
+# names etc. (see Field 4 in the system prompt) are left to the LLM -- they
 # require calendar math this deterministic parser isn't attempting to
 # duplicate for every phrasing.
 _MONTH_NAMES: dict[str, int] = {
@@ -1310,9 +1315,9 @@ def _is_group_type_chip_tap(last_user_text: str | None) -> bool:
 
 
 # Keywords identifying the "which city will you be flying out of?"
-# question (Field 6, origin/departure city — asked directly right after pace,
-# and as a fallback safety net inside budget_estimate_prompt_hint's gate if
-# origin somehow wasn't captured by then). This question has no canonical
+# question (Field 3, origin/departure city — asked directly right after
+# destination, and as a fallback safety net inside budget_estimate_prompt_hint's
+# gate if origin somehow wasn't captured by then). This question has no canonical
 # chip set of its own — the answer is a free-form city name — but historically
 # could fire in a slot where the generic "field is missing -> backfill its
 # canonical chips" and "chips look stale" safety nets mistook it for the pace
@@ -1572,6 +1577,34 @@ def _looks_like_ambiguous_place_code(text: str) -> bool:
     return bool(_AMBIGUOUS_SHORT_CODE_RE.match((text or "").strip()))
 
 
+# The confirm/reject chips offered by the low-confidence branch below are
+# dynamic — their text embeds the geocoded place name (e.g. "Yes, Bengaluru,
+# India is right") — so, unlike the fixed group/destination-mode chip sets,
+# they can't be matched via a static set lookup. Matched by shape instead.
+_ORIGIN_CONFIRMATION_REPLY_RE = re.compile(r"^yes,\s+.+\s+is right$", re.IGNORECASE)
+
+
+def _is_origin_confirmation_reply(last_user_text: str | None) -> bool:
+    """True when the user's last message is a tap of (or exact restatement
+    of) the "Yes, <city>, <country> is right" chip offered after a
+    low-confidence origin geocode. Bug fix: the confirmed reply text names
+    the GEOCODED display name (e.g. "Bengaluru"), which usually differs from
+    the raw text the user originally typed (e.g. "Bangalore") — so the LLM
+    re-extracting `origin.city` from this confirmation naturally looks like
+    a fresh, "newly stated" value to the turn-over-turn diff below. Since
+    "Bengaluru" is itself ALSO a low-confidence match (multiple candidates,
+    same as most short/common Indian city names), that re-triggered the
+    exact same ambiguity check a second time, forcing the user to confirm
+    twice before the wizard would move on (live-tested 2026-09-09). This
+    flag lets the caller skip re-running the check on the very turn the
+    user is answering it — a confirmation reply is not a new, unverified
+    statement, regardless of whether the confirmed name happens to also be
+    flagged low-confidence on its own."""
+    if not last_user_text:
+        return False
+    return bool(_ORIGIN_CONFIRMATION_REPLY_RE.match(last_user_text.strip()))
+
+
 async def _origin_ambiguity_warning(origin: dict[str, Any] | None) -> tuple[str, list[str], bool] | None:
     """Returns (message, chips, hard_reset) if the stated departure city is
     too short/ambiguous to trust blindly, or if geocoding it landed on a
@@ -1647,6 +1680,8 @@ def _next_missing_field_prompt(config: dict[str, Any]) -> tuple[str, list[str]]:
     has_dest = (mode == "exploring") or (mode == "country" and config.get("destination_country")) or (mode == "fixed" and dest and dest.get("city"))
     if not has_dest:
         return ("Where are you thinking of going?", ["Suggest me! 🌍", "I have a destination in mind"])
+    if not (config.get("origin", {}).get("city")):
+        return ("And which city will you be travelling from?", [])
     dates = config.get("dates") or {}
     if not (dates.get("start") and dates.get("end") and (not dates.get("flexible") or dates.get("duration_days"))):
         return ("When are you planning to travel, and for how many days?", [])
@@ -1654,8 +1689,6 @@ def _next_missing_field_prompt(config: dict[str, Any]) -> tuple[str, list[str]]:
         return ("Who will be joining you — travelling solo, as a couple, or with family?", ["Solo 🧳", "Couple ❤️", "Family 👨‍👩‍👧", "Friends 🎉"])
     if not config.get("pace"):
         return ("What pace works for you?", ["Relaxed 🧘", "Moderate 🚶", "Packed 🏃"])
-    if not (config.get("origin", {}).get("city")):
-        return ("And which city will you be travelling from?", [])
     if not (config.get("budget", {}).get("amount", 0) > 0):
         return (f"What's your approximate budget in ₹ (INR)? (Or tell me in {', '.join(TOP_10_CURRENCIES)} — I'll convert.)", [])
     # All fields are actually present — the false claim likely came from a
@@ -1701,7 +1734,7 @@ def _summarise_state(config: dict[str, Any]) -> str:
             "confirm they want the whole period) before this counts as filled"
         )
     elif dates.get("duration_days"):
-        # Duration alone is NOT sufficient (see Field 3 rules) — a real
+        # Duration alone is NOT sufficient (see Field 4 rules) — a real
         # travel period (month/season -> start/end) is still required.
         # Bug fix: this used to read `dates.get("flexible") and
         # dates.get("duration_days")` and report dates as already known
@@ -1743,13 +1776,13 @@ def _summarise_state(config: dict[str, Any]) -> str:
 
     # Signal to LLM whether the "anything else?" checkpoint has already been
     # asked. The checkpoint now fires after the 6 core conversational fields
-    # (purpose/destination/dates/group/pace/origin) — BEFORE budget — so that
+    # (purpose/destination/origin/dates/group/pace) — BEFORE budget — so that
     # splurge/save prefs and any prebooked costs are known before Anya ever
     # asks for a number, and so the app's Gemini feasibility check (which
     # runs automatically the instant budget is recorded — see Stage 3) has
     # the fullest possible picture to validate against. Origin (departure
     # city) is also now required before budget for the same reason — flight
-    # cost varies hugely by departure city (see Field 6 in Section 4).
+    # cost varies hugely by departure city (see Field 3 in Section 4).
     if config.get("_checkpoint_asked"):
         if (config.get("budget") or {}).get("amount", 0) > 0:
             lines.append(
@@ -1781,7 +1814,7 @@ def _summarise_state(config: dict[str, Any]) -> str:
         ),
         (config.get("group") or {}).get("adults", 0) >= 1, config.get("pace"),
         (config.get("destination_mode", "fixed") != "fixed" or (config.get("destination") or {}).get("city")),
-        # Origin/departure city — now required before the Stage 2 checkpoint (see Field 6).
+        # Origin/departure city — now required before the Stage 2 checkpoint (see Field 3).
         bool((config.get("origin") or {}).get("city")),
     ]):
         lines.append("status: 6-core-fields-collected (move to Stage 2: ask the anything-else checkpoint, budget comes after)")
@@ -2292,6 +2325,19 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                 merged["group"] = {**(merged.get("group") or {}), **inferred_group}
                 patch["group"] = {**(patch.get("group") or {}), **inferred_group}
 
+        # Bug fix: purpose "Solo" unambiguously means a single traveller, but
+        # Group was always asked as its own separate step regardless — the
+        # user who just tapped "Solo 🧳" for purpose got asked "who's joining
+        # you?" right after, forcing them to answer the same thing twice.
+        # The moment purpose is solo (chip tap value "solo", or the LLM's
+        # own "solo_backpacking" enum), freeze group to a single adult
+        # UNLESS a real composition is already recorded — never overwrite an
+        # explicit answer (e.g. a later "actually my partner is joining too").
+        if merged.get("purpose") in ("solo", "solo_backpacking") and not (merged.get("group") or {}).get("adults"):
+            solo_group = {"adults": 1, "kids": [], "seniors": 0, "infants": 0, "pets": 0}
+            merged["group"] = {**(merged.get("group") or {}), **solo_group}
+            patch["group"] = {**(patch.get("group") or {}), **solo_group}
+
         # Same backfill, same reason, for dates — only from an explicit
         # day-range-within-one-month sentence (see _infer_dates_from_free_text
         # for exactly what's handled and why the scope is narrow).
@@ -2354,6 +2400,7 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         origin_newly_recorded_this_turn = (
             origin_post_turn != origin_pre_turn and bool(origin_post_turn.get("city"))
             and not group_size_result and not duration_result
+            and not _is_origin_confirmation_reply(last_user_text)
         )
         origin_result = await _origin_ambiguity_warning(merged.get("origin")) if origin_newly_recorded_this_turn else None
         if origin_result:
@@ -2581,6 +2628,14 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
                 fallback_config["group"] = {**(fallback_config.get("group") or {}), **inferred_group}
                 fallback_patch["group"] = {**(fallback_patch.get("group") or {}), **inferred_group}
 
+        # Bug fix (same as JSON-success path above): purpose "Solo" means a
+        # single traveller — freeze group to a single adult once purpose is
+        # solo, unless a real composition is already recorded.
+        if fallback_config.get("purpose") in ("solo", "solo_backpacking") and not (fallback_config.get("group") or {}).get("adults"):
+            solo_group = {"adults": 1, "kids": [], "seniors": 0, "infants": 0, "pets": 0}
+            fallback_config["group"] = {**(fallback_config.get("group") or {}), **solo_group}
+            fallback_patch["group"] = {**(fallback_patch.get("group") or {}), **solo_group}
+
         # Same backfill, same reason, for dates (see _infer_dates_from_free_text).
         existing_fallback_dates = fallback_config.get("dates") or {}
         if not (existing_fallback_dates.get("start") and existing_fallback_dates.get("end")):
@@ -2634,6 +2689,7 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         fallback_origin_newly_recorded = (
             fallback_origin_post_turn != fallback_origin_pre_turn and bool(fallback_origin_post_turn.get("city"))
             and not fallback_group_size_result and not fallback_duration_result
+            and not _is_origin_confirmation_reply(last_user_text)
         )
         fallback_origin_result = (
             await _origin_ambiguity_warning(fallback_config.get("origin")) if fallback_origin_newly_recorded else None
