@@ -3,18 +3,32 @@
 import { useEffect, useState } from 'react'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useWizardChatStore } from '@/store/wizardChatStore'
+import { useItineraryStore } from '@/store/itineraryStore'
 import { getTravelTips, type TravelTip } from '@/lib/api'
+import { resolveDayCity } from '@/lib/dayLocation'
 import { MapWrapper } from '@/components/map/MapWrapper'
 import { BestTimeWidget } from '@/components/dashboard/BestTimeWidget'
 
 export function Column3Sidebar() {
   const collectedLabels = useWizardChatStore((state) => state.collectedLabels)
-  const configDestination = useTripConfigStore((state) => state.config.destination?.city ?? '')
+  const configDestination = useTripConfigStore((state) => state.config.destination)
   const destinationCountry = useTripConfigStore((state) => state.config.destination_country ?? '')
-  // Fall back to the country name when the LLM hasn't resolved a concrete
-  // city yet — without this, country-wide trips (e.g. "Italy") would show
-  // no map context, tips, or booking links at all.
-  const destination = collectedLabels.destination || configDestination || destinationCountry
+  const hops = useTripConfigStore((state) => state.config.hops)
+  const days = useItineraryStore((state) => state.days)
+  const activeDay = useItineraryStore((state) => state.activeDay)
+
+  // Bug fix (2026-09-10): this used to always resolve to the trip's single
+  // top-level destination (or the first hop the LLM happened to write into
+  // `destination`), so every day of a multi-hop trip showed tips/best-time
+  // for the same one city — MapWrapper already gets this right by centring
+  // on the ACTIVE DAY's own item coordinates instead, so `resolveDayCity`
+  // reuses that same logic to pick whichever of destination/hops is
+  // actually nearest to what the active day's items resolved to. Falls back
+  // to the old trip-level fields when there's no itinerary yet (wizard/
+  // pre-generation) or no day-item coordinates to match against.
+  const dayCity = days.length > 0 ? resolveDayCity(days[activeDay], configDestination, hops) : null
+  const destination =
+    dayCity?.city || collectedLabels.destination || configDestination?.city || destinationCountry
   const [tips, setTips] = useState<TravelTip[]>([])
   const [loadingTips, setLoadingTips] = useState(false)
 
@@ -39,6 +53,7 @@ export function Column3Sidebar() {
     return () => { cancelled = true }
   }, [destination])
 
+
   return (
     <div className="space-y-4 p-4">
       <MapWrapper />
@@ -57,7 +72,7 @@ export function Column3Sidebar() {
 
       <div className="border-t border-[var(--_border)] pt-2">
         <h4 className="mb-2 text-xs font-semibold uppercase tracking-widest text-[var(--_muted-fg)]">
-          Travel Tips &amp; Community
+          Travel Tips &amp; Community{destination ? ` — ${destination}` : ''}
         </h4>
 
         {!destination ? (
