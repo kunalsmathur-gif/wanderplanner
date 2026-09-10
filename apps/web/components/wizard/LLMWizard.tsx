@@ -16,6 +16,7 @@ import { savePendingGeneration, getPendingGeneration, clearPendingGeneration } f
 import { formatCurrency } from '@/lib/format'
 import { MAX_CHAT_MESSAGE_LEN } from '@/lib/limits'
 import { VOICE_LANGS, type VoiceLang } from '@/lib/voice'
+import { isStartOverIntent } from '@/lib/startOverIntent'
 import { useVoice } from '@/hooks/useVoice'
 import type { TripConfig, FeasibilityResponse } from '@/types'
 import { WanderplannerLogo } from '@/components/common/WanderplannerLogo'
@@ -105,6 +106,7 @@ function _isThemeChipGroup(chips: string[]): boolean {
   if (themeChips.length === 0) return false
   return themeChips.every((c) => THEME_CHIP_KEYWORDS.some((k) => c.toLowerCase().includes(k)))
 }
+
 
 function _isFieldFilled(key: string, config: Partial<TripConfig>): boolean {
   switch (key) {
@@ -807,6 +809,25 @@ export function LLMWizard() {
       }
       await submitHumanHandoff(value)
       return
+    }
+    if (isStartOverIntent(value)) {
+      const existingConfig = useTripConfigStore.getState().config
+      const hasExistingProgress =
+        Boolean(existingConfig.destination?.city) ||
+        Boolean(existingConfig.dates.start) ||
+        useItineraryStore.getState().days.length > 0
+      // Only worth a hard reset if there's actually collected config or a
+      // finished trip to discard — on a genuinely blank wizard this is a
+      // no-op the LLM can already answer conversationally.
+      if (hasExistingProgress) {
+        setMessages((prev) => [...prev, { id: nextId(), role: 'user', content: value }])
+        setInput('')
+        handleStartOver()
+        setMessages([
+          { id: nextId(), role: 'assistant', content: "No problem — let's start fresh! Where would you like to go? 🌍" },
+        ])
+        return
+      }
     }
     if (value === SHOW_BREAKDOWN_CHIP) {
       // Render the per-category detail from the already-fetched result —
