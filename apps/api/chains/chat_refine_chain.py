@@ -128,6 +128,8 @@ ACTION RULES:
   Set major_change: false.
 - "regenerate": For changes that fundamentally alter the itinerary:
   - Destination change
+  - Adding/removing/reordering multi-hop stops (trip_config.hops) — see
+    ROUTE ORDER below for the "fixed_stop_order" flag this can also touch.
   - Date change (start/end dates or season)
   - Group size change (adults/kids/seniors added or removed)
   - Budget change of >20%
@@ -143,6 +145,24 @@ ACTION RULES:
   regeneration completed, say you don't have visibility into that and ask
   them to check the itinerary on screen or confirm again — never claim it
   is in progress.
+
+ROUTE ORDER (trip_config field "fixed_stop_order", boolean):
+- Multi-hop trips are, by default, silently re-sequenced at regeneration time
+  for travel efficiency (least backtracking) — the order stops are listed in
+  is a wishlist, not a required route.
+- If the user gives an explicit, typically date-bound reason their stops must
+  be visited in a specific order (an event, a match, a wedding, a booked
+  flight — e.g. "Liverpool before Bath, there's a match in Liverpool that
+  week"), include "fixed_stop_order": true in config_patch alongside any
+  hops change, and use action_type "regenerate" (this changes route
+  sequencing, which is itinerary-altering). Mention in your reply that
+  you'll keep that exact order.
+- If the user just reorders/renames hops with no stated reason, leave
+  "fixed_stop_order" out of config_patch (or explicitly false) so the route
+  stays open to efficiency optimization.
+- If the user asks you to REMOVE a previously-fixed order (e.g. "the match
+  got cancelled, plan however makes most sense"), set
+  "fixed_stop_order": false so the trip goes back to auto-optimized routing.
 
 NAMED INTEREST DETECTION:
 - If the user expresses a specific interest, passion, fandom or theme they

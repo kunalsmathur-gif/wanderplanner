@@ -21,6 +21,7 @@ const DEFAULT_CONFIG: TripConfig = {
   destination_mode: 'fixed',
   destination_country: null,
   hops: [],
+  fixed_stop_order: false,
   themes: [],
   personas: [],
   group: DEFAULT_GROUP,

@@ -15,6 +15,7 @@ from core.config import settings
 from core.cost_grounding import accommodation_cost_grounding_hint, flight_cost_grounding_hint
 from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize, wrap_untrusted
+from core.route_optimization import optimize_stop_order
 from core.validation import MAX_TRIP_DAYS
 from models.itinerary import (
     ExpenseBreakdown,
@@ -87,6 +88,43 @@ async def _gem_guidance_block(trip_config: TripConfig) -> str:
         block,
         label="hidden-gem candidates (POI names from OpenStreetMap, community signal from Reddit — may contain untrusted text)",
     )
+
+
+def _visit_order_guidance_block(trip_config: TripConfig) -> str:
+    """Deterministic multi-hop sequencing (see core/route_optimization.py's
+    module docstring for the "why"). Empty for single-destination trips —
+    there is nothing to sequence. For multi-hop trips, either:
+      - the user gave an explicit reason to visit stops in a specific order
+        (trip_config.fixed_stop_order — set by the wizard/chat-refine LLM
+        from what the user actually said, e.g. a match/wedding/booked
+        flight tying a stop to a date), in which case the given order is
+        preserved and the model is told plainly not to reorder it; or
+      - no such reason was given, so the stops are reordered here to
+        minimise total travel distance, and the model is told to follow
+        that computed sequence instead of trip_config's raw list order.
+    """
+    if not trip_config.hops:
+        return ""
+    stops = [trip_config.destination, *trip_config.hops] if trip_config.destination else list(trip_config.hops)
+    if len(stops) < 2:
+        return ""
+
+    if trip_config.fixed_stop_order:
+        order = stops
+        note = (
+            "The user specifically asked for this order — likely tied to a date-bound "
+            "reason (an event, a booked flight, etc.). Do NOT reorder it."
+        )
+    else:
+        order = optimize_stop_order(trip_config.origin, stops)
+        note = (
+            "This order is optimized for travel efficiency (minimizing backtracking "
+            "between stops) — it may differ from the order stops are listed in "
+            "trip_config above. Follow it."
+        )
+
+    sequence = " → ".join(s.city for s in order if s and s.city)
+    return f"VISIT ORDER:\n{sequence}\n{note}"
 
 
 def _pinned_guidance_block(trip_config: TripConfig) -> str:
@@ -404,7 +442,7 @@ RULES:
 - For local_name: provide the place name in local script only when it differs from English (e.g. 浅草寺 for Senso-ji, 에펠탑 for Eiffel Tower). Leave empty for English-named places.
 - For youtube_search_query: generate a short, specific search phrase travelers would use (e.g. "Senso-ji Temple Tokyo travel guide").
 - For expense_breakdown: provide realistic INR estimates for all 8 cost categories. Base on actual market rates for the destination year and accommodation style specified.
-- MULTI-HOP TRIPS: If trip_config.hops is non-empty, the trip visits multiple cities. Distribute days proportionally across all stops (destination + hops). Use the day theme to indicate city transitions (e.g. "Travel Day: Paris → Amsterdam"). Aggregate expense_breakdown across all stops.
+- MULTI-HOP TRIPS: If trip_config.hops is non-empty, the trip visits multiple cities. Distribute days proportionally across all stops (destination + hops). Use the day theme to indicate city transitions (e.g. "Travel Day: Paris → Amsterdam"). Aggregate expense_breakdown across all stops. Sequence the stops in the exact order given by the VISIT ORDER section below (if present) — do NOT default to the order stops happen to be listed in trip_config, which may not be the travel-efficient sequence.
 - BUDGET GUIDANCE (below): apply the stated budget tier to accommodation/dining choices and expense_breakdown figures. If a flight-cost or accommodation-cost grounding range is given, treat it as a strong sanity check for those expense_breakdown line items.
 
 USING DESTINATION RESEARCH (below):
@@ -486,6 +524,8 @@ REAL TRAVELLER ITINERARIES FOR REFERENCE (use as inspiration, not verbatim):
 {day_cost_guidance}
 
 {budget_guidance}
+
+{visit_order_guidance}
 
 TRIP CONFIGURATION:
 {trip_config}
@@ -770,6 +810,7 @@ async def _gemini_itinerary(trip_config: TripConfig, cost_correction: str = "") 
         budget_guidance=neutralize(
             budget_guidance, context="budget tier + cost grounding guidance"
         ),
+        visit_order_guidance=_visit_order_guidance_block(trip_config),
         trip_config=neutralize(trip_json, context="trip configuration"),
     )
     if cost_correction:
@@ -953,6 +994,7 @@ async def _langchain_itinerary(trip_config: TripConfig, cost_correction: str = "
             "pinned_guidance": _pinned_guidance_block(trip_config),
             "day_cost_guidance": _day_cost_guidance_block(trip_config),
             "budget_guidance": neutralize(budget_guidance, context="budget tier + cost grounding guidance"),
+            "visit_order_guidance": _visit_order_guidance_block(trip_config),
             "trip_config": trip_json + (f"\n\n{cost_correction}" if cost_correction else ""),
         })
     # See _gemini_itinerary's identical marker — same "live but ungrounded"

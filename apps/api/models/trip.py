@@ -159,6 +159,15 @@ class TripConfig(BaseModel):
     # its own cold-start ingestion — Overpass, Wikivoyage and embeddings — so
     # an uncapped list is a per-request multiplier on the slowest path there is.
     hops: list[DestinationInput] = Field(default_factory=list, max_length=MAX_HOPS)  # multi-stop, max 5
+    # Multi-hop trips are, by default, silently re-sequenced for travel
+    # efficiency at itinerary-generation time (core/route_optimization.py) —
+    # the order the user typed destination/hops in is a wishlist, not
+    # necessarily the order they want to fly/drive between them. Set True
+    # when the wizard/chat-refine LLM detects the user gave an explicit
+    # reason to visit places in a specific sequence (e.g. "Liverpool before
+    # Bath — there's a match in Liverpool that week") so that sequence is
+    # preserved exactly instead of being reordered out from under them.
+    fixed_stop_order: bool = False
     themes: list[ShortLabel] = Field(default_factory=list, max_length=MAX_THEMES)
     personas: list[ShortLabel] = Field(default_factory=list, max_length=MAX_PERSONAS)
     group: GroupComposition = Field(default_factory=GroupComposition)

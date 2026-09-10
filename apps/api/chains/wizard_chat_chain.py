@@ -290,6 +290,19 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       ]
       This applies any time the user updates the destination too — e.g. "actually add Kandy
       as well" -> append {{"city": "Kandy", ...}} to the existing hops in config_patch.
+
+      ROUTE ORDER (JSON key: "fixed_stop_order", boolean, default false/omitted):
+      By default the app silently re-sequences multi-hop stops for travel efficiency
+      (least backtracking) — the order the user names places in is treated as a
+      wishlist, not a required route. Set "fixed_stop_order": true ONLY when the user
+      gives an explicit reason their stops must be visited in that specific order —
+      typically a date-bound reason (an event, a match, a wedding, a booked flight)
+      rather than just naming places in a particular sequence. Example:
+        User: "Liverpool before Bath — there's a match in Liverpool that week"
+        -> destination: Liverpool, hops: [Bath, ...], fixed_stop_order: true
+      Naming places in an order with NO stated reason (e.g. just "Colombo, Mirissa,
+      Yala") does NOT set this flag — leave it false/omitted so the route can be
+      optimized.
     Map: "suggest me" / "not sure" / "anywhere" / "kuch bhi" / "you decide" -> Case C
 
     CRITICAL — never strand a trip in "exploring" mode while collecting other fields.

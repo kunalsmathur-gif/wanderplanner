@@ -72,6 +72,10 @@ export interface TripConfig {
   destination_mode: DestinationMode
   destination_country: string | null   // used when mode = 'country'
   hops: DestinationInput[]             // multi-stop (max 5), used alongside destination
+  // When true, the backend preserves the destination/hops order exactly
+  // instead of auto-optimizing multi-hop travel sequencing (set when the
+  // user gave an explicit date-bound reason for the order, e.g. an event).
+  fixed_stop_order: boolean
   themes: string[]
   personas: string[]
   group: GroupComposition
