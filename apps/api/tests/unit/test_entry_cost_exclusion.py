@@ -107,3 +107,46 @@ class TestFeasibilityBreakdown:
         result = _mock_feasibility({"nights": 4, "total_people": 2}, budget_inr=200000)
 
         assert result.breakdown.visa_inr is None
+
+    def test_an_ungrounded_visa_guess_does_not_inflate_the_total(self):
+        # 🔴 Found live 2026-09-10: the displayed visa_inr line already goes
+        # to None when ungrounded (see above), but `total_estimated_inr` is
+        # the model's own sum computed BEFORE it's told to drop that guess —
+        # so an inflated, invisible visa figure was still fully counted
+        # toward the shortfall shown to the user, with no line item on
+        # screen to explain it. The feasibility path must exclude an
+        # ungrounded visa guess from the total the same way the itinerary
+        # path's `_parse_expense_breakdown` already does (see
+        # `TestItineraryBreakdown` above).
+        result = _build_response(
+            {
+                "flights_inr": 20000,
+                "visa_inr": 90000,  # a hallucinated, ungrounded guess
+                "accommodation_inr": 20000,
+                "daily_expenses_inr": 10000,
+                "total_estimated_inr": 140000,
+            },
+            budget_inr=60000,
+            entry_grounded=False,
+        )
+
+        assert result.breakdown.visa_inr is None
+        assert result.breakdown.total_estimated_inr == 50000
+        assert result.feasible is True
+
+    def test_a_grounded_visa_guess_still_counts_toward_the_total(self):
+        result = _build_response(
+            {
+                "flights_inr": 20000,
+                "visa_inr": 6000,
+                "accommodation_inr": 20000,
+                "daily_expenses_inr": 10000,
+                "total_estimated_inr": 56000,
+            },
+            budget_inr=60000,
+            entry_grounded=True,
+        )
+
+        assert result.breakdown.visa_inr == 6000
+        assert result.breakdown.total_estimated_inr == 56000
+

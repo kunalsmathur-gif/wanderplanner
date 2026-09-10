@@ -469,6 +469,32 @@ def _duration_days(dates: dict[str, Any] | None) -> tuple[int, bool]:
 _STAY_PP_BOUNDS = (300, 50_000)
 _FOOD_PP_BOUNDS = (100, 10_000)
 
+# Stay grounding accepts a single community mention (`_STAY_MIN_SAMPLES = 1`
+# below) with no floor, unlike food — so one noisy/outlier extraction (a
+# review of a specific luxury villa or safari lodge, not the destination's
+# typical rate) sets the ENTIRE trip's per-night figure with nothing to
+# check it against. Found live 2026-09-10: a solo Sri Lanka trip's
+# feasibility check quoted a bare-minimum floor of ~₹97k against a real,
+# fully-booked itinerary that came in at ₹41k — accommodation_inr alone was
+# ~₹8,085/night/person, several times the hand-authored budget-tier flat
+# default (₹2,000), for a trip the actual generator filled with ordinary
+# budget/mid-range stays. This band is the sanity check the module's own
+# comment on `_STAY_MIN_SAMPLES` flagged as the fix ("a sanity band relative
+# to the flat default"): a single grounded sample is only trusted if it
+# falls within a plausible multiple of the flat default for that
+# destination tier/traveller level; further out, it's more likely noise
+# than a genuinely unusual market than a bare-minimum estimate should
+# anchor to, so it's discarded in favour of the flat default.
+#
+# Deliberately one-sided (lower multiple `0.0`, i.e. no floor): a grounded
+# figure BELOW the flat default can legitimately reflect a genuinely cheap
+# destination — this module's own design intent (see `_grounded_or_flat`'s
+# docstring and `test_estimator_floors_reconciled_food_but_keeps_below_
+# flat_stay`'s below-flat case). The observed failure mode was always an
+# outlier running too HIGH, never too low, so only the upper multiple
+# guards against it.
+_STAY_SANITY_BAND = (0.0, 2.5)
+
 # Wikivoyage "Eat" listings (the dominant community food-price source) quote
 # per-dish/per-meal prices, not a full day's food budget, so a raw median of
 # them systematically under-states daily spend (NEXT_SESSION_TODO "item A").
@@ -499,8 +525,9 @@ _FOOD_MEALS_PER_DAY = 3.0
 #
 # The trade is real and deliberate: for a destination with one mention, that one
 # number now sets the stay line, and stay has no floor. Bounds are the only
-# guard. Revisit if grounded stay figures start looking erratic on thin
-# destinations -- a sanity band relative to the flat default would be the fix.
+# absolute guard; `_STAY_SANITY_BAND` (see below, applied via `_grounded_or_flat`'s
+# `sanity_band` param) is the relative guard against a single outlier sample
+# added 2026-09-10 after exactly this failure mode surfaced live.
 _STAY_MIN_SAMPLES = 1
 
 
@@ -512,6 +539,7 @@ async def _grounded_or_flat(
     bounds: tuple[float, float],
     context_keywords: frozenset[str] | None = None,
     min_samples: int = 2,
+    sanity_band: tuple[float, float] | None = None,
 ) -> tuple[float, bool]:
     """Real per-destination community-reported figure (INR) if the free RAG
     collections have enough signal for it, else the hand-authored flat
@@ -523,7 +551,13 @@ async def _grounded_or_flat(
     deliberately has no floor (a below-flat grounded stay figure can legitimately
     reflect a genuinely cheap destination). Food needs a per-day reconciliation
     and a provenance-conditional floor, which don't fit this signature — see
-    `_grounded_food_per_day` below."""
+    `_grounded_food_per_day` below.
+
+    `sanity_band`, when given, is a `(low_multiple, high_multiple)` of
+    `flat_default` outside which a grounded figure is distrusted and the
+    flat default is used instead — see `_STAY_SANITY_BAND`'s docstring for
+    why this exists (a single-sample grounded figure, as stay's
+    `min_samples=1` allows, has nothing else to check it against)."""
     dest_city = city or country
     if not dest_city:
         return flat_default, False
@@ -536,6 +570,10 @@ async def _grounded_or_flat(
     except Exception:
         grounded = None
     if grounded is not None:
+        if sanity_band is not None and flat_default > 0:
+            low, high = flat_default * sanity_band[0], flat_default * sanity_band[1]
+            if not (low <= grounded <= high):
+                return flat_default, False
         return grounded, True
     return flat_default, False
 
@@ -667,7 +705,7 @@ async def estimate_bare_minimum_budget(
 
     stay_pp_base, stay_community_based = await _grounded_or_flat(
         city, country, "hotel accommodation nightly rate per person", rates["stay_per_night_pp"], _STAY_PP_BOUNDS,
-        context_keywords=STAY_CONTEXT_KEYWORDS, min_samples=_STAY_MIN_SAMPLES,
+        context_keywords=STAY_CONTEXT_KEYWORDS, min_samples=_STAY_MIN_SAMPLES, sanity_band=_STAY_SANITY_BAND,
     )
     stay_airbnb_fallback_used = False
     if not stay_community_based:

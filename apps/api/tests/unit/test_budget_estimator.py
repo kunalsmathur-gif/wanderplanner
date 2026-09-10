@@ -181,6 +181,35 @@ async def test_stay_and_food_use_real_community_data_when_available():
     assert estimate["breakdown"]["food_inr"] == 18000
 
 
+async def test_a_single_outlier_stay_sample_is_distrusted_not_trusted():
+    # 🔴 Found live 2026-09-10: stay grounding accepts a single community
+    # mention (min_samples=1) with no floor, so one noisy/outlier extraction
+    # (e.g. a luxury villa review, not the destination's typical rate) used
+    # to set the ENTIRE trip's per-night figure unchecked. A Sri Lanka
+    # feasibility check quoted a bare-minimum floor of ~₹97k against a real
+    # itinerary that came in at ₹41k, driven by an accommodation figure of
+    # ~₹8,085/night/person — several times the Sri Lanka budget-tier flat
+    # default (₹2,000/night). Destination Colombo (budget tier, mid_range) ->
+    # flat default 2000; ₹8085 is >2.5x that, so it must now be distrusted
+    # and the flat default used instead.
+    with community_grounding(stay=8085, food=None):
+        estimate = await estimate_bare_minimum_budget(_config())
+    assert estimate["stay_community_based"] is False
+    # Falls back to the flat default (2000/night, 4 nights, 2 adults = 16000),
+    # not the outlier sample (8085*4*2 = 64680).
+    assert estimate["breakdown"]["stay_inr"] == 16000
+
+
+async def test_a_plausible_stay_sample_within_the_sanity_band_is_still_trusted():
+    # A genuinely cheaper-than-flat or moderately-higher-than-flat real
+    # figure must still come through — the band guards against outliers,
+    # not against real destination-to-destination variation.
+    with community_grounding(stay=3500, food=None):  # 1.75x the 2000 flat default
+        estimate = await estimate_bare_minimum_budget(_config())
+    assert estimate["stay_community_based"] is True
+    assert estimate["breakdown"]["stay_inr"] == 28000  # 3500*4*2
+
+
 async def test_hint_mentions_community_grounding_when_used():
     with community_grounding(stay=3000, food=1800):
         hint = await budget_estimate_prompt_hint(_config(origin=dict(BENGALURU)))

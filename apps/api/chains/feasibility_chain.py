@@ -69,7 +69,13 @@ FEASIBILITY_PROMPT = """\
 You are a travel cost expert. Estimate the realistic total cost (in Indian Rupees) for the
 trip described below for travelers departing from India.
 
-Provide cost estimates based on average market rates. Be conservative (lean slightly higher).
+Provide cost estimates based on REALISTIC average market rates — accurate, not padded for
+safety margin. A separate deterministic floor is already applied server-side as the
+underestimate safeguard, so inflating your own numbers "to be safe" only widens the gap
+between this estimate and the trip the user actually ends up with, which looks like
+overselling. If real prices vary by season/booking window, use the typical rate a traveller
+booking a few weeks out would actually pay, not the worst case.
+
 
 TRIP DETAILS:
 {trip_config}
@@ -179,7 +185,26 @@ async def check_feasibility(
     under-report the latency that actually hurts."""
     with timing.track("check_feasibility") as timings:
         try:
-            return await _check_feasibility_inner(trip_config, skip_destination_check, timings)
+            result = await _check_feasibility_inner(trip_config, skip_destination_check, timings)
+            # Prior to 2026-09-10 only latency was logged here — a live
+            # ~₹190k-vs-₹41k (feasibility estimate vs. actual generated
+            # itinerary cost) gap for a Sri Lanka trip had to be root-caused
+            # blind, by re-deriving the LLM/floor math from a curl repro
+            # rather than reading it straight out of the logs. Logging the
+            # actual figures (not the trip content — no PII/user text) means
+            # the next such gap is a `railway logs | grep` away.
+            logger.info(
+                "check_feasibility result",
+                extra={"fields": {
+                    "operation": "check_feasibility_result",
+                    "budget_inr": result.budget_inr,
+                    "total_estimated_inr": result.breakdown.total_estimated_inr,
+                    "bare_minimum_inr": result.bare_minimum_inr,
+                    "feasible": result.feasible,
+                    "shortfall_inr": result.shortfall_inr,
+                }},
+            )
+            return result
         finally:
             timing.log_timings(
                 logger, timings,
@@ -397,6 +422,22 @@ def _build_response(
     llm_flights = int(data.get("flights_inr", 0))
     llm_accommodation = int(data.get("accommodation_inr", 0))
     total = int(data.get("total_estimated_inr", 0))
+
+    # Found live 2026-09-10, same failure family as the Bhutan bug this
+    # module's docstring already documents: the prompt tells the model to
+    # discard its own `visa_inr` guess when there's no ENTRY-COST GROUNDING
+    # block for the destination ("do not fill the gap with a guess"), and
+    # the DISPLAYED breakdown already honours that (`visa_inr=None`, shown
+    # as "not available" below) — but `total_estimated_inr` is the model's
+    # own sum, computed BEFORE it's told to drop that guess, so an
+    # ungrounded (and models don't always comply) visa figure kept fully
+    # inflating `total` — and therefore the shortfall shown to the user —
+    # while the breakdown line explaining it was hidden. A trip whose
+    # verdict quoted a shortfall the user could never reconcile against the
+    # visible line items is exactly the "misrepresentation" this guards
+    # against: what's used for the feasibility math must match what's shown.
+    if not entry_grounded:
+        total -= int(data.get("visa_inr") or 0)
 
     # Already-booked flights/accommodation (⭐ NEW): swap the LLM's guessed
     # component for the user's real paid amount, since that's a sunk cost
