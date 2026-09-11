@@ -134,3 +134,79 @@ class TestFloorBreakdownConsistency:
 
         assert response.breakdown.flights_inr == 55000
         assert response.breakdown.accommodation_inr == 40000
+
+
+class TestCeilingCapsAnOverGenerousLlmGuess:
+    """Live prod bug (2026-09-11): a feasibility check quoted ₹114,650 as the
+    minimum needed, but the itinerary the user actually generated afterwards
+    came to only ₹81,785 — a ~40% gap. The floor (`_build_response`'s
+    existing bare-minimum-floor swap) only guards against the LLM guessing
+    too LOW; nothing previously guarded the opposite direction. These tests
+    pin the new ceiling: the LLM's total is capped at
+    `_CEILING_OVER_FLOOR_MULTIPLIER`x the deterministic floor, and the
+    displayed line items are scaled down consistently so they still sum to
+    the (now-capped) total shown next to them."""
+
+    def test_a_wildly_inflated_llm_total_is_capped_at_the_ceiling(self):
+        # Floor is ₹50,000; ceiling is 2x that = ₹100,000. An LLM total of
+        # ₹300,000 (6x the floor) is far past "legitimately pricier" and
+        # must be capped down to the ceiling.
+        raw = {**_RAW, "total_estimated_inr": 300000, "flights_inr": 150000,
+               "accommodation_inr": 100000, "daily_expenses_inr": 50000, "visa_inr": 0}
+        bare_minimum = {
+            "total_inr": 50000,
+            "breakdown": {"flights_inr": 20000, "stay_inr": 20000, "food_inr": 10000},
+        }
+        response = _build_response(raw, budget_inr=100000, bare_minimum=bare_minimum, trip_config=TripConfig())
+
+        assert response.breakdown.total_estimated_inr == 100000
+        # Line items must still sum to the capped total, not silently drift.
+        assert (
+            response.breakdown.flights_inr
+            + response.breakdown.accommodation_inr
+            + response.breakdown.daily_expenses_inr
+        ) == 100000
+
+    def test_a_moderately_higher_llm_total_within_the_ceiling_is_untouched(self):
+        # 1.6x the floor is inside the 2x ceiling -- a legitimately pricier
+        # (e.g. mid-range hotel) guess must survive untouched.
+        raw = {**_RAW, "total_estimated_inr": 80000}
+        bare_minimum = {
+            "total_inr": 50000,
+            "breakdown": {"flights_inr": 20000, "stay_inr": 20000, "food_inr": 10000},
+        }
+        response = _build_response(raw, budget_inr=100000, bare_minimum=bare_minimum, trip_config=TripConfig())
+
+        assert response.breakdown.total_estimated_inr == 80000
+        assert response.breakdown.flights_inr == 40000
+
+    def test_ceiling_never_fights_the_floor(self):
+        # When the floor is binding (LLM total below the floor), the floor
+        # path already sets total == bare_minimum_inr, which the ceiling
+        # (>= the floor by construction) must never re-cap or fight with.
+        raw = {**_RAW, "total_estimated_inr": 30000, "flights_inr": 15000,
+               "accommodation_inr": 10000, "daily_expenses_inr": 5000, "visa_inr": 0}
+        bare_minimum = {
+            "total_inr": 150000,
+            "breakdown": {"flights_inr": 90000, "stay_inr": 40000, "food_inr": 20000},
+        }
+        response = _build_response(raw, budget_inr=200000, bare_minimum=bare_minimum, trip_config=TripConfig())
+
+        assert response.breakdown.total_estimated_inr == 150000
+
+    def test_prebooked_flights_are_not_scaled_down_by_the_ceiling(self):
+        # A user's real, already-paid flight cost must survive the ceiling
+        # cap untouched, exactly like it already survives the floor swap --
+        # it's a sunk cost, not a guess to be adjusted either way.
+        raw = {**_RAW, "total_estimated_inr": 300000, "flights_inr": 150000,
+               "accommodation_inr": 100000, "daily_expenses_inr": 50000, "visa_inr": 0}
+        bare_minimum = {
+            "total_inr": 50000,
+            "breakdown": {"flights_inr": 20000, "stay_inr": 20000, "food_inr": 10000},
+        }
+        trip_config = TripConfig(prebooked_flights_inr=60000)
+        response = _build_response(raw, budget_inr=100000, bare_minimum=bare_minimum, trip_config=trip_config)
+
+        assert response.breakdown.flights_inr == 60000
+        # Total is still capped at the ceiling overall.
+        assert response.breakdown.total_estimated_inr == 100000

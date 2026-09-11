@@ -38,6 +38,25 @@ _ESTIMATE_CACHE_TTL_SECONDS = 60 * 30  # 30 minutes — long enough to cover a
 # multi-turn budget-adjustment back-and-forth in one sitting, short enough
 # that stale/live grounding data doesn't linger indefinitely.
 
+# Found live 2026-09-11: a feasibility check quoted ₹114,650 as the minimum
+# needed, but the itinerary the user actually generated afterwards came to
+# only ₹81,785 — a ~40% gap that erodes trust even though it's much smaller
+# than the ~5x gap the bare-minimum-floor default-tier bug used to produce.
+# Root cause here is structural, not the floor: `total_estimated_inr` is a
+# SEPARATE, independently-sampled Gemini guess (this module's own prompt
+# below), never checked against how conservative it's allowed to run ABOVE
+# the deterministic bare-minimum floor — only checked that it isn't BELOW
+# the floor. An LLM guess is noise around some "true" cost; without a
+# ceiling exactly as real as the existing floor, an over-generous sample is
+# shown to the user as if it were as trustworthy as an under-generous one.
+# Cap the LLM's total at this multiple of the deterministic floor — chosen
+# generously (2x, not tight to the floor itself, which is a genuine
+# bare-minimum flights+stay+food number with no activities/local transport/
+# shopping margin at all) so a legitimately pricier itinerary (mid-range
+# hotels, splurge categories, add-ons) isn't clipped, while a truly runaway
+# guess several multiples over the floor is.
+_CEILING_OVER_FLOOR_MULTIPLIER = 2.0
+
 
 def _estimate_cache_key(trip_summary: dict, budget_tier_hint: str, cost_grounding_hint: str) -> str:
     """Stable signature for everything the Gemini prompt varies with, other
@@ -421,6 +440,7 @@ def _build_response(
 ) -> FeasibilityResponse:
     llm_flights = int(data.get("flights_inr", 0))
     llm_accommodation = int(data.get("accommodation_inr", 0))
+    llm_daily_expenses = int(data.get("daily_expenses_inr", 0))
     total = int(data.get("total_estimated_inr", 0))
 
     # Found live 2026-09-10, same failure family as the Bhutan bug this
@@ -438,6 +458,7 @@ def _build_response(
     # against: what's used for the feasibility math must match what's shown.
     if not entry_grounded:
         total -= int(data.get("visa_inr") or 0)
+    llm_visa = int(data.get("visa_inr") or 0) if entry_grounded else 0
 
     # Already-booked flights/accommodation (⭐ NEW): swap the LLM's guessed
     # component for the user's real paid amount, since that's a sunk cost
@@ -475,9 +496,37 @@ def _build_response(
             llm_flights = int(floor_breakdown.get("flights_inr", llm_flights))
         if prebooked_accommodation is None:
             llm_accommodation = int(floor_breakdown.get("stay_inr", llm_accommodation))
-        floor_food = int(floor_breakdown.get("food_inr", data.get("daily_expenses_inr", 0)))
-    else:
-        floor_food = None
+        llm_daily_expenses = int(floor_breakdown.get("food_inr", data.get("daily_expenses_inr", 0)))
+
+    # Deterministic ceiling (⭐ NEW, mirrors the floor above): the LLM's cost
+    # guess can also occasionally OVERSHOOT — it's an independently-sampled
+    # estimate with no cross-check against how conservative it's allowed to
+    # run relative to the deterministic floor, only against running below
+    # it. Cap the guessable portion of the total (everything except a real,
+    # user-confirmed prebooked sunk cost, which is never adjusted either
+    # way) at `_CEILING_OVER_FLOOR_MULTIPLIER`x the floor. Skip entirely if
+    # the floor already won (total == the floor, which is <= any ceiling
+    # above it) or if there's no floor to anchor a ceiling to at all.
+    ceiling_used = False
+    if not floor_used and bare_minimum_inr is not None:
+        ceiling_value = round(bare_minimum_inr * _CEILING_OVER_FLOOR_MULTIPLIER, -2)
+        fixed_total = (prebooked_flights or 0) + (prebooked_accommodation or 0)
+        variable_total = total - fixed_total
+        if total > ceiling_value and variable_total > 0 and ceiling_value > fixed_total:
+            scale = (ceiling_value - fixed_total) / variable_total
+            if prebooked_flights is None:
+                llm_flights = round(llm_flights * scale, -2)
+            if prebooked_accommodation is None:
+                llm_accommodation = round(llm_accommodation * scale, -2)
+            llm_daily_expenses = round(llm_daily_expenses * scale, -2)
+            llm_visa = round(llm_visa * scale, -2)
+            total = ceiling_value
+            ceiling_used = True
+            logger.info(
+                "feasibility ceiling applied: llm total capped from an over-generous "
+                "guess down to %s (%.1fx the %s floor)",
+                ceiling_value, _CEILING_OVER_FLOOR_MULTIPLIER, bare_minimum_inr,
+            )
 
     feasible = total <= budget_inr
 
@@ -491,9 +540,9 @@ def _build_response(
         # (the international USD 100/night levy, for a traveller who needs no
         # visa and pays ₹1,200/night), and a model cannot tell us when it is
         # guessing.
-        visa_inr=int(data.get("visa_inr", 0)) if entry_grounded else None,
+        visa_inr=llm_visa if entry_grounded else None,
         accommodation_inr=llm_accommodation,
-        daily_expenses_inr=floor_food if floor_used else int(data.get("daily_expenses_inr", 0)),
+        daily_expenses_inr=llm_daily_expenses,
         total_estimated_inr=total,
     )
 
