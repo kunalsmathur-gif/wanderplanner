@@ -78,3 +78,63 @@ async def test_resolve_coords_geocodes_both_once_all_known():
     with patch("chains.wizard_chat_chain.geocode_city", new=AsyncMock(return_value=fake_response)):
         patch_result = await _resolve_origin_destination_coords(config)
     assert patch_result == {"origin": {"lat": 1.0, "lon": 2.0}, "destination": {"lat": 1.0, "lon": 2.0}}
+
+
+@pytest.mark.asyncio
+async def test_resolve_coords_geocodes_hops_even_without_group_or_origin():
+    # 🔴 Found live 2026-09-11: hops were never geocoded here at all, only
+    # origin/destination — so every multi-hop trip's hops stayed at the
+    # LLM's lat:0,lon:0 placeholder forever, and the frontend's day-aware
+    # travel-tips matcher (resolveDayCity) could only ever match every day
+    # to the single destination city. Hops must geocode independent of the
+    # origin/group gate above (that gate exists only for the flight-distance
+    # budget estimate, which hops don't feed).
+    config = {
+        "destination": {"city": "Kandy"},
+        "hops": [{"city": "Galle"}, {"city": "Mirissa", "country": "Sri Lanka"}],
+    }
+
+    async def _fake_geocode(city: str):
+        coords = {"Galle": (6.0535, 80.2210), "Mirissa": (5.9483, 80.4589)}
+        lat, lon = coords[city]
+        return GeocodeResponse(display_name=city, lat=lat, lon=lon, country_code="lk", is_country=False)
+
+    with patch("chains.wizard_chat_chain.geocode_city", new=AsyncMock(side_effect=_fake_geocode)):
+        patch_result = await _resolve_origin_destination_coords(config)
+
+    assert patch_result == {
+        "hops": [
+            {"city": "Galle", "lat": 6.0535, "lon": 80.2210},
+            {"city": "Mirissa", "country": "Sri Lanka", "lat": 5.9483, "lon": 80.4589},
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_resolve_coords_skips_hops_already_geocoded():
+    config = {
+        "destination": {"city": "Kandy"},
+        "hops": [{"city": "Galle", "lat": 6.0535, "lon": 80.2210}],
+    }
+    with patch("chains.wizard_chat_chain.geocode_city", new=AsyncMock()) as mock_geocode:
+        patch_result = await _resolve_origin_destination_coords(config)
+    assert patch_result == {}
+    mock_geocode.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resolve_coords_geocodes_both_hops_and_origin_destination_together():
+    config = {
+        "group": {"adults": 2},
+        "destination": {"city": "Kandy"},
+        "origin": {"city": "Bengaluru"},
+        "hops": [{"city": "Galle"}],
+    }
+    fake_response = GeocodeResponse(display_name="x", lat=1.0, lon=2.0, country_code="in", is_country=False)
+    with patch("chains.wizard_chat_chain.geocode_city", new=AsyncMock(return_value=fake_response)):
+        patch_result = await _resolve_origin_destination_coords(config)
+    assert patch_result == {
+        "origin": {"lat": 1.0, "lon": 2.0},
+        "destination": {"lat": 1.0, "lon": 2.0},
+        "hops": [{"city": "Galle", "lat": 1.0, "lon": 2.0}],
+    }

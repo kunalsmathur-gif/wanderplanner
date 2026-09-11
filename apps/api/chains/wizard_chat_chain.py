@@ -2016,21 +2016,43 @@ async def _resolve_origin_destination_coords(config: dict[str, Any]) -> dict[str
     heuristic, but only once all three of group/destination/origin city are
     already known — otherwise the estimate can't use a number yet anyway
     (see core.budget_estimator's origin gate), so there's no reason to spend
-    a Nominatim call on every earlier turn (purpose, pace, themes, ...)."""
+    a Nominatim call on every earlier turn (purpose, pace, themes, ...).
+
+    Also geocodes every entry in `hops` (independent of the origin/group
+    gate above, since hops don't feed the flight-distance estimate — they
+    only need to be resolvable named stops for the frontend's day-aware
+    travel-tips matcher, apps/web/lib/dayLocation.ts::resolveDayCity()).
+    🔴 Found live 2026-09-11: hops were NEVER geocoded here — only origin/
+    destination were — so every multi-hop trip's hops stayed at the LLM's
+    lat:0,lon:0 placeholder forever. resolveDayCity() then had exactly one
+    valid (non-zero) anchor to match every day's items against — the
+    destination — which is why users only ever saw travel tips for the
+    single destination city, never for any hop, regardless of which day
+    they were viewing."""
     dest_city = (config.get("destination") or {}).get("city")
     origin_city = (config.get("origin") or {}).get("city")
-    if not (_has_group(config) and dest_city and origin_city):
-        return {}
+    hops = config.get("hops") or []
 
-    origin_coords, dest_coords = await asyncio.gather(
-        _ensure_place_coords(config.get("origin")),
-        _ensure_place_coords(config.get("destination")),
-    )
     patch: dict[str, Any] = {}
-    if origin_coords:
-        patch["origin"] = origin_coords
-    if dest_coords:
-        patch["destination"] = dest_coords
+
+    if _has_group(config) and dest_city and origin_city:
+        origin_coords, dest_coords = await asyncio.gather(
+            _ensure_place_coords(config.get("origin")),
+            _ensure_place_coords(config.get("destination")),
+        )
+        if origin_coords:
+            patch["origin"] = origin_coords
+        if dest_coords:
+            patch["destination"] = dest_coords
+
+    if hops:
+        hop_coords_list = await asyncio.gather(*(_ensure_place_coords(hop) for hop in hops))
+        if any(hop_coords_list):
+            patch["hops"] = [
+                {**hop, **coords} if coords else hop
+                for hop, coords in zip(hops, hop_coords_list)
+            ]
+
     return patch
 
 
@@ -2065,7 +2087,9 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
     if geocode_patch:
         config_for_hint = copy.deepcopy(request.partial_config)
         for key, coords in geocode_patch.items():
-            config_for_hint[key] = {**config_for_hint.get(key, {}), **coords}
+            # `hops` patches are a full replacement list (see
+            # _resolve_origin_destination_coords), not a dict to shallow-merge.
+            config_for_hint[key] = coords if isinstance(coords, list) else {**config_for_hint.get(key, {}), **coords}
 
     try:
         budget_hint = await budget_estimate_prompt_hint(config_for_hint, last_user_text)
@@ -2290,11 +2314,17 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             else:
                 merged[k] = v
 
-        # Persist any origin/destination coordinates we resolved above so the
-        # frontend stores them and future turns don't need to re-geocode.
+        # Persist any origin/destination/hops coordinates we resolved above
+        # so the frontend stores them and future turns don't need to
+        # re-geocode. `hops` patches are a full replacement list (see
+        # _resolve_origin_destination_coords), not a dict to shallow-merge.
         for k, coords in geocode_patch.items():
-            merged[k] = {**merged.get(k, {}), **coords}
-            patch[k] = {**patch.get(k, {}), **coords} if isinstance(patch.get(k), dict) else coords
+            if isinstance(coords, list):
+                merged[k] = coords
+                patch[k] = coords
+            else:
+                merged[k] = {**merged.get(k, {}), **coords}
+                patch[k] = {**patch.get(k, {}), **coords} if isinstance(patch.get(k), dict) else coords
 
         # Safety net: the LLM occasionally acknowledges a purpose-chip tap (or
         # a purpose stated in plain prose, e.g. "a family trip to Bali") in
@@ -2608,7 +2638,9 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         fallback_config = dict(request.partial_config)
         fallback_patch: dict[str, Any] = {}
         for k, coords in geocode_patch.items():
-            fallback_config[k] = {**fallback_config.get(k, {}), **coords}
+            # `hops` patches are a full replacement list (see
+            # _resolve_origin_destination_coords), not a dict to shallow-merge.
+            fallback_config[k] = coords if isinstance(coords, list) else {**fallback_config.get(k, {}), **coords}
             fallback_patch[k] = coords
         if not fallback_config.get("purpose"):
             inferred_purpose = _infer_purpose_from_chip_tap(last_user_text) or _infer_purpose_from_free_text(last_user_text)
