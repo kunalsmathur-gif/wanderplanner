@@ -573,6 +573,10 @@ async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
     track_gemini_usage(response, model=settings.gemini_model, purpose="chat_refine")
     raw = response.text
 
+    last_user_text = next(
+        (m.content for m in reversed(request.messages) if m.role == "user"), ""
+    )
+
     try:
         cleaned = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         data = json.loads(cleaned)
@@ -593,16 +597,26 @@ async def chat_refine(request: ChatRefineRequest) -> ChatRefineResponse:
             named_interest=data.get("named_interest") or None,
         )
     except Exception:
-        return ChatRefineResponse(
+        # 🔴 Found live 2026-09-11: whenever Gemini's JSON came back malformed
+        # (this branch — see the comment on the analogous fallback in
+        # wizard_chat_chain.py: it's the one actually hit whenever the JSON
+        # is truncated/duplicated), the response short-circuited straight out
+        # WITHOUT ever running `_apply_day_cost_preference` below. A user
+        # asked "can we reduce budget for day 4?", got a plausible-sounding
+        # but purely conversational acknowledgment ("Absolutely! I can mark
+        # Day 4 to prioritize more budget-friendly options...") with
+        # action_type "none" and no config_patch — nothing was ever stored or
+        # regenerated, exactly the "promised an edit that never happens" bug
+        # `_apply_day_cost_preference` exists to fix on the JSON-success path.
+        # Route this fallback reply through the same safety net instead of
+        # returning early.
+        resp = ChatRefineResponse(
             reply=_extract_reply_text(raw),
             action_type="none",
             config_patch=None,
             major_change=False,
         )
 
-    last_user_text = next(
-        (m.content for m in reversed(request.messages) if m.role == "user"), ""
-    )
     return _cap_reply_length(_strip_false_regen_progress_claim(_strip_false_pin_claim(
         _apply_day_cost_preference(
             await _apply_interest_pinning(resp, request.trip_config),

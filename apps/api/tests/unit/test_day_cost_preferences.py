@@ -11,9 +11,11 @@ from __future__ import annotations
 import pytest
 
 from chains.chat_refine_chain import (
+    ChatRefineRequest,
     ChatRefineResponse,
     _apply_day_cost_preference,
     _parse_day_cost_request,
+    chat_refine,
 )
 from chains.itinerary_chain import (
     _coerce_cost_inr,
@@ -21,6 +23,7 @@ from chains.itinerary_chain import (
     _cost_sanity_problem,
     _day_cost_guidance_block,
 )
+from models.chat import ChatMessage
 from models.itinerary import ItineraryDay, ItineraryItem, ItineraryItemLocation
 from models.trip import DayCostPreference, DestinationInput, PinnedPOI, TripConfig
 
@@ -340,3 +343,75 @@ class TestCostCorrectionBlock:
         verified pins and a good itinerary to fix a number."""
         block = _cost_correction_block("x")
         assert "same pinned" in block and "only the costs were wrong" in block
+
+
+class TestDayCostPreferenceSurvivesAMalformedJsonReply:
+    """Live prod bug (2026-11): a user asked "can we reduce budget for day 4?"
+    in the post-itinerary chat and got only a conversational acknowledgment —
+    no regeneration ever happened. Root cause: chat_refine()'s except-fallback
+    (hit whenever Gemini's JSON reply is malformed/truncated — the common
+    case, not an edge case) used to `return` a bare ChatRefineResponse
+    directly, bypassing _apply_day_cost_preference entirely. These tests
+    drive the real chat_refine() orchestration with a mocked Gemini client
+    that returns non-JSON text, proving the day-cost patch still gets applied
+    on that path."""
+
+    @staticmethod
+    def _install_fake_genai(monkeypatch, reply_text: str):
+        import sys
+        import types
+
+        class _FakeResponse:
+            text = reply_text
+
+        class _FakeModels:
+            def generate_content(self, model, contents, config):
+                return _FakeResponse()
+
+        class _FakeClient:
+            def __init__(self, api_key):
+                self.models = _FakeModels()
+
+        fake_genai = types.ModuleType("google.genai")
+        fake_genai.Client = _FakeClient
+        fake_genai_types = types.ModuleType("google.genai.types")
+        fake_genai_types.GenerateContentConfig = lambda **kw: kw
+        fake_genai_types.Content = lambda **kw: kw
+        fake_genai_types.Part = lambda **kw: kw
+        fake_google = types.ModuleType("google")
+        fake_google.genai = fake_genai
+        monkeypatch.setitem(sys.modules, "google", fake_google)
+        monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
+        monkeypatch.setitem(sys.modules, "google.genai.types", fake_genai_types)
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_reply_still_applies_the_day_cost_patch(self, monkeypatch):
+        from core.config import settings as cfg
+
+        monkeypatch.setattr(cfg, "llm_provider", "gemini")
+        monkeypatch.setattr(cfg, "gemini_api_key", "fake-key")
+        monkeypatch.setattr(cfg, "agentic_router_enabled", False)
+
+        # Not valid JSON at all — mirrors the real, empirically common
+        # failure mode where Gemini answers conversationally instead of with
+        # the requested {"reply": ..., "action_type": ...} envelope.
+        raw_reply = "Absolutely! I can mark Day 4 to prioritize more budget-friendly options."
+        self._install_fake_genai(monkeypatch, raw_reply)
+
+        trip = _trip(days=6)
+        request = ChatRefineRequest(
+            messages=[ChatMessage(role="user", content="can we reduce budget for day 4?")],
+            trip_config=trip,
+        )
+
+        response = await chat_refine(request)
+
+        assert response.action_type == "patch_config"
+        assert response.config_patch is not None
+        prefs = response.config_patch.get("day_cost_preferences")
+        assert prefs is not None and len(prefs) == 1
+        assert prefs[0]["day_number"] == 4
+        assert prefs[0]["direction"] == "cheaper"
+        # The canned confirmation should replace the raw hallucinated text,
+        # not leak it to the user with no follow-through.
+        assert "day 4" in response.reply.lower()
