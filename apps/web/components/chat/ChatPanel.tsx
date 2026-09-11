@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { X, Send, RefreshCw } from 'lucide-react'
+import { X, Send, RefreshCw, Mic, MicOff, Volume2 } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
 import { useTripConfigStore } from '@/store/tripConfigStore'
 import { useItineraryStore } from '@/store/itineraryStore'
@@ -14,6 +14,8 @@ import { loadLastItinerary } from '@/lib/resumeLastItinerary'
 import { diffItineraries, isEmptyDiff } from '@/lib/itineraryDiff'
 import { formatFeasibilityBreakdown, suggestedFeasibleBudget, formatFeasibilityBreakdownDetailed } from '@/lib/feasibilityFormat'
 import { MAX_CHAT_MESSAGE_LEN } from '@/lib/limits'
+import { VOICE_LANGS, type VoiceLang } from '@/lib/voice'
+import { useVoice } from '@/hooks/useVoice'
 import { ChatMessage } from './ChatMessage'
 import { ThemeToggle } from '@/components/common/ThemeToggle'
 import type { ChatRefineResponse, TripConfig, FeasibilityResponse } from '@/types'
@@ -64,6 +66,31 @@ export function ChatPanel() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const cancelRegenRef = useRef<(() => void) | null>(null)
+
+  // ── Voice I/O ──────────────────────────────────────────────────────────────
+  // Same `useVoice` hook the wizard uses (hooks/useVoice.ts) — this chat had
+  // no voice CTA at all before, so every "Ask & adjust" edit had to be typed
+  // even for a user who'd just spoken their whole initial trip to the wizard.
+  const [voiceNotice, setVoiceNotice] = useState('')
+  // One-time "choose a voice language" prompt, mirroring the wizard's —
+  // asked once per session the first time voice mode is turned on here, not
+  // shared with the wizard's own prompt/ref (a user could speak to the
+  // wizard in Hindi, then want English for post-generation chat, or open
+  // this chat without ever having opened the wizard's voice mode at all).
+  const [voiceLangPrompt, setVoiceLangPrompt] = useState(false)
+  const voiceLangAskedRef = useRef(false)
+  // `handleSend` is a hoisted function declaration further down (in scope
+  // here), only ever called from an event, never during render.
+  const voice = useVoice({
+    onTranscript: (text) => {
+      setInput(text)
+      handleSend(text)
+    },
+    onNotice: setVoiceNotice,
+    // Nothing to answer once a regeneration/feasibility check is in flight —
+    // don't reopen the mic mid-check the way the wizard won't mid-generation.
+    canListen: () => regenNote === null && pendingFeasibility === null,
+  })
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -210,8 +237,8 @@ export function ChatPanel() {
     }
   }
 
-  async function handleSend() {
-    const text = input.trim()
+  async function handleSend(overrideText?: string) {
+    const text = (overrideText ?? input).trim()
     if (!text || status === 'sending' || regenNote) return
 
     setInput('')
@@ -270,6 +297,10 @@ export function ChatPanel() {
         result.pinned_pois?.length ? { pins: result.pinned_pois } : undefined,
       )
       setStatus('idle')
+      // No-op unless voice mode is on (checked inside the hook) — speaks
+      // Anya's reply back so a spoken "make day 4 cheaper" gets a spoken
+      // answer, not a reply the user has to read.
+      voice.speakReply(result.reply, result.reply_sig)
 
       if (result.action_type === 'patch_config' && result.config_patch) {
         updateConfig(result.config_patch as Parameters<typeof updateConfig>[0])
@@ -330,6 +361,27 @@ export function ChatPanel() {
     }
   }
 
+  // ── Voice controls ─────────────────────────────────────────────────────────
+
+  function handleToggleVoice() {
+    setVoiceNotice('')
+    // First time starting a spoken conversation in this chat: ask which
+    // language, once, instead of turning the mic on immediately. Every
+    // subsequent toggle (on or off) reuses the answer.
+    if (!voice.voiceMode && !voiceLangAskedRef.current) {
+      setVoiceLangPrompt(true)
+      return
+    }
+    voice.toggleVoiceMode()
+  }
+
+  function handleChooseVoiceLang(next: VoiceLang) {
+    voiceLangAskedRef.current = true
+    setVoiceLangPrompt(false)
+    voice.setLang(next)
+    voice.toggleVoiceMode()
+  }
+
   if (!isOpen) return null
 
   return (
@@ -338,7 +390,7 @@ export function ChatPanel() {
       style={{ maxHeight: '540px' }}
     >
       {/* Header */}
-      <div className="flex shrink-0 items-center justify-between border-b border-[var(--_border)] bg-[var(--_primary)] px-4 py-3">
+      <div className="relative flex shrink-0 items-center justify-between border-b border-[var(--_border)] bg-[var(--_primary)] px-4 py-3">
         <div className="flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20">
             <span className="text-sm">✈️</span>
@@ -354,6 +406,39 @@ export function ChatPanel() {
           </div>
         </div>
         <div className="flex items-center gap-1">
+          {/* Voice CTA — this chat had none before, unlike the wizard's own
+              mic button, even though `useVoice` (hooks/useVoice.ts) is
+              already generic enough to reuse as-is. Language is asked once
+              via the overlay below rather than living here permanently, same
+              rationale as the wizard's header. */}
+          <button
+            type="button"
+            onClick={handleToggleVoice}
+            aria-label={voice.voiceMode ? 'Stop voice mode' : 'Start voice mode'}
+            aria-pressed={voice.voiceMode}
+            disabled={!voice.supported}
+            title={
+              voice.supported
+                ? undefined
+                : 'Voice input isn’t supported in this browser'
+            }
+            className={[
+              'flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors duration-300',
+              !voice.supported
+                ? 'cursor-not-allowed bg-white/10 text-white/30'
+                : voice.isListening
+                  ? 'bg-emerald-400 text-emerald-950 animate-pulse'
+                  : voice.voiceMode
+                    ? 'bg-white text-[var(--_primary)]'
+                    : 'bg-white/15 text-white/50 hover:bg-white/25 hover:text-white',
+            ].join(' ')}
+          >
+            {voice.isSpeaking
+              ? <Volume2 size={14} />
+              : !voice.supported
+                ? <MicOff size={14} />
+                : <Mic size={14} />}
+          </button>
           <ThemeToggle className="flex h-7 w-7 items-center justify-center rounded-lg text-white/70 transition-colors hover:text-white" />
           <button
             onClick={close}
@@ -363,6 +448,40 @@ export function ChatPanel() {
             <X size={18} />
           </button>
         </div>
+
+        {/* ── One-time voice-language prompt ─────────────────────────── */}
+        {voiceLangPrompt && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/50 p-3">
+            <div className="w-full max-w-[260px] rounded-xl bg-[var(--_card)] p-4 text-center shadow-xl">
+              <p className="mb-1 text-xs font-semibold text-[var(--_fg)]">
+                Which language would you like to speak?
+              </p>
+              <p className="mb-3 text-[11px] text-[var(--_muted-fg)]">
+                Anya will listen and reply in this language for the rest of the conversation.
+              </p>
+              <div className="flex justify-center gap-2">
+                {(Object.keys(VOICE_LANGS) as VoiceLang[]).map((code) => (
+                  <button
+                    key={code}
+                    type="button"
+                    onClick={() => handleChooseVoiceLang(code)}
+                    aria-label={`Speak and listen in ${VOICE_LANGS[code].label}`}
+                    className="rounded-full border border-[var(--_border)] px-3 py-1.5 text-xs font-semibold text-[var(--_fg)] transition-colors hover:border-[var(--_primary)] hover:text-[var(--_primary)]"
+                  >
+                    {VOICE_LANGS[code].nativeLabel}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setVoiceLangPrompt(false)}
+                className="mt-3 text-[11px] text-[var(--_muted-fg)] underline"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Messages */}
@@ -535,21 +654,59 @@ export function ChatPanel() {
 
       {/* Input */}
       <div className="shrink-0 border-t border-[var(--_border)] bg-[var(--_card)] px-3 py-2.5">
+        {/* Voice status/failures — same `role="status"` pattern as the
+            wizard's, so a screen reader announces e.g. "microphone blocked". */}
+        {(voiceNotice || voice.isSpeaking || voice.isListening) && (
+          <p
+            role="status"
+            aria-live="polite"
+            className="mb-1.5 px-1 text-xs text-[var(--_muted-fg)]"
+          >
+            {voiceNotice
+              ? voiceNotice
+              : voice.isListening
+                ? `Listening in ${VOICE_LANGS[voice.lang].label}…`
+                : 'Anya is speaking…'}
+          </p>
+        )}
         <div className="flex items-end gap-2">
           <textarea
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about your trip or request changes…"
+            placeholder={voice.isListening ? 'Listening…' : 'Ask about your trip or request changes…'}
             maxLength={MAX_CHAT_MESSAGE_LEN}
             rows={1}
-            disabled={status === 'sending' || regenNote !== null}
+            disabled={status === 'sending' || regenNote !== null || voice.isListening}
             className="max-h-24 flex-1 resize-none overflow-y-auto rounded-xl border border-[var(--_border)] bg-[var(--_bg)] px-3 py-2 text-sm leading-snug text-[var(--_fg)] placeholder:text-[var(--_muted-fg)] focus:border-[var(--_primary)] focus:outline-none disabled:opacity-50"
             style={{ scrollbarWidth: 'none' }}
           />
           <button
-            onClick={handleSend}
+            type="button"
+            onClick={handleToggleVoice}
+            aria-label={voice.voiceMode ? 'Stop voice' : 'Voice input'}
+            aria-pressed={voice.voiceMode}
+            disabled={!voice.supported}
+            className={[
+              'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition-colors duration-300',
+              !voice.supported
+                ? 'cursor-not-allowed border-[var(--_border)] text-[var(--_muted-fg)] opacity-50'
+                : voice.isListening
+                  ? 'border-emerald-400 bg-emerald-50 text-emerald-600 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-400 animate-pulse'
+                  : voice.voiceMode
+                    ? 'border-[var(--_primary)] text-[var(--_primary)]'
+                    : 'border-[var(--_border)] text-[var(--_muted-fg)] hover:border-[var(--_primary)] hover:text-[var(--_primary)]',
+            ].join(' ')}
+          >
+            {voice.isSpeaking
+              ? <Volume2 size={15} />
+              : !voice.supported
+                ? <MicOff size={15} />
+                : <Mic size={15} />}
+          </button>
+          <button
+            onClick={() => handleSend()}
             disabled={!input.trim() || status === 'sending' || regenNote !== null}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--_primary)] text-white transition-all hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
             aria-label="Send message"

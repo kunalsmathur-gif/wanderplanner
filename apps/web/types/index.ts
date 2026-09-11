@@ -255,6 +255,9 @@ export interface ChatRefineResponse {
   named_interest: string | null
   pinned_pois: PinnedPOI[]        // newly verified pins from this message
   dropped_candidates: string[]    // candidates that failed verification
+  // Short-lived HMAC of `reply` (core/reply_signing.py) — pass straight
+  // through to `synthesizeVoice()` unmodified, same as WizardChatResponse.
+  reply_sig?: string | null
 }
 
 export interface ComparisonParameter {

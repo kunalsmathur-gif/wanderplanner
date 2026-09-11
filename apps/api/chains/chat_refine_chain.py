@@ -94,6 +94,14 @@ class ChatRefineResponse(BaseModel):
     named_interest: str | None = None
     pinned_pois: list[PinnedPOI] = []
     dropped_candidates: list[str] = []
+    # Short-lived HMAC of `reply` (core/reply_signing.py), set by the router
+    # (not this function — signing needs the FINAL post-processed reply, and
+    # every helper above returns before that pipeline runs). Mirrors
+    # WizardChatResponse.reply_sig: lets the "Ask & adjust" chat's voice mode
+    # use the same signed server-voice TTS path as the wizard, instead of
+    # falling back to the browser's own (inconsistent, sometimes silent)
+    # speechSynthesis.
+    reply_sig: str | None = None
 
 
 class ChatRefineRequest(BaseModel):
