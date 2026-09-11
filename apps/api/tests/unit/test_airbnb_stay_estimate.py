@@ -272,10 +272,10 @@ class TestFoodGroundingFloor:
 
         with patch("core.budget_estimator.community_median_price_inr", new=_low_stay), patch(
             "core.budget_estimator.community_food_per_day_inr",
-            new=AsyncMock(return_value=(1200.0, False)),
+            new=AsyncMock(return_value=(700.0, False)),
         ):
             est = await estimate_bare_minimum_budget(_config())  # Colombo, budget tier
-        assert est["food_community_based"] is False  # reconciled + below flat -> floored
+        assert est["food_community_based"] is False  # reconciled + below flat (900) -> floored
         assert est["stay_community_based"] is True    # below-flat stay grounding kept
 
     @pytest.mark.asyncio

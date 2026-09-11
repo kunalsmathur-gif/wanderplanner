@@ -422,8 +422,11 @@ PREMIUM_KEYWORDS = ["premium", "luxur", "splurge", "high-end", "high end", "five
 
 def parse_traveller_level(text: str | None) -> str | None:
     """Best-effort keyword parse of the user's own words for their desired
-    spending level. Returns None if ambiguous (caller defaults to 'mid_range'
-    but should treat it as a soft assumption, not a hard fact)."""
+    spending level. Returns None if ambiguous (caller defaults to
+    'economical' — this function backs `estimate_bare_minimum_budget`, a
+    FLOOR meant to answer "is this budget feasible at all", so absent an
+    explicit signal it should assume the cheapest realistic option, not a
+    middling one — see that function's call site for the full rationale)."""
     if not text:
         return None
     lowered = text.lower()
@@ -637,6 +640,15 @@ async def estimate_bare_minimum_budget(
     `hint_text` is the user's own latest message, used only to detect an
     explicit "economical"/"premium" preference and/or an explicit Airbnb/
     vacation-rental stay preference (see `wants_airbnb_stay`); never required.
+
+    Stay/food rates are blended (equally weighted) across `trip_config`'s
+    `destination` AND every entry in `trip_config.get("hops")` — a
+    multi-city trip is NOT priced as if every night were spent at the
+    single `destination` city's tier/rate (see the "hops-blindness" comment
+    at the tier-resolution call site below for the bug this fixes). Flight
+    cost and community-grounding lookups still key off `destination` only,
+    since there's one flight entry point and per-stop grounding would need
+    per-stop night-distribution data this function doesn't have.
     """
     group = trip_config.get("group") or {}
     adults, kids, seniors, infants = _group_headcount(group)
@@ -650,7 +662,22 @@ async def estimate_bare_minimum_budget(
     scope = trip_config.get("scope", "international")
 
     tier = resolve_destination_tier(city, country)
-    traveller_level = parse_traveller_level(hint_text) or "mid_range"
+    # 🔴 Found live 2026-09-11: a Kandy/Galle/Mirissa/Bentota/Yala 6-day solo
+    # trip on a ₹42,100 stated budget got a feasibility floor of ₹209,426 —
+    # nearly 5x the ₹93,776 the actual itinerary generator (which DOES
+    # follow the user's stated low budget via core/budget_tiers.py) produced
+    # for the same trip. Root cause: absent an explicit "economical"/
+    # "premium" signal, this floor defaulted to "mid_range" — but this
+    # function's entire contract is "bare minimum" / "is this budget
+    # feasible AT ALL", which only makes sense answered against the
+    # cheapest realistic option, not a middling one. "mid_range" here also
+    # widened the stay-outlier sanity band (_STAY_SANITY_BAND is relative to
+    # the assumed tier's flat default) enough to let an inflated
+    # community-grounded stay figure through unchecked. Defaulting to
+    # "economical" instead fixes both: it directly lowers the flat
+    # flights/stay/food baseline AND tightens the sanity band proportionally,
+    # without weakening the band's own logic.
+    traveller_level = parse_traveller_level(hint_text) or "economical"
     level_assumed = parse_traveller_level(hint_text) is None
 
     duration_days, duration_assumed = _duration_days(trip_config.get("dates"))
@@ -660,6 +687,32 @@ async def estimate_bare_minimum_budget(
     season_multiplier = _PEAK_SEASON_MULTIPLIER if peak else 1.0
 
     rates = _COST_MATRIX[tier][traveller_level]
+
+    # 🔴 Also found while fixing the above: this whole function only ever
+    # looked at `trip_config["destination"]` — a multi-hop trip's `hops`
+    # (e.g. Galle/Mirissa/Bentota/Yala alongside a Kandy "destination") were
+    # completely ignored, pricing EVERY night of the trip at the single
+    # destination city's tier/rate. For the Sri Lanka trip that triggered
+    # this fix all five cities happen to resolve to the same "budget" tier
+    # (see resolve_destination_tier), so this didn't move that particular
+    # number — but for any multi-country/multi-region trip where hops sit in
+    # a cheaper (or pricier) tier than the headline destination, ignoring
+    # them silently over- or under-states the floor. Blend the flat
+    # stay/food rate across every stop (destination + hops), equally
+    # weighted since we don't have a per-city day breakdown at this point in
+    # the flow — the destination's own tier is still used for `destination_tier`
+    # (display) and the flight fallback (you fly into/out of one entry point,
+    # not each hop), but the sanity band and flat-fallback numbers below are
+    # now anchored to the whole trip's blended rate, not just the
+    # destination's.
+    stop_tiers = [tier] + [
+        resolve_destination_tier(hop.get("city"), hop.get("country"))
+        for hop in (trip_config.get("hops") or [])
+        if isinstance(hop, dict) and hop.get("city")
+    ]
+    stop_rates = [_COST_MATRIX[t][traveller_level] for t in stop_tiers]
+    blended_stay_pp = round(sum(r["stay_per_night_pp"] for r in stop_rates) / len(stop_rates))
+    blended_food_pp = round(sum(r["food_per_day_pp"] for r in stop_rates) / len(stop_rates))
 
     origin = trip_config.get("origin") or {}
     band = flight_band_inr(origin.get("lat"), origin.get("lon"), destination.get("lat"), destination.get("lon"))
@@ -704,7 +757,7 @@ async def estimate_bare_minimum_budget(
                     }
 
     stay_pp_base, stay_community_based = await _grounded_or_flat(
-        city, country, "hotel accommodation nightly rate per person", rates["stay_per_night_pp"], _STAY_PP_BOUNDS,
+        city, country, "hotel accommodation nightly rate per person", blended_stay_pp, _STAY_PP_BOUNDS,
         context_keywords=STAY_CONTEXT_KEYWORDS, min_samples=_STAY_MIN_SAMPLES, sanity_band=_STAY_SANITY_BAND,
     )
     stay_airbnb_fallback_used = False
@@ -717,7 +770,7 @@ async def estimate_bare_minimum_budget(
     if airbnb_requested:
         stay_pp_base = round(stay_pp_base * _AIRBNB_STAY_DISCOUNT_MULTIPLIER)
     food_pp_base, food_community_based = await _grounded_food_per_day(
-        city, country, rates["food_per_day_pp"],
+        city, country, blended_food_pp,
     )
     stay_pp_per_night = stay_pp_base * season_multiplier
     food_pp_per_day = food_pp_base
@@ -783,6 +836,10 @@ async def estimate_bare_minimum_budget(
         "stay_airbnb_based": airbnb_requested,
         "stay_airbnb_fallback_used": stay_airbnb_fallback_used,
         "cheaper_alternative": cheaper_alternative,
+        # Debug/transparency: how many stops (destination + hops) fed into
+        # the blended stay/food flat-rate default above — 1 for a single-city
+        # trip, >1 whenever `hops` were considered.
+        "stops_considered": len(stop_tiers),
     }
 
 

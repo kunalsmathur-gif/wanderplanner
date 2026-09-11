@@ -162,23 +162,26 @@ async def test_stay_and_food_fall_back_to_flat_tier_when_corpus_empty():
     estimate = await estimate_bare_minimum_budget(_config())
     assert estimate["stay_community_based"] is False
     assert estimate["food_community_based"] is False
-    # Regression guard for the recalibrated food figure (see _COST_MATRIX's
-    # comment) — 5 assumed days, 4 nights, 2 adults, budget-tier mid_range:
-    # stay = 2000*4*2 = 16000, food = 1800*5*2 = 18000.
-    assert estimate["breakdown"]["stay_inr"] == 16000
-    assert estimate["breakdown"]["food_inr"] == 18000
+    # 🔴 Found live 2026-09-11: this floor defaulted to "mid_range" absent an
+    # explicit signal, even though it's meant to answer "bare minimum" —
+    # now defaults to "economical" (see estimate_bare_minimum_budget's call
+    # site). 5 assumed days, 4 nights, 2 adults, budget-tier economical:
+    # stay = 1000*4*2 = 8000, food = 900*5*2 = 9000.
+    assert estimate["breakdown"]["stay_inr"] == 8000
+    assert estimate["breakdown"]["food_inr"] == 9000
 
 
 async def test_stay_and_food_use_real_community_data_when_available():
-    with community_grounding(stay=3000, food=1800):
+    with community_grounding(stay=2000, food=1200):
         estimate = await estimate_bare_minimum_budget(_config())
     assert estimate["stay_community_based"] is True
     assert estimate["food_community_based"] is True
     # No dates given -> duration assumed at 5 days (4 nights), 2 adults, no
-    # season multiplier (no start date known) -> stay = 3000*4*2 = 24000,
-    # food = 1800*5*2 = 18000.
-    assert estimate["breakdown"]["stay_inr"] == 24000
-    assert estimate["breakdown"]["food_inr"] == 18000
+    # season multiplier (no start date known) -> stay = 2000*4*2 = 16000,
+    # food = 1200*5*2 = 12000. (stay=2000 is exactly 2x the economical flat
+    # default of 1000, safely inside the 2.5x sanity band.)
+    assert estimate["breakdown"]["stay_inr"] == 16000
+    assert estimate["breakdown"]["food_inr"] == 12000
 
 
 async def test_a_single_outlier_stay_sample_is_distrusted_not_trusted():
@@ -189,29 +192,63 @@ async def test_a_single_outlier_stay_sample_is_distrusted_not_trusted():
     # feasibility check quoted a bare-minimum floor of ~₹97k against a real
     # itinerary that came in at ₹41k, driven by an accommodation figure of
     # ~₹8,085/night/person — several times the Sri Lanka budget-tier flat
-    # default (₹2,000/night). Destination Colombo (budget tier, mid_range) ->
-    # flat default 2000; ₹8085 is >2.5x that, so it must now be distrusted
-    # and the flat default used instead.
+    # default. Destination Colombo (budget tier, economical) -> flat default
+    # 1000; ₹8085 is >2.5x that, so it must now be distrusted and the flat
+    # default used instead.
     with community_grounding(stay=8085, food=None):
         estimate = await estimate_bare_minimum_budget(_config())
     assert estimate["stay_community_based"] is False
-    # Falls back to the flat default (2000/night, 4 nights, 2 adults = 16000),
+    # Falls back to the flat default (1000/night, 4 nights, 2 adults = 8000),
     # not the outlier sample (8085*4*2 = 64680).
-    assert estimate["breakdown"]["stay_inr"] == 16000
+    assert estimate["breakdown"]["stay_inr"] == 8000
 
 
 async def test_a_plausible_stay_sample_within_the_sanity_band_is_still_trusted():
     # A genuinely cheaper-than-flat or moderately-higher-than-flat real
     # figure must still come through — the band guards against outliers,
     # not against real destination-to-destination variation.
-    with community_grounding(stay=3500, food=None):  # 1.75x the 2000 flat default
+    with community_grounding(stay=1800, food=None):  # 1.8x the 1000 flat default
         estimate = await estimate_bare_minimum_budget(_config())
     assert estimate["stay_community_based"] is True
-    assert estimate["breakdown"]["stay_inr"] == 28000  # 3500*4*2
+    assert estimate["breakdown"]["stay_inr"] == 14400  # 1800*4*2
+
+
+async def test_multi_hop_stops_are_blended_into_the_flat_rate_not_ignored():
+    # 🔴 Found live 2026-09-11 alongside the mid_range-default bug: this
+    # estimator only ever looked at `trip_config["destination"]` for tier/
+    # rate resolution — a multi-hop trip's `hops` were completely ignored,
+    # pricing EVERY night at the single destination city's rate. For the
+    # Sri Lanka trip that triggered the original report all hops happened to
+    # share the destination's tier, so this specific bug didn't move that
+    # number — but for a trip spanning tiers (e.g. Paris "premium" ->
+    # Bangkok "moderate") it silently over/under-states the floor. Stay/food
+    # flat defaults must now be the equally-weighted average across
+    # destination + hops, not the destination's rate alone.
+    paris_only = await estimate_bare_minimum_budget(
+        _config(destination={"city": "Paris", "country": "France"})
+    )
+    paris_plus_bangkok_hop = await estimate_bare_minimum_budget(
+        _config(
+            destination={"city": "Paris", "country": "France"},
+            hops=[{"city": "Bangkok", "country": "Thailand"}],
+        )
+    )
+    # premium.economical stay=4000/food=4245 vs moderate.economical
+    # stay=2000/food=1200 — blending in the cheaper Bangkok hop must pull
+    # both components down from the Paris-only figure.
+    assert paris_plus_bangkok_hop["breakdown"]["stay_inr"] < paris_only["breakdown"]["stay_inr"]
+    assert paris_plus_bangkok_hop["breakdown"]["food_inr"] < paris_only["breakdown"]["food_inr"]
+    assert paris_plus_bangkok_hop["stops_considered"] == 2
+    assert paris_only["stops_considered"] == 1
+    # Exact blend: (4000+2000)/2 = 3000/night, 4 nights, 2 adults = 24000.
+    assert paris_plus_bangkok_hop["breakdown"]["stay_inr"] == 24000
+    # (4245+1200)/2 = 2722.5 -> round() = 2722/day (banker's rounding), 5
+    # assumed days, 2 adults = 27220, rounded to nearest 100 = 27200.
+    assert paris_plus_bangkok_hop["breakdown"]["food_inr"] == 27200
 
 
 async def test_hint_mentions_community_grounding_when_used():
-    with community_grounding(stay=3000, food=1800):
+    with community_grounding(stay=2000, food=1200):
         hint = await budget_estimate_prompt_hint(_config(origin=dict(BENGALURU)))
     assert "traveller-reported rates" in hint
     assert "traveller-reported spend" in hint
