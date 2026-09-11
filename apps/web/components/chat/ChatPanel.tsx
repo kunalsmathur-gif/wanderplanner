@@ -150,10 +150,22 @@ export function ChatPanel() {
    * keeping the current itinerary. The destination check DOES allow an
    * explicit override — same high-false-negative-rate reasoning as
    * LLMWizard's CONTINUE_ANYWAY_CHIP. */
-  async function regenerateInPlace(config: TripConfig, skipDestinationCheck = false) {
+  async function regenerateInPlace(config: TripConfig, skipDestinationCheck = false, editContext?: string) {
+    // 🔴 Found live 2026-09-11: the feasibility check below is a network
+    // round-trip (LLM-backed budget floor calc), but nothing told the user
+    // it was happening — `regenNote` (the only "something is in progress"
+    // UI in this panel) was only set once `runRegeneration` started, i.e.
+    // AFTER this check resolved. A user who'd just been told "Done — I'm
+    // rebuilding your itinerary now" (the day-cost-preference canned reply)
+    // saw no visible activity during the check, assumed nothing had
+    // happened, and typed a follow-up ("ok") — which then raced with this
+    // check's own result message, making it look like the edit only did
+    // anything after that second message.
+    setRegenNote('Checking your budget…')
     try {
       const result = await checkFeasibility(config, skipDestinationCheck)
       if (result.destination_verified === false) {
+        setRegenNote(null)
         addMessage({
           role: 'assistant',
           content: `${result.verdict} Your current itinerary is untouched — you can confirm it's a real place and continue, or tell me the right destination.`,
@@ -165,11 +177,22 @@ export function ChatPanel() {
         runRegeneration(config)
         return
       }
+      setRegenNote(null)
       const minBudget = suggestedFeasibleBudget(result)
       const breakdownText = formatFeasibilityBreakdown(result)
+      // 🔴 Found live 2026-09-11: a user asked to make day 6 cheaper (a
+      // cost-REDUCING edit) and, right after being told "Done — rebuilding
+      // now", got a message recommending they INCREASE the overall budget —
+      // reading as if their request had been ignored or reversed. In truth
+      // this shortfall is against the trip's overall budget, which a
+      // single-day edit doesn't touch, and may well have predated the edit.
+      // `editContext`, when given, acknowledges the edit that was actually
+      // applied before delivering the (unrelated) overall-budget verdict, so
+      // the two don't read as contradicting each other.
+      const prefix = editContext ? `${editContext} ` : ''
       addMessage({
         role: 'assistant',
-        content: `${result.verdict} Breakdown: ${breakdownText}. This is a bare-minimum estimate (activities/shopping extra). Your current itinerary is untouched — increase the budget to around ₹${minBudget.toLocaleString('en-IN')}, see the full breakdown to decide what to cut, or keep what you have.`,
+        content: `${prefix}${result.verdict} Breakdown: ${breakdownText}. This is a bare-minimum estimate (activities/shopping extra). Your current itinerary is untouched — increase the budget to around ₹${minBudget.toLocaleString('en-IN')}, see the full breakdown to decide what to cut, or keep what you have.`,
       })
       setPendingFeasibility({ config, kind: 'infeasible', result, suggestedBudget: minBudget })
     } catch {
@@ -178,6 +201,7 @@ export function ChatPanel() {
       // the same "generated anyway" bug the initial-generation gate fixed.
       // Stop here instead: no regeneration until the user says how to
       // proceed.
+      setRegenNote(null)
       addMessage({
         role: 'assistant',
         content: "I couldn't verify whether this still fits your budget just now (a connection hiccup on my end) — I won't regenerate without checking. Your current itinerary is untouched.",
@@ -257,8 +281,21 @@ export function ChatPanel() {
         // the "promised an edit that never happens" bug this path fixes.
         const rebuilds =
           result.config_patch.pinned_pois || result.config_patch.day_cost_preferences
+        // If the just-applied edit was a "make day N cheaper" preference,
+        // an infeasible-overall-budget verdict from the check below would
+        // otherwise read as ignoring/reversing the user's request (see
+        // regenerateInPlace's editContext comment) — acknowledge the edit
+        // first so a subsequent "increase your budget" doesn't look like a
+        // non-sequitur.
+        const dayCostPrefs = result.config_patch.day_cost_preferences
+        const lastCheaperDay = dayCostPrefs
+          ?.filter((p) => p.direction === 'cheaper')
+          .slice(-1)[0]
+        const editContext = lastCheaperDay
+          ? `I've applied that day ${lastCheaperDay.day_number} change —`
+          : undefined
         if (rebuilds && useItineraryStore.getState().days.length > 0) {
-          regenerateInPlace(useTripConfigStore.getState().config)
+          regenerateInPlace(useTripConfigStore.getState().config, false, editContext)
         }
       } else if (result.action_type === 'regenerate' && result.major_change) {
         setPendingAction(result)
