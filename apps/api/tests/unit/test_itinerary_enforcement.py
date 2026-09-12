@@ -85,6 +85,39 @@ class TestOutOfBoundsEnforcement:
         assert len(result_days[0].items) == 1
         assert dropped == []
 
+    def test_origin_anchor_keeps_first_and_last_leg_travel_items(self):
+        """The trip's origin (home city) must anchor the check too — the
+        first-day "Travel from <origin> to <destination>" item and the
+        last-day "Travel to <destination airport> & Departure to <origin>"
+        item both legitimately sit near the origin's coordinates, not the
+        destination's, and must not be treated as out-of-bounds."""
+        from models.trip import OriginInput
+
+        trip_config = _trip_config(
+            origin=OriginInput(city="Bengaluru", lat=12.9716, lon=77.5946)
+        )
+        days = [
+            ItineraryDay(
+                day_number=1, date="2026-01-01", theme="Day 1",
+                items=[_item("Travel from Bengaluru to Paris", 12.9716, 77.5946)],
+            ),
+            ItineraryDay(
+                day_number=6, date="2026-01-06", theme="Day 6",
+                items=[
+                    _item(
+                        "Travel to Paris Airport & Departure to Bengaluru",
+                        12.9716, 77.5946,
+                    )
+                ],
+            ),
+        ]
+
+        result_days, dropped = _flag_out_of_bounds_items(days, trip_config)
+
+        assert dropped == []
+        assert len(result_days[0].items) == 1
+        assert len(result_days[1].items) == 1
+
     def test_no_anchors_returns_days_unchanged(self):
         trip_config = TripConfig(destination=DestinationInput(city="Nowhere"))
         days = [ItineraryDay(

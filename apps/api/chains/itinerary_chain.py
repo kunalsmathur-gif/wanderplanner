@@ -325,11 +325,17 @@ def _flag_out_of_bounds_items(
     user actually configured for this trip — a distinct, higher-confidence
     defect than "unverified": this is a real, matchable place that is simply
     the wrong place, so there is no safe partial state to leave it in.
-    Checked against the primary destination AND all hops (multi-stop trips,
+    Checked against the primary destination, all hops (multi-stop trips,
     e.g. Edinburgh + Glasgow, are common and legitimate — an item near
-    either counts as in-bounds), using the closest of them, so a multi-city
-    trip is never penalised for visiting more than one of its own named
-    cities. Runs on real lat/lon only; an item with no coordinates (0, 0 —
+    either counts as in-bounds), AND the trip's origin, using the closest of
+    them, so a multi-city trip is never penalised for visiting more than one
+    of its own named cities. The origin anchor matters specifically for the
+    first/last-leg travel items every itinerary needs (e.g. "Travel from
+    Bengaluru to Rishikesh" or the return "Travel to Dehradun Airport &
+    Departure to Bengaluru") — those legs are *supposed* to sit near the
+    user's home city, not the destination, so without this anchor they read
+    as implausibly far away and get dropped exactly when they're most
+    needed. Runs on real lat/lon only; an item with no coordinates (0, 0 —
     never a real destination) is left in place rather than guessed at.
 
     Enforcement, not just disclosure: the user should never be able to keep
@@ -342,7 +348,7 @@ def _flag_out_of_bounds_items(
     not silent."""
     anchors = [
         (d.lat, d.lon)
-        for d in [trip_config.destination, *trip_config.hops]
+        for d in [trip_config.destination, *trip_config.hops, trip_config.origin]
         if d and not (d.lat == 0.0 and d.lon == 0.0)
     ]
     if not anchors:
