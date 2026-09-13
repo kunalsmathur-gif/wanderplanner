@@ -292,11 +292,11 @@ class TestRetryCascadeRespectsTheDeadline:
                 self.models = _FakeModels()
 
         fake_genai = types.ModuleType("google.genai")
-        fake_genai.Client = _FakeClient
+        fake_genai.Client = _FakeClient  # type: ignore[attr-defined]
         fake_genai_types = types.ModuleType("google.genai.types")
-        fake_genai_types.GenerateContentConfig = lambda **kw: kw
+        fake_genai_types.GenerateContentConfig = lambda **kw: kw  # type: ignore[attr-defined]
         fake_google = types.ModuleType("google")
-        fake_google.genai = fake_genai
+        fake_google.genai = fake_genai  # type: ignore[attr-defined]
 
         monkeypatch.setitem(sys.modules, "google", fake_google)
         monkeypatch.setitem(sys.modules, "google.genai", fake_genai)

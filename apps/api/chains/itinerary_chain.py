@@ -401,11 +401,17 @@ async def _itinerary_examples_block(trip_config: TripConfig) -> str:
         logger.warning("itinerary_corpus retrieval failed; generating without examples", exc_info=corpus_result)
         corpus_examples = ""
     else:
+        # gather's return type is `str | BaseException`; the isinstance check
+        # above only narrows away Exception, not the wider BaseException, so
+        # this assert closes the gap mypy can't — retrieve_itinerary_examples
+        # only ever returns str or raises (an Exception, caught above).
+        assert isinstance(corpus_result, str)
         corpus_examples = corpus_result
     if isinstance(generated_result, Exception):
         logger.warning("generated_itineraries retrieval failed; ignoring", exc_info=generated_result)
         generated_examples = ""
     else:
+        assert isinstance(generated_result, str)
         generated_examples = generated_result
 
     # Combined rather than each independently wrapped, so the two sources

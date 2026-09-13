@@ -491,6 +491,10 @@ def _build_response(
         # identical retries: the LLM's own flights_inr is resampled fresh
         # every call and isn't what the floor path's "why is the number
         # higher" verdict was actually driven by.
+        # bare_minimum_inr is only non-None when bare_minimum itself was
+        # truthy a few lines up; mypy can't carry that cross-statement, so
+        # this assert closes the gap.
+        assert bare_minimum is not None
         floor_breakdown = bare_minimum["breakdown"]
         if prebooked_flights is None:
             llm_flights = int(floor_breakdown.get("flights_inr", llm_flights))

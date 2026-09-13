@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 import services.user_last_itinerary as user_last_itinerary
 from db_models import User, UserLastItinerary
-from models.itinerary import ExpenseBreakdown, ItineraryResponse
+from models.itinerary import ExpenseBreakdown, ItineraryDay, ItineraryResponse
 from models.trip import TripConfig
 
 pytestmark = pytest.mark.asyncio
@@ -53,12 +53,12 @@ def _trip_config(**overrides) -> TripConfig:
 
 def _itinerary() -> ItineraryResponse:
     return ItineraryResponse(
-        days=[{
-            "day_number": 1,
-            "date": "2026-09-01",
-            "theme": "Arrival",
-            "items": [],
-        }],
+        days=[ItineraryDay(
+            day_number=1,
+            date="2026-09-01",
+            theme="Arrival",
+            items=[],
+        )],
         alignment_score=0.9,
         expense_breakdown=ExpenseBreakdown(),
         generation_tier="live",
