@@ -25,7 +25,9 @@ threads race to get the singleton first.
 """
 from __future__ import annotations
 
+import sys
 import threading
+import types
 
 import core.embeddings as embeddings_module
 
@@ -39,6 +41,22 @@ class _FakeModel:
     def __init__(self):
         import time
         time.sleep(0.05)
+
+
+def _stub_sentence_transformers(monkeypatch):
+    """`get_embedder`/`get_reranker` unconditionally do
+    `from sentence_transformers import SentenceTransformer`/`CrossEncoder`
+    before ever reaching the mocked `_load_local_first` below — so without
+    this stub these tests would only pass in an environment that happens to
+    have the real (heavy) `sentence-transformers` package installed, exactly
+    the ML dependency this module's docstring says the tests don't need.
+    Injecting a fake module makes the import succeed everywhere; the actual
+    classes are never instantiated since `_load_local_first` is patched to
+    call the fake `loader(...)` directly instead."""
+    fake_module = types.ModuleType("sentence_transformers")
+    fake_module.SentenceTransformer = object  # type: ignore[attr-defined]
+    fake_module.CrossEncoder = object  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
 
 
 def _make_call_counting_loader():
@@ -65,6 +83,7 @@ class TestGetEmbedderConcurrency:
         embeddings_module._model = None
 
     def test_concurrent_first_callers_construct_the_model_exactly_once(self, monkeypatch):
+        _stub_sentence_transformers(monkeypatch)
         loader, calls = _make_call_counting_loader()
         # Patch the loader `_load_local_first` calls, not `_load_local_first`
         # itself, so the real check-then-set-under-lock logic in
@@ -103,6 +122,7 @@ class TestGetRerankerConcurrency:
         embeddings_module._reranker = None
 
     def test_concurrent_first_callers_construct_the_reranker_exactly_once(self, monkeypatch):
+        _stub_sentence_transformers(monkeypatch)
         loader, calls = _make_call_counting_loader()
         monkeypatch.setattr(
             embeddings_module, "_load_local_first",
