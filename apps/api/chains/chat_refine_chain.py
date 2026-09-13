@@ -75,7 +75,7 @@ def _extract_reply_text(raw: str) -> str:
 _REPLY_TRUNCATION_SUFFIX = "… (trimmed)"
 
 
-def _cap_reply_length(resp: "ChatRefineResponse") -> "ChatRefineResponse":
+def _cap_reply_length(resp: ChatRefineResponse) -> ChatRefineResponse:
     limit = MAX_CHAT_MESSAGE_LEN
     if len(resp.reply) > limit:
         resp.reply = resp.reply[: limit - len(_REPLY_TRUNCATION_SUFFIX)] + _REPLY_TRUNCATION_SUFFIX

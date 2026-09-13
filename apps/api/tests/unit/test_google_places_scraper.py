@@ -113,7 +113,7 @@ class TestPoiPointId:
         re-ingested by the OTHER provider next week overwrites the same
         points instead of accumulating duplicates."""
         import hashlib
-        expected = int(hashlib.md5("Goa::Flora Restaurant".encode()).hexdigest(), 16) % (2**63)
+        expected = int(hashlib.md5(b"Goa::Flora Restaurant").hexdigest(), 16) % (2**63)
         assert poi_point_id("Goa", "Flora Restaurant") == expected
 
 

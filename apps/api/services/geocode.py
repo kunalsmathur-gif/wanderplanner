@@ -158,7 +158,7 @@ _GEOCODE_CACHE_TTL_SECONDS = 6 * 60 * 60  # 6h: destinations don't move; long
                                            # enough to matter under load, short
                                            # enough that a genuine Nominatim
                                            # data correction isn't stuck for days.
-_geocode_cache: dict[tuple[str, str], tuple[float, "GeocodeResponse"]] = {}
+_geocode_cache: dict[tuple[str, str], tuple[float, GeocodeResponse]] = {}
 
 
 def _pick_best_hit(hits: list[dict]) -> dict:

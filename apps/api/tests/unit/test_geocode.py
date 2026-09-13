@@ -462,7 +462,6 @@ class TestGeocodeCache:
 
     @pytest.mark.asyncio
     async def test_expired_cache_entry_triggers_a_fresh_lookup(self):
-        import time as real_time
         from services import geocode as geocode_module
 
         search_resp = _json_response([_place_hit(name="Bengaluru", country="India", cc="in", importance=0.8)])

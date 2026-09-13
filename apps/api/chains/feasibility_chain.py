@@ -507,7 +507,6 @@ def _build_response(
     # way) at `_CEILING_OVER_FLOOR_MULTIPLIER`x the floor. Skip entirely if
     # the floor already won (total == the floor, which is <= any ceiling
     # above it) or if there's no floor to anchor a ceiling to at all.
-    ceiling_used = False
     if not floor_used and bare_minimum_inr is not None:
         ceiling_value = round(bare_minimum_inr * _CEILING_OVER_FLOOR_MULTIPLIER, -2)
         fixed_total = (prebooked_flights or 0) + (prebooked_accommodation or 0)
@@ -521,7 +520,6 @@ def _build_response(
             llm_daily_expenses = round(llm_daily_expenses * scale, -2)
             llm_visa = round(llm_visa * scale, -2)
             total = ceiling_value
-            ceiling_used = True
             logger.info(
                 "feasibility ceiling applied: llm total capped from an over-generous "
                 "guess down to %s (%.1fx the %s floor)",

@@ -25,8 +25,8 @@ flag gets set from what the user actually said.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from itertools import permutations
-from typing import Sequence
 
 from core.distance_pricing import haversine_km
 from models.trip import DestinationInput, OriginInput

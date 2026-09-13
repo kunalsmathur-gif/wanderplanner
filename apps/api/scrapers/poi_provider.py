@@ -27,7 +27,6 @@ from core.config import settings
 from db import AsyncSessionLocal
 from db_models import PoiProviderUsage
 from scrapers.google_places import (
-    GooglePlacesQuotaError,
     estimate_cost_usd,
     fetch_google_places_pois,
 )

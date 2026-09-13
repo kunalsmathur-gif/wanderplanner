@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -31,7 +31,7 @@ async def create_agent_lead(
     # — e.g. a feasibility-gate handoff and a post-generation quote request
     # can both land the same day for the same user/destination; that's a
     # legitimate distinct ask each time, not abuse.
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     requester_filter = AgentLead.user_id == user.id if user else AgentLead.email == body.email
     existing = (
         await db.execute(

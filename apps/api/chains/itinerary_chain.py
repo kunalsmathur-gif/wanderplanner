@@ -1212,7 +1212,7 @@ async def _generate_itinerary_inner(
                     days, dropped_fabricated = await asyncio.wait_for(
                         _flag_unverified_items(days, trip_config), timeout=3.0
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning("Item-title verification timed out; leaving items unflagged")
         # Geo out-of-bounds check runs on every tier — pure CPU, no I/O, and
         # a coordinate glitch is worth catching even in mock/cache data.
