@@ -89,6 +89,10 @@ class ItineraryDay(BaseModel):
 class ExpenseBreakdown(BaseModel):
     """Estimated cost breakdown for the full trip, in INR."""
     flights_inr: int = 0           # Round-trip flights for all passengers
+    # Self-drive fuel+toll cost for the whole vehicle, round trip — only
+    # non-zero when trip_config.travel_mode is "road_trip" (flights_inr is 0
+    # in that case instead).
+    ground_transport_inr: int = 0
     # ⚠️ `None` means "we could not look this up", NOT "free". 0 means we
     # checked and entry genuinely costs nothing. Collapsing the two is exactly
     # how a 5-day Bhutan trip came to show ₹41,000 of "visa" — an ungrounded

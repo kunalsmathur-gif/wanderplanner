@@ -9,6 +9,7 @@ export function formatFeasibilityBreakdown(result: FeasibilityResponse): string 
   const b = result.breakdown
   return [
     b.flights_inr > 0 ? `flights ₹${b.flights_inr.toLocaleString('en-IN')}` : null,
+    b.ground_transport_inr > 0 ? `road trip transport ₹${b.ground_transport_inr.toLocaleString('en-IN')}` : null,
     b.visa_inr == null
       ? 'visa/entry cost not available — check officially'
       : b.visa_inr > 0
@@ -33,6 +34,9 @@ export function formatFeasibilityBreakdownDetailed(result: FeasibilityResponse):
   const lines: string[] = []
   if (b.flights_inr > 0) {
     lines.push(`✈️ Flights: ₹${b.flights_inr.toLocaleString('en-IN')} (${pct(b.flights_inr)})`)
+  }
+  if (b.ground_transport_inr > 0) {
+    lines.push(`🚗 Road trip transport (fuel/tolls): ₹${b.ground_transport_inr.toLocaleString('en-IN')} (${pct(b.ground_transport_inr)})`)
   }
   if (b.visa_inr == null) {
     lines.push('🛂 Visa/entry: not available — check officially')

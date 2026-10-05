@@ -7,6 +7,7 @@ import { formatCurrency } from '@/lib/format'
 
 const CATEGORIES = [
   { key: 'flights_inr',          icon: '✈️',  label: 'Flights'             },
+  { key: 'ground_transport_inr', icon: '🚗',  label: 'Road Trip Transport' },
   { key: 'visa_inr',             icon: '🛂',  label: 'Visa & Entry'        },
   { key: 'accommodation_inr',    icon: '🏨',  label: 'Accommodation'       },
   { key: 'activities_inr',       icon: '🎟️', label: 'Activities & Passes' },

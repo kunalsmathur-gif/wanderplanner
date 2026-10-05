@@ -147,3 +147,34 @@ def estimate_domestic_alternative(distance_km: float, class_tier: str) -> dict[s
         "bus_inr": _bus_fare_inr(distance_km, class_tier),
         "cab_inr": _cab_fare_inr(distance_km),
     }
+
+
+# ---------------------------------------------------------------------------
+# Self-drive (road trip): fuel + toll estimate for the traveller's OWN
+# vehicle, one-way, for the WHOLE CAR — unlike rail/bus/cab above, this is
+# not a per-passenger seat fare, so callers must not multiply it by
+# headcount (see core/budget_estimator.py's travel_mode == "road_trip"
+# branch, which applies it flat across the group instead of per-traveller).
+# No distance cap, unlike cab (CAB_MAX_KM) or bus (_BUS_MAX_KM) above — a
+# genuine road trip can legitimately run well past either of those limits
+# (e.g. Mumbai-Goa ~600km, Delhi-Manali ~540km), and the user explicitly
+# told us they're driving, so there's no "too far to be realistic" cutoff
+# to enforce the way there is for a cab/bus booking.
+# ---------------------------------------------------------------------------
+
+# Blended ₹/km for a mid-size sedan: roughly ₹8-9/km fuel (at ~15km/l,
+# ~₹100-105/l petrol) + ₹2-3/km amortised highway tolls. Deliberately one
+# flat rate, not a class_tier lookup — a self-driven car's running cost
+# doesn't change with the traveller's chosen comfort tier the way a train
+# class or cab type does.
+_SELF_DRIVE_RATE_PER_KM_INR = 11.0
+_SELF_DRIVE_MINIMUM_FARE_INR = 500
+
+
+def self_drive_fuel_toll_inr(distance_km: float) -> int:
+    """One-way fuel+toll estimate (INR, for the whole vehicle) for a
+    self-driven road trip covering `distance_km`. Round-trip is simply
+    `2 * self_drive_fuel_toll_inr(distance_km)` at the call site."""
+    if distance_km <= 0:
+        raise ValueError(f"distance_km must be positive, got {distance_km!r}")
+    return int(max(_SELF_DRIVE_MINIMUM_FARE_INR, round(distance_km * _SELF_DRIVE_RATE_PER_KM_INR, -1)))

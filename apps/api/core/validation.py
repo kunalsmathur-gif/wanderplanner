@@ -416,6 +416,7 @@ PACE_VALUES = ("relaxed", "moderate", "packed")
 SCOPE_VALUES = ("local", "domestic", "international")
 CROWD_PREFERENCE_VALUES = ("touristy", "balanced", "offbeat")
 DESTINATION_MODE_VALUES = ("fixed", "exploring", "country")
+TRAVEL_MODE_VALUES = ("flight", "road_trip")
 
 _PACE_ALIASES = {
     "slow": "relaxed", "easy": "relaxed", "easygoing": "relaxed", "chill": "relaxed",
@@ -455,6 +456,23 @@ _DESTINATION_MODE_ALIASES = {
     "exploration": "exploring", "browsing": "exploring", "suggest": "exploring",
     "region": "country", "countrywide": "country", "country wide": "country",
     "nationwide": "country", "multi city": "country", "within a country": "country",
+}
+
+# ⭐ NEW — bug fix: a road trip was still being costed with a round-trip
+# flight estimate. "flight" (default) is every trip that doesn't explicitly
+# say otherwise; "road_trip" means the traveller is self-driving and the
+# cost-estimation chains (core/budget_estimator.py, chains/feasibility_chain.py,
+# chains/itinerary_chain.py) should price ground transport (fuel/tolls)
+# instead of air tickets.
+_TRAVEL_MODE_ALIASES = {
+    "road trip": "road_trip", "roadtrip": "road_trip",
+    "self drive": "road_trip", "selfdrive": "road_trip",
+    "driving": "road_trip", "drive": "road_trip", "driving down": "road_trip",
+    "drive down": "road_trip", "by car": "road_trip", "by road": "road_trip",
+    "own car": "road_trip", "car": "road_trip", "car trip": "road_trip",
+    "by bike": "road_trip", "bike trip": "road_trip", "motorcycle trip": "road_trip",
+    "fly": "flight", "flying": "flight", "plane": "flight", "air": "flight",
+    "flights": "flight", "by flight": "flight", "by air": "flight",
 }
 
 # Non-alphanumeric run → single space, so "off-beat", "off_beat", "Off Beat!"
@@ -553,6 +571,18 @@ DestinationMode = Annotated[
     ),
 ]
 
+TravelMode = Annotated[
+    Literal["flight", "road_trip"],
+    BeforeValidator(
+        choice_validator(
+            allowed=TRAVEL_MODE_VALUES,
+            aliases=_TRAVEL_MODE_ALIASES,
+            default="flight",
+            field="travel_mode",
+        )
+    ),
+]
+
 # Which config key gets which rules — used by the wizard/refine chains to
 # normalise a `config_patch` *before* it is merged into the partial config and
 # sent back to the frontend. Without this the model-level types above would
@@ -571,6 +601,11 @@ CHOICE_FIELDS: dict[str, dict[str, Any]] = {
         "allowed": DESTINATION_MODE_VALUES,
         "aliases": _DESTINATION_MODE_ALIASES,
         "default": "fixed",
+    },
+    "travel_mode": {
+        "allowed": TRAVEL_MODE_VALUES,
+        "aliases": _TRAVEL_MODE_ALIASES,
+        "default": "flight",
     },
 }
 

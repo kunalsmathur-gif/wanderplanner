@@ -175,6 +175,7 @@ def test_every_alias_target_is_a_real_canonical_value():
         _DESTINATION_MODE_ALIASES,
         _PACE_ALIASES,
         _SCOPE_ALIASES,
+        _TRAVEL_MODE_ALIASES,
     )
 
     for field, aliases in (
@@ -182,6 +183,7 @@ def test_every_alias_target_is_a_real_canonical_value():
         ("scope", _SCOPE_ALIASES),
         ("crowd_preference", _CROWD_PREFERENCE_ALIASES),
         ("destination_mode", _DESTINATION_MODE_ALIASES),
+        ("travel_mode", _TRAVEL_MODE_ALIASES),
     ):
         allowed = CHOICE_FIELDS[field]["allowed"]
         for alias, target in aliases.items():
@@ -196,6 +198,7 @@ def test_no_alias_shadows_a_canonical_value_of_its_own_field():
         _DESTINATION_MODE_ALIASES,
         _PACE_ALIASES,
         _SCOPE_ALIASES,
+        _TRAVEL_MODE_ALIASES,
     )
 
     for field, aliases in (
@@ -203,6 +206,7 @@ def test_no_alias_shadows_a_canonical_value_of_its_own_field():
         ("scope", _SCOPE_ALIASES),
         ("crowd_preference", _CROWD_PREFERENCE_ALIASES),
         ("destination_mode", _DESTINATION_MODE_ALIASES),
+        ("travel_mode", _TRAVEL_MODE_ALIASES),
     ):
         allowed = CHOICE_FIELDS[field]["allowed"]
         shadowed = [a for a in aliases if a in allowed]
@@ -218,6 +222,7 @@ def test_alias_keys_are_already_in_normalised_form():
         _PACE_ALIASES,
         _SCOPE_ALIASES,
         _SEPARATOR_RUN_RE,
+        _TRAVEL_MODE_ALIASES,
     )
 
     for aliases in (
@@ -225,6 +230,7 @@ def test_alias_keys_are_already_in_normalised_form():
         _SCOPE_ALIASES,
         _CROWD_PREFERENCE_ALIASES,
         _DESTINATION_MODE_ALIASES,
+        _TRAVEL_MODE_ALIASES,
     ):
         for alias in aliases:
             normalised = _SEPARATOR_RUN_RE.sub(" ", alias.casefold()).strip()

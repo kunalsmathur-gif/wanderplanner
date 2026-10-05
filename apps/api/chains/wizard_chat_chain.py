@@ -6,7 +6,7 @@ import copy
 import json
 import logging
 import re
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -373,6 +373,19 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
     "origin + destination + duration" utterances given in one breath) — extract origin
     immediately if the user volunteers it early, don't wait to ask.
 
+    TRAVEL MODE (JSON key: "travel_mode", NOT one of the 7 required fields — optional,
+    inferred, defaults to "flight"):
+    If the user's own words say they're self-driving — "road trip", "driving down", "by car",
+    "self-drive", "taking the bike", "riding down" — set config_patch.travel_mode: "road_trip"
+    that same turn. Otherwise leave it unset (the app defaults to "flight"). This matters for
+    cost estimates: a road trip is NOT fed flight prices (see core.budget_estimator) — it gets
+    its own ground-transport (fuel/toll) estimate instead. Bug fix: previously there was no
+    travel_mode concept at all, so a user explicitly planning "a road trip to Goa" still had
+    the budget/feasibility math quietly price a flight they never asked about or intend to
+    take. Do NOT ask the user to confirm this explicitly if they've already stated it in plain
+    language — just set it. If genuinely ambiguous (e.g. they mention a car but it's unclear
+    if that's just airport pickup), leave travel_mode unset rather than guessing.
+
   Field 4 -- dates (JSON key: "dates")
     When and how long they want to travel.
     Fixed window: {{"start": "2026-12-20", "end": "2026-12-27", "flexible": false}}
@@ -385,6 +398,19 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       "November" / "November 2026" -> start: "2026-11-01", end: "2026-11-30", flexible: false
       "long weekend" -> duration_days: 3
       "summer holidays" -> start: approx May 1, end: approx May 31, flexible: true
+
+    🔴 "any weekend" / "a weekend" / "some weekend" (NO specific weekend named, e.g. "plan a
+    trip for any weekend", "whenever this weekend"): do NOT treat this as an open-ended/
+    flexible request spanning multiple weekends — resolve it to the SINGLE upcoming
+    Saturday-Sunday as a concrete, non-flexible 2-day window, and say so in your reply so the
+    user can correct you if they meant a different one, e.g. "Sure — I'll plan for the coming
+    weekend, Oct 10-11. Let me know if you had a different weekend in mind." Bug fix
+    (live-reported): previously there was no instruction for this exact phrasing, and the model
+    improvised a date range spanning every remaining weekend of the year (~62 days), which then
+    tripped the max-trip-length guard with a scope the user never asked for. A deterministic
+    backend fallback (see _infer_weekend_dates_from_free_text) also catches the common phrasings
+    of this case even if config_patch is missed on a given turn, but always state the concrete
+    dates you resolved to in your reply either way.
 
     🔴 If the user gives ONLY a month/period with NO number of days ("November", "sometime in
     December", "next monsoon"), do NOT silently assume any duration — not 7 days, and NOT the
@@ -1218,6 +1244,49 @@ def _infer_dates_from_free_text(last_user_text: str | None, reference_date: date
         return None  # e.g. "the 25th to the 3rd" spans a month boundary — not handled here
 
     return {"start": start.isoformat(), "end": end.isoformat(), "flexible": False}
+
+
+# Live-reported bug: "plan a trip for any weekend" (no specific weekend
+# named) left the LLM with no concrete anchor, and it improvised a date range
+# spanning every remaining weekend of the year (~62 days) -- which then
+# tripped the max-trip-length guard with a range the user never asked for.
+# "Any/a/some weekend" obviously means ONE weekend, not all of them, so
+# resolve it deterministically to the single upcoming Saturday-Sunday instead
+# of leaving the LLM to guess a scope. Named/dated weekends ("next Saturday",
+# "the last weekend of November") are left to the LLM -- they name something
+# concrete this parser isn't attempting to duplicate.
+_VAGUE_WEEKEND_RE = re.compile(
+    r"\b(?:any|a|some|the next|next|this|upcoming)\s+weekend\b",
+    re.IGNORECASE,
+)
+
+
+def _infer_weekend_dates_from_free_text(last_user_text: str | None, reference_date: date | None = None) -> dict[str, Any] | None:
+    """Deterministically resolves a vague "a/any/some/this/next weekend"
+    mention (no specific calendar weekend named) to the single upcoming
+    Saturday-Sunday, as a concrete {start, end, flexible: false} patch.
+    `reference_date` defaults to today and exists only so tests don't depend
+    on wall-clock time. Returns None if no vague-weekend phrasing matches --
+    the LLM remains responsible for everything else."""
+    if not last_user_text:
+        return None
+    if not _VAGUE_WEEKEND_RE.search(last_user_text):
+        return None
+    if reference_date is None:
+        reference_date = datetime.now(UTC).date()
+
+    # Saturday is weekday() == 5 (Monday=0). If today itself is Saturday,
+    # still roll to NEXT week's occurrence -- "any weekend" said on a
+    # Saturday means the upcoming one, not "right now, already half over".
+    days_until_saturday = (5 - reference_date.weekday()) % 7 or 7
+    start = reference_date + timedelta(days=days_until_saturday)
+    end = start + timedelta(days=1)
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "flexible": False,
+        "duration_days": 2,
+    }
 
 
 # Same failure shape as purpose/pace/budget/group/dates above: the LLM
@@ -2383,10 +2452,12 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
 
         # Same backfill, same reason, for dates — only from an explicit
         # day-range-within-one-month sentence (see _infer_dates_from_free_text
-        # for exactly what's handled and why the scope is narrow).
+        # for exactly what's handled and why the scope is narrow), falling
+        # back to a vague "any weekend" resolution (see
+        # _infer_weekend_dates_from_free_text) when that doesn't match.
         existing_dates = merged.get("dates") or {}
         if not (existing_dates.get("start") and existing_dates.get("end")):
-            inferred_dates = _infer_dates_from_free_text(last_user_text)
+            inferred_dates = _infer_dates_from_free_text(last_user_text) or _infer_weekend_dates_from_free_text(last_user_text)
             if inferred_dates:
                 merged["dates"] = {**existing_dates, **inferred_dates}
                 patch["dates"] = {**(patch.get("dates") or {}), **inferred_dates}
@@ -2681,10 +2752,11 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
             fallback_config["group"] = {**(fallback_config.get("group") or {}), **solo_group}
             fallback_patch["group"] = {**(fallback_patch.get("group") or {}), **solo_group}
 
-        # Same backfill, same reason, for dates (see _infer_dates_from_free_text).
+        # Same backfill, same reason, for dates (see _infer_dates_from_free_text
+        # and _infer_weekend_dates_from_free_text).
         existing_fallback_dates = fallback_config.get("dates") or {}
         if not (existing_fallback_dates.get("start") and existing_fallback_dates.get("end")):
-            inferred_dates = _infer_dates_from_free_text(last_user_text)
+            inferred_dates = _infer_dates_from_free_text(last_user_text) or _infer_weekend_dates_from_free_text(last_user_text)
             if inferred_dates:
                 fallback_config["dates"] = {**existing_fallback_dates, **inferred_dates}
                 fallback_patch["dates"] = {**(fallback_patch.get("dates") or {}), **inferred_dates}

@@ -210,3 +210,47 @@ class TestCeilingCapsAnOverGenerousLlmGuess:
         assert response.breakdown.flights_inr == 60000
         # Total is still capped at the ceiling overall.
         assert response.breakdown.total_estimated_inr == 100000
+
+
+class TestRoadTripGroundTransport:
+    """Live-reported bug: a user planning an explicit road trip still had
+    the feasibility estimate quietly include a round-trip flight cost.
+    `ground_transport_inr` must flow through `_build_response` the same way
+    `flights_inr` does, in all three paths: raw LLM data, the floor swap,
+    and the ceiling scale-down."""
+
+    def test_llm_ground_transport_passes_through_when_floor_not_binding(self):
+        raw = {
+            "flights_inr": 0,
+            "ground_transport_inr": 9000,
+            "visa_inr": 0,
+            "accommodation_inr": 30000,
+            "daily_expenses_inr": 10000,
+            "total_estimated_inr": 49000,
+        }
+        bare_minimum = {
+            "total_inr": 40000,
+            "breakdown": {"flights_inr": 0, "ground_transport_inr": 8000, "stay_inr": 20000, "food_inr": 12000},
+        }
+        response = _build_response(raw, budget_inr=100000, bare_minimum=bare_minimum, trip_config=TripConfig(travel_mode="road_trip"))
+        assert response.breakdown.flights_inr == 0
+        assert response.breakdown.ground_transport_inr == 9000
+        assert response.breakdown.total_estimated_inr == 49000
+
+    def test_floor_swap_also_replaces_ground_transport(self):
+        raw = {
+            "flights_inr": 0,
+            "ground_transport_inr": 2000,
+            "visa_inr": 0,
+            "accommodation_inr": 30000,
+            "daily_expenses_inr": 10000,
+            "total_estimated_inr": 42000,
+        }
+        bare_minimum = {
+            "total_inr": 150000,
+            "breakdown": {"flights_inr": 0, "ground_transport_inr": 90000, "stay_inr": 40000, "food_inr": 20000},
+        }
+        response = _build_response(raw, budget_inr=100000, bare_minimum=bare_minimum, trip_config=TripConfig(travel_mode="road_trip"))
+        assert response.breakdown.ground_transport_inr == 90000
+        assert response.breakdown.flights_inr == 0
+        assert response.breakdown.total_estimated_inr == 150000

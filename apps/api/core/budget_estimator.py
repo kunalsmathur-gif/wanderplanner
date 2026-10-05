@@ -81,7 +81,7 @@ from typing import Any
 from core.airbnb_pricing import airbnb_hotel_equivalent_pp_inr
 from core.cost_grounding import community_food_per_day_inr, community_median_price_inr
 from core.distance_pricing import flight_band_inr, haversine_km
-from core.domestic_transport_pricing import estimate_domestic_alternative
+from core.domestic_transport_pricing import estimate_domestic_alternative, self_drive_fuel_toll_inr
 from core.keyword_match import has_keyword
 from core.price_extraction import FOOD_CONTEXT_KEYWORDS, STAY_CONTEXT_KEYWORDS
 
@@ -410,6 +410,14 @@ _DOMESTIC_FLIGHT_DISCOUNT = 0.5
 # nudge that reads as noise rather than a genuinely useful tip.
 _CHEAPER_ALTERNATIVE_MIN_SAVINGS_FRACTION = 0.15
 
+# travel_mode == "road_trip" fallback when origin/destination coordinates
+# aren't known yet (so `self_drive_fuel_toll_inr` has no distance to work
+# from) — a flat, documented assumption for a typical short-to-medium
+# India road trip's round-trip fuel+toll cost, used only until real
+# coordinates are available. Far closer to reality than silently reusing
+# the flight estimate, which is the bug this whole branch exists to fix.
+_SELF_DRIVE_FLAT_FALLBACK_ROUNDTRIP_INR = 3000
+
 
 ECONOMICAL_KEYWORDS = ["economical", "budget", "cheap", "affordable", "backpack", "shoestring", "low cost", "low-cost", "save money", "frugal", "no frills", "bare minimum", "economy"]
 PREMIUM_KEYWORDS = ["premium", "luxur", "splurge", "high-end", "high end", "five star", "5 star", "indulgent", "lavish", "no expense", "opulent", "upscale", "posh", "fancier", "top-notch", "top notch"]
@@ -715,6 +723,8 @@ async def estimate_bare_minimum_budget(
     blended_food_pp = round(sum(r["food_per_day_pp"] for r in stop_rates) / len(stop_rates))
 
     origin = trip_config.get("origin") or {}
+    is_road_trip = trip_config.get("travel_mode") == "road_trip" and scope == "domestic"
+
     band = flight_band_inr(origin.get("lat"), origin.get("lon"), destination.get("lat"), destination.get("lon"))
     if band:
         low, high = band
@@ -729,6 +739,18 @@ async def estimate_bare_minimum_budget(
     if scope == "domestic":
         flight_pp *= _DOMESTIC_FLIGHT_DISCOUNT
 
+    # ⭐ Road trip (bug fix): the traveller is self-driving, not flying — a
+    # round-trip flight estimate has no business in this budget at all.
+    # Flat across the WHOLE GROUP (one car), not per-passenger like
+    # flight_pp — see self_drive_fuel_toll_inr's docstring for why.
+    road_trip_transport_inr: int | None = None
+    if is_road_trip:
+        if origin.get("lat") and origin.get("lon") and destination.get("lat") and destination.get("lon"):
+            distance_km = haversine_km(origin["lat"], origin["lon"], destination["lat"], destination["lon"])
+            road_trip_transport_inr = 2 * self_drive_fuel_toll_inr(distance_km)
+        else:
+            road_trip_transport_inr = _SELF_DRIVE_FLAT_FALLBACK_ROUNDTRIP_INR
+
     # Rail/bus/cab "cheaper alternative" call-out — domestic (India-internal)
     # routes only; international routes have no rail/bus alternative worth
     # modelling here (see core/domestic_transport_pricing.py's docstring).
@@ -737,7 +759,14 @@ async def estimate_bare_minimum_budget(
     # module's fares are one-way — halving flight_pp keeps both sides of the
     # comparison on the same footing.
     cheaper_alternative: dict[str, Any] | None = None
-    if scope == "domestic" and origin.get("lat") and origin.get("lon") and destination.get("lat") and destination.get("lon"):
+    if (
+        not is_road_trip
+        and scope == "domestic"
+        and origin.get("lat")
+        and origin.get("lon")
+        and destination.get("lat")
+        and destination.get("lon")
+    ):
         distance_km = haversine_km(origin["lat"], origin["lon"], destination["lat"], destination["lon"])
         alt = estimate_domestic_alternative(distance_km, traveller_level)
         flight_one_way_pp = flight_pp / 2
@@ -804,12 +833,20 @@ async def estimate_bare_minimum_budget(
     )
 
     # Swap in the user's real already-paid amounts where given, instead of
-    # our heuristic guess for that component.
-    flights_component = int(prebooked_flights) if prebooked_flights is not None else int(flight_breakdown)
+    # our heuristic guess for that component. A road trip has no flight
+    # component at all (it's replaced below by ground_transport_component) —
+    # an already-booked flight on a self-drive trip is a contradiction the
+    # wizard shouldn't be able to produce, but prebooked_flights still wins
+    # if somehow both are set, since it's a real user-stated number.
+    if is_road_trip and prebooked_flights is None:
+        flights_component = 0
+    else:
+        flights_component = int(prebooked_flights) if prebooked_flights is not None else int(flight_breakdown)
+    ground_transport_component = int(road_trip_transport_inr) if road_trip_transport_inr is not None else 0
     stay_component = int(prebooked_accommodation) if prebooked_accommodation is not None else int(stay_breakdown)
     food_component = int(food_breakdown)
 
-    total = round(flights_component + stay_component + food_component, -2)
+    total = round(flights_component + ground_transport_component + stay_component + food_component, -2)
     per_person = round(total / total_known_people, -2)
 
     return {
@@ -817,6 +854,7 @@ async def estimate_bare_minimum_budget(
         "per_person_inr": int(per_person),
         "breakdown": {
             "flights_inr": flights_component,
+            "ground_transport_inr": ground_transport_component,
             "stay_inr": stay_component,
             "food_inr": food_component,
         },
@@ -830,6 +868,7 @@ async def estimate_bare_minimum_budget(
         "flights_prebooked": prebooked_flights is not None,
         "accommodation_prebooked": prebooked_accommodation is not None,
         "flight_distance_based": flight_distance_based,
+        "is_road_trip": is_road_trip,
         "origin_city": origin.get("city"),
         "stay_community_based": stay_community_based,
         "food_community_based": food_community_based,
@@ -928,7 +967,7 @@ async def budget_estimate_prompt_hint(trip_config: dict[str, Any], hint_text: st
         assumptions.append("travel month unknown, so no peak-season adjustment applied")
     elif estimate["peak_season"]:
         assumptions.append("peak season for this destination — flights/stay skewed ~25% higher")
-    if not estimate["flight_distance_based"] and not estimate["flights_prebooked"]:
+    if not estimate["flight_distance_based"] and not estimate["flights_prebooked"] and not estimate.get("is_road_trip"):
         assumptions.append(
             "couldn't pin down real flight distance for this departure city yet, so flights use a generic "
             "destination-tier estimate rather than a route-specific one"
@@ -966,18 +1005,26 @@ async def budget_estimate_prompt_hint(trip_config: dict[str, Any], hint_text: st
         "a heuristic guess.\n"
     )
 
+    is_road_trip = estimate.get("is_road_trip", False)
+    transport_label = "road trip transport (fuel/tolls)" if is_road_trip else "flights"
+    transport_line = (
+        f"  Breakdown — {transport_label}: ₹{(b.get('ground_transport_inr', 0) if is_road_trip else b['flights_inr']):,} "
+        f"| stay: ₹{b['stay_inr']:,} | food: ₹{b['food_inr']:,}\n"
+    )
+
     return (
-        "BUDGET RECOMMENDATION GUIDANCE: Use this computed bare-minimum estimate (flights + stay + food "
-        "only — local transport/activities/shopping are extra) instead of inventing a number yourself:\n"
+        "BUDGET RECOMMENDATION GUIDANCE: Use this computed bare-minimum estimate "
+        f"({transport_label} + stay + food only — local transport/activities/shopping are extra) instead of "
+        "inventing a number yourself:\n"
         f"  Total for {estimate['headcount']} traveller(s), {estimate['duration_days']} days: "
         f"₹{estimate['total_inr']:,} (₹{estimate['per_person_inr']:,} per person)\n"
-        f"  Breakdown — flights: ₹{b['flights_inr']:,} | stay: ₹{b['stay_inr']:,} | food: ₹{b['food_inr']:,}\n"
+        + transport_line +
         f"  Destination cost tier: {estimate['destination_tier']} | comfort level used: {estimate['traveller_level']}\n"
         f"  {assumptions_text}\n"
-        + cheaper_alternative_note
+        + (cheaper_alternative_note if not is_road_trip else "")
         + prebooked_note +
-        "Present this naturally in your own words, ALWAYS stating both the total AND the per-person figure, "
-        "and mention it covers flights + stay + food as a bare minimum (activities/shopping/local transport "
-        "are extra). If any assumption above is a guess, mention it briefly so the user can correct it."
+        f"Present this naturally in your own words, ALWAYS stating both the total AND the per-person figure, "
+        f"and mention it covers {transport_label} + stay + food as a bare minimum (activities/shopping/local "
+        "transport are extra). If any assumption above is a guess, mention it briefly so the user can correct it."
     )
 

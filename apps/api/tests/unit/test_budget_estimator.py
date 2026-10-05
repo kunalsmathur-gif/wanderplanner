@@ -310,3 +310,84 @@ async def test_no_cheaper_alternative_note_for_international_route():
     config = _config(origin=dict(DELHI), destination=dict(GOA), group={"adults": 2})
     hint = await budget_estimate_prompt_hint(config)
     assert "CHEAPER ALTERNATIVE AVAILABLE" not in hint
+
+
+# ── Road trip (travel_mode="road_trip") — bug fix ─────────────────────────
+# Live-reported bug: a user planning an explicit road trip still had the
+# budget estimate quietly include a round-trip flight cost. Fixed by zeroing
+# flights_inr and substituting a flat, per-vehicle (not per-passenger)
+# ground_transport_inr whenever travel_mode == "road_trip" on a domestic
+# route.
+
+MUMBAI = {"city": "Mumbai", "country": "India", "lat": 19.0760, "lon": 72.8777}
+
+
+async def test_road_trip_zeroes_flights_and_adds_ground_transport():
+    config = _config(
+        scope="domestic", travel_mode="road_trip",
+        origin=dict(MUMBAI), destination=dict(GOA), group={"adults": 2},
+    )
+    estimate = await estimate_bare_minimum_budget(config)
+    assert estimate["breakdown"]["flights_inr"] == 0
+    assert estimate["breakdown"]["ground_transport_inr"] > 0
+    assert estimate["is_road_trip"] is True
+
+
+async def test_flight_mode_has_no_ground_transport_cost():
+    config = _config(
+        scope="domestic", travel_mode="flight",
+        origin=dict(MUMBAI), destination=dict(GOA), group={"adults": 2},
+    )
+    estimate = await estimate_bare_minimum_budget(config)
+    assert estimate["breakdown"]["flights_inr"] > 0
+    assert estimate["breakdown"]["ground_transport_inr"] == 0
+    assert estimate["is_road_trip"] is False
+
+
+async def test_road_trip_ground_transport_is_flat_not_per_passenger():
+    """A self-driven car's fuel/toll cost doesn't scale with headcount the
+    way flight seats do — 2 vs 6 adults on the same route must cost the
+    same ground_transport_inr."""
+    small_group = _config(
+        scope="domestic", travel_mode="road_trip",
+        origin=dict(MUMBAI), destination=dict(GOA), group={"adults": 2},
+    )
+    large_group = _config(
+        scope="domestic", travel_mode="road_trip",
+        origin=dict(MUMBAI), destination=dict(GOA), group={"adults": 6},
+    )
+    small_estimate = await estimate_bare_minimum_budget(small_group)
+    large_estimate = await estimate_bare_minimum_budget(large_group)
+    assert small_estimate["breakdown"]["ground_transport_inr"] == large_estimate["breakdown"]["ground_transport_inr"]
+
+
+async def test_road_trip_without_coords_falls_back_to_flat_estimate():
+    config = _config(
+        scope="domestic", travel_mode="road_trip",
+        origin={"city": "Mumbai"}, destination={"city": "Goa", "country": "India"},
+        group={"adults": 2},
+    )
+    estimate = await estimate_bare_minimum_budget(config)
+    assert estimate["breakdown"]["flights_inr"] == 0
+    assert estimate["breakdown"]["ground_transport_inr"] > 0
+
+
+async def test_road_trip_skips_cheaper_alternative_callout():
+    """Suggesting rail/bus/cab to someone already road-tripping doesn't
+    make sense — the cheaper-alternative call-out must not fire."""
+    config = _config(
+        scope="domestic", travel_mode="road_trip",
+        origin=dict(MUMBAI), destination=dict(GOA), group={"adults": 2},
+    )
+    estimate = await estimate_bare_minimum_budget(config)
+    assert estimate["cheaper_alternative"] is None
+
+
+async def test_road_trip_prompt_hint_shows_ground_transport_not_flights():
+    config = _config(
+        scope="domestic", travel_mode="road_trip",
+        origin=dict(MUMBAI), destination=dict(GOA), group={"adults": 2},
+    )
+    hint = await budget_estimate_prompt_hint(config)
+    assert "road trip" in hint.lower() or "fuel" in hint.lower() or "toll" in hint.lower()
+    assert "CHEAPER ALTERNATIVE AVAILABLE" not in hint

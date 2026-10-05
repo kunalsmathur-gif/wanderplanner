@@ -7,6 +7,11 @@ from models.trip import TripConfig
 
 class CostBreakdown(BaseModel):
     flights_inr: int = 0           # Return flights per person × num people
+    # Road trip only (trip_config.travel_mode == "road_trip"): fuel+tolls for
+    # the whole vehicle, round trip. 0 for every flight-mode trip. Mutually
+    # exclusive with flights_inr being non-zero in practice — see
+    # chains/feasibility_chain.py's road-trip handling.
+    ground_transport_inr: int = 0
     # None = we could not look it up; 0 = checked, genuinely free. See the
     # matching note on `models/itinerary.py::ExpenseBreakdown.visa_inr`.
     visa_inr: int | None = None    # Total visa/entry fees; None = unknown

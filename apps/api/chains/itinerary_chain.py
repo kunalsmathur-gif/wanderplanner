@@ -453,7 +453,8 @@ RULES:
 - Flag schedule conflicts (< 30 min transit gap) in transit_warnings.
 - For local_name: provide the place name in local script only when it differs from English (e.g. 浅草寺 for Senso-ji, 에펠탑 for Eiffel Tower). Leave empty for English-named places.
 - For youtube_search_query: generate a short, specific search phrase travelers would use (e.g. "Senso-ji Temple Tokyo travel guide").
-- For expense_breakdown: provide realistic INR estimates for all 8 cost categories. Base on actual market rates for the destination year and accommodation style specified.
+- For expense_breakdown: provide realistic INR estimates for all 9 cost categories. Base on actual market rates for the destination year and accommodation style specified.
+- TRAVEL MODE: check trip_config for "travel_mode". If it is "road_trip", the traveller is self-driving — set flights_inr to 0 and instead estimate ground_transport_inr: round-trip fuel+toll cost for the WHOLE VEHICLE (not multiplied by passenger count, unlike flights), based on the typical driving distance between origin and destination. If travel_mode is "flight" or absent, estimate flights_inr as normal and set ground_transport_inr to 0. Never populate both as non-zero for the same trip.
 - MULTI-HOP TRIPS: If trip_config.hops is non-empty, the trip visits multiple cities. Distribute days proportionally across all stops (destination + hops). Use the day theme to indicate city transitions (e.g. "Travel Day: Paris → Amsterdam"). Aggregate expense_breakdown across all stops. Sequence the stops in the exact order given by the VISIT ORDER section below (if present) — do NOT default to the order stops happen to be listed in trip_config, which may not be the travel-efficient sequence.
 - BUDGET GUIDANCE (below): apply the stated budget tier to accommodation/dining choices and expense_breakdown figures. If a flight-cost or accommodation-cost grounding range is given, treat it as a strong sanity check for those expense_breakdown line items.
 
@@ -508,7 +509,8 @@ OUTPUT SCHEMA:
     }}
   ],
   "expense_breakdown": {{
-    "flights_inr": <round-trip economy flights, all passengers>,
+    "flights_inr": <round-trip economy flights, all passengers — 0 if TRIP DETAILS says travel_mode is "road_trip">,
+    "ground_transport_inr": <self-drive fuel+toll cost for the WHOLE VEHICLE (not per person), round trip — ONLY non-zero if travel_mode is "road_trip"; 0 otherwise>,
     "visa_inr": <total MANDATORY entry cost all passengers — see ENTRY COSTS rule — 0 if none>,
     "accommodation_inr": <nightly rate INR × nights × rooms>,
     "activities_inr": <estimated total entry fees across all days>,
@@ -679,7 +681,8 @@ def _mock_itinerary(trip_config: TripConfig, tip_texts: list[str] | None = None)
     return {
         "days": days,
         "expense_breakdown": {
-            "flights_inr": 35000 * max(1, num_days // 3),
+            "flights_inr": 0 if trip_config.travel_mode == "road_trip" else 35000 * max(1, num_days // 3),
+            "ground_transport_inr": 4000 if trip_config.travel_mode == "road_trip" else 0,
             "visa_inr": 6500,
             "accommodation_inr": 4500 * num_days,
             "activities_inr": 2000 * num_days,
@@ -707,6 +710,7 @@ def _parse_expense_breakdown(
     people = max(people, 1)
 
     flights = int(raw.get("flights_inr", 0))
+    ground_transport = int(raw.get("ground_transport_inr", 0))
     # 🔴 A visa figure is allowed through ONLY when the corpus actually covered
     # this country — `entry_grounded` is the result of a real lookup, not the
     # model's opinion of its own confidence.
@@ -732,13 +736,14 @@ def _parse_expense_breakdown(
     # ⚠️ The total therefore UNDERSTATES a trip with a real but unlooked-up
     # entry cost; the "not available" label is what stops that reading as free.
     subtotal = (
-        flights + (visa or 0) + accommodation + activities + food + local_transport + shopping
+        flights + ground_transport + (visa or 0) + accommodation + activities + food + local_transport + shopping
     )
     buffer = int(raw.get("emergency_buffer_inr", round(subtotal * 0.10)))
     total = int(raw.get("total_inr", subtotal + buffer)) or (subtotal + buffer)
 
     return ExpenseBreakdown(
         flights_inr=flights,
+        ground_transport_inr=ground_transport,
         visa_inr=visa,
         accommodation_inr=accommodation,
         activities_inr=activities,

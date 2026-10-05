@@ -252,6 +252,7 @@ export function ItineraryDocument({ days, config, expenseBreakdown }: Props) {
 
             {[
               { label: 'Flights (round-trip)', val: expenseBreakdown.flights_inr },
+              { label: '   Road Trip Transport (fuel/tolls)', val: expenseBreakdown.ground_transport_inr },
               { label: '   Visa & Entry fees', val: expenseBreakdown.visa_inr },
               { label: '   Accommodation', val: expenseBreakdown.accommodation_inr },
               { label: '   Activities & Passes', val: expenseBreakdown.activities_inr },

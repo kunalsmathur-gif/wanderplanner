@@ -72,6 +72,10 @@ export interface TripConfig {
   destination_mode: DestinationMode
   destination_country: string | null   // used when mode = 'country'
   hops: DestinationInput[]             // multi-stop (max 5), used alongside destination
+  // How the traveller is getting there — "road_trip" zeroes flights_inr in
+  // favour of a ground_transport_inr (fuel/toll) estimate. Defaults to
+  // "flight" when unset.
+  travel_mode?: 'flight' | 'road_trip'
   // When true, the backend preserves the destination/hops order exactly
   // instead of auto-optimizing multi-hop travel sequencing (set when the
   // user gave an explicit date-bound reason for the order, e.g. an event).
@@ -183,6 +187,9 @@ export type GenerationTier =
 // Expense breakdown types
 export interface ExpenseBreakdown {
   flights_inr: number
+  // Self-drive fuel+toll cost for the whole vehicle, round trip — only
+  // non-zero for a road trip (flights_inr is 0 in that case instead).
+  ground_transport_inr: number
   visa_inr: number | null   // null = could not look it up; 0 = genuinely free
   accommodation_inr: number
   activities_inr: number
@@ -199,6 +206,7 @@ export interface ExpenseBreakdown {
 // Feasibility types
 export interface CostBreakdown {
   flights_inr: number
+  ground_transport_inr: number
   visa_inr: number | null   // null = could not look it up; 0 = genuinely free
   accommodation_inr: number
   daily_expenses_inr: number

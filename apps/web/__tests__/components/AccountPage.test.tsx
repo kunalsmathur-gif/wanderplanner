@@ -62,7 +62,7 @@ const SAVED_TRIP = {
     alignment_score: 0.9,
     warnings: [],
     expense_breakdown: {
-      flights_inr: 0, visa_inr: null, accommodation_inr: 0, activities_inr: 0,
+      flights_inr: 0, ground_transport_inr: 0, visa_inr: null, accommodation_inr: 0, activities_inr: 0,
       food_inr: 0, local_transport_inr: 0, shopping_inr: 0, emergency_buffer_inr: 0,
       total_inr: 0, destination_currency_code: '', total_destination_currency: 0, num_people: 1,
     },

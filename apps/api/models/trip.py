@@ -29,6 +29,7 @@ from core.validation import (
     PoiName,
     PurposeText,
     ShortLabel,
+    TravelMode,
     TripScope,
     clean_trip_dates,
 )
@@ -154,6 +155,16 @@ class TripConfig(BaseModel):
     destination: DestinationInput | None = None
     destination_mode: DestinationMode = "fixed"
     destination_country: CountryName | None = None  # used when mode = "country"
+    # How the traveller gets to the destination (⭐ NEW — bug fix: a stated
+    # road trip was still being budgeted/estimated with a round-trip flight
+    # cost). "flight" (default) assumes air travel; "road_trip" means the
+    # traveller is self-driving, and every cost-estimation chain
+    # (core/budget_estimator.py, chains/feasibility_chain.py,
+    # chains/itinerary_chain.py) prices ground transport (fuel/tolls)
+    # instead. Only meaningfully modelled for scope="domestic" — an
+    # international "road trip" still needs a flight to leave the country,
+    # so that combination is left priced as a flight.
+    travel_mode: TravelMode = "flight"
     # `max_length` enforces what the comment has always claimed and what the
     # frontend store already does (tripConfigStore.ts caps at 5). Each hop is
     # its own cold-start ingestion — Overpass, Wikivoyage and embeddings — so

@@ -105,7 +105,8 @@ TRIP DETAILS:
 
 OUTPUT SCHEMA (valid JSON only, no markdown):
 {{
-  "flights_inr": <round-trip economy flight cost per person × total passengers>,
+  "flights_inr": <round-trip economy flight cost per person × total passengers — 0 if TRIP DETAILS says travel_mode is "road_trip" (see TRAVEL MODE rule below)>,
+  "ground_transport_inr": <self-drive fuel+toll cost for the WHOLE VEHICLE (not per person), round trip — ONLY non-zero if travel_mode is "road_trip"; 0 otherwise>,
   "visa_inr": <total MANDATORY entry cost for all passengers — see ENTRY COSTS rule — 0 if none>,
   "accommodation_inr": <avg nightly rate in INR × number of nights × number of rooms needed>,
   "daily_expenses_inr": <food + activities + local transport per person per day × days × people>,
@@ -129,6 +130,19 @@ RULES:
 - If budget is clearly insufficient, suggest 2-3 cheaper alternatives that offer similar experiences.
 - If budget is sufficient, still suggest 1-2 alternative destinations for variety.
 - Keep alternatives realistic for Indian passport holders.
+
+TRAVEL MODE (`flights_inr` vs `ground_transport_inr`):
+- Check TRIP DETAILS below for `"travel_mode"`. If it is `"road_trip"`, the
+  traveller is self-driving — set `flights_inr` to 0 and instead estimate
+  `ground_transport_inr`: round-trip fuel + toll cost for the WHOLE VEHICLE
+  (not multiplied by passenger count, unlike flights), based on the typical
+  driving distance between origin and destination. A self-driven car's cost
+  does not scale with headcount the way flight seats or accommodation rooms
+  do — one car carries the whole party.
+- If `travel_mode` is `"flight"` or absent, estimate `flights_inr` as
+  normal and set `ground_transport_inr` to 0.
+- Never populate both `flights_inr` and `ground_transport_inr` as non-zero
+  for the same trip — the traveller picked exactly one way to get there.
 
 ENTRY COSTS (`visa_inr`) — the traveller holds an INDIAN passport:
 - Include every MANDATORY per-person cost of entry: visa or e-visa fees,
@@ -302,6 +316,7 @@ async def _check_feasibility_inner(
         "seniors": seniors,
         "accommodation_style": trip_config.accommodation.style[0] if trip_config.accommodation.style else "mid-range hotel",
         "purpose": trip_config.purpose,
+        "travel_mode": trip_config.travel_mode,
     }
 
     if settings.llm_provider == "mock":
@@ -439,6 +454,7 @@ def _build_response(
     destination_verified: bool | None = None,
 ) -> FeasibilityResponse:
     llm_flights = int(data.get("flights_inr", 0))
+    llm_ground_transport = int(data.get("ground_transport_inr", 0))
     llm_accommodation = int(data.get("accommodation_inr", 0))
     llm_daily_expenses = int(data.get("daily_expenses_inr", 0))
     total = int(data.get("total_estimated_inr", 0))
@@ -498,6 +514,7 @@ def _build_response(
         floor_breakdown = bare_minimum["breakdown"]
         if prebooked_flights is None:
             llm_flights = int(floor_breakdown.get("flights_inr", llm_flights))
+        llm_ground_transport = int(floor_breakdown.get("ground_transport_inr", llm_ground_transport))
         if prebooked_accommodation is None:
             llm_accommodation = int(floor_breakdown.get("stay_inr", llm_accommodation))
         llm_daily_expenses = int(floor_breakdown.get("food_inr", data.get("daily_expenses_inr", 0)))
@@ -519,6 +536,7 @@ def _build_response(
             scale = (ceiling_value - fixed_total) / variable_total
             if prebooked_flights is None:
                 llm_flights = round(llm_flights * scale, -2)
+            llm_ground_transport = round(llm_ground_transport * scale, -2)
             if prebooked_accommodation is None:
                 llm_accommodation = round(llm_accommodation * scale, -2)
             llm_daily_expenses = round(llm_daily_expenses * scale, -2)
@@ -534,6 +552,7 @@ def _build_response(
 
     breakdown = CostBreakdown(
         flights_inr=llm_flights,
+        ground_transport_inr=llm_ground_transport,
         # 🔴 The model's figure is kept only when the visa corpus actually
         # covered this country; otherwise None, meaning "not available" — never
         # 0, which would claim entry is free. Same structural gate as
@@ -587,7 +606,12 @@ def _mock_feasibility(trip_summary: dict, budget_inr: int) -> FeasibilityRespons
     nights = trip_summary.get("nights", 4)
     people = trip_summary.get("total_people", 2)
 
-    flights = 35000 * people
+    # Road trip (⭐ bug fix): mirror the live path's travel_mode handling so
+    # dev-mode runs exercise the same "no air tickets for a self-drive trip"
+    # behaviour instead of validating a path that never ships.
+    is_road_trip = trip_summary.get("travel_mode") == "road_trip"
+    flights = 0 if is_road_trip else 35000 * people
+    ground_transport = 4000 if is_road_trip else 0  # flat dev-mode placeholder, whole vehicle
     # None, matching what the live path produces for an uncovered country: the
     # mock runs with no corpus behind it, so a flat ₹6,500/person here would be
     # the one surface showing a figure production would have suppressed — dev
@@ -595,7 +619,7 @@ def _mock_feasibility(trip_summary: dict, budget_inr: int) -> FeasibilityRespons
     visa = None
     accommodation = 4500 * nights
     daily = 3000 * nights * people
-    total = flights + (visa or 0) + accommodation + daily
+    total = flights + ground_transport + (visa or 0) + accommodation + daily
 
     alternatives = [
         AlternativeDestination(
@@ -617,6 +641,7 @@ def _mock_feasibility(trip_summary: dict, budget_inr: int) -> FeasibilityRespons
     return _build_response(
         {
             "flights_inr": flights,
+            "ground_transport_inr": ground_transport,
             "visa_inr": visa,
             "accommodation_inr": accommodation,
             "daily_expenses_inr": daily,

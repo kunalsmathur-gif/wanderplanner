@@ -150,3 +150,39 @@ class TestFeasibilityBreakdown:
         assert result.breakdown.visa_inr == 6000
         assert result.breakdown.total_estimated_inr == 56000
 
+
+
+class TestItineraryRoadTripGroundTransport:
+    """Live-reported bug: a user planning an explicit road trip still had
+    the itinerary's expense_breakdown quietly include a round-trip flight
+    cost. `ground_transport_inr` must flow through `_parse_expense_breakdown`
+    and contribute to the computed subtotal/total the same way flights_inr
+    does for a flight trip."""
+
+    def test_ground_transport_passes_through(self):
+        raw = {**_RAW, "flights_inr": 0, "ground_transport_inr": 9000, "visa_inr": 0}
+        breakdown = _parse_expense_breakdown(raw, TripConfig(travel_mode="road_trip"), entry_grounded=True)
+
+        assert breakdown.flights_inr == 0
+        assert breakdown.ground_transport_inr == 9000
+
+    def test_ground_transport_contributes_to_total(self):
+        raw = {
+            "flights_inr": 0,
+            "ground_transport_inr": 9000,
+            "visa_inr": 0,
+            "accommodation_inr": 30000,
+            "activities_inr": 5000,
+            "food_inr": 10000,
+            "local_transport_inr": 3000,
+            "shopping_inr": 2000,
+        }
+        breakdown = _parse_expense_breakdown(raw, TripConfig(travel_mode="road_trip"), entry_grounded=True)
+
+        subtotal = 9000 + 30000 + 5000 + 10000 + 3000 + 2000
+        assert breakdown.total_inr >= subtotal
+
+    def test_defaults_to_zero_when_absent(self):
+        breakdown = _parse_expense_breakdown(_RAW, TripConfig(), entry_grounded=True)
+
+        assert breakdown.ground_transport_inr == 0
