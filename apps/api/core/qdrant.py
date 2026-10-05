@@ -70,6 +70,11 @@ def _ensure_collections(client: QdrantClient):
         settings.qdrant_collection_youtube_comments: 384,
         settings.qdrant_collection_youtube_narration: 384,
         settings.qdrant_collection_visa_info: 384,
+        # Pan-India events corpus (docs/plans/india-workation-finder-plan.md).
+        # Same embedding model/dim as the collections above; not added to
+        # _DESTINATION_INDEXED_COLLECTIONS below — events are pan-India, keyed
+        # by `location` (city/state), not a single "destination" payload field.
+        settings.qdrant_collection_india_events: 384,
     }
     existing = {c.name for c in client.get_collections().collections}
     for name, dim in collections.items():

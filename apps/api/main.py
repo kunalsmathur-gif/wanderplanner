@@ -46,6 +46,7 @@ from routers import (
     travel_tips,
     voice,
     wizard_chat,
+    workation,
 )
 
 configure_logging()
@@ -132,6 +133,7 @@ app.include_router(itinerary_feedback.router, prefix="/api")
 app.include_router(generation_signal.router, prefix="/api")
 app.include_router(analytics.router, prefix="/api")
 app.include_router(voice.router, prefix="/api")
+app.include_router(workation.router, prefix="/api")
 
 
 @app.get("/health")

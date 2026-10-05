@@ -95,6 +95,58 @@ async def _refresh_itinerary_corpus():
     await mark_ran(job_id)
 
 
+async def _refresh_india_events():
+    """7-day cadence (`india_events_refresh_days`) ingestion of the India
+    Workation & Long Weekend Finder event corpus: scrape/pull all ingestion
+    tiers (official tourism boards, news RSS, AllEvents.in/Eventbrite/
+    Bandsintown/Meetup, YouTube mention-mining), then embed and upsert into
+    the `india_events` Qdrant collection, via the already-implemented
+    `ingest_india_events()`/`embed_and_store_india_events()` in
+    `scrapers/india_events.py`. This wrapper's own exponential-backoff retry
+    (`core.retry.with_backoff`) covers whole-pipeline failure modes that
+    aren't already tolerated per-source inside `ingest_india_events()` — a
+    source outage across the board, or a transient embedding/Qdrant write
+    failure — so one bad night doesn't have to wait a full extra 7 days
+    before trying again.
+
+    Gated by `core.job_run_state` (deploy-safe cadence, not process uptime):
+    the outer APScheduler trigger only fires once daily inside the 2-4AM IST
+    off-peak window (`_off_peak_ist`), but the actual ingestion only runs
+    once `india_events_refresh_days` has genuinely elapsed since the last
+    *successful* run, per the DB-persisted `last_run_at` — so repeated
+    deploys/restarts never reset this clock, and a transient failure is
+    retried the very next night (not a full 7 days later), since
+    `mark_ran()` is only called on success.
+    """
+    job_id = "india_events_refresh"
+    if not await is_due(job_id, interval=timedelta(days=settings.india_events_refresh_days)):
+        return
+
+    from scrapers.india_events import embed_and_store_india_events, ingest_india_events
+
+    async def _ingest_and_store() -> int:
+        events = await ingest_india_events()
+        return embed_and_store_india_events(events)
+
+    try:
+        # 4 attempts, 5/10/20-minute backoff (~35min worst case) — comfortably
+        # inside the 2-4AM window even starting at the tail of it.
+        count = await with_backoff(
+            _ingest_and_store,
+            job_name="india_events_refresh",
+            max_attempts=4,
+            base_delay_seconds=300,
+        )
+        logger.info("India events ingestion complete: %d events stored", count)
+    except Exception:
+        # Already logged with full attempt detail inside with_backoff(); no
+        # mark_ran() means is_due() stays True and tomorrow's 3:40AM IST
+        # check retries the whole thing, rather than waiting out the full
+        # 7-day cadence again.
+        return
+    await mark_ran(job_id)
+
+
 async def _refresh_visa_info():
     """Refresh the `visa_info` entry-rules corpus (issue #37).
 
@@ -567,6 +619,14 @@ async def start_scheduler():
         # and off-peak per the 2-4AM IST window.
         trigger=_off_peak_ist(3, 20),
         id="visa_info_refresh",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        _refresh_india_events,
+        # Self-gated via core.job_run_state (see function docstring) — deploy-safe,
+        # and off-peak per the 2-4AM IST window.
+        trigger=_off_peak_ist(3, 40),
+        id="india_events_refresh",
         replace_existing=True,
     )
     _scheduler.add_job(

@@ -1,0 +1,179 @@
+{
+  "_meta": {
+    "description": "Curated static India holiday calendar (national + state/UT gazetted holidays). NOT a live feed — see services/long_weekend.py module docstring and docs/data-freshness-strategy.md for the refresh cadence this mirrors.",
+    "refresh_cadence": "annual, before the start of each covered year",
+    "last_refreshed": "2026-10-01",
+    "covers_years": [2026, 2027],
+    "sources": "Government of India gazetted holiday notifications, state government gazette notifications, and publicly published national/state holiday calendars. Lunar-calendar festival dates (Diwali, Holi, Eid, Onam, etc.) are best-effort estimates for the covered years and should be re-verified against the official central/state gazette each year during the annual refresh — they are not astronomically computed."
+  },
+  "national": [
+    {"name": "Republic Day", "date": "2026-01-26"},
+    {"name": "Holi", "date": "2026-03-04"},
+    {"name": "Eid al-Fitr", "date": "2026-03-20"},
+    {"name": "Good Friday", "date": "2026-04-03"},
+    {"name": "Eid al-Adha (Bakrid)", "date": "2026-05-27"},
+    {"name": "Independence Day", "date": "2026-08-15"},
+    {"name": "Janmashtami", "date": "2026-09-04"},
+    {"name": "Gandhi Jayanti", "date": "2026-10-02"},
+    {"name": "Dussehra (Vijayadashami)", "date": "2026-10-20"},
+    {"name": "Diwali", "date": "2026-11-08"},
+    {"name": "Guru Nanak Jayanti", "date": "2026-11-24"},
+    {"name": "Christmas", "date": "2026-12-25"},
+    {"name": "Republic Day", "date": "2027-01-26"},
+    {"name": "Holi", "date": "2027-03-23"},
+    {"name": "Eid al-Fitr", "date": "2027-03-10"},
+    {"name": "Good Friday", "date": "2027-03-26"},
+    {"name": "Eid al-Adha (Bakrid)", "date": "2027-05-17"},
+    {"name": "Independence Day", "date": "2027-08-15"},
+    {"name": "Janmashtami", "date": "2027-08-25"},
+    {"name": "Gandhi Jayanti", "date": "2027-10-02"},
+    {"name": "Dussehra (Vijayadashami)", "date": "2027-10-09"},
+    {"name": "Diwali", "date": "2027-10-29"},
+    {"name": "Guru Nanak Jayanti", "date": "2027-11-14"},
+    {"name": "Christmas", "date": "2027-12-25"}
+  ],
+  "states": {
+    "Karnataka": [
+      {"name": "Ugadi", "date": "2026-03-19"},
+      {"name": "Karnataka Rajyotsava", "date": "2026-11-01"},
+      {"name": "Ugadi", "date": "2027-04-07"},
+      {"name": "Karnataka Rajyotsava", "date": "2027-11-01"}
+    ],
+    "Tamil Nadu": [
+      {"name": "Pongal", "date": "2026-01-14"},
+      {"name": "Thiruvalluvar Day", "date": "2026-01-15"},
+      {"name": "Tamil New Year (Puthandu)", "date": "2026-04-14"},
+      {"name": "Pongal", "date": "2027-01-15"},
+      {"name": "Thiruvalluvar Day", "date": "2027-01-16"},
+      {"name": "Tamil New Year (Puthandu)", "date": "2027-04-14"}
+    ],
+    "Kerala": [
+      {"name": "Vishu", "date": "2026-04-14"},
+      {"name": "Thiru Onam", "date": "2026-08-27"},
+      {"name": "Vishu", "date": "2027-04-14"},
+      {"name": "Thiru Onam", "date": "2027-09-15"}
+    ],
+    "West Bengal": [
+      {"name": "Poila Boishakh (Bengali New Year)", "date": "2026-04-15"},
+      {"name": "Rabindra Jayanti", "date": "2026-05-09"},
+      {"name": "Durga Puja (Maha Ashtami)", "date": "2026-10-18"},
+      {"name": "Durga Puja (Vijaya Dashami)", "date": "2026-10-20"},
+      {"name": "Poila Boishakh (Bengali New Year)", "date": "2027-04-15"},
+      {"name": "Durga Puja (Maha Ashtami)", "date": "2027-10-07"},
+      {"name": "Durga Puja (Vijaya Dashami)", "date": "2027-10-09"}
+    ],
+    "Punjab": [
+      {"name": "Baisakhi", "date": "2026-04-14"},
+      {"name": "Guru Gobind Singh Jayanti", "date": "2026-01-05"},
+      {"name": "Baisakhi", "date": "2027-04-14"}
+    ],
+    "Maharashtra": [
+      {"name": "Gudi Padwa", "date": "2026-03-19"},
+      {"name": "Maharashtra Day", "date": "2026-05-01"},
+      {"name": "Gudi Padwa", "date": "2027-04-07"},
+      {"name": "Maharashtra Day", "date": "2027-05-01"}
+    ],
+    "Gujarat": [
+      {"name": "Uttarayan (Makar Sankranti)", "date": "2026-01-14"},
+      {"name": "Gujarat Day", "date": "2026-05-01"},
+      {"name": "Uttarayan (Makar Sankranti)", "date": "2027-01-14"},
+      {"name": "Gujarat Day", "date": "2027-05-01"}
+    ],
+    "Telangana": [
+      {"name": "Ugadi", "date": "2026-03-19"},
+      {"name": "Telangana Formation Day", "date": "2026-06-02"},
+      {"name": "Ugadi", "date": "2027-04-07"},
+      {"name": "Telangana Formation Day", "date": "2027-06-02"}
+    ],
+    "Andhra Pradesh": [
+      {"name": "Ugadi", "date": "2026-03-19"},
+      {"name": "Andhra Pradesh Foundation Day", "date": "2026-11-01"},
+      {"name": "Ugadi", "date": "2027-04-07"},
+      {"name": "Andhra Pradesh Foundation Day", "date": "2027-11-01"}
+    ],
+    "Assam": [
+      {"name": "Magh Bihu", "date": "2026-01-15"},
+      {"name": "Bohag Bihu (Rongali Bihu)", "date": "2026-04-14"},
+      {"name": "Magh Bihu", "date": "2027-01-15"},
+      {"name": "Bohag Bihu (Rongali Bihu)", "date": "2027-04-14"}
+    ],
+    "Odisha": [
+      {"name": "Utkala Dibasa (Odisha Day)", "date": "2026-04-01"},
+      {"name": "Raja Parba", "date": "2026-06-14"},
+      {"name": "Utkala Dibasa (Odisha Day)", "date": "2027-04-01"}
+    ],
+    "Goa": [
+      {"name": "Goa Liberation Day", "date": "2026-12-19"},
+      {"name": "Goa Liberation Day", "date": "2027-12-19"}
+    ],
+    "Rajasthan": [
+      {"name": "Rajasthan Day", "date": "2026-03-30"},
+      {"name": "Rajasthan Day", "date": "2027-03-30"}
+    ],
+    "Uttar Pradesh": [
+      {"name": "Uttar Pradesh Day", "date": "2026-01-24"},
+      {"name": "Uttar Pradesh Day", "date": "2027-01-24"}
+    ],
+    "Haryana": [
+      {"name": "Haryana Day", "date": "2026-11-01"},
+      {"name": "Haryana Day", "date": "2027-11-01"}
+    ],
+    "Madhya Pradesh": [
+      {"name": "Madhya Pradesh Foundation Day", "date": "2026-11-01"},
+      {"name": "Madhya Pradesh Foundation Day", "date": "2027-11-01"}
+    ],
+    "Chhattisgarh": [
+      {"name": "Chhattisgarh Foundation Day", "date": "2026-11-01"},
+      {"name": "Chhattisgarh Foundation Day", "date": "2027-11-01"}
+    ],
+    "Jharkhand": [
+      {"name": "Jharkhand Foundation Day", "date": "2026-11-15"},
+      {"name": "Jharkhand Foundation Day", "date": "2027-11-15"}
+    ],
+    "Bihar": [
+      {"name": "Chhath Puja", "date": "2026-11-16"},
+      {"name": "Chhath Puja", "date": "2027-11-05"}
+    ],
+    "Himachal Pradesh": [
+      {"name": "Himachal Day", "date": "2026-04-15"},
+      {"name": "Himachal Day", "date": "2027-04-15"}
+    ],
+    "Uttarakhand": [
+      {"name": "Uttarakhand Formation Day", "date": "2026-11-09"},
+      {"name": "Uttarakhand Formation Day", "date": "2027-11-09"}
+    ],
+    "Delhi": [],
+    "Jammu and Kashmir": [
+      {"name": "Sheikh Abdullah's Birthday", "date": "2026-12-05"}
+    ],
+    "Puducherry": [
+      {"name": "De Lanoy Day", "date": "2026-08-16"}
+    ],
+    "Sikkim": [
+      {"name": "Sikkim State Day", "date": "2026-05-16"},
+      {"name": "Sikkim State Day", "date": "2027-05-16"}
+    ],
+    "Manipur": [
+      {"name": "Kut Festival", "date": "2026-11-01"}
+    ],
+    "Meghalaya": [
+      {"name": "Wangala Festival", "date": "2026-11-08"}
+    ],
+    "Mizoram": [
+      {"name": "Mizoram State Day", "date": "2026-02-20"},
+      {"name": "Mizoram State Day", "date": "2027-02-20"}
+    ],
+    "Nagaland": [
+      {"name": "Nagaland State Inauguration Day", "date": "2026-12-01"},
+      {"name": "Nagaland State Inauguration Day", "date": "2027-12-01"}
+    ],
+    "Tripura": [
+      {"name": "Tripura Statehood Day", "date": "2026-01-21"},
+      {"name": "Tripura Statehood Day", "date": "2027-01-21"}
+    ],
+    "Arunachal Pradesh": [
+      {"name": "Statehood Day", "date": "2026-02-20"},
+      {"name": "Statehood Day", "date": "2027-02-20"}
+    ]
+  }
+}

@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { TripConfig, ItineraryResponse, ComparisonResponse, DestinationInput, FeasibilityResponse, RecommendCitiesResponse, ChatRefineResponse } from '@/types'
+import type { TripConfig, ItineraryResponse, ComparisonResponse, DestinationInput, FeasibilityResponse, RecommendCitiesResponse, ChatRefineResponse, LongWeekendWindow, WorkationRecommendResponse } from '@/types'
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000',
@@ -119,6 +119,27 @@ export async function recommendCities(
     trip_config: tripConfig,
   })
   return data as RecommendCitiesResponse
+}
+
+// ── India Workation & Long Weekend Finder ────────────────────────────────
+export async function getLongWeekends(state: string, year?: number): Promise<LongWeekendWindow[]> {
+  const { data } = await api.get('/api/workation/long-weekends', {
+    params: { state, ...(year ? { year } : {}) },
+  })
+  return (data as { windows: LongWeekendWindow[] }).windows
+}
+
+export async function getWorkationRecommendations(
+  state: string,
+  interests: string[],
+  dateRange?: [string, string],
+): Promise<WorkationRecommendResponse> {
+  const { data } = await api.post('/api/workation/recommend', {
+    state,
+    interests,
+    date_range: dateRange ?? null,
+  })
+  return data as WorkationRecommendResponse
 }
 
 // ── Feasibility check ────────────────────────────────────────────────────

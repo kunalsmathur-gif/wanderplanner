@@ -328,6 +328,18 @@ export function LandingHero() {
               </p>
             )}
           </div>
+
+          {/* India Workation & Long Weekend Finder entry point — a separate
+              discovery surface for the "don't know where to go yet" cohort,
+              not folded into the Anya wizard (see
+              docs/plans/india-workation-finder-plan.md). */}
+          <Link
+            href="/workation"
+            className="mt-5 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--_primary)] hover:underline"
+          >
+            Planning a quick India getaway? Find your next long weekend
+            <ArrowRight size={14} />
+          </Link>
         </section>
 
         {/* ── Inspiration gallery ──────────────────────────────────── */}

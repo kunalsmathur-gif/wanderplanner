@@ -272,3 +272,62 @@ export interface ComparisonResponse {
   comparison: ComparisonParameter[]
   partial_failures: string[]
 }
+
+// ── India Workation & Long Weekend Finder (docs/plans/india-workation-finder-plan.md) ──
+// Mirrors apps/api/services/long_weekend.py::LongWeekendWindow and
+// apps/api/chains/workation_recommend_chain.py's response models field-for-field.
+
+export interface LongWeekendWindow {
+  start_date: string
+  end_date: string
+  total_days_off: number
+  leave_days_needed: number
+  reason: string
+  value: number
+}
+
+export interface EventSummary {
+  name: string
+  start_date: string
+  end_date: string
+  location: string
+  lat: number
+  lon: number
+  interest_category: string
+  source_citation: string
+  deep_link?: string | null
+}
+
+export interface VenueSummary {
+  total_venues_found: number
+  venues_with_verified_wifi_count: number
+  has_limited_coverage: boolean
+}
+
+export interface DestinationCandidate {
+  destination: string
+  lat: number
+  lon: number
+  rationale: string
+  matching_events: EventSummary[]
+  venue_summary: VenueSummary
+  workation_split: string
+}
+
+// Trimmed view of LongWeekendWindow returned inside WorkationRecommendResponse —
+// field names kept identical to LongWeekendWindow (same backend comment).
+export interface LongWeekendSummary {
+  start_date: string
+  end_date: string
+  total_days_off: number
+  leave_days_needed: number
+  reason: string
+  value: number
+}
+
+export interface WorkationRecommendResponse {
+  long_weekends: LongWeekendSummary[]
+  destinations: DestinationCandidate[]
+  has_results: boolean
+  message: string
+}

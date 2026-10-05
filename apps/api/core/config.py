@@ -110,6 +110,12 @@ class Settings(BaseSettings):
     # itinerary_corpus's schema/dual-embedding strategy, so real generated
     # output becomes retrievable few-shot grounding for future generations.
     qdrant_collection_generated_itineraries: str = "generated_itineraries"
+    # Pan-India events corpus (docs/plans/india-workation-finder-plan.md),
+    # batch-ingested weekly/monthly from the official-API + curated + Wikipedia
+    # tiers in scrapers/india_events.py. Pan-India, not per-destination — no
+    # single "destination" field, so it is intentionally NOT added to
+    # core/qdrant.py's _DESTINATION_INDEXED_COLLECTIONS.
+    qdrant_collection_india_events: str = "india_events"
     # Visa rules are low-churn, so a monthly refresh is plenty; and unlike the
     # metered YouTube sources this is a free Wikimedia API, so the cadence is
     # about staleness, not quota.
@@ -303,6 +309,16 @@ class Settings(BaseSettings):
     # touched during generation — see docs/itinerary-generation-flow.md.
     pexels_api_key: str = ""
 
+    # Pan-India events ingestion (scrapers/india_events.py) — three official
+    # free-tier developer APIs, each read-only and each a documented no-op
+    # (log + return []) when its key is unset, same pattern as
+    # `pexels_api_key`/`youtube_api_key` above. No single one covers every
+    # interest category (music/food/culture/pilgrimage/sports/craft), hence
+    # three plus the curated Tier A dataset in the same module.
+    allevents_api_key: str | None = None
+    eventbrite_api_key: str | None = None
+    bandsintown_app_id: str | None = None
+
     # Ingestion
     reddit_refresh_hours: int = 6
     reddit_min_score: int = 10
@@ -383,6 +399,8 @@ class Settings(BaseSettings):
 
 
     itinerary_corpus_refresh_days: int = 7  # weekly cadence for now (was monthly, docs §9 ingestion pipeline)
+
+    india_events_refresh_days: int = 7  # weekly cadence for the india_events RAG corpus (India Workation & Long Weekend Finder plan)
 
     # YouTube Data API v3 (docs/NEXT_SESSION_TODO.md item 3 — hidden-gems
     # alternative source while Reddit ingestion is blocked on approval).

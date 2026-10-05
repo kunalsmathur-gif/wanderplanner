@@ -157,6 +157,48 @@ A bidirectional calendar engine serving as the operational backbone for trip tim
 * **Multi-Timezone Syncing:** Keeps departure time zones and localized destination time zones clearly synchronized across flight blocks and landing activities.  
 * **External Ecosystem Export:** Provides one-click native calendar sync capabilities (Google Calendar, Apple Calendar, Outlook) via standardized .ics payloads and OAuth webhooks.
 
+  ### **Epic 7: India Workation & Long Weekend Finder**
+
+A standalone discovery surface at `/workation`, separate from the Anya wizard, for Indian
+corporate employees who don't yet know where to go, don't track upcoming long weekends or
+optimal leave days, don't know what's happening around India that matches their interests, and
+need workation logistics (WFH-friendly wifi venues) for a hybrid "5 days WFH + 2 weekend days
+exploring" trip shape. Full design is tracked in `docs/plans/india-workation-finder-plan.md`.
+
+* **Long Weekend Finder:** Given a user's home state, computes upcoming long-weekend windows
+  from a curated national + state-wise holiday calendar (`apps/api/services/long_weekend.py`),
+  ranked by days-off-per-leave-day-used. Pure date math — no LLM, no network call, fully
+  deterministic.
+* **Pan-India Events:** A new `india_events` Qdrant collection, batch-embedded weekly
+  (`apps/api/scrapers/india_events.py`, scheduled via `_refresh_india_events` in
+  `core/scheduler.py`), sourced from official free APIs (AllEvents.in, Eventbrite,
+  Bandsintown) as the primary tier, a curated annual calendar for major pilgrimage/cultural
+  festivals and sports-league windows as a second tier, and a best-effort Wikipedia/Wikivoyage
+  scrape as a last-resort fallback. Every event record carries a source citation — consistent
+  with this PRD's "never fabricate a recommendation" principle (Epic 2's hidden-gems
+  provenance discipline) — and "nothing found" is a valid, honest result.
+* **Workation-Friendly Venues:** No new data source — `apps/api/services/workation_venues.py`
+  extends the existing OSM Overpass POI querying (already used for Epic 2's itinerary
+  grounding) to surface cafes/hotels/coworking spaces with verified
+  `wifi=yes`/`internet_access=wlan` tags, degrading gracefully (fewer venues, explicit
+  low-coverage flag) rather than inventing wifi coverage where OSM tagging is sparse.
+  **Destination Recommendation + India Map Visualization:** `chains/workation_recommend_chain.py`
+  combines the long-weekend window, matched events, and venue signal into a ranked destination
+  shortlist with an LLM-generated rationale per candidate (falls back to a deterministic
+  rationale if the LLM call fails). Every destination and event carries lat/lon so the
+  frontend (`/workation`, `components/workation/WorkationMap.tsx`) can render results as
+  clickable markers on an interactive India map — clicking a marker selects that
+  destination/event and surfaces its logistics — reusing the existing `leaflet`/`react-leaflet`
+  stack already used for itinerary maps. A list view remains alongside the map as the
+  accessible/no-coordinates fallback.
+* **Hand-off to Existing Wizard:** A "Plan this trip" action on a selected destination builds a
+  pre-filled `TripConfig` and reuses the existing pending-generation resume mechanism
+  (`apps/web/lib/pendingGeneration.ts` + `LLMWizard.tsx`'s mount-time resume effect, the same
+  mechanism built for the Google SSO round-trip per Epic 1A) to hand off into full itinerary
+  generation — Epic 2's generation pipeline is reused, not duplicated.
+* **Scope boundary:** India-only (national + state holidays); international trips are out of
+  scope for this surface.
+
   ## **5\. Detailed UX & UI Architecture Guidelines**
 
   ### **5.1 Design System Tokens & Global Styles**
