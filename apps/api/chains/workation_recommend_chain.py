@@ -212,7 +212,12 @@ async def recommend_workation(request: WorkationRecommendRequest) -> WorkationRe
         # than the bare city name: common Indian city names (e.g. "Katra")
         # are ambiguous globally without state context and can silently
         # resolve to a same-named place on the other side of the world.
-        dest_coords = await _geocode_cached(raw_events[0]["location"], geocode_cache)
+        # Prefer an event's own precise lat/lon (AllEvents.in's JSON-LD
+        # tier supplies these) over this ambiguous city-name geocode when
+        # available.
+        dest_coords = _event_payload_coords(raw_events[0])
+        if dest_coords is None:
+            dest_coords = await _geocode_cached(raw_events[0]["location"], geocode_cache)
         if dest_coords is None:
             dest_coords = await _geocode_cached(city, geocode_cache)
         if dest_coords is None:
@@ -220,7 +225,11 @@ async def recommend_workation(request: WorkationRecommendRequest) -> WorkationRe
 
         event_summaries: list[EventSummary] = []
         for raw in raw_events[:_MAX_EVENTS_PER_DESTINATION]:
-            event_coords = await _geocode_cached(raw["location"], geocode_cache) or dest_coords
+            event_coords = (
+                _event_payload_coords(raw)
+                or await _geocode_cached(raw["location"], geocode_cache)
+                or dest_coords
+            )
             event_summaries.append(
                 EventSummary(
                     name=raw["name"],
@@ -297,6 +306,17 @@ def _city_from_location(location: str) -> str:
     """`EventRecord.location` is documented as 'City/state, e.g. "Pushkar,
     Rajasthan"' — take the city part for deduping/display."""
     return location.split(",")[0].strip()
+
+
+def _event_payload_coords(raw: dict) -> tuple[float, float] | None:
+    """An event's own precise coordinates, when its source supplied them
+    (e.g. AllEvents.in's JSON-LD `geo` block) — bypasses the ambiguous
+    city-name geocode entirely for these, since a specific venue's lat/lon
+    is strictly more accurate than re-deriving it from a city string."""
+    lat, lon = raw.get("lat"), raw.get("lon")
+    if lat is not None and lon is not None:
+        return (lat, lon)
+    return None
 
 
 async def _geocode_cached(

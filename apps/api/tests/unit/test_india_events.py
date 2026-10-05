@@ -7,7 +7,7 @@ and tests/unit/test_osm_scraper.py.
 from __future__ import annotations
 
 from datetime import date
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -15,11 +15,14 @@ from pydantic import ValidationError
 from scrapers.india_events import (
     _CURATED_EVENTS,
     EventRecord,
+    _allevents_jsonld_to_record,
+    _extract_jsonld_event,
     _parse_event_date_range,
     _parse_event_location,
     curated_tier_a_events,
     embed_and_store_india_events,
     fetch_allevents,
+    fetch_allevents_rss,
     fetch_bandsintown,
     fetch_eventbrite,
     ingest_india_events,
@@ -182,6 +185,8 @@ class TestIngestDedup:
 
         with patch("scrapers.india_events.fetch_allevents", side_effect=_fake_allevents), \
              patch("scrapers.india_events.fetch_eventbrite", return_value=[]), \
+             patch("scrapers.india_events.fetch_allevents_rss", return_value=[]), \
+             patch("scrapers.district_events.fetch_district_events", return_value=[]), \
              patch("scrapers.india_events.scrape_wikipedia_festivals", return_value=[]):
             events = await ingest_india_events(cities=["Mumbai"])
 
@@ -195,6 +200,8 @@ class TestIngestDedup:
     async def test_distinct_events_are_all_kept(self):
         with patch("scrapers.india_events.fetch_allevents", return_value=[]), \
              patch("scrapers.india_events.fetch_eventbrite", return_value=[]), \
+             patch("scrapers.india_events.fetch_allevents_rss", return_value=[]), \
+             patch("scrapers.district_events.fetch_district_events", return_value=[]), \
              patch("scrapers.india_events.scrape_wikipedia_festivals", return_value=[]):
             events = await ingest_india_events(cities=["Mumbai"])
 
@@ -457,6 +464,8 @@ class TestScrapeWikipediaFestivalsIntegration:
 
         with patch("scrapers.india_events.fetch_allevents", return_value=[]), \
              patch("scrapers.india_events.fetch_eventbrite", return_value=[]), \
+             patch("scrapers.india_events.fetch_allevents_rss", return_value=[]), \
+             patch("scrapers.district_events.fetch_district_events", return_value=[]), \
              patch("scrapers.india_events.scrape_wikipedia_festivals", return_value=[wiki_record]):
             events = await ingest_india_events(cities=["Mumbai"])
 
@@ -465,3 +474,162 @@ class TestScrapeWikipediaFestivalsIntegration:
         # `scrape_wikipedia_festivals()` in its normal orchestration path.
         names = {e.name for e in events}
         assert "Konark Dance Festival" in names
+
+
+class TestExtractJsonldEvent:
+    def test_extracts_bare_event_object(self):
+        html = """
+        <html><head>
+        <script type="application/ld+json">
+        {"@context": "https://schema.org", "@type": "Event", "name": "Test Gig"}
+        </script>
+        </head></html>
+        """
+        event = _extract_jsonld_event(html)
+        assert event is not None
+        assert event["name"] == "Test Gig"
+
+    def test_extracts_event_from_graph_wrapper(self):
+        html = """
+        <script type="application/ld+json">
+        {"@context": "https://schema.org", "@graph": [
+            {"@type": "WebPage", "name": "irrelevant"},
+            {"@type": "Event", "name": "Graph Gig"}
+        ]}
+        </script>
+        """
+        event = _extract_jsonld_event(html)
+        assert event is not None
+        assert event["name"] == "Graph Gig"
+
+    def test_ignores_non_event_blocks(self):
+        html = """
+        <script type="application/ld+json">
+        {"@type": "FAQPage", "name": "not an event"}
+        </script>
+        """
+        assert _extract_jsonld_event(html) is None
+
+    def test_malformed_json_does_not_raise(self):
+        html = '<script type="application/ld+json">{not valid json</script>'
+        assert _extract_jsonld_event(html) is None
+
+    def test_no_jsonld_blocks_returns_none(self):
+        assert _extract_jsonld_event("<html><body>no scripts here</body></html>") is None
+
+
+class TestAllEventsJsonldToRecord:
+    def test_maps_full_event_with_geo(self):
+        data = {
+            "name": "Seed Business School Festival",
+            "description": "Meet admission directors",
+            "startDate": "2026-10-10T12:00:00+05:30",
+            "endDate": "2026-10-10T16:30:00+05:30",
+            "url": "https://allevents.in/mumbai/seed-business-school-festival",
+            "location": {
+                "@type": "Place",
+                "address": {"addressLocality": "Mumbai", "addressRegion": "MH"},
+                "geo": {"@type": "GeoCoordinates", "latitude": "18.994269", "longitude": "72.8238429"},
+            },
+        }
+        record = _allevents_jsonld_to_record(data, fallback_city="Mumbai", event_url="https://allevents.in/x")
+
+        assert record is not None
+        assert record.name == "Seed Business School Festival"
+        assert record.start_date == date(2026, 10, 10)
+        assert record.end_date == date(2026, 10, 10)
+        assert record.location == "Mumbai, MH"
+        assert record.lat == pytest.approx(18.994269)
+        assert record.lon == pytest.approx(72.8238429)
+        assert record.source_citation == "AllEvents.in (public RSS feed)"
+
+    def test_falls_back_to_city_when_no_address(self):
+        data = {
+            "name": "Mystery Meetup",
+            "startDate": "2026-11-01T10:00:00+05:30",
+            "location": {},
+        }
+        record = _allevents_jsonld_to_record(data, fallback_city="Pune", event_url="https://allevents.in/y")
+
+        assert record is not None
+        assert record.location == "Pune"
+        assert record.lat is None
+        assert record.lon is None
+
+    def test_missing_name_returns_none(self):
+        data = {"startDate": "2026-11-01T10:00:00+05:30"}
+        assert _allevents_jsonld_to_record(data, fallback_city="Pune", event_url="https://x") is None
+
+    def test_missing_start_date_returns_none(self):
+        data = {"name": "No Date Event"}
+        assert _allevents_jsonld_to_record(data, fallback_city="Pune", event_url="https://x") is None
+
+
+class TestFetchAllEventsRss:
+    @pytest.mark.asyncio
+    async def test_non_200_feed_response_returns_empty(self):
+        mock_client = MagicMock()
+        mock_resp = MagicMock(status_code=404)
+        mock_client.__aenter__.return_value.get = AsyncMock(return_value=mock_resp)
+
+        with patch("scrapers.india_events.httpx.AsyncClient", return_value=mock_client):
+            records = await fetch_allevents_rss("Mumbai")
+
+        assert records == []
+
+    @pytest.mark.asyncio
+    async def test_feed_fetch_exception_returns_empty(self):
+        with patch("scrapers.india_events.httpx.AsyncClient", side_effect=RuntimeError("boom")):
+            records = await fetch_allevents_rss("Mumbai")
+
+        assert records == []
+
+    @pytest.mark.asyncio
+    async def test_parses_feed_entries_into_records(self):
+        rss_xml = """<?xml version="1.0"?>
+        <rss version="2.0"><channel>
+          <item><link>https://allevents.in/mumbai/some-event</link></item>
+        </channel></rss>
+        """
+        event_html = """
+        <script type="application/ld+json">
+        {"@type": "Event", "name": "Some Event",
+         "startDate": "2026-10-12T10:00:00+05:30", "endDate": "2026-10-12T12:00:00+05:30",
+         "location": {"address": {"addressLocality": "Mumbai", "addressRegion": "MH"}}}
+        </script>
+        """
+        feed_resp = MagicMock(status_code=200, text=rss_xml)
+        event_resp = MagicMock()
+        event_resp.text = event_html
+        event_resp.raise_for_status = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.__aenter__.return_value.get = AsyncMock(side_effect=[feed_resp, event_resp])
+
+        with patch("scrapers.india_events.httpx.AsyncClient", return_value=mock_client), \
+             patch("scrapers.india_events.asyncio.sleep", new=AsyncMock()):
+            records = await fetch_allevents_rss("Mumbai", max_events=5)
+
+        assert len(records) == 1
+        assert records[0].name == "Some Event"
+        assert records[0].location == "Mumbai, MH"
+
+    @pytest.mark.asyncio
+    async def test_malformed_event_page_is_skipped_not_fatal(self):
+        rss_xml = """<?xml version="1.0"?>
+        <rss version="2.0"><channel>
+          <item><link>https://allevents.in/mumbai/bad-event</link></item>
+        </channel></rss>
+        """
+        feed_resp = MagicMock(status_code=200, text=rss_xml)
+
+        mock_client = MagicMock()
+        mock_client.__aenter__.return_value.get = AsyncMock(
+            side_effect=[feed_resp, RuntimeError("page fetch failed")]
+        )
+
+        with patch("scrapers.india_events.httpx.AsyncClient", return_value=mock_client), \
+             patch("scrapers.india_events.asyncio.sleep", new=AsyncMock()):
+            records = await fetch_allevents_rss("Mumbai", max_events=5)
+
+        assert records == []

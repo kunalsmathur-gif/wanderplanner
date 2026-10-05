@@ -36,13 +36,16 @@ from __future__ import annotations
 import asyncio
 import calendar
 import hashlib
+import json
 import logging
 import re
 import time
 from datetime import date
 from typing import Any, Literal
 
+import feedparser
 import httpx
+from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 
 from core.config import settings
@@ -69,6 +72,15 @@ class EventRecord(BaseModel):
     interest_category: InterestCategory
     source_citation: str = Field(description="e.g. 'AllEvents.in API' or a direct source URL")
     deep_link: str | None = None
+    lat: float | None = Field(
+        default=None,
+        description=(
+            "Exact venue coordinates, when the source provides them (e.g. "
+            "AllEvents.in's schema.org geo block) — lets the recommend chain "
+            "skip its own ambiguous city-name geocode for this event."
+        ),
+    )
+    lon: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +151,156 @@ def _allevents_item_to_record(item: dict[str, Any]) -> EventRecord | None:
         )
     except Exception:
         logger.debug("Skipping malformed AllEvents.in item: %r", item)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Tier C — AllEvents.in public RSS feed + per-event JSON-LD
+# ---------------------------------------------------------------------------
+#
+# `fetch_allevents()` above requires `ALLEVENTS_API_KEY`, which is not
+# self-serve (confirmed: sales-assisted access only). Every AllEvents.in
+# city page instead publishes a public RSS feed
+# (`https://allevents.in/{city-slug}/RSS`) meant for exactly this kind of
+# third-party syndication — no key, no login. Each `<item><link>` in that
+# feed points at a normal, server-rendered event page that embeds a complete
+# `schema.org Event` JSON-LD block (exact venue name/address/lat-lon, start
+# and end timestamps, price) — retrievable with a plain HTTP GET, no
+# JavaScript execution or headless browser needed. Confirmed live
+# 2026-10-05 against 9 major metros.
+
+_ALLEVENTS_CITY_SLUGS: dict[str, str] = {
+    "Mumbai": "mumbai",
+    "Delhi": "delhi",
+    "Bengaluru": "bangalore",
+    "Bangalore": "bangalore",
+    "Hyderabad": "hyderabad",
+    "Chennai": "chennai",
+    "Kolkata": "kolkata",
+    "Pune": "pune",
+    "Ahmedabad": "ahmedabad",
+    "Jaipur": "jaipur",
+    "Goa": "goa",
+}
+
+_ALLEVENTS_USER_AGENT = (
+    "Mozilla/5.0 (compatible; WanderplanBot/1.0; "
+    "+https://wanderplanner.org) india-events-ingest"
+)
+_ALLEVENTS_MAX_EVENTS_PER_CITY = 15
+_ALLEVENTS_DETAIL_FETCH_DELAY_S = 0.5
+
+
+async def fetch_allevents_rss(
+    city: str, max_events: int = _ALLEVENTS_MAX_EVENTS_PER_CITY
+) -> list[EventRecord]:
+    """Fetch upcoming `city` events from AllEvents.in's public per-city RSS
+    feed, following each item's link to extract its `schema.org Event`
+    JSON-LD. Never raises — a feed-fetch failure, or a single malformed
+    event page, degrades to skipping that part rather than failing the
+    whole ingest, same contract as every other fetcher in this module.
+
+    Deliberately paced (a short sleep between per-event page fetches,
+    capped at `max_events` per city) — this reads public pages meant for
+    syndication (the RSS feed itself), not an API with documented rate
+    limits, so staying polite and low-volume matters more here than for the
+    official-API tiers above.
+    """
+    slug = _ALLEVENTS_CITY_SLUGS.get(city, city.lower().replace(" ", ""))
+    headers = {"User-Agent": _ALLEVENTS_USER_AGENT}
+
+    try:
+        async with httpx.AsyncClient(timeout=15, headers=headers) as client:
+            resp = await client.get(f"https://allevents.in/{slug}/RSS")
+            if resp.status_code != 200:
+                logger.info(
+                    "AllEvents.in RSS not available for %r (HTTP %d) — skipping",
+                    city, resp.status_code,
+                )
+                return []
+            feed = feedparser.parse(resp.text)
+    except Exception as e:
+        logger.warning("AllEvents.in RSS fetch failed for %r: %s", city, type(e).__name__)
+        return []
+
+    links = [entry.link for entry in feed.entries if getattr(entry, "link", None)][:max_events]
+
+    records: list[EventRecord] = []
+    async with httpx.AsyncClient(timeout=15, headers=headers) as client:
+        for link in links:
+            try:
+                resp = await client.get(link)
+                resp.raise_for_status()
+                event_data = _extract_jsonld_event(resp.text)
+                if event_data:
+                    record = _allevents_jsonld_to_record(event_data, fallback_city=city, event_url=link)
+                    if record:
+                        records.append(record)
+            except Exception as e:
+                logger.debug("Skipping AllEvents.in event page %r: %s", link, type(e).__name__)
+            await asyncio.sleep(_ALLEVENTS_DETAIL_FETCH_DELAY_S)
+
+    return records
+
+
+def _extract_jsonld_event(html: str) -> dict[str, Any] | None:
+    """Pulls the first `schema.org Event` object out of a page's
+    `<script type="application/ld+json">` blocks, handling both a bare
+    `Event` object and an array/`@graph` wrapper (both common JSON-LD
+    shapes). Returns None if no block parses or none is an `Event`."""
+    soup = BeautifulSoup(html, "lxml")
+    for tag in soup.find_all("script", {"type": "application/ld+json"}):
+        try:
+            parsed = json.loads(tag.string or "")
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        candidates: list[Any] = []
+        if isinstance(parsed, dict):
+            candidates.append(parsed)
+            candidates.extend(parsed.get("@graph", []))
+        elif isinstance(parsed, list):
+            candidates.extend(parsed)
+
+        for candidate in candidates:
+            if isinstance(candidate, dict) and candidate.get("@type") == "Event":
+                return candidate
+    return None
+
+
+def _allevents_jsonld_to_record(
+    data: dict[str, Any], fallback_city: str, event_url: str
+) -> EventRecord | None:
+    """Best-effort mapping from one AllEvents.in event page's JSON-LD
+    `Event` object to an `EventRecord`. Returns None (rather than raising)
+    for a malformed/incomplete block."""
+    try:
+        location_obj = data.get("location") or {}
+        address = location_obj.get("address") or {}
+        locality = address.get("addressLocality")
+        region = address.get("addressRegion")
+        if locality and region:
+            location = f"{locality}, {region}"
+        else:
+            location = locality or fallback_city
+
+        geo = location_obj.get("geo") or {}
+        lat = float(geo["latitude"]) if geo.get("latitude") is not None else None
+        lon = float(geo["longitude"]) if geo.get("longitude") is not None else None
+
+        return EventRecord(
+            name=data["name"],
+            start_date=data["startDate"][:10],
+            end_date=(data.get("endDate") or data["startDate"])[:10],
+            location=location,
+            interest_category=_guess_category(f"{data['name']} {data.get('description', '')}"),
+            source_citation="AllEvents.in (public RSS feed)",
+            deep_link=data.get("url") or event_url,
+            lat=lat,
+            lon=lon,
+        )
+    except (KeyError, ValueError, TypeError):
+        logger.debug("Skipping malformed AllEvents.in JSON-LD block: %r", data.get("name"))
         return None
 
 
@@ -882,11 +1044,22 @@ async def ingest_india_events(cities: list[str] | None = None) -> list[EventReco
     if cities is None:
         cities = ["Mumbai", "Delhi", "Bengaluru", "Hyderabad", "Chennai", "Kolkata", "Pune"]
 
+    # Deferred import: `scrapers/district_events.py` imports `EventRecord`/
+    # `_guess_category` from this module, so importing it back at module
+    # top-level here would be circular. Importing inside the function body
+    # (after this module has finished loading) avoids that while still
+    # keeping Playwright itself fully optional (district_events.py's own
+    # `fetch_district_events()` lazy-imports `playwright` and degrades to
+    # `[]` if it's not installed).
+    from scrapers.district_events import fetch_district_events
+
     all_records: list[EventRecord] = []
 
     for city in cities:
         all_records.extend(await fetch_allevents(city))
         all_records.extend(await fetch_eventbrite(city))
+        all_records.extend(await fetch_allevents_rss(city))
+        all_records.extend(await fetch_district_events(city))
 
     all_records.extend(curated_tier_a_events())
     all_records.extend(scrape_wikipedia_festivals())
@@ -942,6 +1115,8 @@ def embed_and_store_india_events(events: list[EventRecord]) -> int:
             "interest_category": event.interest_category,
             "source_citation": event.source_citation,
             "deep_link": event.deep_link,
+            "lat": event.lat,
+            "lon": event.lon,
             "text": texts[len(points)],
         }
         points.append(PointStruct(id=point_id_int, vector=vec, payload=payload))

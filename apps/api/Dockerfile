@@ -16,6 +16,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 # so only this one package is installed here, not the full heavy file.
 RUN pip install --no-cache-dir sentence-transformers==3.0.0
 
+# scrapers/district_events.py needs a real headless Chromium to render
+# District.in's client-side SPA (no public API/RSS exists for it — see that
+# module's docstring). `--with-deps` additionally installs Chromium's
+# system library dependencies (fonts, X11/GTK libs, etc.) that `python:3.11-
+# slim` doesn't ship with; this noticeably increases image size/build time,
+# but only this one scraper needs it (everything else in scrapers/ is a
+# plain httpx GET).
+RUN playwright install --with-deps chromium
+
 COPY . .
 
 # Railway injects $PORT; default to 8000 for local docker usage
