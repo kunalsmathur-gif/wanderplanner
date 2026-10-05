@@ -628,6 +628,10 @@ _WIKI_CATEGORIES: dict[str, InterestCategory | None] = {
 _MAX_WIKI_CATEGORY_MEMBERS = 800
 _MAX_WIKI_CATEGORY_PAGES = 4  # cmcontinue pages per category, at cmlimit=500 each
 _WIKI_EXTRACTS_BATCH_SIZE = 50  # MediaWiki's per-request titles cap for non-bot accounts
+
+# Keeps each embed_and_store_india_events() upsert request small — see the
+# call site for why this was added.
+_INDIA_EVENTS_UPSERT_BATCH_SIZE = 50
 _WIKI_REQUEST_DELAY_S = 0.3  # politeness gap between requests, same rationale as
 # `scrapers/wikivoyage.py`'s `_DISTRICT_FETCH_DELAY_S` — this scraper's category walk
 # + batched extracts fetch issues a burst of requests rather than one or two.
@@ -1122,5 +1126,13 @@ def embed_and_store_india_events(events: list[EventRecord]) -> int:
         points.append(PointStruct(id=point_id_int, vector=vec, payload=payload))
 
     client = get_qdrant()
-    client.upsert(collection_name=settings.qdrant_collection_india_events, points=points)
+    # Upsert in bounded chunks rather than one nationwide request — this tier
+    # now pulls from AllEvents.in + District.in on top of the original
+    # curated/Wikipedia tiers, so a full refresh can be 100-200+ events at
+    # once. A single giant upsert was observed to hit Qdrant Cloud's request
+    # write-timeout in live testing (2026-10-05); batching keeps each request
+    # small and lets a late chunk fail without losing earlier ones.
+    for i in range(0, len(points), _INDIA_EVENTS_UPSERT_BATCH_SIZE):
+        batch = points[i : i + _INDIA_EVENTS_UPSERT_BATCH_SIZE]
+        client.upsert(collection_name=settings.qdrant_collection_india_events, points=batch)
     return len(points)
