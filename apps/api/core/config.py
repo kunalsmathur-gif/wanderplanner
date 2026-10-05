@@ -400,7 +400,7 @@ class Settings(BaseSettings):
 
     itinerary_corpus_refresh_days: int = 7  # weekly cadence for now (was monthly, docs §9 ingestion pipeline)
 
-    india_events_refresh_days: int = 7  # weekly cadence for the india_events RAG corpus (India Workation & Long Weekend Finder plan)
+    india_events_refresh_days: int = 1  # daily cadence for the india_events RAG corpus (India Workation & Long Weekend Finder plan) — events change more often than other RAG corpora (new listings appear daily on AllEvents.in/District.in), so this is refreshed more aggressively than e.g. itinerary_corpus/visa_info
 
     # YouTube Data API v3 (docs/NEXT_SESSION_TODO.md item 3 — hidden-gems
     # alternative source while Reddit ingestion is blocked on approval).
