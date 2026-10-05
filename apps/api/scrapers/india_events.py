@@ -147,6 +147,17 @@ async def fetch_eventbrite(city: str = "India", max_results: int = 50) -> list[E
 
     Returns `[]` (never raises) when `settings.eventbrite_api_key` is unset or
     on any request failure.
+
+    Confirmed live 2026-10-05 with a real, valid API key (auth succeeds
+    against `/v3/users/me/`): Eventbrite has deprecated/restricted the public
+    `/v3/events/search/` endpoint for standard API keys — it now returns a
+    hard 404 for every request, not a transient error. A standard key can
+    only list events for the key owner's *own* organizer account
+    (`/v3/users/me/organizations/` -> `/v3/organizations/{id}/events/`),
+    which is useless for ingesting public India-wide events unless the key
+    owner personally organizes events on Eventbrite. Kept wired (rather than
+    removed) in case Eventbrite restores/grants broader search access to this
+    key in the future — but do not expect this tier to return real data.
     """
     if not settings.eventbrite_api_key:
         logger.info("EVENTBRITE_API_KEY not set — skipping Eventbrite fetch for %r", city)
@@ -164,10 +175,12 @@ async def fetch_eventbrite(city: str = "India", max_results: int = 50) -> list[E
                     params=params,
                     headers=headers,
                 )
-                if resp.status_code in (401, 403, 429):
+                if resp.status_code in (401, 403, 404, 429):
                     logger.warning(
-                        "Eventbrite refused for %r (HTTP %d) — not retrying",
+                        "Eventbrite refused for %r (HTTP %d) — not retrying%s",
                         city, resp.status_code,
+                        " (public search endpoint deprecated for standard keys — see docstring)"
+                        if resp.status_code == 404 else "",
                     )
                     return []
                 resp.raise_for_status()
