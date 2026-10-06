@@ -41,7 +41,7 @@ from core.prompt_guard import neutralize
 from core.qdrant import get_qdrant
 from services.geocode import geocode_city
 from services.long_weekend import LongWeekendWindow, get_long_weekends
-from services.workation_venues import find_workation_venues
+from services.workation_venues import WorkationVenueResult, find_workation_venues
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,12 @@ _MIN_EVENT_SCORE = 0.20
 _MIN_DESTINATIONS = 3
 _MAX_DESTINATIONS = 5
 _MAX_EVENTS_PER_DESTINATION = 3
+
+# Hard per-destination deadline for the venue-signal enrichment pass. Venue
+# data is a nice-to-have ("workation-friendly wifi spots") on top of the core
+# events/long-weekend result, so it must never be allowed to make the whole
+# `/recommend` request fail or stall — see `_find_workation_venues_bounded`.
+_VENUE_LOOKUP_DEADLINE_S = 20.0
 
 
 class WorkationRecommendRequest(BaseModel):
@@ -204,8 +210,14 @@ async def recommend_workation(request: WorkationRecommendRequest) -> WorkationRe
     # Cities ranked by how many matching events they have, most first.
     ranked_cities = sorted(events_by_destination.items(), key=lambda kv: -len(kv[1]))
 
+    # First pass: geocoding + event summaries only (cheap, cached, no
+    # external network dependency beyond the geocoder). Venue lookups are
+    # deliberately deferred to a second, concurrent pass below rather than
+    # being awaited inline here — see `_find_workation_venues_bounded`'s
+    # docstring for why.
+    candidates: list[tuple[str, tuple[float, float], list[EventSummary]]] = []
     for city, raw_events in ranked_cities:
-        if len(destinations) >= _MAX_DESTINATIONS:
+        if len(candidates) >= _MAX_DESTINATIONS:
             break
 
         # Geocode using the first event's full "City, State" location rather
@@ -244,7 +256,24 @@ async def recommend_workation(request: WorkationRecommendRequest) -> WorkationRe
                 )
             )
 
-        venue_result = await find_workation_venues(city)
+        candidates.append((city, dest_coords, event_summaries))
+
+    # Second pass: fetch venue signal for all candidate cities *concurrently*
+    # rather than one-at-a-time, each bounded by an overall deadline. Before
+    # this fix, a live production incident showed Overpass connection
+    # failures compounding in series (several destinations x several retries
+    # each) into multi-minute total latency, well past the frontend's
+    # request timeout, so `/recommend` failed outright for the whole request
+    # even though venue data is a nice-to-have enrichment, not the core
+    # result. `find_workation_venues` already degrades gracefully to an
+    # empty/limited-coverage result on its own failures; `asyncio.wait_for`
+    # here adds a hard ceiling so even an unexpected hang can't do the same
+    # thing to the response as a whole.
+    venue_results = await asyncio.gather(
+        *(_find_workation_venues_bounded(city) for city, _, _ in candidates)
+    )
+
+    for (city, dest_coords, event_summaries), venue_result in zip(candidates, venue_results):
         venue_summary = VenueSummary(
             total_venues_found=venue_result.total_venues_found,
             venues_with_verified_wifi_count=venue_result.venues_with_verified_wifi_count,
@@ -335,6 +364,42 @@ async def _geocode_cached(
         result = None
     cache[place] = result
     return result
+
+
+async def _find_workation_venues_bounded(city: str) -> WorkationVenueResult:
+    """`find_workation_venues` wrapped with a hard wall-clock deadline.
+
+    `find_workation_venues` already degrades gracefully on its own (Overpass
+    failures resolve to an empty, `has_limited_coverage=True` result rather
+    than raising) — but a 2026-10-06 production incident showed Railway's
+    cloud IP range getting hard connection failures from both configured
+    Overpass mirrors, and the venue lookups for several destinations running
+    *in series* inside the caller's loop meant those per-destination retry
+    budgets stacked into several minutes of total latency, well past the
+    frontend's request timeout, failing `/recommend` outright. Venue data is
+    an enrichment on top of the core events/long-weekend result, not the
+    result itself, so it must never be allowed to do that. This adds a
+    second, independent safety net: if a single destination's lookup somehow
+    still runs long, it's abandoned at `_VENUE_LOOKUP_DEADLINE_S` and treated
+    the same honest way `find_workation_venues` treats a real Overpass
+    failure — zero venues, flagged as limited coverage — rather than ever
+    blocking the response.
+    """
+    try:
+        return await asyncio.wait_for(
+            find_workation_venues(city), timeout=_VENUE_LOOKUP_DEADLINE_S
+        )
+    except TimeoutError:
+        logger.warning(
+            "Venue lookup for %r exceeded %.0fs deadline, degrading to limited coverage",
+            city, _VENUE_LOOKUP_DEADLINE_S,
+        )
+        return WorkationVenueResult(
+            venues=[],
+            total_venues_found=0,
+            venues_with_verified_wifi_count=0,
+            has_limited_coverage=True,
+        )
 
 
 async def _retrieve_matching_events(

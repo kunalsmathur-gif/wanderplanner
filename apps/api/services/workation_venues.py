@@ -42,10 +42,29 @@ logger = logging.getLogger(__name__)
 # an interactive (user-facing) request, not a background ingestion job, so a
 # shorter worst-case wait is preferable to osm.py's more patient 5-attempt
 # budget.
-_MAX_FETCH_ATTEMPTS = 3
-_RETRY_BASE_DELAY_S = 2.0
-_RETRY_MAX_DELAY_S = 20.0
-_RETRY_JITTER_S = 1.5
+#
+# 2026-10-06: tightened after a live production incident — Railway's cloud IP
+# range was getting hard connection failures (not 429/504s) from both
+# configured mirrors, and the old 60s-per-attempt httpx timeout meant each
+# failed attempt could itself take up to 60s to time out, so 3 attempts x 2
+# mirrors could stall a single destination for 2-3 minutes. A `/recommend`
+# request touching several destinations in series then blew well past any
+# reasonable client/proxy timeout and surfaced as a hard failure (not just
+# slowness) in the workation UI. The per-attempt timeout below bounds a
+# single failed attempt to a few seconds; `find_workation_venues` is also now
+# called concurrently per destination with its own overall deadline (see
+# chains/workation_recommend_chain.py) so one unreachable mirror can never
+# block the whole response.
+_MAX_FETCH_ATTEMPTS = 2
+_RETRY_BASE_DELAY_S = 1.0
+_RETRY_MAX_DELAY_S = 5.0
+_RETRY_JITTER_S = 0.5
+
+# Bounds a single Overpass HTTP attempt so a hung/unreachable mirror fails
+# fast rather than eating the full retry budget in one blocking call. Much
+# shorter than scrapers/osm.py's 120s (that's a patient background job; this
+# is an interactive request a user is waiting on).
+_FETCH_TIMEOUT = httpx.Timeout(connect=5.0, read=8.0, write=8.0, pool=5.0)
 
 # Default search radius around the destination's geocoded point. Kept smaller
 # than scrapers/osm.py's general POI radius — a traveller looking for a wifi
@@ -146,7 +165,7 @@ async def _fetch_overpass_venues(query: str, destination: str) -> list[dict] | N
 
     for attempt in range(1, _MAX_FETCH_ATTEMPTS + 1):
         mirror_url = mirrors[(attempt - 1) % len(mirrors)]
-        async with httpx.AsyncClient(timeout=60, headers=headers) as client:
+        async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT, headers=headers) as client:
             try:
                 resp = await client.post(mirror_url, data={"data": query})
                 resp.raise_for_status()
