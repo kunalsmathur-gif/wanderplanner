@@ -6,6 +6,7 @@ and tests/unit/test_osm_scraper.py.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -719,6 +720,87 @@ class TestFetchAllEventsRss:
             records = await fetch_allevents_rss("Mumbai")  # default max_events, no override
 
         assert len(records) == n_items
+
+    @pytest.mark.asyncio
+    async def test_429_response_is_retried_not_silently_dropped(self):
+        """Regression test for a real bug found live (2026-10-06): once
+        multiple cities' detail-page fetches ran concurrently, AllEvents.in
+        started responding 429 (rate limited) to some requests — a plain
+        `raise_for_status()` without retry logic would silently drop those
+        events (ironically including Guns N' Roses, the event this whole
+        tier exists to stop losing). A 429 must be retried, not treated the
+        same as a genuinely broken page."""
+        rss_xml = """<?xml version="1.0"?>
+        <rss version="2.0"><channel>
+          <item><link>https://allevents.in/mumbai/rate-limited-event</link></item>
+        </channel></rss>
+        """
+        event_html = """
+        <script type="application/ld+json">
+        {"@type": "Event", "name": "Guns N' Roses India 2026",
+         "startDate": "2026-11-14T19:00:00+05:30", "endDate": "2026-11-14T23:00:00+05:30",
+         "location": {"address": {"addressLocality": "Bengaluru", "addressRegion": "KA"}}}
+        </script>
+        """
+        feed_resp = MagicMock(status_code=200, text=rss_xml)
+        rate_limited_resp = MagicMock(status_code=429)
+        success_resp = MagicMock(status_code=200, text=event_html)
+        success_resp.raise_for_status = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.__aenter__.return_value.get = AsyncMock(
+            side_effect=[feed_resp, rate_limited_resp, success_resp]
+        )
+
+        with patch("scrapers.india_events.httpx.AsyncClient", return_value=mock_client), \
+             patch("scrapers.india_events.asyncio.sleep", new=AsyncMock()):
+            records = await fetch_allevents_rss("Mumbai", max_events=1)
+
+        assert len(records) == 1
+        assert records[0].name == "Guns N' Roses India 2026"
+
+    @pytest.mark.asyncio
+    async def test_detail_fetch_semaphore_is_shared_across_concurrent_city_calls(self):
+        """The whole point of the global semaphore: at most
+        `_ALLEVENTS_DETAIL_FETCH_SEMAPHORE._value` detail-page requests are
+        ever in flight at once, even when `fetch_allevents_rss` is invoked
+        concurrently for several cities at once (as
+        `ingest_india_events()` now does)."""
+        from scrapers.india_events import _ALLEVENTS_DETAIL_FETCH_SEMAPHORE
+
+        in_flight = 0
+        max_in_flight = 0
+
+        async def _slow_get(url):
+            nonlocal in_flight, max_in_flight
+            if "RSS" in url or url.endswith("/RSS"):
+                return MagicMock(
+                    status_code=200,
+                    text=(
+                        '<?xml version="1.0"?><rss version="2.0"><channel>'
+                        '<item><link>https://allevents.in/x/e</link></item>'
+                        "</channel></rss>"
+                    ),
+                )
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+            await asyncio.sleep(0.05)
+            in_flight -= 1
+            resp = MagicMock(status_code=200, text="<script type=\"application/ld+json\">{}</script>")
+            resp.raise_for_status = MagicMock()
+            return resp
+
+        def _make_client(*args, **kwargs):
+            mock_client = MagicMock()
+            mock_client.__aenter__.return_value.get = AsyncMock(side_effect=_slow_get)
+            return mock_client
+
+        with patch("scrapers.india_events.httpx.AsyncClient", side_effect=_make_client):
+            await asyncio.gather(
+                *(fetch_allevents_rss(f"City{i}", max_events=1) for i in range(6))
+            )
+
+        assert max_in_flight <= _ALLEVENTS_DETAIL_FETCH_SEMAPHORE._value
 
 
 class TestGuessCategory:

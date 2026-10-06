@@ -201,6 +201,22 @@ _ALLEVENTS_USER_AGENT = (
 # (`core/scheduler.py::_refresh_india_events`), not any live request path.
 _ALLEVENTS_MAX_EVENTS_PER_CITY = 100
 _ALLEVENTS_DETAIL_FETCH_DELAY_S = 0.5
+# Global (cross-city) cap on how many AllEvents.in detail-page requests are
+# in flight *at once*, regardless of how many cities `ingest_india_events()`
+# is sweeping concurrently (`_INGEST_CITY_CONCURRENCY`, currently 8). Each
+# city's own 0.5s pacing above only throttles *that city's* requests in
+# isolation — but every city's detail pages are served from the same
+# `allevents.in` host, so running 8 cities' detail-page loops concurrently
+# effectively hit that one host ~8x harder than the original sequential
+# design. Confirmed live (2026-10-06, right after expanding from 7 to 58
+# cities): this triggered real HTTP 429s that silently dropped real events
+# — including, ironically, the Guns N' Roses Bengaluru event this whole
+# tier exists to stop losing. A semaphore of 2 keeps the *host-wide*
+# request rate close to the original single-city-at-a-time pacing even
+# while cities are fetched concurrently for everything else.
+_ALLEVENTS_DETAIL_FETCH_SEMAPHORE = asyncio.Semaphore(2)
+_ALLEVENTS_DETAIL_FETCH_MAX_ATTEMPTS = 3
+_ALLEVENTS_RATE_LIMIT_BACKOFF_S = 3.0
 
 
 async def fetch_allevents_rss(
@@ -240,19 +256,59 @@ async def fetch_allevents_rss(
     records: list[EventRecord] = []
     async with httpx.AsyncClient(timeout=15, headers=headers) as client:
         for link in links:
-            try:
-                resp = await client.get(link)
-                resp.raise_for_status()
-                event_data = _extract_jsonld_event(resp.text)
-                if event_data:
-                    record = _allevents_jsonld_to_record(event_data, fallback_city=city, event_url=link)
-                    if record:
-                        records.append(record)
-            except Exception as e:
-                logger.debug("Skipping AllEvents.in event page %r: %s", link, type(e).__name__)
-            await asyncio.sleep(_ALLEVENTS_DETAIL_FETCH_DELAY_S)
+            event_data = await _fetch_allevents_detail_page(client, link)
+            if event_data:
+                record = _allevents_jsonld_to_record(event_data, fallback_city=city, event_url=link)
+                if record:
+                    records.append(record)
 
     return records
+
+
+async def _fetch_allevents_detail_page(client: httpx.AsyncClient, link: str) -> dict[str, Any] | None:
+    """Fetches and parses one AllEvents.in event detail page, bounded by
+    the global `_ALLEVENTS_DETAIL_FETCH_SEMAPHORE` (shared across every
+    concurrently-swept city, not just this one) and retried with backoff
+    specifically on HTTP 429 (the host is rate-limiting us, not telling us
+    the page is gone) — up to `_ALLEVENTS_DETAIL_FETCH_MAX_ATTEMPTS`
+    attempts before giving up on this one link. Any other failure (parse
+    error, 404, timeout) is not retried, consistent with every other
+    fetcher's best-effort "skip and move on" contract.
+    """
+    for attempt in range(_ALLEVENTS_DETAIL_FETCH_MAX_ATTEMPTS):
+        is_retryable_429 = False
+        async with _ALLEVENTS_DETAIL_FETCH_SEMAPHORE:
+            try:
+                resp = await client.get(link)
+                if resp.status_code == 429:
+                    raise httpx.HTTPStatusError(
+                        "429 rate limited", request=resp.request, response=resp
+                    )
+                resp.raise_for_status()
+                result = _extract_jsonld_event(resp.text)
+            except httpx.HTTPStatusError as e:
+                if (
+                    e.response is not None
+                    and e.response.status_code == 429
+                    and attempt < _ALLEVENTS_DETAIL_FETCH_MAX_ATTEMPTS - 1
+                ):
+                    is_retryable_429 = True
+                    result = None
+                else:
+                    logger.debug("Skipping AllEvents.in event page %r: %s", link, type(e).__name__)
+                    result = None
+            except Exception as e:
+                logger.debug("Skipping AllEvents.in event page %r: %s", link, type(e).__name__)
+                result = None
+
+        if is_retryable_429:
+            await asyncio.sleep(_ALLEVENTS_RATE_LIMIT_BACKOFF_S * (attempt + 1))
+            continue
+
+        await asyncio.sleep(_ALLEVENTS_DETAIL_FETCH_DELAY_S)
+        return result
+
+    return None
 
 
 def _extract_jsonld_event(html: str) -> dict[str, Any] | None:
