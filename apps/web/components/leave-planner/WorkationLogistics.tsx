@@ -14,7 +14,7 @@ export function WorkationLogistics({ destination }: Props) {
 
   return (
     <div className="rounded-xl border border-[var(--_border)] bg-[var(--_card)] p-4">
-      <p className="text-sm font-semibold text-[var(--_fg)]">{destination.destination} — workation logistics</p>
+      <p className="text-sm font-semibold text-[var(--_fg)]">{destination.destination} — leave planner logistics</p>
       <p className="mt-1 text-sm text-[var(--_muted-fg)]">{destination.workation_split}</p>
 
       <div className="mt-3 flex items-center gap-2 text-sm">

@@ -63,7 +63,7 @@ export function usePlanThisTrip() {
 
   return function planThisTrip(destination: DestinationCandidate, longWeekend: LongWeekendSummary | null) {
     const tripConfig = buildTripConfig(destination, longWeekend)
-    logClientEvent('workation_handoff', {
+    logClientEvent('leave_planner_handoff', {
       destination: destination.destination,
       start_date: longWeekend?.start_date ?? null,
       end_date: longWeekend?.end_date ?? null,

@@ -130,7 +130,7 @@ export async function getLongWeekends(state: string, year?: number): Promise<Lon
 }
 
 export async function getWorkationRecommendations(
-  state: string,
+  state: string | null,
   interests: string[],
   dateRange?: [string, string],
 ): Promise<WorkationRecommendResponse> {
@@ -140,10 +140,16 @@ export async function getWorkationRecommendations(
   // unreachable) plus an LLM rationale pass, so real-world worst-case
   // latency can land in the 30-45s range even though it's no longer the
   // multi-minute serial stall a 2026-10-06 prod incident surfaced.
+  //
+  // `state` is nullable: the Leave Planner's "just browse events across
+  // India for a weekend" mode has no home state at all, so `date_range` is
+  // sent on its own and the backend builds a one-off window straight from
+  // those dates (see chains/workation_recommend_chain.py's
+  // `recommend_workation` docstring for the two-mode contract).
   const { data } = await api.post(
     '/api/workation/recommend',
     {
-      state,
+      state: state ?? null,
       interests,
       date_range: dateRange ?? null,
     },

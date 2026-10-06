@@ -1,5 +1,29 @@
 # Plan: India Workation & Long Weekend Finder
 
+> **Naming update (2026-10-06)**: the user-facing feature is now branded **"Leave Planner"**
+> everywhere a user sees it — the route (`/leave-planner`, with `/workation` kept as a
+> permanent redirect for old links), the landing-page CTA, page headings/copy, and analytics
+> event names (`leave_planner_view`/`leave_planner_recommend`/`leave_planner_handoff`). This
+> is a UI/docs rename only — backend module/file names (`workation_recommend_chain.py`,
+> `services/workation_venues.py`, `routers/workation.py`), the `/api/workation/*` route
+> paths, the `india_events` Qdrant collection, and internal type names
+> (`WorkationRecommendRequest`/`Response`, `DestinationCandidate.workation_split`) are
+> unchanged — those remain internal implementation details, not user-visible naming. The
+> rest of this document still uses "workation" throughout since it describes that
+> unchanged backend design; treat "workation" below as synonymous with "Leave Planner".
+>
+> Same update also added **two discovery modes** at the frontend entry point instead of a
+> single state-first form: (1) pick home state → pick one specific long weekend → pick
+> interests (optional) → see ranked destinations, or (2) skip state entirely, just pick a
+> weekend/date range → see pan-India events for that window (interests optional, no state
+> needed). Backend support: `WorkationRecommendRequest.state` is now optional
+> (`str | None`); when omitted, a `date_range` is required and a synthetic
+> `LongWeekendWindow` is built directly from it via a new `_window_from_date_range()`
+> helper in `chains/workation_recommend_chain.py`, flowing through the same downstream
+> event/venue/destination-assembly logic as the state-anchored path. Also added **"Music"**
+> to the interests list (backend already tagged events with `interest_category: "music"`;
+> this was a frontend-only gap).
+
 ## Problem
 
 WanderPlanner's existing flow requires a user to already know a destination (or at least

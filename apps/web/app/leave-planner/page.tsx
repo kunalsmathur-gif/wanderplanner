@@ -3,28 +3,34 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Loader2 } from 'lucide-react'
-import { HomeStateInterestForm } from '@/components/workation/HomeStateInterestForm'
-import { WorkationMapWrapper } from '@/components/workation/WorkationMapWrapper'
-import { LongWeekendList } from '@/components/workation/LongWeekendList'
-import { EventsAroundYou } from '@/components/workation/EventsAroundYou'
-import { DestinationShortlist } from '@/components/workation/DestinationShortlist'
-import { WorkationLogistics } from '@/components/workation/WorkationLogistics'
-import { PlanThisTripCTA } from '@/components/workation/PlanThisTripCTA'
+import { LeavePlannerFlow } from '@/components/leave-planner/LeavePlannerFlow'
+import { WorkationMapWrapper } from '@/components/leave-planner/WorkationMapWrapper'
+import { LongWeekendList } from '@/components/leave-planner/LongWeekendList'
+import { EventsAroundYou } from '@/components/leave-planner/EventsAroundYou'
+import { DestinationShortlist } from '@/components/leave-planner/DestinationShortlist'
+import { WorkationLogistics } from '@/components/leave-planner/WorkationLogistics'
+import { PlanThisTripCTA } from '@/components/leave-planner/PlanThisTripCTA'
 import { logClientEvent } from '@/lib/analyticsBeacon'
 import { usePlanThisTrip } from '@/lib/workationHandoff'
-import type { DestinationCandidate, LongWeekendWindow, WorkationRecommendResponse } from '@/types'
+import type { DestinationCandidate, WorkationRecommendResponse } from '@/types'
 
 /**
- * Standalone discovery surface for the "India Workation & Long Weekend
- * Finder" (docs/plans/india-workation-finder-plan.md) — deliberately
- * separate from the Anya wizard. A user picks a home state + interests,
- * sees upcoming long weekends and candidate destinations plotted on a map
- * (the primary visual/selection surface per the plan's addendum) with the
- * same data available as accessible list cards, then hands off a chosen
- * destination + window into the existing wizard via `PlanThisTripCTA`.
+ * Standalone discovery surface — "Leave Planner" (renamed 2026-10-06; was
+ * "India Workation & Long Weekend Finder", same underlying feature/data,
+ * see docs/plans/india-workation-finder-plan.md) — deliberately separate
+ * from the Anya wizard.
+ *
+ * Two discovery modes (redesigned 2026-10-06, `LeavePlannerFlow` owns the
+ * mode/step state): "plan around my long weekends" (home state -> pick one
+ * gazetted long weekend -> interests) and "just show me a weekend's events"
+ * (pick any weekend/date range, no home state at all -> optional interests).
+ * Both funnel into the same results UI below: candidate destinations
+ * plotted on a map (the primary visual/selection surface per the plan's
+ * addendum) with the same data available as accessible list cards, then a
+ * hand-off of a chosen destination + window into the existing wizard via
+ * `PlanThisTripCTA`.
  */
-export default function WorkationPage() {
-  const [longWeekends, setLongWeekends] = useState<LongWeekendWindow[]>([])
+export default function LeavePlannerPage() {
   const [recommendations, setRecommendations] = useState<WorkationRecommendResponse | null>(null)
   const [selectedDestination, setSelectedDestination] = useState<DestinationCandidate | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -32,20 +38,15 @@ export default function WorkationPage() {
   const planThisTrip = usePlanThisTrip()
 
   useEffect(() => {
-    logClientEvent('workation_view')
+    logClientEvent('leave_planner_view')
   }, [])
 
-  function handleResults(
-    _state: string,
-    windows: LongWeekendWindow[],
-    results: WorkationRecommendResponse,
-  ) {
-    setLongWeekends(windows)
+  function handleResults(results: WorkationRecommendResponse) {
     setRecommendations(results)
     setSelectedDestination(results.destinations[0] ?? null)
     setError(null)
     setHasSearched(true)
-    logClientEvent('workation_recommend', {
+    logClientEvent('leave_planner_recommend', {
       has_results: results.has_results,
       destination_count: results.destinations.length,
     })
@@ -56,11 +57,12 @@ export default function WorkationPage() {
   }
 
   const destinations = recommendations?.destinations ?? []
-  // All candidate destinations are matched against the best-ranked window
-  // (apps/api/chains/workation_recommend_chain.py uses `windows[0]` as
-  // `top_window` for every destination in a single response) — so the first
-  // long-weekend summary is always the right one to hand off alongside any
-  // selected destination.
+  // All candidate destinations are matched against the single window the
+  // user picked in `LeavePlannerFlow` — the backend narrows `long_weekends`
+  // down to exactly that window (state mode: `date_range`-filtered; browse
+  // mode: the one synthetic window built from the chosen dates) — so the
+  // first (only) long-weekend summary is always the right one to hand off
+  // alongside any selected destination.
   const matchedLongWeekend = recommendations?.long_weekends[0] ?? null
 
   return (
@@ -73,18 +75,18 @@ export default function WorkationPage() {
 
       <div>
         <h1 className="font-display text-2xl font-black text-[var(--_fg)] sm:text-3xl">
-          Find your next long weekend
+          Leave Planner
         </h1>
         <p className="mt-1.5 max-w-xl text-sm text-[var(--_muted-fg)]">
-          Tell us your home state and interests — we'll find upcoming long weekends, what's
-          happening around India that matches your interests, and where a workation (a few
-          WFH days + the weekend) fits best.
+          Plan around your upcoming long weekends, or just browse what's happening across
+          India for a weekend you already have in mind — either way, we'll show you where a
+          few WFH days + the weekend fits best.
         </p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
         <div className="flex flex-col gap-5">
-          <HomeStateInterestForm onResults={handleResults} onError={handleError} />
+          <LeavePlannerFlow onResults={handleResults} onError={handleError} />
 
           {error && (
             <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -94,7 +96,7 @@ export default function WorkationPage() {
 
           {hasSearched && recommendations && !recommendations.has_results && (
             <p className="rounded-xl border border-[var(--_border)] bg-[var(--_card)] p-4 text-sm text-[var(--_muted-fg)]">
-              {recommendations.message || 'Nothing found for this state/interests yet — try a different state or broaden your interests.'}
+              {recommendations.message || 'Nothing found for these dates/interests yet — try a different weekend or broaden your interests.'}
             </p>
           )}
 
@@ -102,9 +104,9 @@ export default function WorkationPage() {
             <>
               <section>
                 <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[var(--_muted-fg)]">
-                  Upcoming long weekends
+                  Your selected weekend
                 </h2>
-                <LongWeekendList windows={longWeekends} />
+                <LongWeekendList windows={recommendations?.long_weekends ?? []} />
               </section>
 
               {destinations.length > 0 && (
@@ -156,7 +158,7 @@ export default function WorkationPage() {
           {!hasSearched && (
             <div className="flex h-40 items-center justify-center gap-2 rounded-2xl border border-dashed border-[var(--_border)] text-sm text-[var(--_muted-fg)]">
               <Loader2 size={16} className="opacity-0" />
-              Pick a state and interests to see results on the map.
+              Pick a weekend to see results on the map.
             </div>
           )}
         </div>

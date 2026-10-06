@@ -329,15 +329,16 @@ export function LandingHero() {
             )}
           </div>
 
-          {/* India Workation & Long Weekend Finder entry point — a separate
-              discovery surface for the "don't know where to go yet" cohort,
-              not folded into the Anya wizard (see
+          {/* "Leave Planner" entry point (formerly "India Workation & Long
+              Weekend Finder" — renamed 2026-10-06, same underlying feature)
+              — a separate discovery surface for the "don't know where to go
+              yet" cohort, not folded into the Anya wizard (see
               docs/plans/india-workation-finder-plan.md). */}
           <Link
-            href="/workation"
+            href="/leave-planner"
             className="mt-5 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--_primary)] hover:underline"
           >
-            Planning a quick India getaway? Find your next long weekend
+            Planning a quick India getaway? Try the Leave Planner
             <ArrowRight size={14} />
           </Link>
         </section>
