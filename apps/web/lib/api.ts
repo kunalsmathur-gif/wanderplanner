@@ -134,11 +134,21 @@ export async function getWorkationRecommendations(
   interests: string[],
   dateRange?: [string, string],
 ): Promise<WorkationRecommendResponse> {
-  const { data } = await api.post('/api/workation/recommend', {
-    state,
-    interests,
-    date_range: dateRange ?? null,
-  })
+  // Longer timeout than the shared 25s default: this endpoint fans out to
+  // several destinations' venue (Overpass) lookups concurrently (each with
+  // its own ~20s worst-case backend deadline when Overpass mirrors are
+  // unreachable) plus an LLM rationale pass, so real-world worst-case
+  // latency can land in the 30-45s range even though it's no longer the
+  // multi-minute serial stall a 2026-10-06 prod incident surfaced.
+  const { data } = await api.post(
+    '/api/workation/recommend',
+    {
+      state,
+      interests,
+      date_range: dateRange ?? null,
+    },
+    { timeout: 45_000 },
+  )
   return data as WorkationRecommendResponse
 }
 
