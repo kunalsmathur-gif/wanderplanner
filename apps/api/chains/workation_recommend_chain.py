@@ -74,7 +74,13 @@ _VENUE_LOOKUP_DEADLINE_S = 20.0
 
 
 class WorkationRecommendRequest(BaseModel):
-    state: str
+    # `state` is optional per the "Leave Planner" redesign's second discovery
+    # mode: a traveller who doesn't want to anchor to a home state's gazetted
+    # holiday calendar at all, and just wants to browse what's happening
+    # across India for a specific weekend/date range they already have in
+    # mind. That mode requires `date_range` instead (validated in
+    # `recommend_workation`) since there's no state to derive a window from.
+    state: str | None = None
     interests: list[str]
     date_range: tuple[str, str] | None = None
 
@@ -159,29 +165,57 @@ async def recommend_workation(request: WorkationRecommendRequest) -> WorkationRe
     Never fabricates: a state with no long weekends, or a long weekend with no
     matching events/geocodable destinations, returns `has_results=False` with
     an explanatory `message` rather than an invented destination.
+
+    Two discovery modes, matching the Leave Planner UI's two entry points:
+    - `request.state` set: anchor to that state's gazetted long-weekend
+      calendar (original behaviour, unchanged) — optionally narrowed to one
+      specific window via `request.date_range` once the user has picked it.
+    - `request.state` omitted: "just show me events across India for a
+      weekend I already have in mind" — skips `get_long_weekends()` (there's
+      no state to compute a holiday calendar for) and builds a single
+      synthetic window directly from the required `request.date_range`
+      instead, via `_window_from_date_range()`.
     """
-    windows = get_long_weekends(request.state)
+    if request.state:
+        windows = get_long_weekends(request.state)
 
-    if not windows:
-        return WorkationRecommendResponse(
-            long_weekends=[],
-            destinations=[],
-            has_results=False,
-            message=f"No upcoming long weekends found for {request.state}.",
-        )
-
-    if request.date_range is not None:
-        windows = _filter_windows_by_date_range(windows, request.date_range)
         if not windows:
             return WorkationRecommendResponse(
                 long_weekends=[],
                 destinations=[],
                 has_results=False,
-                message=(
-                    f"No long weekend for {request.state} overlaps "
-                    f"{request.date_range[0]} to {request.date_range[1]}."
-                ),
+                message=f"No upcoming long weekends found for {request.state}.",
             )
+
+        if request.date_range is not None:
+            windows = _filter_windows_by_date_range(windows, request.date_range)
+            if not windows:
+                return WorkationRecommendResponse(
+                    long_weekends=[],
+                    destinations=[],
+                    has_results=False,
+                    message=(
+                        f"No long weekend for {request.state} overlaps "
+                        f"{request.date_range[0]} to {request.date_range[1]}."
+                    ),
+                )
+    else:
+        if request.date_range is None:
+            return WorkationRecommendResponse(
+                long_weekends=[],
+                destinations=[],
+                has_results=False,
+                message="Pick a home state, or a specific weekend/date range to browse events for.",
+            )
+        window = _window_from_date_range(request.date_range)
+        if window is None:
+            return WorkationRecommendResponse(
+                long_weekends=[],
+                destinations=[],
+                has_results=False,
+                message=f"Couldn't understand the date range {request.date_range[0]} to {request.date_range[1]}.",
+            )
+        windows = [window]
 
     long_weekend_summaries = [_window_to_summary(w) for w in windows]
 
@@ -477,6 +511,37 @@ def _filter_windows_by_date_range(
     except (ValueError, IndexError, TypeError):
         return []
     return [w for w in windows if w.start_date <= range_end and w.end_date >= range_start]
+
+
+def _window_from_date_range(date_range: tuple[str, str]) -> LongWeekendWindow | None:
+    """Builds a single synthetic `LongWeekendWindow` directly from an explicit
+    date range the user picked themselves — the Leave Planner's "just browse
+    events across India for a weekend I already have in mind" mode, which has
+    no home state and therefore nothing for `get_long_weekends()` to compute
+    a gazetted-holiday window from. `reason`/`leave_days_needed` are honest
+    placeholders (there's no holiday being reasoned about here, just the
+    traveller's own chosen dates) rather than fabricated holiday context.
+
+    Returns `None` for an unparseable or inverted (`end < start`) range so the
+    caller can fail closed with an explanatory message, same contract as
+    `_filter_windows_by_date_range`.
+    """
+    try:
+        start = date.fromisoformat(date_range[0])
+        end = date.fromisoformat(date_range[1])
+    except (ValueError, IndexError, TypeError):
+        return None
+    if end < start:
+        return None
+    total_days = (end - start).days + 1
+    return LongWeekendWindow(
+        start_date=start,
+        end_date=end,
+        total_days_off=total_days,
+        leave_days_needed=0,
+        reason="Selected dates",
+        value=float(total_days),
+    )
 
 
 async def _fill_rationales(

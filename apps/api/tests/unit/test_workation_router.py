@@ -80,5 +80,25 @@ async def test_workation_recommend_handles_unexpected_error(client):
 
 @pytest.mark.asyncio
 async def test_workation_recommend_validates_request_body(client):
-    resp = await client.post("/api/workation/recommend", json={"interests": ["music"]})
+    # `state` is intentionally optional (the Leave Planner's "browse events
+    # across India for a weekend" mode has no home state at all — see
+    # chains/workation_recommend_chain.py's `recommend_workation` docstring),
+    # but `interests` has no default and must still be present.
+    resp = await client.post("/api/workation/recommend", json={"state": "Karnataka"})
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_workation_recommend_allows_omitted_state(client):
+    mock_response = WorkationRecommendResponse(
+        long_weekends=[], destinations=[], has_results=False, message="ok",
+    )
+    with patch(
+        "routers.workation.recommend_workation", new=AsyncMock(return_value=mock_response)
+    ) as mocked:
+        resp = await client.post(
+            "/api/workation/recommend",
+            json={"interests": ["music"], "date_range": ["2026-11-14", "2026-11-16"]},
+        )
+    assert resp.status_code == 200
+    mocked.assert_awaited_once()

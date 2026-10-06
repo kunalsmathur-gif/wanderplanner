@@ -233,6 +233,70 @@ class TestNoMatches:
         assert response.has_results is False
 
 
+class TestStatelessDateRangeMode:
+    """Leave Planner's second discovery mode — "just show me events across
+    India for a weekend I already have in mind," no home state at all. Covers
+    `request.state is None`, which must build a synthetic window directly
+    from `request.date_range` rather than calling `get_long_weekends()`."""
+
+    @pytest.mark.asyncio
+    async def test_state_omitted_with_date_range_builds_synthetic_window(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(settings, "llm_provider", "mock")
+
+        with patch("chains.workation_recommend_chain.get_long_weekends") as mock_get_long_weekends, \
+             patch("chains.workation_recommend_chain.get_qdrant") as mock_get_qdrant, \
+             patch("chains.workation_recommend_chain.geocode_city", new_callable=AsyncMock) as mock_geocode, \
+             patch("chains.workation_recommend_chain.find_workation_venues", new_callable=AsyncMock) as mock_venues:
+
+            mock_client = MagicMock()
+            mock_client.search.return_value = [
+                _qdrant_hit(0.9, _event_payload(start="2026-11-14", end="2026-11-16")),
+            ]
+            mock_get_qdrant.return_value = mock_client
+            mock_geocode.return_value = _geocode(15.335, 76.46, "Hampi")
+            mock_venues.return_value = _venue_result()
+
+            request = WorkationRecommendRequest(
+                interests=["culture"], date_range=("2026-11-14", "2026-11-16")
+            )
+            response = await recommend_workation(request)
+
+        # get_long_weekends must never be called in this mode — there's no
+        # state to compute a gazetted holiday calendar for.
+        mock_get_long_weekends.assert_not_called()
+        assert response.has_results is True
+        assert len(response.destinations) == 1
+        assert response.long_weekends[0].start_date == "2026-11-14"
+        assert response.long_weekends[0].end_date == "2026-11-16"
+        assert response.long_weekends[0].reason == "Selected dates"
+
+    @pytest.mark.asyncio
+    async def test_state_omitted_without_date_range_asks_for_one(self):
+        request = WorkationRecommendRequest(interests=["music"])
+        response = await recommend_workation(request)
+
+        assert response.has_results is False
+        assert response.destinations == []
+        assert "home state" in response.message or "date range" in response.message
+
+    @pytest.mark.asyncio
+    async def test_state_omitted_with_invalid_date_range_fails_closed(self):
+        request = WorkationRecommendRequest(interests=["music"], date_range=("not-a-date", "also-not"))
+        response = await recommend_workation(request)
+
+        assert response.has_results is False
+        assert response.destinations == []
+        assert "Couldn't understand" in response.message
+
+    @pytest.mark.asyncio
+    async def test_state_omitted_with_inverted_date_range_fails_closed(self):
+        request = WorkationRecommendRequest(interests=["music"], date_range=("2026-11-16", "2026-11-14"))
+        response = await recommend_workation(request)
+
+        assert response.has_results is False
+        assert response.destinations == []
+
+
 class TestLLMFallback:
     @pytest.mark.asyncio
     async def test_gemini_failure_falls_back_to_mock_rationale(self, monkeypatch: pytest.MonkeyPatch):
