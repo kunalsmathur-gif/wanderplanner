@@ -224,3 +224,29 @@ class TestFetchDistrictEventsBatch:
         mock_chromium.launch.assert_called_once()
         assert set(results.keys()) == {"Mumbai", "Delhi", "Pune"}
         assert all(v == [] for v in results.values())
+
+    @pytest.mark.asyncio
+    async def test_browser_launch_failure_degrades_to_empty_not_raises(self):
+        """Regression test for a real bug found live (2026-10-06): a
+        Chromium launch failure (e.g. local resource contention/timeout)
+        previously propagated uncaught out of this function. Since
+        `ingest_india_events()` now runs this batch concurrently with the
+        HTTP-based tiers via `asyncio.gather`, an uncaught exception here
+        would have taken down the *other* tier's already-fetched results
+        too — must degrade to `[]` per city instead, like every other
+        fetcher's best-effort contract."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_chromium = MagicMock()
+        mock_chromium.launch = AsyncMock(side_effect=TimeoutError("launch timed out"))
+        mock_pw_instance = MagicMock()
+        mock_pw_instance.chromium = mock_chromium
+        mock_pw_cm = MagicMock()
+        mock_pw_cm.__aenter__ = AsyncMock(return_value=mock_pw_instance)
+        mock_pw_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("playwright.async_api.async_playwright", return_value=mock_pw_cm):
+            results = await fetch_district_events_batch(["Mumbai", "Delhi"])
+
+        assert results == {"Mumbai": [], "Delhi": []}
+

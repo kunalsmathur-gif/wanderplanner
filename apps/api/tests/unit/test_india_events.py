@@ -256,6 +256,36 @@ class TestIngestDedup:
         mock_batch.assert_called_once()
         assert mock_batch.call_args.args[0] == ["Mumbai", "Delhi", "Pune"]
 
+    @pytest.mark.asyncio
+    async def test_district_tier_exception_does_not_lose_http_tier_results(self):
+        """Regression test for a real bug found live (2026-10-06): the
+        HTTP-based tiers and the District.in batch tier run concurrently
+        via `asyncio.gather`. Without `return_exceptions=True`, an
+        exception from one tier (e.g. a Chromium launch failure) would
+        propagate and discard the *other* tier's already-fetched results
+        too, even though they're entirely independent data sources."""
+        real_event = EventRecord(
+            name="Real AllEvents Event",
+            start_date=date(2026, 12, 1),
+            end_date=date(2026, 12, 1),
+            location="Mumbai, MH",
+            interest_category="music",
+            source_citation="AllEvents.in API",
+        )
+
+        with patch("scrapers.india_events.fetch_allevents", return_value=[real_event]), \
+             patch("scrapers.india_events.fetch_eventbrite", return_value=[]), \
+             patch("scrapers.india_events.fetch_allevents_rss", return_value=[]), \
+             patch(
+                 "scrapers.district_events.fetch_district_events_batch",
+                 side_effect=RuntimeError("browser launch failed"),
+             ), \
+             patch("scrapers.india_events.scrape_wikipedia_festivals", return_value=[]):
+            events = await ingest_india_events(cities=["Mumbai"])
+
+        names = {e.name for e in events}
+        assert "Real AllEvents Event" in names
+
 
 class TestEmbedAndStore:
     def test_empty_list_short_circuits_without_embedding(self):

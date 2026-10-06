@@ -1174,7 +1174,21 @@ async def ingest_india_events(cities: list[str] | None = None) -> list[EventReco
     http_results, district_results = await asyncio.gather(
         asyncio.gather(*(_fetch_http_tiers(city) for city in cities)),
         fetch_district_events_batch(cities),
+        return_exceptions=True,
     )
+    # Defense in depth: `fetch_district_events_batch` already degrades any
+    # internal failure to an empty-per-city dict rather than raising (see
+    # its own docstring/try-except), but `return_exceptions=True` here
+    # means a bug in that contract — or in the HTTP tier's gather — can
+    # never again take down the *other* independent tier's already-fetched
+    # results, matching this module's best-effort-per-tier convention.
+    if isinstance(http_results, BaseException):
+        logger.warning("HTTP-based event tiers failed entirely: %s", type(http_results).__name__)
+        http_results = []
+    if isinstance(district_results, BaseException):
+        logger.warning("District.in batch tier failed entirely: %s", type(district_results).__name__)
+        district_results = {}
+
     all_records: list[EventRecord] = [r for sub in http_results for r in sub]
     for city_records in district_results.values():
         all_records.extend(city_records)

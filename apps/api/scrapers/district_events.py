@@ -279,12 +279,28 @@ async def fetch_district_events_batch(
         async with semaphore:
             results[city] = await _fetch_one_city_with_browser(browser, city)
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch()
-        try:
-            await asyncio.gather(*(_one(browser, city) for city in cities))
-        finally:
-            await browser.close()
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch()
+            try:
+                await asyncio.gather(*(_one(browser, city) for city in cities))
+            finally:
+                await browser.close()
+    except Exception as e:
+        # A browser-launch failure (e.g. resource contention, a corrupted
+        # local Chromium cache — observed live 2026-10-06) must not take
+        # down the rest of `ingest_india_events()`'s independent tiers: it
+        # previously ran sequentially with its own try/except per call, but
+        # since `ingest_india_events()` now runs this batch concurrently
+        # with the HTTP-based tiers via `asyncio.gather`, an uncaught
+        # exception here would propagate and cancel/discard the sibling
+        # tier's already-gathered results too. Degrade every city in this
+        # batch to `[]` instead, the same best-effort contract as every
+        # other fetcher.
+        logger.warning(
+            "District.in batch scrape failed for %d cities: %s", len(cities), type(e).__name__
+        )
+        return {city: results.get(city, []) for city in cities}
 
     return results
 
