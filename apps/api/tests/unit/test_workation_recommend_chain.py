@@ -296,6 +296,16 @@ class TestStatelessDateRangeMode:
         assert response.has_results is False
         assert response.destinations == []
 
+    @pytest.mark.asyncio
+    async def test_state_omitted_with_past_date_range_fails_closed_with_specific_message(self):
+        # A user can't plan a trip for a weekend that's already over.
+        request = WorkationRecommendRequest(interests=["music"], date_range=("2020-01-04", "2020-01-05"))
+        response = await recommend_workation(request)
+
+        assert response.has_results is False
+        assert response.destinations == []
+        assert "past" in response.message.lower()
+
 
 class TestLLMFallback:
     @pytest.mark.asyncio

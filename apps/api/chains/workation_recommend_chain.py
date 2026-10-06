@@ -40,7 +40,7 @@ from core.llm_client import track_gemini_usage
 from core.prompt_guard import neutralize
 from core.qdrant import get_qdrant
 from services.geocode import geocode_city
-from services.long_weekend import LongWeekendWindow, get_long_weekends
+from services.long_weekend import LongWeekendWindow, drop_elapsed_windows, get_long_weekends
 from services.workation_venues import WorkationVenueResult, find_workation_venues
 
 logger = logging.getLogger(__name__)
@@ -178,6 +178,7 @@ async def recommend_workation(request: WorkationRecommendRequest) -> WorkationRe
     """
     if request.state:
         windows = get_long_weekends(request.state)
+        windows = drop_elapsed_windows(windows)
 
         if not windows:
             return WorkationRecommendResponse(
@@ -209,11 +210,22 @@ async def recommend_workation(request: WorkationRecommendRequest) -> WorkationRe
             )
         window = _window_from_date_range(request.date_range)
         if window is None:
+            try:
+                range_end = date.fromisoformat(request.date_range[1])
+                is_past = range_end < date.today()
+            except (ValueError, IndexError, TypeError):
+                is_past = False
+            message = (
+                f"{request.date_range[0]} to {request.date_range[1]} is in the past — "
+                "pick a current or upcoming date range."
+                if is_past
+                else f"Couldn't understand the date range {request.date_range[0]} to {request.date_range[1]}."
+            )
             return WorkationRecommendResponse(
                 long_weekends=[],
                 destinations=[],
                 has_results=False,
-                message=f"Couldn't understand the date range {request.date_range[0]} to {request.date_range[1]}.",
+                message=message,
             )
         windows = [window]
 
@@ -522,16 +534,17 @@ def _window_from_date_range(date_range: tuple[str, str]) -> LongWeekendWindow | 
     placeholders (there's no holiday being reasoned about here, just the
     traveller's own chosen dates) rather than fabricated holiday context.
 
-    Returns `None` for an unparseable or inverted (`end < start`) range so the
-    caller can fail closed with an explanatory message, same contract as
-    `_filter_windows_by_date_range`.
+    Returns `None` for an unparseable, inverted (`end < start`), or
+    entirely-past (`end < today`) range so the caller can fail closed with an
+    explanatory message, same contract as `_filter_windows_by_date_range` —
+    a user can't plan a trip for a window that's already over.
     """
     try:
         start = date.fromisoformat(date_range[0])
         end = date.fromisoformat(date_range[1])
     except (ValueError, IndexError, TypeError):
         return None
-    if end < start:
+    if end < start or end < date.today():
         return None
     total_days = (end - start).days + 1
     return LongWeekendWindow(

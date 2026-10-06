@@ -27,7 +27,7 @@ from core.llm_usage import reset_usage
 from core.rate_limit import DEFAULT_RATE_LIMIT, LLM_RATE_LIMIT, limiter
 from db import get_db
 from db_models import User
-from services.long_weekend import LongWeekendWindow, get_long_weekends
+from services.long_weekend import LongWeekendWindow, drop_elapsed_windows, get_long_weekends
 
 router = APIRouter()
 
@@ -50,6 +50,7 @@ async def long_weekends_endpoint(
     reset_usage()
     try:
         windows = get_long_weekends(state, year)
+        windows = drop_elapsed_windows(windows)
         return LongWeekendsResponse(windows=windows)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=sanitize_error(e, context="workation-long-weekends"))

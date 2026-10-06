@@ -14,8 +14,15 @@ interface Props {
 
 const QUICK_PICK_COUNT = 6
 
+/** Formats a Date's *local* calendar date as YYYY-MM-DD. Deliberately avoids
+ * `toISOString()`, which converts to UTC first — in IST (UTC+5:30) that
+ * shifts local midnight back to 18:30 the *previous* day, silently turning
+ * a Saturday-Sunday weekend into Friday-Saturday in the resulting string. */
 function toISODate(d: Date): string {
-  return d.toISOString().slice(0, 10)
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function formatLabel(start: Date, end: Date): string {
@@ -54,6 +61,7 @@ function nextWeekends(count: number): WeekendRange[] {
  * (a specific long weekend, a short trip spanning more than Sat-Sun, etc). */
 export function WeekendQuickPicker({ selected, onSelect }: Props) {
   const quickPicks = useMemo(() => nextWeekends(QUICK_PICK_COUNT), [])
+  const todayISO = useMemo(() => toISODate(new Date()), [])
   const [customMode, setCustomMode] = useState(false)
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
@@ -110,6 +118,7 @@ export function WeekendQuickPicker({ selected, onSelect }: Props) {
             <input
               type="date"
               value={customStart}
+              min={todayISO}
               onChange={(e) => setCustomStart(e.target.value)}
               className="input mt-1 rounded-lg border border-[var(--_border)] bg-[var(--_card)] px-2.5 py-1.5 text-sm text-[var(--_fg)]"
             />
@@ -119,6 +128,7 @@ export function WeekendQuickPicker({ selected, onSelect }: Props) {
             <input
               type="date"
               value={customEnd}
+              min={customStart || todayISO}
               onChange={(e) => setCustomEnd(e.target.value)}
               className="input mt-1 rounded-lg border border-[var(--_border)] bg-[var(--_card)] px-2.5 py-1.5 text-sm text-[var(--_fg)]"
             />

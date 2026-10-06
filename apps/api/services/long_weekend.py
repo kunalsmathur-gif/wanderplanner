@@ -153,6 +153,29 @@ def get_long_weekends(state: str, year: int | None = None) -> list[LongWeekendWi
     return windows
 
 
+def drop_elapsed_windows(
+    windows: list[LongWeekendWindow], today: date | None = None
+) -> list[LongWeekendWindow]:
+    """Filters out windows that have already fully elapsed as of ``today``
+    (defaults to ``date.today()``) — a user can't plan a trip for a long
+    weekend that's already over. A window already in progress (start in the
+    past, end today-or-later) is kept since there may still be actionable
+    days left.
+
+    Deliberately **not** baked into ``get_long_weekends`` itself: that
+    function is pinned to an explicit ``year`` and tested with fixed
+    historical-looking dates independent of the real wall-clock date (see
+    ``test_long_weekend.py``'s module docstring) — mixing in a
+    ``date.today()``-dependent filter there would make those fixtures
+    flaky/order-dependent on whenever the suite happens to run. Callers that
+    serve live traffic (the router, the recommend chain) apply this filter
+    themselves after fetching windows for the *current* year.
+    """
+    if today is None:
+        today = date.today()
+    return [w for w in windows if w.end_date >= today]
+
+
 def _contiguous_runs(off_days: set[date], start: date, end: date) -> list[list[date]]:
     runs: list[list[date]] = []
     current: list[date] = []

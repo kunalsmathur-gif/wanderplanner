@@ -12,7 +12,12 @@ from datetime import date
 
 import pytest
 
-from services.long_weekend import LongWeekendWindow, get_holidays_for_state, get_long_weekends
+from services.long_weekend import (
+    LongWeekendWindow,
+    drop_elapsed_windows,
+    get_holidays_for_state,
+    get_long_weekends,
+)
 
 
 class TestGetHolidaysForState:
@@ -85,3 +90,24 @@ class TestGetLongWeekends:
     def test_all_windows_are_long_weekend_window_instances(self):
         windows = get_long_weekends("Tamil Nadu", 2026)
         assert all(isinstance(w, LongWeekendWindow) for w in windows)
+
+
+class TestDropElapsedWindows:
+    def test_drops_windows_that_have_already_fully_ended(self):
+        windows = get_long_weekends("Karnataka", 2026)
+        today = date(2026, 10, 6)
+        filtered = drop_elapsed_windows(windows, today=today)
+        assert all(w.end_date >= today for w in filtered)
+        assert len(filtered) < len(windows)  # some 2026 windows precede October
+
+    def test_keeps_a_window_already_in_progress(self):
+        windows = get_long_weekends("Karnataka", 2026)
+        in_progress = next(w for w in windows if w.start_date == date(2026, 1, 24))
+        today = date(2026, 1, 25)  # inside the Jan 24-26 window
+        filtered = drop_elapsed_windows(windows, today=today)
+        assert in_progress in filtered
+
+    def test_defaults_to_date_today_when_unset(self):
+        windows = get_long_weekends("Karnataka", 2026)
+        filtered = drop_elapsed_windows(windows)
+        assert all(w.end_date >= date.today() for w in filtered)
