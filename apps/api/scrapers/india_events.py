@@ -311,11 +311,26 @@ async def _fetch_allevents_detail_page(client: httpx.AsyncClient, link: str) -> 
     return None
 
 
+def _is_event_type(type_value: Any) -> bool:
+    """True if a JSON-LD `@type` value is `Event` or any of its schema.org
+    subtypes (e.g. `MusicEvent`, `SportsEvent`, `Festival`,
+    `ScreeningEvent`). AllEvents.in tags concerts/sports/festivals with
+    these more specific subtypes rather than the bare `Event` type — a page
+    using one of them was previously silently skipped entirely (confirmed
+    live: a Guns N' Roses concert page's JSON-LD is typed `MusicEvent`),
+    which looks identical to "the page had no event data" with only a
+    debug-level log. `@type` can also legally be a list of types (e.g.
+    `["Event", "MusicEvent"]`), so both shapes are checked."""
+    type_names = type_value if isinstance(type_value, list) else [type_value]
+    return any(isinstance(t, str) and t.endswith("Event") for t in type_names)
+
+
 def _extract_jsonld_event(html: str) -> dict[str, Any] | None:
-    """Pulls the first `schema.org Event` object out of a page's
+    """Pulls the first `schema.org Event` (or Event subtype, e.g.
+    `MusicEvent`/`SportsEvent`/`Festival`) object out of a page's
     `<script type="application/ld+json">` blocks, handling both a bare
     `Event` object and an array/`@graph` wrapper (both common JSON-LD
-    shapes). Returns None if no block parses or none is an `Event`."""
+    shapes). Returns None if no block parses or none is an Event type."""
     soup = BeautifulSoup(html, "lxml")
     for tag in soup.find_all("script", {"type": "application/ld+json"}):
         try:
@@ -331,7 +346,7 @@ def _extract_jsonld_event(html: str) -> dict[str, Any] | None:
             candidates.extend(parsed)
 
         for candidate in candidates:
-            if isinstance(candidate, dict) and candidate.get("@type") == "Event":
+            if isinstance(candidate, dict) and _is_event_type(candidate.get("@type")):
                 return candidate
     return None
 

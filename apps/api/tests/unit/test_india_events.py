@@ -592,6 +592,32 @@ class TestExtractJsonldEvent:
     def test_no_jsonld_blocks_returns_none(self):
         assert _extract_jsonld_event("<html><body>no scripts here</body></html>") is None
 
+    def test_extracts_music_event_subtype(self):
+        """Regression test: AllEvents.in tags concerts with `MusicEvent`
+        (a schema.org subtype of `Event`), not the bare `Event` type —
+        confirmed live via a real Guns N' Roses concert page that was
+        previously silently dropped entirely because of this."""
+        html = """
+        <script type="application/ld+json">
+        {"@type": "MusicEvent", "name": "Guns N' Roses: India 2026"}
+        </script>
+        """
+        event = _extract_jsonld_event(html)
+        assert event is not None
+        assert event["name"] == "Guns N' Roses: India 2026"
+
+    def test_extracts_event_subtype_from_list_type(self):
+        """`@type` can legally be a list of types, e.g. `["Event",
+        "SportsEvent"]` — this should still be recognized as an event."""
+        html = """
+        <script type="application/ld+json">
+        {"@type": ["Event", "SportsEvent"], "name": "Cup Final"}
+        </script>
+        """
+        event = _extract_jsonld_event(html)
+        assert event is not None
+        assert event["name"] == "Cup Final"
+
 
 class TestAllEventsJsonldToRecord:
     def test_maps_full_event_with_geo(self):
