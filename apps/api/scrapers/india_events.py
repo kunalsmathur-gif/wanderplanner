@@ -187,7 +187,19 @@ _ALLEVENTS_USER_AGENT = (
     "Mozilla/5.0 (compatible; WanderplanBot/1.0; "
     "+https://wanderplanner.org) india-events-ingest"
 )
-_ALLEVENTS_MAX_EVENTS_PER_CITY = 15
+# Raised from an earlier 15 after a real coverage gap was found live
+# (2026-10-06): AllEvents.in's per-city RSS feed is **not** date-sorted —
+# it's closer to a "recently listed" order — so a low cap silently missed
+# major, far-in-advance-announced events. Confirmed live example: "Guns N'
+# Roses: India 2026 - Bengaluru" (14 Nov 2026, announced well in advance)
+# sat at feed position 54, past the old cap of 15. Every major metro's feed
+# tops out naturally around 92-99 items (confirmed live across all 7 cities
+# `ingest_india_events()` covers), so 100 effectively fetches the whole feed
+# rather than an arbitrary slice of it — the per-event detail-page fetch
+# pacing (`_ALLEVENTS_DETAIL_FETCH_DELAY_S`) is what keeps this polite, not
+# a low item cap. This only affects the nightly off-peak ingestion job
+# (`core/scheduler.py::_refresh_india_events`), not any live request path.
+_ALLEVENTS_MAX_EVENTS_PER_CITY = 100
 _ALLEVENTS_DETAIL_FETCH_DELAY_S = 0.5
 
 
@@ -460,7 +472,7 @@ def _guess_category(raw_category: str) -> InterestCategory:
     — the broadest, lowest-risk bucket — rather than raising, since a
     third-party API's category taxonomy will never line up exactly."""
     raw = (raw_category or "").lower()
-    if any(k in raw for k in ("music", "concert", "gig")):
+    if any(k in raw for k in ("music", "concert", "gig", "dj ", "dj night", "band", "rock ", "metal", "orchestra", "unplugged", "edm")):
         return "music"
     if any(k in raw for k in ("food", "culinary", "drink")):
         return "food"
@@ -745,6 +757,29 @@ _MAJOR_INDIAN_CITIES = [
     "Hampi", "Ajmer", "Bikaner", "Jaisalmer", "Nagaur", "Kullu", "Manali", "Haridwar",
     "Rishikesh", "Mathura", "Vrindavan", "Konark",
 ]
+
+# Default city sweep for `ingest_india_events()`'s AllEvents.in/District.in
+# tiers — previously hardcoded to just 7 metros. Live-verified 2026-10-06
+# that both sources have real, substantial coverage far beyond those 7
+# (e.g. Jaipur 91 AllEvents RSS items / 32 District.in events, Lucknow
+# 95/31, Indore 78/32, Surat 82, Patna 70, Varanasi 46, Goa 36 — all
+# confirmed live, not assumed). Reuses `_MAJOR_INDIAN_CITIES` (already
+# curated for state/UT coverage, used by the Wikipedia tier) with its 3
+# exact city-name synonyms collapsed to one canonical spelling each, so
+# every state/UT has at least one represented city across all three
+# scraped tiers, not just the Wikipedia fallback.
+_INGEST_DEFAULT_CITIES = [
+    c for c in _MAJOR_INDIAN_CITIES if c not in {"New Delhi", "Bangalore", "Mysore"}
+]
+
+# Bounded concurrency for the per-city HTTP tiers (AllEvents.in/Eventbrite)
+# when sweeping `_INGEST_DEFAULT_CITIES` (58 cities) — keeps total ingest
+# runtime within the scheduler's off-peak window and existing ~35min
+# retry budget (see `core/scheduler.py::_refresh_india_events`) instead of
+# fetching 58 cities one-by-one. 8 concurrent cities x up to ~50s/city
+# worst case (100-event AllEvents cap x 0.5s detail-page pacing) still
+# completes in well under 10 minutes for the whole sweep.
+_INGEST_CITY_CONCURRENCY = 8
 
 
 def _resolve_upcoming_year(month: int, day: int | None = None) -> int:
@@ -1041,29 +1076,52 @@ async def ingest_india_events(cities: list[str] | None = None) -> list[EventReco
     missing API key or a failed fetch from one tier never blocks the others,
     consistent with every client function's own no-op contract above.
 
-    `cities` defaults to a short list of major metros for the primary-tier
-    city-scoped API sweeps; callers doing a broader batch ingest (the
-    scheduler job another workstream wires up) can pass a longer list.
+    `cities` defaults to `_INGEST_DEFAULT_CITIES` (all states/UTs, 58
+    cities) for the primary-tier city-scoped sweeps; callers can still pass
+    a shorter list (e.g. tests, a targeted re-ingest). The HTTP-based tiers
+    (AllEvents.in/Eventbrite) run with bounded concurrency
+    (`_INGEST_CITY_CONCURRENCY`) rather than one city at a time, and
+    District.in's tier shares a single headless browser across all cities
+    instead of launching one per city — both exist specifically so sweeping
+    58 cities instead of 7 doesn't balloon runtime past the scheduler's
+    off-peak window (see `_INGEST_DEFAULT_CITIES`/`_INGEST_CITY_CONCURRENCY`
+    comments above and `fetch_district_events_batch`'s docstring). The HTTP
+    tier and the District.in tier are independent data sources, so they run
+    concurrently with each other too (not one after the other) — live-timed
+    2026-10-06: a single AllEvents.in-heavy city (near its ~100-event cap,
+    each detail page paced 0.5s apart) can itself take ~170s, so overlapping
+    the two tiers instead of serializing them meaningfully shortens the
+    overall sweep.
     """
     if cities is None:
-        cities = ["Mumbai", "Delhi", "Bengaluru", "Hyderabad", "Chennai", "Kolkata", "Pune"]
+        cities = _INGEST_DEFAULT_CITIES
 
     # Deferred import: `scrapers/district_events.py` imports `EventRecord`/
     # `_guess_category` from this module, so importing it back at module
     # top-level here would be circular. Importing inside the function body
     # (after this module has finished loading) avoids that while still
     # keeping Playwright itself fully optional (district_events.py's own
-    # `fetch_district_events()` lazy-imports `playwright` and degrades to
-    # `[]` if it's not installed).
-    from scrapers.district_events import fetch_district_events
+    # fetchers lazy-import `playwright` and degrade to `[]`/`{}` if it's
+    # not installed).
+    from scrapers.district_events import fetch_district_events_batch
 
-    all_records: list[EventRecord] = []
+    semaphore = asyncio.Semaphore(_INGEST_CITY_CONCURRENCY)
 
-    for city in cities:
-        all_records.extend(await fetch_allevents(city))
-        all_records.extend(await fetch_eventbrite(city))
-        all_records.extend(await fetch_allevents_rss(city))
-        all_records.extend(await fetch_district_events(city))
+    async def _fetch_http_tiers(city: str) -> list[EventRecord]:
+        async with semaphore:
+            records: list[EventRecord] = []
+            records.extend(await fetch_allevents(city))
+            records.extend(await fetch_eventbrite(city))
+            records.extend(await fetch_allevents_rss(city))
+            return records
+
+    http_results, district_results = await asyncio.gather(
+        asyncio.gather(*(_fetch_http_tiers(city) for city in cities)),
+        fetch_district_events_batch(cities),
+    )
+    all_records: list[EventRecord] = [r for sub in http_results for r in sub]
+    for city_records in district_results.values():
+        all_records.extend(city_records)
 
     all_records.extend(curated_tier_a_events())
     all_records.extend(scrape_wikipedia_festivals())

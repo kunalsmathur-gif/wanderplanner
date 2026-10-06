@@ -13,10 +13,12 @@ import pytest
 from pydantic import ValidationError
 
 from scrapers.india_events import (
+    _ALLEVENTS_MAX_EVENTS_PER_CITY,
     _CURATED_EVENTS,
     EventRecord,
     _allevents_jsonld_to_record,
     _extract_jsonld_event,
+    _guess_category,
     _parse_event_date_range,
     _parse_event_location,
     curated_tier_a_events,
@@ -186,7 +188,7 @@ class TestIngestDedup:
         with patch("scrapers.india_events.fetch_allevents", side_effect=_fake_allevents), \
              patch("scrapers.india_events.fetch_eventbrite", return_value=[]), \
              patch("scrapers.india_events.fetch_allevents_rss", return_value=[]), \
-             patch("scrapers.district_events.fetch_district_events", return_value=[]), \
+             patch("scrapers.district_events.fetch_district_events_batch", return_value={}), \
              patch("scrapers.india_events.scrape_wikipedia_festivals", return_value=[]):
             events = await ingest_india_events(cities=["Mumbai"])
 
@@ -201,7 +203,7 @@ class TestIngestDedup:
         with patch("scrapers.india_events.fetch_allevents", return_value=[]), \
              patch("scrapers.india_events.fetch_eventbrite", return_value=[]), \
              patch("scrapers.india_events.fetch_allevents_rss", return_value=[]), \
-             patch("scrapers.district_events.fetch_district_events", return_value=[]), \
+             patch("scrapers.district_events.fetch_district_events_batch", return_value={}), \
              patch("scrapers.india_events.scrape_wikipedia_festivals", return_value=[]):
             events = await ingest_india_events(cities=["Mumbai"])
 
@@ -210,6 +212,48 @@ class TestIngestDedup:
         names = {e.name for e in events}
         assert "Char Dham Yatra (opening)" in names
         assert "Rath Yatra (Puri)" in names
+
+    @pytest.mark.asyncio
+    async def test_defaults_to_the_full_state_city_sweep_not_just_seven_metros(self):
+        """Regression guard for the 2026-10-06 expansion: `cities=None`
+        must sweep `_INGEST_DEFAULT_CITIES` (58 cities, every state/UT),
+        not the old hardcoded 7-metro list."""
+        from scrapers.india_events import _INGEST_DEFAULT_CITIES
+
+        seen_cities: set[str] = set()
+
+        async def _record_city(city):
+            seen_cities.add(city)
+            return []
+
+        with patch("scrapers.india_events.fetch_allevents", side_effect=_record_city), \
+             patch("scrapers.india_events.fetch_eventbrite", return_value=[]), \
+             patch("scrapers.india_events.fetch_allevents_rss", return_value=[]), \
+             patch("scrapers.district_events.fetch_district_events_batch", return_value={}), \
+             patch("scrapers.india_events.scrape_wikipedia_festivals", return_value=[]):
+            await ingest_india_events()
+
+        assert seen_cities == set(_INGEST_DEFAULT_CITIES)
+        assert len(_INGEST_DEFAULT_CITIES) > 7
+
+    @pytest.mark.asyncio
+    async def test_calls_district_batch_fetcher_once_not_once_per_city(self):
+        """`ingest_india_events()` must use the shared-browser batch
+        fetcher (one call covering all cities), not the single-city
+        `fetch_district_events()` in a loop — that per-city-browser
+        pattern is exactly what made sweeping 58 cities expensive."""
+        with patch("scrapers.india_events.fetch_allevents", return_value=[]), \
+             patch("scrapers.india_events.fetch_eventbrite", return_value=[]), \
+             patch("scrapers.india_events.fetch_allevents_rss", return_value=[]), \
+             patch(
+                 "scrapers.district_events.fetch_district_events_batch",
+                 return_value={},
+             ) as mock_batch, \
+             patch("scrapers.india_events.scrape_wikipedia_festivals", return_value=[]):
+            await ingest_india_events(cities=["Mumbai", "Delhi", "Pune"])
+
+        mock_batch.assert_called_once()
+        assert mock_batch.call_args.args[0] == ["Mumbai", "Delhi", "Pune"]
 
 
 class TestEmbedAndStore:
@@ -465,7 +509,7 @@ class TestScrapeWikipediaFestivalsIntegration:
         with patch("scrapers.india_events.fetch_allevents", return_value=[]), \
              patch("scrapers.india_events.fetch_eventbrite", return_value=[]), \
              patch("scrapers.india_events.fetch_allevents_rss", return_value=[]), \
-             patch("scrapers.district_events.fetch_district_events", return_value=[]), \
+             patch("scrapers.district_events.fetch_district_events_batch", return_value={}), \
              patch("scrapers.india_events.scrape_wikipedia_festivals", return_value=[wiki_record]):
             events = await ingest_india_events(cities=["Mumbai"])
 
@@ -633,3 +677,64 @@ class TestFetchAllEventsRss:
             records = await fetch_allevents_rss("Mumbai", max_events=5)
 
         assert records == []
+
+    def test_default_per_city_cap_covers_a_full_feed_not_just_the_first_page(self):
+        # Regression test for a real coverage gap found live (2026-10-06):
+        # AllEvents.in's per-city RSS feed isn't date-sorted, so a low cap
+        # silently missed far-in-advance-announced major events (e.g. a
+        # Guns N' Roses India tour date sat at feed position 54). Every
+        # metro's feed tops out naturally around 92-99 items, so the default
+        # must comfortably exceed that rather than being a small arbitrary
+        # slice.
+        assert _ALLEVENTS_MAX_EVENTS_PER_CITY >= 99
+
+    @pytest.mark.asyncio
+    async def test_fetches_up_to_the_default_cap_not_just_fifteen(self):
+        # 20 feed items (more than the old 15-item cap) must all be
+        # followed, proving the default cap was actually raised rather than
+        # just the docstring/comment.
+        n_items = 20
+        rss_xml = "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel>" + "".join(
+            f"<item><link>https://allevents.in/mumbai/event-{i}</link></item>" for i in range(n_items)
+        ) + "</channel></rss>"
+        event_html = """
+        <script type="application/ld+json">
+        {"@type": "Event", "name": "Some Event",
+         "startDate": "2026-10-12T10:00:00+05:30", "endDate": "2026-10-12T12:00:00+05:30",
+         "location": {"address": {"addressLocality": "Mumbai", "addressRegion": "MH"}}}
+        </script>
+        """
+        feed_resp = MagicMock(status_code=200, text=rss_xml)
+        event_resp = MagicMock()
+        event_resp.text = event_html
+        event_resp.raise_for_status = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.__aenter__.return_value.get = AsyncMock(
+            side_effect=[feed_resp] + [event_resp] * n_items
+        )
+
+        with patch("scrapers.india_events.httpx.AsyncClient", return_value=mock_client), \
+             patch("scrapers.india_events.asyncio.sleep", new=AsyncMock()):
+            records = await fetch_allevents_rss("Mumbai")  # default max_events, no override
+
+        assert len(records) == n_items
+
+
+class TestGuessCategory:
+    def test_recognizes_core_music_keywords(self):
+        assert _guess_category("live concert gig") == "music"
+
+    def test_recognizes_rock_metal_dj_band_as_music(self):
+        # Regression test: "Bangalore Open Air - Rock & Heavy Metal Festival"
+        # and similar concert/tour listings were falling through to the
+        # "culture" default because none of the original keywords
+        # (music/concert/gig) appeared in their AllEvents.in description.
+        assert _guess_category("Rock & Heavy Metal Festival") == "music"
+        assert _guess_category("Anirudh DJ Night") == "music"
+        assert _guess_category("live band performance") == "music"
+        assert _guess_category("EDM unplugged orchestra set") == "music"
+
+    def test_falls_back_to_culture_for_unmatched_text(self):
+        assert _guess_category("heritage walk and city tour") == "culture"
+

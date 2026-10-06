@@ -15,9 +15,11 @@ import pytest
 
 from scrapers.district_events import (
     _DISTRICT_CITY_COORDS,
+    _DISTRICT_MAX_EVENTS_PER_CITY,
     _district_item_to_record,
     _parse_discovery_results,
     fetch_district_events,
+    fetch_district_events_batch,
 )
 
 
@@ -106,11 +108,42 @@ class TestParseDiscoveryResults:
     def test_caps_at_max_events_per_city(self):
         items = [
             {"ItemDetails": {"EventData": {"name": f"Event {i}", "start_time_epoch": 1792000000}}}
-            for i in range(50)
+            for i in range(_DISTRICT_MAX_EVENTS_PER_CITY + 50)
         ]
         data = {"EDSResponse": {"rails": [{"items": items}]}}
         records = _parse_discovery_results(data, fallback_city="Mumbai")
-        assert len(records) == 20  # _DISTRICT_MAX_EVENTS_PER_CITY
+        assert len(records) == _DISTRICT_MAX_EVENTS_PER_CITY
+
+    def test_default_cap_is_generous_enough_to_span_multiple_rails(self):
+        # Regression test for a real coverage gap found live (2026-10-06):
+        # a single `get_discovery_results` response contains every rail
+        # (Trending, Dandiya/Garba, Sports, Food, etc.) in one page load —
+        # a low cap meant whichever rail came first (observed live: an
+        # in-season Dandiya/Garba rail) silently consumed the whole budget
+        # before the loop ever reached other rails, even though all of
+        # that data was already sitting in the one response. Confirmed
+        # live: 139 of 157 District.in-sourced events were "culture" versus
+        # single digits for every other category. The cap must comfortably
+        # exceed a single rail's typical item count (observed live: dozens
+        # of items in a season-driven rail) so other rails aren't starved.
+        first_rail_items = [
+            {"ItemDetails": {"EventData": {"name": f"Dandiya Night {i}", "start_time_epoch": 1792000000}}}
+            for i in range(30)  # more than the old cap (20), well under the new one
+        ]
+        second_rail_items = [
+            {"ItemDetails": {"EventData": {"name": "ISL Match: Bengaluru FC", "start_time_epoch": 1792000000}}}
+        ]
+        data = {
+            "EDSResponse": {
+                "rails": [
+                    {"items": first_rail_items},
+                    {"items": second_rail_items},
+                ]
+            }
+        }
+        records = _parse_discovery_results(data, fallback_city="Bengaluru")
+        names = [r.name for r in records]
+        assert "ISL Match: Bengaluru FC" in names
 
 
 class TestFetchDistrictEventsDegradation:
@@ -129,3 +162,65 @@ class TestFetchDistrictEventsDegradation:
             records = await fetch_district_events("Mumbai")
 
         assert records == []
+
+
+class TestDistrictCityCoords:
+    def test_covers_every_city_in_the_ingest_default_sweep(self):
+        """Every city `ingest_india_events()` sweeps by default must have a
+        seed coordinate here, or District.in silently contributes zero
+        events for it regardless of real coverage (the exact class of
+        coverage gap the per-city caps fixed earlier this session, but at
+        the city-list level instead of the per-city-cap level)."""
+        from scrapers.india_events import _INGEST_DEFAULT_CITIES
+
+        missing = [c for c in _INGEST_DEFAULT_CITIES if c not in _DISTRICT_CITY_COORDS]
+        assert missing == []
+
+    def test_has_more_than_the_original_seven_metros(self):
+        assert len(_DISTRICT_CITY_COORDS) > 7
+
+
+class TestFetchDistrictEventsBatch:
+    @pytest.mark.asyncio
+    async def test_missing_playwright_degrades_every_city_to_empty(self):
+        with patch.dict("sys.modules", {"playwright.async_api": None}):
+            results = await fetch_district_events_batch(["Mumbai", "Delhi"])
+
+        assert results == {"Mumbai": [], "Delhi": []}
+
+    @pytest.mark.asyncio
+    async def test_shares_one_browser_launch_across_all_cities(self):
+        """The whole point of the batch helper: one `chromium.launch()`
+        call regardless of how many cities are requested, not one per
+        city (that per-city-browser cost is what made sweeping 58 cities
+        instead of 7 expensive before this change)."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_browser = MagicMock()
+        mock_browser.close = AsyncMock()
+        mock_context = MagicMock()
+        mock_context.close = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        mock_page = MagicMock()
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        mock_page.on = MagicMock()
+        mock_page.goto = AsyncMock(side_effect=TimeoutError("no response captured"))
+
+        mock_chromium = MagicMock()
+        mock_chromium.launch = AsyncMock(return_value=mock_browser)
+        mock_pw_instance = MagicMock()
+        mock_pw_instance.chromium = mock_chromium
+        mock_pw_cm = MagicMock()
+        mock_pw_cm.__aenter__ = AsyncMock(return_value=mock_pw_instance)
+        mock_pw_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "playwright.async_api.async_playwright", return_value=mock_pw_cm
+        ):
+            results = await fetch_district_events_batch(
+                ["Mumbai", "Delhi", "Pune"], max_concurrent=2
+            )
+
+        mock_chromium.launch.assert_called_once()
+        assert set(results.keys()) == {"Mumbai", "Delhi", "Pune"}
+        assert all(v == [] for v in results.values())
