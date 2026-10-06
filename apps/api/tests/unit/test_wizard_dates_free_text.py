@@ -13,6 +13,7 @@ from datetime import date
 
 from chains.wizard_chat_chain import (
     _infer_dates_from_free_text,
+    _infer_vague_duration_dates_from_free_text,
     _infer_weekend_dates_from_free_text,
 )
 
@@ -122,3 +123,66 @@ class TestInferWeekendDatesFromFreeText:
     def test_returns_none_without_weekend_mention(self):
         assert _infer_weekend_dates_from_free_text("5 days in Goa", reference_date=REF) is None
         assert _infer_weekend_dates_from_free_text(None, reference_date=REF) is None
+
+
+class TestInferVagueDurationDatesFromFreeText:
+    """Regression tests for _infer_vague_duration_dates_from_free_text.
+
+    Generalises the "any weekend" fix (user feedback): "plan a trip for a
+    week" / "a month" (no month/season named) had the same anchor-free gap
+    -- the user is undecided on exact dates, not asking the assistant to
+    stall on a clarifying question or guess an enormous window. Resolve to
+    ONE concrete, near-term window instead.
+    """
+
+    def test_a_week_resolves_to_next_monday_through_sunday(self):
+        # REF = Wed 2026-08-12 -> next Monday is 2026-08-17, +6 days = 08-23.
+        assert _infer_vague_duration_dates_from_free_text("plan a trip for a week", reference_date=REF) == {
+            "start": "2026-08-17",
+            "end": "2026-08-23",
+            "flexible": False,
+            "duration_days": 7,
+        }
+
+    def test_one_week_phrasing_also_matches(self):
+        assert _infer_vague_duration_dates_from_free_text("I want one week off", reference_date=REF) == {
+            "start": "2026-08-17",
+            "end": "2026-08-23",
+            "flexible": False,
+            "duration_days": 7,
+        }
+
+    def test_rolls_to_next_week_when_reference_date_is_itself_monday(self):
+        monday = date(2026, 8, 17)
+        assert _infer_vague_duration_dates_from_free_text("a week trip", reference_date=monday) == {
+            "start": "2026-08-24",
+            "end": "2026-08-30",
+            "flexible": False,
+            "duration_days": 7,
+        }
+
+    def test_a_month_resolves_to_a_flexible_30_day_window_starting_today(self):
+        assert _infer_vague_duration_dates_from_free_text("planning for a month", reference_date=REF) == {
+            "start": "2026-08-12",
+            "end": "2026-09-10",
+            "flexible": True,
+            "duration_days": 30,
+        }
+
+    def test_one_month_phrasing_also_matches(self):
+        assert _infer_vague_duration_dates_from_free_text("one month trip", reference_date=REF) == {
+            "start": "2026-08-12",
+            "end": "2026-09-10",
+            "flexible": True,
+            "duration_days": 30,
+        }
+
+    def test_named_month_is_not_treated_as_vague_duration(self):
+        """"A week in November" already names a period -- that's the
+        model's existing month+duration handling, not this parser's job."""
+        assert _infer_vague_duration_dates_from_free_text("a week in November", reference_date=REF) is None
+        assert _infer_vague_duration_dates_from_free_text("a month long trip in December", reference_date=REF) is None
+
+    def test_returns_none_without_a_vague_duration_phrase(self):
+        assert _infer_vague_duration_dates_from_free_text("5 days in Goa", reference_date=REF) is None
+        assert _infer_vague_duration_dates_from_free_text(None, reference_date=REF) is None

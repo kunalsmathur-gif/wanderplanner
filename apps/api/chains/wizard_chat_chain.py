@@ -399,20 +399,30 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
       "long weekend" -> duration_days: 3
       "summer holidays" -> start: approx May 1, end: approx May 31, flexible: true
 
-    🔴 "any weekend" / "a weekend" / "some weekend" (NO specific weekend named, e.g. "plan a
-    trip for any weekend", "whenever this weekend"): do NOT treat this as an open-ended/
-    flexible request spanning multiple weekends — resolve it to the SINGLE upcoming
-    Saturday-Sunday as a concrete, non-flexible 2-day window, and say so in your reply so the
-    user can correct you if they meant a different one, e.g. "Sure — I'll plan for the coming
-    weekend, Oct 10-11. Let me know if you had a different weekend in mind." Bug fix
-    (live-reported): previously there was no instruction for this exact phrasing, and the model
-    improvised a date range spanning every remaining weekend of the year (~62 days), which then
-    tripped the max-trip-length guard with a scope the user never asked for. A deterministic
-    backend fallback (see _infer_weekend_dates_from_free_text) also catches the common phrasings
-    of this case even if config_patch is missed on a given turn, but always state the concrete
-    dates you resolved to in your reply either way.
+    🔴 VAGUE / UNANCHORED PERIOD — "any weekend" / "a week" / "a month" (etc.) with NO specific
+    weekend, month, or season named (e.g. "plan a trip for any weekend", "I want a week off",
+    "planning for a month"): do NOT leave this open-ended, ask an extra clarifying question, or
+    let it silently span an enormous range. The user is undecided on exact dates, not asking you
+    to guess a 60+ day window — resolve it to ONE concrete, reasonably-near window and say so in
+    your reply so the user can correct you if they meant something else:
+      - "any/a/some/this/next weekend" -> the single upcoming Saturday-Sunday (2 days),
+        flexible: false. e.g. "Sure — I'll plan for the coming weekend, Oct 10-11. Let me know
+        if you had a different weekend in mind."
+      - "a week" / "one week" (no month/season named) -> the week starting next Monday (7 days),
+        flexible: false. e.g. "Got it — I'll plan for the week of Oct 12-18. Shout if you had
+        different dates in mind."
+      - "a month" / "one month" (no month NAME given — "a month" is a duration, "November" is a
+        calendar month and is handled below) -> a 30-day window starting today, flexible: true.
+        e.g. "Got it — I'll plan a flexible ~30-day window starting Oct 6. Let me know if you
+        had specific dates in mind instead."
+    Bug fix (live-reported): previously there was no instruction for any of this, and the model
+    improvised — one report had "any weekend" span every remaining weekend of the year (~62
+    days), tripping the max-trip-length guard with a scope the user never asked for. Deterministic
+    backend fallbacks (_infer_weekend_dates_from_free_text, _infer_vague_duration_dates_from_free_text)
+    also catch the common phrasings of these cases even if config_patch is missed on a given turn,
+    but always state the concrete dates you resolved to in your reply either way, every time.
 
-    🔴 If the user gives ONLY a month/period with NO number of days ("November", "sometime in
+    🔴 If the user gives ONLY a NAMED month/period with NO number of days ("November", "sometime in
     December", "next monsoon"), do NOT silently assume any duration — not 7 days, and NOT the
     whole month. Set start/end to that month's boundaries but leave duration_days OUT of
     config_patch, and ask directly: "Got it, November! And how many days were you thinking —
@@ -424,9 +434,9 @@ explicitly appears in CURRENT_STATE below. Never assume a field is filled from m
     a user who just said "November" got a 29-30 day itinerary they never asked for. Never mark
     dates as filled (see IMPORTANT below) until duration_days is explicitly known.
 
-    IMPORTANT: Duration alone ("5 days", "a week") is NOT enough to fill this field.
-    You MUST also know WHEN they want to travel (month or rough period).
-    If the user gives only duration without a time period, ask:
+    IMPORTANT: A bare NUMERIC duration ("5 days", "10 days") with no month/season/period is NOT
+    enough to fill this field — you MUST also know WHEN (see the VAGUE/UNANCHORED rule above for
+    "a week"/"a month" instead, which ARE resolved automatically). For a numeric day-count, ask:
       "Got it! And roughly when are you planning to travel -- any particular month or season?"
     Do not mark dates as filled until you have BOTH a duration AND a travel month/period.
     Set start/end to approximate month boundaries for flexible travel (e.g., month="December"
@@ -1287,6 +1297,70 @@ def _infer_weekend_dates_from_free_text(last_user_text: str | None, reference_da
         "flexible": False,
         "duration_days": 2,
     }
+
+
+# Same bug family as the weekend case above, generalised per user feedback:
+# "plan a trip for a week" / "a month" (no month/season NAMED at all) left
+# the same kind of anchor-free gap -- the user is undecided on exact dates,
+# not asking the assistant to guess a huge window or stall on an extra
+# clarifying question before any dates exist at all. Resolve to ONE
+# concrete, near-term window and let the reply (not this function) state the
+# assumption back to the user for confirmation -- see the system prompt's
+# VAGUE / UNANCHORED PERIOD rule.
+#
+# Deliberately narrow: only the bare phrase ("a week"/"one week", "a
+# month"/"one month") with NO month name anywhere in the text. If a month
+# IS named ("a week in November"), that is a duration + period the model
+# already handles together -- this parser isn't attempting to duplicate it,
+# and guessing a date range over a sentence that already names a period
+# would silently discard information the user gave.
+_VAGUE_WEEK_DURATION_RE = re.compile(r"\b(?:a|one)\s+week\b", re.IGNORECASE)
+_VAGUE_MONTH_DURATION_RE = re.compile(r"\b(?:a|one)\s+month\b", re.IGNORECASE)
+_ANY_MONTH_NAME_RE = re.compile(r"\b(?:" + _MONTH_NAMES_RE + r")\b", re.IGNORECASE)
+
+
+def _infer_vague_duration_dates_from_free_text(last_user_text: str | None, reference_date: date | None = None) -> dict[str, Any] | None:
+    """Deterministically resolves a bare, anchor-free "a week"/"a month"
+    duration mention (no month name stated) to a concrete near-term window.
+    `reference_date` defaults to today and exists only so tests don't depend
+    on wall-clock time. Returns None if neither bare phrase matches, or if a
+    month name is present anywhere in the text (that case is left to the
+    model's existing month+duration handling)."""
+    if not last_user_text:
+        return None
+    if _ANY_MONTH_NAME_RE.search(last_user_text):
+        return None
+    if reference_date is None:
+        reference_date = datetime.now(UTC).date()
+
+    if _VAGUE_WEEK_DURATION_RE.search(last_user_text):
+        # Assume a clean week starting next Monday, not "starting right
+        # now" if today happens to be mid-week -- mirrors the weekend
+        # case's "roll forward to the next clean occurrence" choice.
+        days_until_monday = (0 - reference_date.weekday()) % 7 or 7
+        start = reference_date + timedelta(days=days_until_monday)
+        end = start + timedelta(days=6)
+        return {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "flexible": False,
+            "duration_days": 7,
+        }
+
+    if _VAGUE_MONTH_DURATION_RE.search(last_user_text):
+        # "A month" (duration) is not "November" (a named calendar month,
+        # handled elsewhere) -- assume a flexible ~30-day window starting
+        # today, since the user hasn't anchored it to any particular period.
+        start = reference_date
+        end = start + timedelta(days=29)
+        return {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "flexible": True,
+            "duration_days": 30,
+        }
+
+    return None
 
 
 # Same failure shape as purpose/pace/budget/group/dates above: the LLM
@@ -2457,7 +2531,11 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # _infer_weekend_dates_from_free_text) when that doesn't match.
         existing_dates = merged.get("dates") or {}
         if not (existing_dates.get("start") and existing_dates.get("end")):
-            inferred_dates = _infer_dates_from_free_text(last_user_text) or _infer_weekend_dates_from_free_text(last_user_text)
+            inferred_dates = (
+                _infer_dates_from_free_text(last_user_text)
+                or _infer_weekend_dates_from_free_text(last_user_text)
+                or _infer_vague_duration_dates_from_free_text(last_user_text)
+            )
             if inferred_dates:
                 merged["dates"] = {**existing_dates, **inferred_dates}
                 patch["dates"] = {**(patch.get("dates") or {}), **inferred_dates}
@@ -2756,7 +2834,11 @@ async def wizard_chat(request: WizardChatRequest) -> WizardChatResponse:
         # and _infer_weekend_dates_from_free_text).
         existing_fallback_dates = fallback_config.get("dates") or {}
         if not (existing_fallback_dates.get("start") and existing_fallback_dates.get("end")):
-            inferred_dates = _infer_dates_from_free_text(last_user_text) or _infer_weekend_dates_from_free_text(last_user_text)
+            inferred_dates = (
+                _infer_dates_from_free_text(last_user_text)
+                or _infer_weekend_dates_from_free_text(last_user_text)
+                or _infer_vague_duration_dates_from_free_text(last_user_text)
+            )
             if inferred_dates:
                 fallback_config["dates"] = {**existing_fallback_dates, **inferred_dates}
                 fallback_patch["dates"] = {**(fallback_patch.get("dates") or {}), **inferred_dates}
